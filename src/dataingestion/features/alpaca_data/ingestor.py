@@ -69,13 +69,37 @@ class AlpacaIngestor:
     def get_account(self):
         return self.trading_client.get_account()
 
-    def get_option_contracts(self, underlying_symbol: str, limit: int = 100):
+    def get_option_contracts(
+        self,
+        underlying_symbol: str,
+        limit: int = 100,
+        expiration_date: str = None,
+        type: str = None,  # "call" or "put"
+    ):
         from alpaca.trading.requests import GetOptionContractsRequest
+        from alpaca.trading.enums import ContractType
 
-        req = GetOptionContractsRequest(
-            underlying_symbols=[underlying_symbol], status="active", limit=limit
-        )
+        params = {
+            "underlying_symbols": [underlying_symbol],
+            "status": "active",
+            "limit": limit,
+        }
+        if expiration_date:
+            # Check format or pass as is? Alpaca expects YYYY-MM-DD
+            params["expiration_date"] = expiration_date
+        if type:
+            params["type"] = ContractType.CALL if type.lower() == "call" else ContractType.PUT
+
+        req = GetOptionContractsRequest(**params)
         return self.trading_client.get_option_contracts(req)
+
+    def get_option_snapshot(self, symbol: str):
+        from alpaca.data.requests import OptionSnapshotRequest
+        req = OptionSnapshotRequest(symbol_or_symbols=symbol)
+        # Verify which client to use: option_client (historical) usually has getting latest quote?
+        # Actually in alpaca-py, OptionHistoricalDataClient has get_option_snapshot
+        res = self.option_client.get_option_snapshot(req)
+        return res[symbol] if symbol in res else None
 
     def get_latest_quote(self, symbol: str):
         from alpaca.data.requests import StockLatestQuoteRequest

@@ -19,6 +19,7 @@ The service ingests data from these providers into a structured Data Lake (Parqu
 
 ### 1. Market Data
 - **Alpaca** (`raw/market_data/alpaca_bars/`):
+    - **Trading Gateway**: Proxy for Account Info, Orders (`POST /orders`), and Option Chains.
     - Historical Bars (Stocks/Crypto) and Option Bars.
     - Corporate Actions (Splits/Dividends).
 - **Coinbase** (`raw/market_data/coinbase_candles/`):

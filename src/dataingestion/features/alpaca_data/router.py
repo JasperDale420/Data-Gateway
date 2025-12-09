@@ -75,11 +75,36 @@ async def get_latest_quote(symbol: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/options/snapshots/{symbol}")
+async def get_option_snapshot(symbol: str):
+    """Get latest option snapshot (price)."""
+    try:
+        snap = alpaca_ingestor.get_option_snapshot(symbol)
+        if not snap or not snap.latest_quote:
+            return {}
+        
+        return {
+            "symbol": symbol,
+            "ask_price": snap.latest_quote.ask_price,
+            "bid_price": snap.latest_quote.bid_price,
+            "timestamp": str(snap.latest_quote.timestamp) if snap.latest_quote.timestamp else None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/options/contracts/{symbol}", response_model=List[OptionContract])
-async def get_contracts(symbol: str, limit: int = 100):
+async def get_contracts(
+    symbol: str,
+    limit: int = 100,
+    expiration_date: Optional[str] = None,
+    type: Optional[str] = None,
+):
     """Get active option contracts for an underlying symbol."""
     try:
-        res = alpaca_ingestor.get_option_contracts(symbol, limit)
+        res = alpaca_ingestor.get_option_contracts(
+            symbol, limit, expiration_date=expiration_date, type=type
+        )
         contracts = []
         if hasattr(res, "option_contracts"):
             for c in res.option_contracts:
