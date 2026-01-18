@@ -28,7 +28,8 @@ RUN pip install --no-cache-dir \
     "redis>=5.0" \
     "prometheus-client>=0.20" \
     "psutil>=5.9" \
-    "yfinance>=0.2"
+    "yfinance>=0.2" \
+    "alpaca-py>=0.28"
 
 # Copy gateway source and install as package
 COPY gateway/ gateway/

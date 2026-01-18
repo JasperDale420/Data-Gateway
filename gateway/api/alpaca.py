@@ -8,52 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from gateway.api.deps import get_registry, require_api_key, require_provider_rate_limit
 from gateway.core.auth import Client
 from gateway.core.registry import ProviderRegistry
-from gateway.schemas import (
-    # Stock responses
-    StockBarsResponse,
-    StockQuoteResponse,
-    StockTradesResponse,
-    StockSnapshotResponse,
-    LatestBarsResponse,
-    LatestTradesResponse,
-    HistoricalQuotesResponse,
-    SnapshotsResponse,
-    AuctionsResponse,
-    ResponseMeta,
-    # Option responses
-    OptionChainResponse,
-    OptionSnapshotResponse,
-    OptionBarsResponse,
-    OptionQuoteResponse,
-    OptionTradesResponse,
-    OptionLatestTradesResponse,
-    OptionSnapshotsResponse,
-    # Crypto responses
-    CryptoBarsResponse,
-    CryptoTradesResponse,
-    CryptoQuoteResponse,
-    CryptoSnapshotResponse,
-    CryptoLatestBarsResponse,
-    CryptoLatestTradesResponse,
-    CryptoOrderbookResponse,
-    # Forex responses
-    ForexRatesResponse,
-    ForexHistoricalResponse,
-    # News/Screener responses
-    NewsResponse,
-    MostActivesResponse,
-    MoversResponse,
-    # Meta responses
-    CorporateActionsResponse,
-    ConditionCodesResponse,
-    ExchangeCodesResponse,
-    FixedIncomeResponse,
-)
+from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/api/v1/alpaca", tags=["alpaca"])
 
 
-@router.get("/stocks/{symbol}/bars")
+@router.get("/stocks/{symbol}/bars", response_model=SuccessResponse)
 async def get_stock_bars(
     symbol: str,
     timeframe: str = Query(default="1Day", description="Bar timeframe"),
@@ -104,7 +64,7 @@ async def get_stock_bars(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/stocks/{symbol}/quotes")
+@router.get("/stocks/{symbol}/quotes", response_model=SuccessResponse)
 async def get_stock_quotes(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -135,7 +95,7 @@ async def get_stock_quotes(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/stocks/{symbol}/trades")
+@router.get("/stocks/{symbol}/trades", response_model=SuccessResponse)
 async def get_stock_trades(
     symbol: str,
     start: datetime | None = Query(default=None),
@@ -179,7 +139,7 @@ async def get_stock_trades(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/stocks/{symbol}/snapshot")
+@router.get("/stocks/{symbol}/snapshot", response_model=SuccessResponse)
 async def get_stock_snapshot(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -218,7 +178,7 @@ async def get_stock_snapshot(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/stocks/bars/latest")
+@router.get("/stocks/bars/latest", response_model=SuccessResponse)
 async def get_latest_bars(
     symbols: str = Query(..., description="Comma-separated symbols"),
     client: Client = Depends(require_api_key),
@@ -242,7 +202,7 @@ async def get_latest_bars(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/stocks/trades/latest")
+@router.get("/stocks/trades/latest", response_model=SuccessResponse)
 async def get_latest_trades(
     symbols: str = Query(..., description="Comma-separated symbols"),
     client: Client = Depends(require_api_key),
@@ -266,7 +226,7 @@ async def get_latest_trades(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/stocks/quotes")
+@router.get("/stocks/quotes", response_model=SuccessResponse)
 async def get_historical_quotes(
     symbols: str = Query(..., description="Comma-separated symbols"),
     start: datetime = Query(..., description="Start time (ISO 8601)"),
@@ -293,7 +253,7 @@ async def get_historical_quotes(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/stocks/snapshots")
+@router.get("/stocks/snapshots", response_model=SuccessResponse)
 async def get_snapshots(
     symbols: str = Query(..., description="Comma-separated symbols"),
     client: Client = Depends(require_api_key),
@@ -317,7 +277,7 @@ async def get_snapshots(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/stocks/auctions")
+@router.get("/stocks/auctions", response_model=SuccessResponse)
 async def get_auctions(
     symbols: str = Query(..., description="Comma-separated symbols"),
     start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
@@ -349,7 +309,7 @@ async def get_auctions(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/options/chain/{underlying}")
+@router.get("/options/chain/{underlying}", response_model=SuccessResponse)
 async def get_option_chain(
     underlying: str,
     expiration_date: str | None = Query(default=None, description="Exact expiration (YYYY-MM-DD)"),
@@ -395,7 +355,7 @@ async def get_option_chain(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/options/chain/{underlying}/snapshot")
+@router.get("/options/chain/{underlying}/snapshot", response_model=SuccessResponse)
 async def get_option_chain_snapshot(
     underlying: str,
     client: Client = Depends(require_api_key),
@@ -435,7 +395,7 @@ async def get_option_chain_snapshot(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/options/{contract}/bars")
+@router.get("/options/{contract}/bars", response_model=SuccessResponse)
 async def get_option_bars(
     contract: str,
     timeframe: str = Query(default="1Day", description="Bar timeframe"),
@@ -483,7 +443,7 @@ async def get_option_bars(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/options/{contract}/quotes")
+@router.get("/options/{contract}/quotes", response_model=SuccessResponse)
 async def get_option_quotes(
     contract: str,
     client: Client = Depends(require_api_key),
@@ -514,7 +474,7 @@ async def get_option_quotes(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/options/trades")
+@router.get("/options/trades", response_model=SuccessResponse)
 async def get_options_trades(
     contracts: str = Query(..., description="Comma-separated option contracts"),
     start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
@@ -541,7 +501,7 @@ async def get_options_trades(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/options/trades/latest")
+@router.get("/options/trades/latest", response_model=SuccessResponse)
 async def get_options_latest_trades(
     contracts: str = Query(..., description="Comma-separated option contracts"),
     client: Client = Depends(require_api_key),
@@ -565,7 +525,7 @@ async def get_options_latest_trades(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/options/snapshots/{underlying}")
+@router.get("/options/snapshots/{underlying}", response_model=SuccessResponse)
 async def get_options_snapshots(
     underlying: str,
     client: Client = Depends(require_api_key),
@@ -597,7 +557,7 @@ async def get_options_snapshots(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/crypto/{pair}/bars")
+@router.get("/crypto/{pair}/bars", response_model=SuccessResponse)
 async def get_crypto_bars(
     pair: str,
     timeframe: str = Query(default="1Hour", description="Bar timeframe"),
@@ -637,7 +597,7 @@ async def get_crypto_bars(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/crypto/{pair}/trades")
+@router.get("/crypto/{pair}/trades", response_model=SuccessResponse)
 async def get_crypto_trades(
     pair: str,
     start: datetime | None = Query(default=None),
@@ -674,7 +634,7 @@ async def get_crypto_trades(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/crypto/{pair}/quotes")
+@router.get("/crypto/{pair}/quotes", response_model=SuccessResponse)
 async def get_crypto_quotes(
     pair: str,
     client: Client = Depends(require_api_key),
@@ -705,7 +665,7 @@ async def get_crypto_quotes(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/crypto/{pair}/snapshot")
+@router.get("/crypto/{pair}/snapshot", response_model=SuccessResponse)
 async def get_crypto_snapshot(
     pair: str,
     client: Client = Depends(require_api_key),
@@ -731,7 +691,7 @@ async def get_crypto_snapshot(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/crypto/bars/latest")
+@router.get("/crypto/bars/latest", response_model=SuccessResponse)
 async def get_crypto_latest_bars(
     pairs: str = Query(..., description="Comma-separated crypto pairs"),
     client: Client = Depends(require_api_key),
@@ -755,7 +715,7 @@ async def get_crypto_latest_bars(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/crypto/trades/latest")
+@router.get("/crypto/trades/latest", response_model=SuccessResponse)
 async def get_crypto_latest_trades(
     pairs: str = Query(..., description="Comma-separated crypto pairs"),
     client: Client = Depends(require_api_key),
@@ -784,7 +744,7 @@ async def get_crypto_latest_trades(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/forex/rates")
+@router.get("/forex/rates", response_model=SuccessResponse)
 async def get_forex_rates(
     pairs: str = Query(..., description="Comma-separated pairs: EUR/USD,GBP/USD"),
     client: Client = Depends(require_api_key),
@@ -811,7 +771,7 @@ async def get_forex_rates(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/forex/rates/historical")
+@router.get("/forex/rates/historical", response_model=SuccessResponse)
 async def get_forex_rates_historical(
     pairs: str = Query(..., description="Comma-separated pairs: EUR/USD,GBP/USD"),
     timeframe: str = Query(default="1Day", description="1Min, 1Hour, 1Day"),
@@ -861,7 +821,7 @@ async def get_forex_rates_historical(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/news")
+@router.get("/news", response_model=SuccessResponse)
 async def get_news(
     symbols: str | None = Query(default=None, description="Comma-separated symbols: AAPL,MSFT"),
     start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
@@ -912,7 +872,7 @@ async def get_news(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/screener/most-actives")
+@router.get("/screener/most-actives", response_model=SuccessResponse)
 async def get_most_actives(
     by: str = Query(default="volume", description="Sort by: volume or trades"),
     top: int = Query(default=10, le=100, description="Number of results"),
@@ -948,7 +908,7 @@ async def get_most_actives(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/screener/movers")
+@router.get("/screener/movers", response_model=SuccessResponse)
 async def get_movers(
     market_type: str = Query(default="stocks", description="Market type: stocks"),
     top: int = Query(default=10, le=50, description="Number of results per side"),
@@ -988,7 +948,7 @@ async def get_movers(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/corporate-actions/{symbol}")
+@router.get("/corporate-actions/{symbol}", response_model=SuccessResponse)
 async def get_corporate_actions(
     symbol: str,
     types: str | None = Query(
@@ -1039,7 +999,7 @@ async def get_corporate_actions(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/meta/conditions")
+@router.get("/meta/conditions", response_model=SuccessResponse)
 async def get_condition_codes(
     asset_class: str = Query(default="stocks", description="Asset class: stocks, options, crypto"),
     client: Client = Depends(require_api_key),
@@ -1068,7 +1028,7 @@ async def get_condition_codes(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/meta/exchanges")
+@router.get("/meta/exchanges", response_model=SuccessResponse)
 async def get_exchange_codes(
     asset_class: str = Query(default="stocks", description="Asset class: stocks, options, crypto"),
     client: Client = Depends(require_api_key),
@@ -1097,7 +1057,7 @@ async def get_exchange_codes(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/crypto/{pair}/orderbook")
+@router.get("/crypto/{pair}/orderbook", response_model=SuccessResponse)
 async def get_crypto_orderbook(
     pair: str,
     client: Client = Depends(require_api_key),
@@ -1162,7 +1122,7 @@ async def get_logo(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/fixed-income/prices")
+@router.get("/fixed-income/prices", response_model=SuccessResponse)
 async def get_fixed_income_prices(
     isins: str = Query(..., description="Comma-separated list of ISINs (max 1000)"),
     client: Client = Depends(require_api_key),
@@ -1197,7 +1157,7 @@ async def get_fixed_income_prices(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/account")
+@router.get("/account", response_model=SuccessResponse)
 async def get_account(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -1215,7 +1175,7 @@ async def get_account(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.post("/orders")
+@router.post("/orders", response_model=SuccessResponse)
 async def create_order(
     symbol: str,
     side: str,
@@ -1257,7 +1217,7 @@ async def create_order(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/orders")
+@router.get("/orders", response_model=SuccessResponse)
 async def get_orders(
     status: str = Query(default="open", description="Order status: open, closed, all"),
     limit: int = Query(default=50, le=500, description="Max orders to return"),
@@ -1290,7 +1250,7 @@ async def get_orders(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/orders/{order_id}")
+@router.get("/orders/{order_id}", response_model=SuccessResponse)
 async def get_order(
     order_id: str,
     client: Client = Depends(require_api_key),
@@ -1309,7 +1269,7 @@ async def get_order(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/orders:by_client_order_id")
+@router.get("/orders:by_client_order_id", response_model=SuccessResponse)
 async def get_order_by_client_id(
     client_order_id: str = Query(..., description="Client order ID"),
     client: Client = Depends(require_api_key),
@@ -1328,7 +1288,7 @@ async def get_order_by_client_id(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.delete("/orders/{order_id}")
+@router.delete("/orders/{order_id}", response_model=SuccessResponse)
 async def cancel_order(
     order_id: str,
     client: Client = Depends(require_api_key),
@@ -1351,7 +1311,7 @@ async def cancel_order(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.delete("/orders")
+@router.delete("/orders", response_model=SuccessResponse)
 async def cancel_all_orders(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -1369,7 +1329,7 @@ async def cancel_all_orders(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/positions")
+@router.get("/positions", response_model=SuccessResponse)
 async def get_positions(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -1387,7 +1347,7 @@ async def get_positions(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/positions/{symbol}")
+@router.get("/positions/{symbol}", response_model=SuccessResponse)
 async def get_position(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1406,7 +1366,7 @@ async def get_position(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.delete("/positions/{symbol}")
+@router.delete("/positions/{symbol}", response_model=SuccessResponse)
 async def close_position(
     symbol: str,
     qty: float | None = Query(default=None, description="Quantity to close"),
@@ -1427,7 +1387,7 @@ async def close_position(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.delete("/positions")
+@router.delete("/positions", response_model=SuccessResponse)
 async def close_all_positions(
     cancel_orders: bool = Query(default=True, description="Cancel open orders first"),
     client: Client = Depends(require_api_key),
@@ -1446,7 +1406,7 @@ async def close_all_positions(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/portfolio/history")
+@router.get("/portfolio/history", response_model=SuccessResponse)
 async def get_portfolio_history(
     period: str | None = Query(default="1M", description="Period: 1D, 1W, 1M, 3M, 6M, 1A, all"),
     timeframe: str | None = Query(default="1D", description="Timeframe: 1Min, 5Min, 15Min, 1H, 1D"),
@@ -1472,7 +1432,7 @@ async def get_portfolio_history(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/assets")
+@router.get("/assets", response_model=SuccessResponse)
 async def get_assets(
     status: str | None = Query(default="active", description="Asset status: active, inactive"),
     asset_class: str | None = Query(
@@ -1497,7 +1457,7 @@ async def get_assets(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/assets/{symbol}")
+@router.get("/assets/{symbol}", response_model=SuccessResponse)
 async def get_asset(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1516,7 +1476,7 @@ async def get_asset(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/clock")
+@router.get("/clock", response_model=SuccessResponse)
 async def get_clock(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -1534,7 +1494,7 @@ async def get_clock(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/calendar")
+@router.get("/calendar", response_model=SuccessResponse)
 async def get_calendar(
     start: date | None = Query(default=None, description="Start date (YYYY-MM-DD)"),
     end: date | None = Query(default=None, description="End date (YYYY-MM-DD)"),
@@ -1559,7 +1519,7 @@ async def get_calendar(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/account/configurations")
+@router.get("/account/configurations", response_model=SuccessResponse)
 async def get_account_configurations(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -1577,7 +1537,7 @@ async def get_account_configurations(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.patch("/account/configurations")
+@router.patch("/account/configurations", response_model=SuccessResponse)
 async def set_account_configurations(
     dtbp_check: str | None = None,
     trade_confirm_email: str | None = None,
@@ -1611,7 +1571,7 @@ async def set_account_configurations(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/account/activities")
+@router.get("/account/activities", response_model=SuccessResponse)
 async def get_account_activities(
     activity_types: str | None = Query(default=None, description="Comma-separated activity types"),
     client: Client = Depends(require_api_key),
@@ -1636,7 +1596,7 @@ async def get_account_activities(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/watchlists")
+@router.get("/watchlists", response_model=SuccessResponse)
 async def get_watchlists(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -1654,7 +1614,7 @@ async def get_watchlists(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.post("/watchlists")
+@router.post("/watchlists", response_model=SuccessResponse)
 async def create_watchlist(
     name: str,
     symbols: str | None = Query(default=None, description="Comma-separated symbols"),
@@ -1675,7 +1635,7 @@ async def create_watchlist(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/watchlists/{watchlist_id}")
+@router.get("/watchlists/{watchlist_id}", response_model=SuccessResponse)
 async def get_watchlist(
     watchlist_id: str,
     client: Client = Depends(require_api_key),
@@ -1694,7 +1654,7 @@ async def get_watchlist(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.put("/watchlists/{watchlist_id}")
+@router.put("/watchlists/{watchlist_id}", response_model=SuccessResponse)
 async def update_watchlist(
     watchlist_id: str,
     name: str | None = None,
@@ -1716,7 +1676,7 @@ async def update_watchlist(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.delete("/watchlists/{watchlist_id}")
+@router.delete("/watchlists/{watchlist_id}", response_model=SuccessResponse)
 async def delete_watchlist(
     watchlist_id: str,
     client: Client = Depends(require_api_key),
@@ -1739,7 +1699,7 @@ async def delete_watchlist(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.post("/watchlists/{watchlist_id}/assets")
+@router.post("/watchlists/{watchlist_id}/assets", response_model=SuccessResponse)
 async def add_asset_to_watchlist(
     watchlist_id: str,
     symbol: str,
@@ -1759,7 +1719,7 @@ async def add_asset_to_watchlist(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.delete("/watchlists/{watchlist_id}/assets/{symbol}")
+@router.delete("/watchlists/{watchlist_id}/assets/{symbol}", response_model=SuccessResponse)
 async def remove_asset_from_watchlist(
     watchlist_id: str,
     symbol: str,
@@ -1784,7 +1744,7 @@ async def remove_asset_from_watchlist(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.patch("/orders/{order_id}")
+@router.patch("/orders/{order_id}", response_model=SuccessResponse)
 async def replace_order(
     order_id: str,
     qty: float | None = None,

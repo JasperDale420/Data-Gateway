@@ -1018,4 +1018,3 @@ class AssetResponse(BaseModel):
     success: bool = True
     data: Asset
     meta: ResponseMeta | None = None
-
