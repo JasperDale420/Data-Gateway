@@ -10,16 +10,26 @@ from gateway.core.auth import Client
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
+# Query description constants
+DESC_BAR_TIMEFRAME = "Bar timeframe"
+DESC_START_TIME = "Start time (ISO 8601)"
+DESC_END_TIME = "End time (ISO 8601)"
+DESC_MAX_BARS = "Max bars to return"
+DESC_COMMA_SYMBOLS = "Comma-separated symbols"
+
+# Error message constants
+ERR_PROVIDER_NOT_AVAILABLE = "Alpaca provider not available"
+
 router = APIRouter(prefix="/api/v1/alpaca", tags=["alpaca"])
 
 
 @router.get("/stocks/{symbol}/bars", response_model=SuccessResponse)
 async def get_stock_bars(
     symbol: str,
-    timeframe: str = Query(default="1Day", description="Bar timeframe"),
-    start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
-    end: datetime | None = Query(default=None, description="End time (ISO 8601)"),
-    limit: int = Query(default=1000, le=10000, description="Max bars to return"),
+    timeframe: str = Query(default="1Day", description=DESC_BAR_TIMEFRAME),
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
+    limit: int = Query(default=1000, le=10000, description=DESC_MAX_BARS),
     feed: str = Query(default="sip", description="Data feed: sip or iex"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -28,7 +38,7 @@ async def get_stock_bars(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     # Default time range: last 24 hours
     if not end:
@@ -74,7 +84,7 @@ async def get_stock_quotes(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -108,7 +118,7 @@ async def get_stock_trades(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     if not end:
         end = datetime.now(UTC)
@@ -149,7 +159,7 @@ async def get_stock_snapshot(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -180,14 +190,14 @@ async def get_stock_snapshot(
 
 @router.get("/stocks/bars/latest", response_model=SuccessResponse)
 async def get_latest_bars(
-    symbols: str = Query(..., description="Comma-separated symbols"),
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest bar for each symbol."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -204,14 +214,14 @@ async def get_latest_bars(
 
 @router.get("/stocks/trades/latest", response_model=SuccessResponse)
 async def get_latest_trades(
-    symbols: str = Query(..., description="Comma-separated symbols"),
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest trade for each symbol."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -228,9 +238,9 @@ async def get_latest_trades(
 
 @router.get("/stocks/quotes", response_model=SuccessResponse)
 async def get_historical_quotes(
-    symbols: str = Query(..., description="Comma-separated symbols"),
-    start: datetime = Query(..., description="Start time (ISO 8601)"),
-    end: datetime = Query(..., description="End time (ISO 8601)"),
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
+    start: datetime = Query(..., description=DESC_START_TIME),
+    end: datetime = Query(..., description=DESC_END_TIME),
     limit: int = Query(default=10000, le=10000, description="Max quotes"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -238,7 +248,7 @@ async def get_historical_quotes(
     """Get historical quotes for symbols."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -255,14 +265,14 @@ async def get_historical_quotes(
 
 @router.get("/stocks/snapshots", response_model=SuccessResponse)
 async def get_snapshots(
-    symbols: str = Query(..., description="Comma-separated symbols"),
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get current snapshots for symbols."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -279,9 +289,9 @@ async def get_snapshots(
 
 @router.get("/stocks/auctions", response_model=SuccessResponse)
 async def get_auctions(
-    symbols: str = Query(..., description="Comma-separated symbols"),
-    start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
-    end: datetime | None = Query(default=None, description="End time (ISO 8601)"),
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
     limit: int = Query(default=1000, le=10000, description="Max auctions per symbol"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -289,7 +299,7 @@ async def get_auctions(
     """Get auction data for symbols."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -325,7 +335,7 @@ async def get_option_chain(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -365,7 +375,7 @@ async def get_option_chain_snapshot(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -398,10 +408,10 @@ async def get_option_chain_snapshot(
 @router.get("/options/{contract}/bars", response_model=SuccessResponse)
 async def get_option_bars(
     contract: str,
-    timeframe: str = Query(default="1Day", description="Bar timeframe"),
-    start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
-    end: datetime | None = Query(default=None, description="End time (ISO 8601)"),
-    limit: int = Query(default=1000, le=10000, description="Max bars to return"),
+    timeframe: str = Query(default="1Day", description=DESC_BAR_TIMEFRAME),
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
+    limit: int = Query(default=1000, le=10000, description=DESC_MAX_BARS),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
@@ -409,7 +419,7 @@ async def get_option_bars(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     if not end:
         end = datetime.now(UTC)
@@ -453,7 +463,7 @@ async def get_option_quotes(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -477,8 +487,8 @@ async def get_option_quotes(
 @router.get("/options/trades", response_model=SuccessResponse)
 async def get_options_trades(
     contracts: str = Query(..., description="Comma-separated option contracts"),
-    start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
-    end: datetime | None = Query(default=None, description="End time (ISO 8601)"),
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
     limit: int = Query(default=1000, le=10000, description="Max trades"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -486,7 +496,7 @@ async def get_options_trades(
     """Get historical trades for option contracts."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -510,7 +520,7 @@ async def get_options_latest_trades(
     """Get latest trades for option contracts."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -534,7 +544,7 @@ async def get_options_snapshots(
     """Get snapshots for all options on an underlying."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -560,10 +570,10 @@ async def get_options_snapshots(
 @router.get("/crypto/{pair}/bars", response_model=SuccessResponse)
 async def get_crypto_bars(
     pair: str,
-    timeframe: str = Query(default="1Hour", description="Bar timeframe"),
-    start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
-    end: datetime | None = Query(default=None, description="End time (ISO 8601)"),
-    limit: int = Query(default=1000, le=10000, description="Max bars to return"),
+    timeframe: str = Query(default="1Hour", description=DESC_BAR_TIMEFRAME),
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
+    limit: int = Query(default=1000, le=10000, description=DESC_MAX_BARS),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
@@ -571,7 +581,7 @@ async def get_crypto_bars(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -610,7 +620,7 @@ async def get_crypto_trades(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -644,7 +654,7 @@ async def get_crypto_quotes(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -675,7 +685,7 @@ async def get_crypto_snapshot(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -700,7 +710,7 @@ async def get_crypto_latest_bars(
     """Get latest bars for crypto pairs."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -724,7 +734,7 @@ async def get_crypto_latest_trades(
     """Get latest trades for crypto pairs."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -754,7 +764,7 @@ async def get_forex_rates(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -785,7 +795,7 @@ async def get_forex_rates_historical(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -824,8 +834,8 @@ async def get_forex_rates_historical(
 @router.get("/news", response_model=SuccessResponse)
 async def get_news(
     symbols: str | None = Query(default=None, description="Comma-separated symbols: AAPL,MSFT"),
-    start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
-    end: datetime | None = Query(default=None, description="End time (ISO 8601)"),
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
     limit: int = Query(default=10, le=50, description="Max articles to return"),
     include_content: bool = Query(default=False, description="Include full article content"),
     client: Client = Depends(require_api_key),
@@ -835,7 +845,7 @@ async def get_news(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -883,7 +893,7 @@ async def get_most_actives(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     if by not in ("volume", "trades"):
         raise HTTPException(status_code=400, detail="'by' must be 'volume' or 'trades'")
@@ -919,7 +929,7 @@ async def get_movers(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -954,8 +964,8 @@ async def get_corporate_actions(
     types: str | None = Query(
         default=None, description="Action types: dividend,split,merger,spinoff"
     ),
-    start: datetime | None = Query(default=None, description="Start time (ISO 8601)"),
-    end: datetime | None = Query(default=None, description="End time (ISO 8601)"),
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
@@ -963,7 +973,7 @@ async def get_corporate_actions(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1009,7 +1019,7 @@ async def get_condition_codes(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1038,7 +1048,7 @@ async def get_exchange_codes(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1067,7 +1077,7 @@ async def get_crypto_orderbook(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1105,7 +1115,7 @@ async def get_logo(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1132,7 +1142,7 @@ async def get_fixed_income_prices(
     provider = registry.get("alpaca")
 
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1165,7 +1175,7 @@ async def get_account(
     """Get account information."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1193,7 +1203,7 @@ async def create_order(
     """Create a new order."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1222,7 +1232,7 @@ async def get_orders(
     status: str = Query(default="open", description="Order status: open, closed, all"),
     limit: int = Query(default=50, le=500, description="Max orders to return"),
     direction: str = Query(default="desc", description="Sort direction: asc, desc"),
-    symbols: str | None = Query(default=None, description="Comma-separated symbols"),
+    symbols: str | None = Query(default=None, description=DESC_COMMA_SYMBOLS),
     nested: bool = Query(default=True, description="Include nested multi-leg orders"),
     side: str | None = Query(default=None, description="Filter by side: buy, sell"),
     client: Client = Depends(require_api_key),
@@ -1231,7 +1241,7 @@ async def get_orders(
     """Get all orders with optional filters."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1259,7 +1269,7 @@ async def get_order(
     """Get a specific order by ID."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1278,7 +1288,7 @@ async def get_order_by_client_id(
     """Get order by client order ID."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1297,7 +1307,7 @@ async def cancel_order(
     """Cancel an order by ID."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1319,7 +1329,7 @@ async def cancel_all_orders(
     """Cancel all open orders."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1337,7 +1347,7 @@ async def get_positions(
     """Get all open positions."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1356,7 +1366,7 @@ async def get_position(
     """Get position for a specific symbol."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1377,7 +1387,7 @@ async def close_position(
     """Close a position (fully or partially)."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1396,7 +1406,7 @@ async def close_all_positions(
     """Close all open positions."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1417,7 +1427,7 @@ async def get_portfolio_history(
     """Get account portfolio history."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1445,7 +1455,7 @@ async def get_assets(
     """Get available assets."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1466,7 +1476,7 @@ async def get_asset(
     """Get a specific asset by symbol."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1484,7 +1494,7 @@ async def get_clock(
     """Get market clock."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1504,7 +1514,7 @@ async def get_calendar(
     """Get trading calendar."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1527,7 +1537,7 @@ async def get_account_configurations(
     """Get account configuration settings."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1552,7 +1562,7 @@ async def set_account_configurations(
     """Update account configuration settings."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1580,7 +1590,7 @@ async def get_account_activities(
     """Get account activities."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1604,7 +1614,7 @@ async def get_watchlists(
     """Get all watchlists."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1617,14 +1627,14 @@ async def get_watchlists(
 @router.post("/watchlists", response_model=SuccessResponse)
 async def create_watchlist(
     name: str,
-    symbols: str | None = Query(default=None, description="Comma-separated symbols"),
+    symbols: str | None = Query(default=None, description=DESC_COMMA_SYMBOLS),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Create a new watchlist."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1644,7 +1654,7 @@ async def get_watchlist(
     """Get a specific watchlist by ID."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1658,14 +1668,14 @@ async def get_watchlist(
 async def update_watchlist(
     watchlist_id: str,
     name: str | None = None,
-    symbols: str | None = Query(default=None, description="Comma-separated symbols"),
+    symbols: str | None = Query(default=None, description=DESC_COMMA_SYMBOLS),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Update a watchlist."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1685,7 +1695,7 @@ async def delete_watchlist(
     """Delete a watchlist."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1709,7 +1719,7 @@ async def add_asset_to_watchlist(
     """Add an asset to a watchlist."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1729,7 +1739,7 @@ async def remove_asset_from_watchlist(
     """Remove an asset from a watchlist."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
@@ -1758,7 +1768,7 @@ async def replace_order(
     """Replace/modify an existing order."""
     provider = registry.get("alpaca")
     if not provider:
-        raise HTTPException(status_code=503, detail="Alpaca provider not available")
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca")
