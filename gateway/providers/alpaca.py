@@ -1371,6 +1371,84 @@ class AlpacaProvider(DataProvider):
             raise
 
     # ─────────────────────────────────────────────────────────────────
+    # Logos API
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_logo(self, symbol: str, placeholder: bool = True) -> bytes | None:
+        """Get company logo image for a symbol.
+
+        Args:
+            symbol: Stock symbol
+            placeholder: Whether to return placeholder if logo not found
+
+        Returns:
+            PNG image bytes or None if not found and placeholder=False
+        """
+        if not self._client:
+            raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
+
+        try:
+            params: dict[str, Any] = {}
+            if not placeholder:
+                params["placeholder"] = "false"
+
+            response = await self._client.get(
+                f"/v1beta1/logos/{symbol.upper()}",
+                params=params,
+            )
+            response.raise_for_status()
+
+            logger.info("alpaca_logo_fetched", symbol=symbol)
+            return response.content
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404 and not placeholder:
+                return None
+            logger.error(
+                "alpaca_logo_error",
+                symbol=symbol,
+                status=e.response.status_code,
+                error=str(e),
+            )
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Fixed Income API
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_fixed_income_prices(self, isins: list[str]) -> dict[str, dict]:
+        """Get latest prices for fixed income securities (US Treasuries).
+
+        Args:
+            isins: List of ISIN identifiers (max 1000)
+
+        Returns:
+            Dict mapping ISIN to price data with keys: t, p, ytm, ytw
+        """
+        if not self._client:
+            raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
+
+        try:
+            response = await self._client.get(
+                "/v1beta1/fixed_income/latest/prices",
+                params={"isins": ",".join(isins[:1000])},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            prices = data.get("prices", {})
+            logger.info("alpaca_fixed_income_prices_fetched", count=len(prices))
+            return prices
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "alpaca_fixed_income_error",
+                status=e.response.status_code,
+                error=str(e),
+            )
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
     # WebSocket Streaming
     # ─────────────────────────────────────────────────────────────────
 

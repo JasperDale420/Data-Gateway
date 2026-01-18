@@ -45,6 +45,11 @@ All notable changes to this project will be documented in this file.
   - `GET /api/v1/alpaca/options/snapshots/{underlying}` — Snapshots (NEW)
   - `GET /api/v1/alpaca/crypto/bars/latest` — Latest bars (NEW)
   - `GET /api/v1/alpaca/crypto/trades/latest` — Latest trades (NEW)
+  - `GET /api/v1/alpaca/logos/{symbol}` — Company logo (NEW)
+  - `GET /api/v1/alpaca/fixed-income/prices` — Fixed income prices (NEW)
+- **Pydantic Response Models**: Added 60+ typed response schemas for OpenAPI documentation
+  - Stock, Options, Crypto, Forex, News, Screener response types
+  - Trading API response types (Account, Order, Position, etc.)
 - **Paper/Live trading support**: Uses `APCA_API_BASE_URL` env var
 - **New dependency**: `alpaca-py>=0.28`
 
