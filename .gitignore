@@ -61,3 +61,9 @@ cover/
 
 # Project specific
 data_lake/
+
+# Code quality tools
+.secrets.baseline
+.mypy_cache/
+.ruff_cache/
+codebase.md

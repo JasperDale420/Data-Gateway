@@ -1,30 +1,84 @@
 [project]
-name = "dataingestion"
+name = "data-gateway"
 version = "0.1.0"
-description = "Centralized Data Ingestion Service"
+description = "Unified financial data gateway for the Empire Trading Framework"
 readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-    "fastapi>=0.109.0",
-    "uvicorn>=0.27.0",
-    "redis>=5.0.1",
-    "pydantic>=2.6.0",
-    "pydantic-settings>=2.1.0",
-    "python-dotenv>=0.21.0",
-    "httpx>=0.26.0",
-    "pyarrow>=14.0.0",
-    "alpaca-py>=0.17.0",
-    "unusualwhales-python-client>=0.1.0",
-    "pandas>=2.2.0",
-    "yfinance>=0.2.36",
-    "fredapi>=0.5.1",
-    "newsapi-python>=0.2.7",
-    "coinbase-advanced-py>=1.2.0"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Empire Trading", email = "dev@empire.trading"}
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gateway"]
+
+dependencies = [
+    "fastapi[standard]>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=13.0",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.0",
+    "cachetools>=5.3",
+    "httpx>=0.27",
+    "structlog>=24.0",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "redis>=5.0",
+    "prometheus-client>=0.20",
+    "psutil>=5.9",
+    "yfinance>=0.2",
+    "alpaca-py>=0.28",
+    # unusualwhales SDK is installed separately in Docker via copied local package
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=4.0",
+    "ruff>=0.5",
+    "black>=24.0",
+    "pyright>=1.1",
+    "pre-commit>=4.0",
+    "bandit[toml]>=1.8",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "venv"]
+skips = ["B101"]  # Skip assert warnings in tests
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/dataingestion"]
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["gateway"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]

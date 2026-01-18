@@ -1,0 +1,132 @@
+"""WebSocket connection management."""
+
+import asyncio
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+
+import structlog
+from fastapi import WebSocket
+
+from gateway.core.auth import Client
+
+logger = structlog.get_logger()
+
+
+@dataclass
+class Connection:
+    """Active WebSocket connection."""
+
+    websocket: WebSocket
+    client: Client | None = None
+    connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    authenticated: bool = False
+    subscriptions: set[str] = field(default_factory=set)
+
+    @property
+    def client_id(self) -> str:
+        """Get client ID or 'anonymous'."""
+        return self.client.id if self.client else "anonymous"
+
+
+class ConnectionManager:
+    """Manages active WebSocket connections."""
+
+    def __init__(self):
+        self._connections: dict[str, Connection] = {}
+        self._lock = asyncio.Lock()
+
+    async def connect(self, connection_id: str, websocket: WebSocket) -> Connection:
+        """Register a new connection."""
+        await websocket.accept()
+
+        connection = Connection(websocket=websocket)
+
+        async with self._lock:
+            self._connections[connection_id] = connection
+
+        logger.info("connection_opened", connection_id=connection_id)
+        return connection
+
+    async def disconnect(self, connection_id: str) -> None:
+        """Remove a connection."""
+        async with self._lock:
+            connection = self._connections.pop(connection_id, None)
+
+        if connection:
+            logger.info(
+                "connection_closed",
+                connection_id=connection_id,
+                client_id=connection.client_id,
+                subscriptions=len(connection.subscriptions),
+            )
+
+    async def authenticate(self, connection_id: str, client: Client) -> bool:
+        """Mark connection as authenticated."""
+        async with self._lock:
+            connection = self._connections.get(connection_id)
+            if not connection:
+                return False
+
+            connection.client = client
+            connection.authenticated = True
+
+        logger.info("connection_authenticated", connection_id=connection_id, client_id=client.id)
+        return True
+
+    def get(self, connection_id: str) -> Connection | None:
+        """Get connection by ID."""
+        return self._connections.get(connection_id)
+
+    def is_authenticated(self, connection_id: str) -> bool:
+        """Check if connection is authenticated."""
+        connection = self._connections.get(connection_id)
+        return connection.authenticated if connection else False
+
+    @property
+    def active_count(self) -> int:
+        """Count of active connections."""
+        return len(self._connections)
+
+    @property
+    def authenticated_count(self) -> int:
+        """Count of authenticated connections."""
+        return sum(1 for c in self._connections.values() if c.authenticated)
+
+    def get_stats(self) -> dict:
+        """Get connection statistics."""
+        return {
+            "active": self.active_count,
+            "authenticated": self.authenticated_count,
+            "anonymous": self.active_count - self.authenticated_count,
+        }
+
+    async def broadcast(self, message: dict, client_ids: list[str] | None = None) -> int:
+        """Broadcast message to connections.
+
+        Args:
+            message: Message to send
+            client_ids: Optional list of client IDs to target. If None, broadcast to all.
+
+        Returns:
+            Number of connections that received the message.
+        """
+        sent = 0
+
+        for connection in self._connections.values():
+            if not connection.authenticated:
+                continue
+
+            if client_ids and connection.client_id not in client_ids:
+                continue
+
+            try:
+                await connection.websocket.send_json(message)
+                sent += 1
+            except Exception as e:
+                logger.warning(
+                    "broadcast_send_failed",
+                    client_id=connection.client_id,
+                    error=str(e),
+                )
+
+        return sent

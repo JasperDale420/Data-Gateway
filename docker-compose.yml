@@ -1,36 +1,35 @@
-version: '3.8'
-
 services:
-  api:
-    build: .
-    container_name: data_ingestion_api
+  gateway:
+    container_name: data-gateway
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8080:8080"
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      # Override DATA_DIR to use the mounted volume
-      - DATA_DIR=/data
+      - GATEWAY_DEBUG=true
+      - GATEWAY_LOG_LEVEL=DEBUG
+    env_file:
+      - .env
     volumes:
-      - ./data_lake:/data
-      - ./.env:/app/.env
-    depends_on:
-      - redis
-    restart: always
+      - ./clients.yaml:/app/clients.yaml:ro
+      - ./providers.yaml:/app/providers.yaml:ro
+    restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      test: [ "CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+  # Redis for Phase 4 (disabled by default)
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   command: redis-server --appendonly yes
+  #   restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    container_name: data_ingestion_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: always
-
-volumes:
-  redis_data:
+  # volumes:
+  #   redis_data:

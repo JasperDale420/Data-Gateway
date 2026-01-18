@@ -1,0 +1,229 @@
+"""Prometheus metrics for gateway observability."""
+
+from prometheus_client import Counter, Gauge, Histogram, Info
+
+# Gateway info
+GATEWAY_INFO = Info(
+    "gateway",
+    "Gateway service information",
+)
+
+# Request metrics
+REQUEST_COUNT = Counter(
+    "gateway_requests_total",
+    "Total number of HTTP requests",
+    ["method", "path", "status"],
+)
+
+REQUEST_DURATION = Histogram(
+    "gateway_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "path"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 10.0),
+)
+
+# Cache metrics
+CACHE_HITS = Counter(
+    "gateway_cache_hits_total",
+    "Total cache hits",
+    ["cache_type"],
+)
+
+CACHE_MISSES = Counter(
+    "gateway_cache_misses_total",
+    "Total cache misses",
+    ["cache_type"],
+)
+
+CACHE_SIZE = Gauge(
+    "gateway_cache_size",
+    "Current cache size",
+    ["cache_type"],
+)
+
+# WebSocket metrics
+WEBSOCKET_CONNECTIONS = Gauge(
+    "gateway_websocket_connections",
+    "Current WebSocket connections",
+)
+
+WEBSOCKET_MESSAGES = Counter(
+    "gateway_websocket_messages_total",
+    "Total WebSocket messages",
+    ["direction"],  # inbound, outbound
+)
+
+WEBSOCKET_SUBSCRIPTIONS = Gauge(
+    "gateway_websocket_subscriptions",
+    "Current WebSocket subscriptions",
+    ["feed"],  # bars, quotes, trades, news
+)
+
+# Provider metrics
+PROVIDER_REQUESTS = Counter(
+    "gateway_provider_requests_total",
+    "Total requests to upstream providers",
+    ["provider", "status"],  # success, error
+)
+
+PROVIDER_LATENCY = Histogram(
+    "gateway_provider_latency_seconds",
+    "Upstream provider request latency",
+    ["provider"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
+
+PROVIDER_HEALTH = Gauge(
+    "gateway_provider_healthy",
+    "Provider health status (1=healthy, 0=unhealthy)",
+    ["provider"],
+)
+
+# Rate limiting metrics
+RATE_LIMIT_EXCEEDED = Counter(
+    "gateway_rate_limit_exceeded_total",
+    "Total rate limit exceeded events",
+    ["client_id"],
+)
+
+# Process metrics
+PROCESS_MEMORY_BYTES = Gauge(
+    "gateway_process_memory_bytes",
+    "Process memory usage in bytes",
+    ["type"],  # rss, vms
+)
+
+PROCESS_MEMORY_PERCENT = Gauge(
+    "gateway_process_memory_percent",
+    "Process memory usage as percentage of total system memory",
+)
+
+
+def init_metrics(version: str = "0.1.0") -> None:
+    """Initialize gateway info metrics."""
+    GATEWAY_INFO.info(
+        {
+            "version": version,
+            "service": "data-gateway",
+        }
+    )
+
+
+def update_memory_metrics() -> None:
+    """Update process memory metrics.
+
+    Uses resource module (available on Unix) or psutil if available.
+    """
+    try:
+        import resource
+
+        # Get memory usage in bytes (Unix only)
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        # maxrss is in kilobytes on Linux, bytes on macOS
+        import platform
+
+        if platform.system() == "Darwin":
+            rss = usage.ru_maxrss  # bytes on macOS
+        else:
+            rss = usage.ru_maxrss * 1024  # KB to bytes on Linux
+
+        PROCESS_MEMORY_BYTES.labels(type="rss").set(rss)
+
+    except ImportError:
+        pass  # resource module not available on Windows
+
+    try:
+        import psutil
+
+        process = psutil.Process()
+        mem_info = process.memory_info()
+        PROCESS_MEMORY_BYTES.labels(type="rss").set(mem_info.rss)
+        PROCESS_MEMORY_BYTES.labels(type="vms").set(mem_info.vms)
+        PROCESS_MEMORY_PERCENT.set(process.memory_percent())
+    except ImportError:
+        pass  # psutil not installed
+
+
+def record_request(method: str, path: str, status: int, duration: float) -> None:
+    """Record HTTP request metrics."""
+    # Normalize path to avoid high cardinality
+    normalized_path = _normalize_path(path)
+    REQUEST_COUNT.labels(method=method, path=normalized_path, status=str(status)).inc()
+    REQUEST_DURATION.labels(method=method, path=normalized_path).observe(duration)
+
+
+def record_cache_hit(cache_type: str = "memory") -> None:
+    """Record cache hit."""
+    CACHE_HITS.labels(cache_type=cache_type).inc()
+
+
+def record_cache_miss(cache_type: str = "memory") -> None:
+    """Record cache miss."""
+    CACHE_MISSES.labels(cache_type=cache_type).inc()
+
+
+def record_provider_request(provider: str, success: bool, duration: float) -> None:
+    """Record upstream provider request."""
+    status = "success" if success else "error"
+    PROVIDER_REQUESTS.labels(provider=provider, status=status).inc()
+    PROVIDER_LATENCY.labels(provider=provider).observe(duration)
+
+
+def set_provider_health(provider: str, healthy: bool) -> None:
+    """Set provider health status."""
+    PROVIDER_HEALTH.labels(provider=provider).set(1 if healthy else 0)
+
+
+def record_rate_limit_exceeded(client_id: str) -> None:
+    """Record rate limit exceeded event."""
+    # Truncate client ID to avoid cardinality explosion
+    safe_id = client_id[:20] if len(client_id) > 20 else client_id
+    RATE_LIMIT_EXCEEDED.labels(client_id=safe_id).inc()
+
+
+def _normalize_path(path: str) -> str:
+    """Normalize path to reduce cardinality.
+
+    Replaces variable path segments with placeholders.
+    """
+    parts = path.split("/")
+    normalized = []
+
+    for part in parts:
+        if not part:
+            continue
+        # Replace symbols, IDs, etc. with placeholders
+        if _looks_like_symbol(part):
+            normalized.append("{symbol}")
+        elif _looks_like_id(part):
+            normalized.append("{id}")
+        elif _looks_like_date(part):
+            normalized.append("{date}")
+        else:
+            normalized.append(part)
+
+    return "/" + "/".join(normalized)
+
+
+def _looks_like_symbol(s: str) -> bool:
+    """Check if string looks like a stock symbol."""
+    return len(s) <= 5 and s.isupper() and s.isalpha()
+
+
+def _looks_like_id(s: str) -> bool:
+    """Check if string looks like an ID."""
+    # UUIDs, long alphanumeric strings
+    if len(s) > 8 and any(c.isdigit() for c in s):
+        return True
+    # Pure numbers
+    if s.isdigit() and len(s) > 4:
+        return True
+    return False
+
+
+def _looks_like_date(s: str) -> bool:
+    """Check if string looks like a date."""
+    # YYYY-MM-DD format
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        return True
+    return False

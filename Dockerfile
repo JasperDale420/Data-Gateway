@@ -1,48 +1,51 @@
-FROM python:3.10-slim
+# Runtime stage (single-stage for simplicity)
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Create non-root user
+RUN groupadd -r gateway && useradd -r -g gateway gateway
 
-# Install Python dependencies
-COPY pyproject.toml .
-# We don't have a lock file, so installing directly from pyproject.toml or manually.
-# Since pyproject.toml is modern but maybe not directly usable by pip without build backend if not set up.
-# Let's assume we can install .[dev] if it is a valid package, or just install dependencies.
-# Inspecting pyproject.toml revealed generic deps.
-# Let's just install them explicitly for stability or using pip install .
+# Copy and install patched Unusual Whales SDK v5.1 first
+COPY unusualwhales_sdk/ /tmp/unusualwhales_sdk/
+RUN pip install --no-cache-dir /tmp/unusualwhales_sdk/ && rm -rf /tmp/unusualwhales_sdk/
+
+# Copy pyproject.toml first to cache dependency installation
+COPY pyproject.toml README.md ./
+
+# Install dependencies explicitly
 RUN pip install --no-cache-dir \
-    fastapi \
-    uvicorn \
-    redis \
-    pydantic-settings \
-    alpaca-py \
-    unusualwhales-python-client \
-    pandas \
-    pyarrow \
-    yfinance \
-    fredapi \
-    newsapi-python \
-    coinbase-advanced-py \
-    httpx
+    "fastapi[standard]>=0.115.0" \
+    "uvicorn[standard]>=0.32.0" \
+    "websockets>=13.0" \
+    "pydantic>=2.5" \
+    "pydantic-settings>=2.0" \
+    "cachetools>=5.3" \
+    "httpx>=0.27" \
+    "structlog>=24.0" \
+    "python-dotenv>=1.0" \
+    "pyyaml>=6.0" \
+    "redis>=5.0" \
+    "prometheus-client>=0.20" \
+    "psutil>=5.9" \
+    "yfinance>=0.2"
 
-# Copy source code
-COPY src /app/src
-COPY .env.example /app/.env
-# Note: Real .env should be mounted or passed as env vars
+# Copy gateway source and install as package
+COPY gateway/ gateway/
+RUN pip install --no-cache-dir --no-deps .
 
-# Set PYTHONPATH
-ENV PYTHONPATH=/app/src
+# Copy config files
+COPY clients.yaml providers.yaml ./
 
-# Create data directory
-RUN mkdir -p /data
+# Switch to non-root user
+USER gateway
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8080
 
-# Command to run (using main entry point)
-CMD ["uvicorn", "dataingestion.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()"
+
+# Run application
+CMD ["python", "-m", "uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -2,17 +2,169 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.0] - 2025-12-08
+## [0.5.0] - 2026-01-18
 
 ### Added
-- **Unusual Whales API Integration**: Complete implementation of Phases 7-10 (Endpoints: NetFlow, GroupFlow, DarkPool, MarketTide, Insider, Congress, News, Shorts, Greeks, Options, Eras, Tickers, Alerts).
-- **Data Ingestion**: Specific ingestors for SEC, YFinance, FRED, NewsAPI, Coinbase, Alpaca, and Unusual Whales.
-- **Storage**: Forensic Data Lake structure (Bronze/Silver/Gold layers) with Parquet/ZSTD support.
-- **API**: FastAPI router with caching (Redis) and Pydantic schemas.
-- **Infrastructure**: Docker Compose setup for API and Redis.
-- **Tooling**: Makefile for `format`, `lint`, `test`, `ci`.
 
-### Fixed
-- Multiple linting errors in `ingestor.py`, `storage.py`, `gemini_adapter.py`.
-- Syntax errors in `feature_processor.py`.
-- API verification tests for SEC endpoints.
+- **Alpaca Trading API via SDK**: Migrated from httpx to `alpaca-py` SDK
+  - `GET /api/v1/alpaca/account` — Account information
+  - `POST /api/v1/alpaca/orders` — Create orders (market, limit, stop, stop_limit)
+  - `GET /api/v1/alpaca/orders` — List orders with filters
+  - `GET /api/v1/alpaca/orders/{id}` — Get specific order
+  - `GET /api/v1/alpaca/orders:by_client_order_id` — Get by client ID
+  - `PATCH /api/v1/alpaca/orders/{id}` — Replace/modify order (NEW)
+  - `DELETE /api/v1/alpaca/orders/{id}` — Cancel order
+  - `DELETE /api/v1/alpaca/orders` — Cancel all orders
+  - `GET /api/v1/alpaca/positions` — All open positions
+  - `GET /api/v1/alpaca/positions/{symbol}` — Position for symbol
+  - `DELETE /api/v1/alpaca/positions/{symbol}` — Close position
+  - `DELETE /api/v1/alpaca/positions` — Close all positions
+  - `GET /api/v1/alpaca/portfolio/history` — Portfolio history
+  - `GET /api/v1/alpaca/assets` — Available assets
+  - `GET /api/v1/alpaca/assets/{symbol}` — Asset info
+  - `GET /api/v1/alpaca/clock` — Market clock
+  - `GET /api/v1/alpaca/calendar` — Trading calendar
+  - `GET /api/v1/alpaca/account/configurations` — Account config (NEW)
+  - `PATCH /api/v1/alpaca/account/configurations` — Update config (NEW)
+  - `GET /api/v1/alpaca/account/activities` — Account activities (NEW)
+  - `GET /api/v1/alpaca/watchlists` — List watchlists (NEW)
+  - `POST /api/v1/alpaca/watchlists` — Create watchlist (NEW)
+  - `GET /api/v1/alpaca/watchlists/{id}` — Get watchlist (NEW)
+  - `PUT /api/v1/alpaca/watchlists/{id}` — Update watchlist (NEW)
+  - `DELETE /api/v1/alpaca/watchlists/{id}` — Delete watchlist (NEW)
+  - `POST /api/v1/alpaca/watchlists/{id}/assets` — Add asset (NEW)
+  - `DELETE /api/v1/alpaca/watchlists/{id}/assets/{symbol}` — Remove asset (NEW)
+- **Market Data API Expansion**:
+  - `GET /api/v1/alpaca/stocks/bars/latest` — Latest bars (NEW)
+  - `GET /api/v1/alpaca/stocks/trades/latest` — Latest trades (NEW)
+  - `GET /api/v1/alpaca/stocks/quotes` — Historical quotes (NEW)
+  - `GET /api/v1/alpaca/stocks/snapshots` — Snapshots (NEW)
+  - `GET /api/v1/alpaca/stocks/auctions` — Auctions (NEW)
+  - `GET /api/v1/alpaca/options/trades` — Options trades (NEW)
+  - `GET /api/v1/alpaca/options/trades/latest` — Latest trades (NEW)
+  - `GET /api/v1/alpaca/options/snapshots/{underlying}` — Snapshots (NEW)
+  - `GET /api/v1/alpaca/crypto/bars/latest` — Latest bars (NEW)
+  - `GET /api/v1/alpaca/crypto/trades/latest` — Latest trades (NEW)
+- **Paper/Live trading support**: Uses `APCA_API_BASE_URL` env var
+- **New dependency**: `alpaca-py>=0.28`
+
+---
+
+## [0.4.0] - 2026-01-16
+
+### Added
+
+- **WebSocket Multiplexer**: Full upstream connection management for Alpaca streams
+  - `StreamMultiplexer`: Manages all upstream WebSocket connections, routes messages to clients
+  - `UpstreamConnection`: Single WebSocket connection with auth, subscribe, heartbeat, reconnection
+  - `SubscriptionManager`: Tracks client subscriptions, computes aggregate upstream subscriptions
+  - `AlpacaStreamType`: Enum for stocks (SIP/IEX), options, crypto, news streams
+- **Dynamic subscribe/unsubscribe**: Clients can add/remove symbols in real-time
+- **Subscription aggregation**: Multiple clients share single upstream connection per stream type
+- **Reconnection with backoff**: Exponential backoff 1s→16s with ±20% jitter per PRD
+- **Stream configuration**: `GATEWAY_STREAM_USE_IEX`, `GATEWAY_STREAM_RECONNECT_*` settings
+- **Multiplexer dependency**: `get_multiplexer()`/`set_multiplexer()` for DI
+
+### Changed
+
+- `websocket.py`: Subscribe/unsubscribe handlers now wire to `StreamMultiplexer`
+- `main.py`: Initializes `StreamMultiplexer` on startup if Alpaca credentials are set
+
+---
+
+## [0.3.0] - 2026-01-14
+
+### Added
+
+- **UnusualWhalesProvider**: Flow, darkpool, market tide, institutions, congress, insiders
+- **UW API** (PRD-aligned `/api/v1/uw/*`):
+  - `/uw/flow/all`, `/uw/flow/{symbol}`
+  - `/uw/darkpool/all`, `/uw/darkpool/{symbol}`
+  - `/uw/institutions/{symbol}`, `/uw/congress/{symbol}`, `/uw/insiders/{symbol}`
+  - `/uw/market/tide`
+- **Cursor pagination**: `next_cursor`, `has_more`, `total_count` per PRD
+- **News API stub**: `/api/v1/news/*` returns 501 (EventRegistry pending)
+- **Provider stubs**: AlphaVantageProvider, FinnhubProvider
+- **Schemas**: `NormalizedFlowAlert`, `NormalizedDarkpoolTrade`, `NormalizedMarketTide`
+- **Phase 1 completion**:
+  - Per-client rate limits from `permissions.rate_limit`
+  - WebSocket subscription limit via `permissions.ws_subscriptions_max`
+  - `MessageRingBuffer` for WebSocket message history per symbol
+  - `RequestDeduplicator` to coalesce identical in-flight requests
+- **Phase 2 options endpoints**:
+  - `GET /api/v1/alpaca/options/chain/{underlying}` - full option chain with greeks
+  - `GET /api/v1/alpaca/options/chain/{underlying}/snapshot` - chain snapshot
+  - `GET /api/v1/alpaca/options/{contract}/bars` - historical option bars
+  - `GET /api/v1/alpaca/options/{contract}/quotes` - latest option quotes
+- **NormalizedOptionContract** schema with greeks support
+- **WebSocket heartbeat monitoring**: 30s timeout with auto-reconnect
+- **YFinanceProvider**: Fundamentals, financials, history, options, recommendations
+- **yfinance API** (10 endpoints at `/api/v1/yf/*`):
+  - `/yf/ticker/{symbol}` - full ticker info
+  - `/yf/ticker/{symbol}/info` - company info
+  - `/yf/ticker/{symbol}/financials` - income, balance, cash flow
+  - `/yf/ticker/{symbol}/earnings` - quarterly/annual earnings
+  - `/yf/ticker/{symbol}/history` - historical OHLCV
+  - `/yf/ticker/{symbol}/options` - option expirations
+  - `/yf/ticker/{symbol}/options/{exp}` - option chain
+  - `/yf/ticker/{symbol}/recommendations` - analyst recs
+  - `/yf/ticker/{symbol}/holders` - institutional/insider
+  - `/yf/ticker/{symbol}/calendar` - earnings/dividend calendar
+- **SECProvider**: Filings, 13F, insider trades via data.sec.gov (free API)
+- **SEC API** (7 endpoints at `/api/v1/sec/*`):
+  - `/sec/company/{cik}` - company info by CIK
+  - `/sec/company/ticker/{ticker}` - CIK lookup by ticker
+  - `/sec/filings/{cik}` - all filings
+  - `/sec/filings/{cik}/{form_type}` - filings by type
+  - `/sec/13f/{cik}` - 13F institutional holdings
+  - `/sec/insiders/{cik}` - insider trades (Form 3/4/5)
+  - `/sec/facts/{cik}` - XBRL company facts
+- **Phase 2 completion - Crypto REST** (4 endpoints at `/api/v1/alpaca/crypto/*`):
+  - `GET /alpaca/crypto/{pair}/bars` - historical crypto bars
+  - `GET /alpaca/crypto/{pair}/trades` - historical crypto trades
+  - `GET /alpaca/crypto/{pair}/quotes` - latest crypto quote
+  - `GET /alpaca/crypto/{pair}/snapshot` - current snapshot
+- **Phase 2 completion - Forex REST** (2 endpoints at `/api/v1/alpaca/forex/*`):
+  - `GET /alpaca/forex/rates` - latest FX rates
+  - `GET /alpaca/forex/rates/historical` - historical FX rates
+- **Phase 2 WebSocket stream handlers**:
+  - `AlpacaOptionsStreamHandler` - options WS with heartbeat monitoring
+  - `AlpacaCryptoStreamHandler` - crypto WS with heartbeat monitoring
+  - `AlpacaNewsStreamHandler` - news WS with heartbeat monitoring
+
+## [0.2.0] - 2026-01-14
+
+### Added
+
+- **Provider framework**: `DataProvider` base class with capabilities and lifecycle hooks
+- **Provider registry**: Dynamic provider loading from `providers.yaml`
+- **AlpacaProvider**: Full REST API support for bars, quotes, trades
+- **AlpacaStreamHandler**: WebSocket streaming with reconnection logic
+- **REST API**: Alpaca endpoints at `/api/v1/alpaca/stocks/*` (PRD-aligned)
+- **SubscriptionManager**: Reference counting with 30s grace period
+- **KeyLoadBalancer**: Round-robin key selection with health tracking
+- **RateLimitMiddleware**: `X-RateLimit-*` headers per PRD spec
+- **CacheMiddleware**: `X-Gateway-Cache` headers with HIT/MISS tracking
+- **REST authentication**: `X-Gateway-Key` header requirement
+- **WebSocket heartbeat**: 30s interval, disconnect after 3 missed (PRD-aligned)
+- **Message format**: `provider`, `feed`, `error_code` fields (PRD-aligned)
+- **Admin endpoints**: `/api/v1/status`, `/admin/logs/recent`, `/admin/errors/summary`
+- **CLI tool**: `python -m gateway.cli` for key management (generate, rotate, list)
+- **Key hashing**: SHA-256 hashed keys for production (`key_hash` field)
+- **Schema fields**: Added `timeframe` to Bar, `trade_id` to Trade
+- **Test suite**: 34 tests covering all core components
+
+## [0.1.0] - 2026-01-14
+
+### Added
+
+- **Project scaffolding**: FastAPI application with uvicorn
+- **Docker support**: Multi-stage Dockerfile with non-root user
+- **Configuration**: pydantic-settings with environment variable loading
+- **Client authentication**: YAML-based client keys with permissions
+- **In-memory cache**: TTLCache with hit/miss statistics
+- **Connection manager**: WebSocket connection tracking
+- **Health endpoints**: `/health`, `/health/ready`, `/health/status`
+- **WebSocket endpoint**: `/ws` with auth handshake and timeout
+- **Structured logging**: structlog with JSON output
+- **Test suite**: pytest fixtures and unit tests for core components
