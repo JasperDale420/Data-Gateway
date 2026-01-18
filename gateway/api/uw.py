@@ -7,11 +7,16 @@ from gateway.api.deps import get_cache, get_registry, require_api_key, require_p
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.registry import ProviderRegistry
+from gateway.schemas import SuccessResponse
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/uw", tags=["unusual_whales"])
 
+# Query description constants
+DESC_DATE = "Date (YYYY-MM-DD)"
+
+# Error message constants
 PROVIDER_NOT_AVAILABLE = "Unusual Whales provider not available"
 
 
@@ -52,7 +57,7 @@ def _paginate_response(
     }
 
 
-@router.get("/flow/all")
+@router.get("/flow/all", response_model=SuccessResponse)
 async def get_flow_all(
     limit: int = Query(default=50, le=100, ge=1),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
@@ -79,12 +84,12 @@ async def get_flow_all(
     return response
 
 
-@router.get("/flow/{symbol}")
+@router.get("/flow/{symbol}", response_model=SuccessResponse)
 async def get_flow_symbol(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
     cursor: str | None = Query(default=None),
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -109,7 +114,7 @@ async def get_flow_symbol(
     return response
 
 
-@router.get("/darkpool/all")
+@router.get("/darkpool/all", response_model=SuccessResponse)
 async def get_darkpool_all(
     limit: int = Query(default=50, le=100, ge=1),
     cursor: str | None = Query(default=None),
@@ -136,12 +141,12 @@ async def get_darkpool_all(
     return response
 
 
-@router.get("/darkpool/{symbol}")
+@router.get("/darkpool/{symbol}", response_model=SuccessResponse)
 async def get_darkpool_symbol(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
     cursor: str | None = Query(default=None),
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -166,7 +171,7 @@ async def get_darkpool_symbol(
     return response
 
 
-@router.get("/institutions/{symbol}")
+@router.get("/institutions/{symbol}", response_model=SuccessResponse)
 async def get_institutions(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -194,7 +199,7 @@ async def get_institutions(
     return response
 
 
-@router.get("/congress/{symbol}")
+@router.get("/congress/{symbol}", response_model=SuccessResponse)
 async def get_congress(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -222,7 +227,7 @@ async def get_congress(
     return response
 
 
-@router.get("/insiders/{symbol}")
+@router.get("/insiders/{symbol}", response_model=SuccessResponse)
 async def get_insiders(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -250,9 +255,9 @@ async def get_insiders(
     return response
 
 
-@router.get("/market/tide")
+@router.get("/market/tide", response_model=SuccessResponse)
 async def get_market_tide(
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -289,10 +294,10 @@ async def get_market_tide(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/gex/{symbol}")
+@router.get("/gex/{symbol}", response_model=SuccessResponse)
 async def get_gex(
     symbol: str,
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -325,10 +330,10 @@ async def get_gex(
     return response
 
 
-@router.get("/gex/{symbol}/strike")
+@router.get("/gex/{symbol}/strike", response_model=SuccessResponse)
 async def get_gex_by_strike(
     symbol: str,
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -361,10 +366,10 @@ async def get_gex_by_strike(
     return response
 
 
-@router.get("/gex/{symbol}/expiry")
+@router.get("/gex/{symbol}/expiry", response_model=SuccessResponse)
 async def get_gex_by_expiry(
     symbol: str,
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -402,9 +407,9 @@ async def get_gex_by_expiry(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/earnings/premarket")
+@router.get("/earnings/premarket", response_model=SuccessResponse)
 async def get_earnings_premarket(
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     limit: int = Query(default=50, le=100, ge=1),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -428,9 +433,9 @@ async def get_earnings_premarket(
     return response
 
 
-@router.get("/earnings/afterhours")
+@router.get("/earnings/afterhours", response_model=SuccessResponse)
 async def get_earnings_afterhours(
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     limit: int = Query(default=50, le=100, ge=1),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -454,7 +459,7 @@ async def get_earnings_afterhours(
     return response
 
 
-@router.get("/earnings/{symbol}")
+@router.get("/earnings/{symbol}", response_model=SuccessResponse)
 async def get_earnings_ticker(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -486,7 +491,7 @@ async def get_earnings_ticker(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/screener/stocks")
+@router.get("/screener/stocks", response_model=SuccessResponse)
 async def get_screener_stocks(
     limit: int = Query(default=20, le=100, ge=1),
     client: Client = Depends(require_api_key),
@@ -519,7 +524,7 @@ async def get_screener_stocks(
     return response
 
 
-@router.get("/screener/options")
+@router.get("/screener/options", response_model=SuccessResponse)
 async def get_screener_options(
     limit: int = Query(default=20, le=100, ge=1),
     client: Client = Depends(require_api_key),
@@ -557,10 +562,10 @@ async def get_screener_options(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/{symbol}/net-premium")
+@router.get("/{symbol}/net-premium", response_model=SuccessResponse)
 async def get_net_premium(
     symbol: str,
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -589,7 +594,7 @@ async def get_net_premium(
     return response
 
 
-@router.get("/{symbol}/max-pain")
+@router.get("/{symbol}/max-pain", response_model=SuccessResponse)
 async def get_max_pain(
     symbol: str,
     expiry: str | None = Query(default=None, description="Expiration (YYYY-MM-DD)"),
@@ -621,7 +626,7 @@ async def get_max_pain(
     return response
 
 
-@router.get("/{symbol}/iv-rank")
+@router.get("/{symbol}/iv-rank", response_model=SuccessResponse)
 async def get_iv_rank(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -655,10 +660,10 @@ async def get_iv_rank(
     return response
 
 
-@router.get("/{symbol}/oi-change")
+@router.get("/{symbol}/oi-change", response_model=SuccessResponse)
 async def get_oi_change(
     symbol: str,
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -692,7 +697,7 @@ async def get_oi_change(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/etf/{symbol}/holdings")
+@router.get("/etf/{symbol}/holdings", response_model=SuccessResponse)
 async def get_etf_holdings(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -719,7 +724,7 @@ async def get_etf_holdings(
     return response
 
 
-@router.get("/etf/{symbol}/exposure")
+@router.get("/etf/{symbol}/exposure", response_model=SuccessResponse)
 async def get_etf_exposure(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -746,7 +751,7 @@ async def get_etf_exposure(
     return response
 
 
-@router.get("/etf/{symbol}/flows")
+@router.get("/etf/{symbol}/flows", response_model=SuccessResponse)
 async def get_etf_flows(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -778,7 +783,7 @@ async def get_etf_flows(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/{symbol}/short-interest")
+@router.get("/{symbol}/short-interest", response_model=SuccessResponse)
 async def get_short_interest(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -805,7 +810,7 @@ async def get_short_interest(
     return response
 
 
-@router.get("/{symbol}/ftds")
+@router.get("/{symbol}/ftds", response_model=SuccessResponse)
 async def get_ftds(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -832,7 +837,7 @@ async def get_ftds(
     return response
 
 
-@router.get("/{symbol}/short-volume")
+@router.get("/{symbol}/short-volume", response_model=SuccessResponse)
 async def get_short_volume(
     symbol: str,
     limit: int = Query(default=50, le=100, ge=1),
@@ -864,7 +869,7 @@ async def get_short_volume(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/{symbol}/iv-term-structure")
+@router.get("/{symbol}/iv-term-structure", response_model=SuccessResponse)
 async def get_iv_term_structure(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -895,7 +900,7 @@ async def get_iv_term_structure(
     return response
 
 
-@router.get("/{symbol}/realized-vol")
+@router.get("/{symbol}/realized-vol", response_model=SuccessResponse)
 async def get_realized_vol(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -929,7 +934,7 @@ async def get_realized_vol(
     return response
 
 
-@router.get("/{symbol}/vol-stats")
+@router.get("/{symbol}/vol-stats", response_model=SuccessResponse)
 async def get_vol_stats(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -968,7 +973,7 @@ async def get_vol_stats(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/seasonality/market")
+@router.get("/seasonality/market", response_model=SuccessResponse)
 async def get_market_seasonality(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -997,7 +1002,7 @@ async def get_market_seasonality(
     return response
 
 
-@router.get("/seasonality/{symbol}")
+@router.get("/seasonality/{symbol}", response_model=SuccessResponse)
 async def get_ticker_seasonality(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1033,10 +1038,10 @@ async def get_ticker_seasonality(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/{symbol}/option-volume")
+@router.get("/{symbol}/option-volume", response_model=SuccessResponse)
 async def get_historic_option_volume(
     symbol: str,
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -1065,10 +1070,10 @@ async def get_historic_option_volume(
     return response
 
 
-@router.get("/contract/{contract_id}/intraday")
+@router.get("/contract/{contract_id}/intraday", response_model=SuccessResponse)
 async def get_intraday_option_data(
     contract_id: str,
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -1101,7 +1106,7 @@ async def get_intraday_option_data(
     return response
 
 
-@router.get("/screener/contracts")
+@router.get("/screener/contracts", response_model=SuccessResponse)
 async def get_options_screener(
     min_volume: int | None = Query(default=None, description="Min volume"),
     min_premium: float | None = Query(default=None, description="Min premium"),
@@ -1132,7 +1137,7 @@ async def get_options_screener(
     return response
 
 
-@router.get("/{symbol}/iv-surface")
+@router.get("/{symbol}/iv-surface", response_model=SuccessResponse)
 async def get_iv_surface(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1168,7 +1173,7 @@ async def get_iv_surface(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/darkpool/{symbol}/levels")
+@router.get("/darkpool/{symbol}/levels", response_model=SuccessResponse)
 async def get_off_lit_levels(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1199,7 +1204,7 @@ async def get_off_lit_levels(
     return response
 
 
-@router.get("/congress/recent")
+@router.get("/congress/recent", response_model=SuccessResponse)
 async def get_recent_congress_trades(
     limit: int = Query(default=50, le=200),
     client: Client = Depends(require_api_key),
@@ -1226,7 +1231,7 @@ async def get_recent_congress_trades(
     return response
 
 
-@router.get("/{symbol}/nope")
+@router.get("/{symbol}/nope", response_model=SuccessResponse)
 async def get_nope(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1260,7 +1265,7 @@ async def get_nope(
     return response
 
 
-@router.get("/{symbol}/pc-ratio")
+@router.get("/{symbol}/pc-ratio", response_model=SuccessResponse)
 async def get_put_call_ratio(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1296,7 +1301,7 @@ async def get_put_call_ratio(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/{symbol}/spot-exposures")
+@router.get("/{symbol}/spot-exposures", response_model=SuccessResponse)
 async def get_spot_exposures_by_strike(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1327,10 +1332,10 @@ async def get_spot_exposures_by_strike(
     return response
 
 
-@router.get("/{symbol}/flow-strike")
+@router.get("/{symbol}/flow-strike", response_model=SuccessResponse)
 async def get_flow_per_strike(
     symbol: str,
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -1359,10 +1364,10 @@ async def get_flow_per_strike(
     return response
 
 
-@router.get("/{symbol}/flow-expiry")
+@router.get("/{symbol}/flow-expiry", response_model=SuccessResponse)
 async def get_flow_per_expiry(
     symbol: str,
-    date: str | None = Query(default=None, description="Date (YYYY-MM-DD)"),
+    date: str | None = Query(default=None, description=DESC_DATE),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -1391,7 +1396,7 @@ async def get_flow_per_expiry(
     return response
 
 
-@router.get("/{symbol}/greek-flow")
+@router.get("/{symbol}/greek-flow", response_model=SuccessResponse)
 async def get_greek_flow(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1422,7 +1427,7 @@ async def get_greek_flow(
     return response
 
 
-@router.get("/market/net-flow-expiry")
+@router.get("/market/net-flow-expiry", response_model=SuccessResponse)
 async def get_net_flow_expiry(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -1451,7 +1456,7 @@ async def get_net_flow_expiry(
     return response
 
 
-@router.get("/{symbol}/interpolated-iv")
+@router.get("/{symbol}/interpolated-iv", response_model=SuccessResponse)
 async def get_interpolated_iv(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1487,7 +1492,7 @@ async def get_interpolated_iv(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/market/calendar")
+@router.get("/market/calendar", response_model=SuccessResponse)
 async def get_economic_calendar(
     start_date: str | None = Query(default=None, description="Start date (YYYY-MM-DD)"),
     end_date: str | None = Query(default=None, description="End date (YYYY-MM-DD)"),
@@ -1518,7 +1523,7 @@ async def get_economic_calendar(
     return response
 
 
-@router.get("/market/sector/{sector}/tide")
+@router.get("/market/sector/{sector}/tide", response_model=SuccessResponse)
 async def get_sector_tide(
     sector: str,
     client: Client = Depends(require_api_key),
@@ -1551,7 +1556,7 @@ async def get_sector_tide(
     return response
 
 
-@router.get("/market/top-impact")
+@router.get("/market/top-impact", response_model=SuccessResponse)
 async def get_top_net_impact(
     limit: int = Query(default=20, le=100),
     client: Client = Depends(require_api_key),
@@ -1585,7 +1590,7 @@ async def get_top_net_impact(
     return response
 
 
-@router.get("/alerts")
+@router.get("/alerts", response_model=SuccessResponse)
 async def get_custom_alerts(
     min_premium: float | None = Query(default=None, description="Min premium"),
     min_volume: int | None = Query(default=None, description="Min volume"),
@@ -1616,7 +1621,7 @@ async def get_custom_alerts(
     return response
 
 
-@router.get("/market/correlations")
+@router.get("/market/correlations", response_model=SuccessResponse)
 async def get_market_correlations(
     start_date: str | None = Query(default=None, description="Start date (YYYY-MM-DD)"),
     end_date: str | None = Query(default=None, description="End date (YYYY-MM-DD)"),
@@ -1652,7 +1657,7 @@ async def get_market_correlations(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/etf/{symbol}/tide")
+@router.get("/etf/{symbol}/tide", response_model=SuccessResponse)
 async def get_etf_tide(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1686,7 +1691,7 @@ async def get_etf_tide(
     return response
 
 
-@router.get("/{symbol}/volume-levels")
+@router.get("/{symbol}/volume-levels", response_model=SuccessResponse)
 async def get_option_volume_levels(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -1717,7 +1722,7 @@ async def get_option_volume_levels(
     return response
 
 
-@router.get("/trades/full-tape/{date}")
+@router.get("/trades/full-tape/{date}", response_model=SuccessResponse)
 async def get_full_tape(
     date: str,
     client: Client = Depends(require_api_key),
@@ -1747,7 +1752,7 @@ async def get_full_tape(
     return response
 
 
-@router.get("/contract/{contract_id}/volume-profile")
+@router.get("/contract/{contract_id}/volume-profile", response_model=SuccessResponse)
 async def get_volume_profile(
     contract_id: str,
     client: Client = Depends(require_api_key),
@@ -1777,7 +1782,7 @@ async def get_volume_profile(
     return response
 
 
-@router.get("/{symbol}/greek-flow-expiry")
+@router.get("/{symbol}/greek-flow-expiry", response_model=SuccessResponse)
 async def get_greek_flow_expiry(
     symbol: str,
     client: Client = Depends(require_api_key),
