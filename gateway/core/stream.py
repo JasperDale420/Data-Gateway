@@ -33,15 +33,27 @@ class AlpacaStreamType(Enum):
     def from_feed(cls, feed: str) -> "AlpacaStreamType":
         """Convert feed name to stream type."""
         mapping = {
+            # Stocks
             "stock_bars": cls.STOCKS_SIP,
             "stock_quotes": cls.STOCKS_SIP,
             "stock_trades": cls.STOCKS_SIP,
+            "stock_dailyBars": cls.STOCKS_SIP,
+            "stock_updatedBars": cls.STOCKS_SIP,
+            "stock_lulds": cls.STOCKS_SIP,
+            "stock_statuses": cls.STOCKS_SIP,
+            "stock_imbalances": cls.STOCKS_SIP,
+            # Options
             "option_bars": cls.OPTIONS,
             "option_quotes": cls.OPTIONS,
             "option_trades": cls.OPTIONS,
+            # Crypto
             "crypto_bars": cls.CRYPTO,
             "crypto_quotes": cls.CRYPTO,
             "crypto_trades": cls.CRYPTO,
+            "crypto_dailyBars": cls.CRYPTO,
+            "crypto_updatedBars": cls.CRYPTO,
+            "crypto_orderbooks": cls.CRYPTO,
+            # News
             "news": cls.NEWS,
         }
         return mapping.get(feed, cls.STOCKS_SIP)

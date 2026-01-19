@@ -73,7 +73,29 @@ curl http://localhost:8080/health
 
 Full OpenAPI docs available at `http://localhost:8080/docs` when running.
 
-### WebSocket
+## API Discovery
+
+The Gateway provides runtime API discovery through catalog endpoints:
+
+```bash
+# Full API summary
+curl http://localhost:8080/catalog/
+
+# WebSocket streams and channels
+curl http://localhost:8080/catalog/streams
+
+# REST API providers and endpoints
+curl http://localhost:8080/catalog/providers
+
+# Available feed types for subscriptions
+curl http://localhost:8080/catalog/feeds
+```
+
+See [API_REFERENCE.md](API_REFERENCE.md) for complete documentation.
+
+## WebSocket Streaming
+
+Connect to the Gateway WebSocket for real-time data:
 
 ```
 ws://localhost:8080/ws
@@ -84,6 +106,32 @@ ws://localhost:8080/ws
 ```json
 {"action": "auth", "key": "gw_your_api_key"}
 ```
+
+**Subscribe to feeds:**
+
+```json
+{"action": "subscribe", "feed": "stock_bars", "symbols": ["AAPL", "MSFT"]}
+```
+
+### Available Feeds
+
+| Feed | Description | Stream |
+|------|-------------|--------|
+| `stock_bars` | Stock minute bars | Alpaca SIP |
+| `stock_quotes` | Stock NBBO quotes | Alpaca SIP |
+| `stock_trades` | Stock trade executions | Alpaca SIP |
+| `option_bars` | Options minute bars | Alpaca OPRA |
+| `option_quotes` | Options quotes | Alpaca OPRA |
+| `crypto_bars` | Crypto minute bars | Alpaca Crypto |
+| `crypto_orderbooks` | Crypto Level 2 orderbooks | Alpaca Crypto |
+| `news` | Real-time news articles | Alpaca News |
+
+**Symbol Formats:**
+
+- Stocks: `AAPL`, `MSFT`
+- Options (OCC): `AAPL240119C00190000`
+- Crypto: `BTC/USD`, `ETH/USD`
+- News: `*` (all) or specific tickers
 
 ## Configuration
 
