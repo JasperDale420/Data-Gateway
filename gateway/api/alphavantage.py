@@ -7,6 +7,7 @@ from gateway.api.deps import get_cache, get_registry, require_api_key, require_p
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.registry import ProviderRegistry
+from gateway.schemas import SuccessResponse
 
 logger = structlog.get_logger()
 
@@ -24,7 +25,7 @@ def _cache_key(prefix: str, *args) -> str:
     return ":".join(parts)
 
 
-@router.get("/quote/{symbol}")
+@router.get("/quote/{symbol}", response_model=SuccessResponse)
 async def get_quote(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -64,7 +65,7 @@ async def get_quote(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/intraday/{symbol}")
+@router.get("/intraday/{symbol}", response_model=SuccessResponse)
 async def get_intraday(
     symbol: str,
     interval: str = Query(default="5min", description="1min, 5min, 15min, 30min, 60min"),
@@ -105,7 +106,7 @@ async def get_intraday(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/daily/{symbol}")
+@router.get("/daily/{symbol}", response_model=SuccessResponse)
 async def get_daily(
     symbol: str,
     outputsize: str = Query(default="compact", description="compact (100 days) or full"),
@@ -146,7 +147,7 @@ async def get_daily(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/weekly/{symbol}")
+@router.get("/weekly/{symbol}", response_model=SuccessResponse)
 async def get_weekly(
     symbol: str,
     adjusted: bool = Query(default=True, description="Include adjustments"),
@@ -186,7 +187,7 @@ async def get_weekly(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/overview/{symbol}")
+@router.get("/overview/{symbol}", response_model=SuccessResponse)
 async def get_company_overview(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -225,7 +226,7 @@ async def get_company_overview(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/earnings/{symbol}")
+@router.get("/earnings/{symbol}", response_model=SuccessResponse)
 async def get_earnings(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -259,7 +260,7 @@ async def get_earnings(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/income-statement/{symbol}")
+@router.get("/income-statement/{symbol}", response_model=SuccessResponse)
 async def get_income_statement(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -293,7 +294,7 @@ async def get_income_statement(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/balance-sheet/{symbol}")
+@router.get("/balance-sheet/{symbol}", response_model=SuccessResponse)
 async def get_balance_sheet(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -327,7 +328,7 @@ async def get_balance_sheet(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/cash-flow/{symbol}")
+@router.get("/cash-flow/{symbol}", response_model=SuccessResponse)
 async def get_cash_flow(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -366,7 +367,7 @@ async def get_cash_flow(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/monthly/{symbol}")
+@router.get("/monthly/{symbol}", response_model=SuccessResponse)
 async def get_monthly(
     symbol: str,
     adjusted: bool = Query(default=True, description="Use adjusted close prices"),
@@ -402,7 +403,7 @@ async def get_monthly(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/search")
+@router.get("/search", response_model=SuccessResponse)
 async def search_symbols(
     q: str = Query(..., min_length=1, description="Search keywords"),
     client: Client = Depends(require_api_key),
@@ -443,7 +444,7 @@ async def search_symbols(
 CACHE_TTL_INDICATOR = 3600  # 1 hour
 
 
-@router.get("/indicator/{indicator}/{symbol}")
+@router.get("/indicator/{indicator}/{symbol}", response_model=SuccessResponse)
 async def get_technical_indicator(
     indicator: str,
     symbol: str,
@@ -489,7 +490,7 @@ async def get_technical_indicator(
 
 
 # Convenience endpoints for popular indicators
-@router.get("/indicator/sma/{symbol}")
+@router.get("/indicator/sma/{symbol}", response_model=SuccessResponse)
 async def get_sma(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -505,7 +506,7 @@ async def get_sma(
     )
 
 
-@router.get("/indicator/ema/{symbol}")
+@router.get("/indicator/ema/{symbol}", response_model=SuccessResponse)
 async def get_ema(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -521,7 +522,7 @@ async def get_ema(
     )
 
 
-@router.get("/indicator/rsi/{symbol}")
+@router.get("/indicator/rsi/{symbol}", response_model=SuccessResponse)
 async def get_rsi(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -537,7 +538,7 @@ async def get_rsi(
     )
 
 
-@router.get("/indicator/macd/{symbol}")
+@router.get("/indicator/macd/{symbol}", response_model=SuccessResponse)
 async def get_macd(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -552,7 +553,7 @@ async def get_macd(
     )
 
 
-@router.get("/indicator/bbands/{symbol}")
+@router.get("/indicator/bbands/{symbol}", response_model=SuccessResponse)
 async def get_bbands(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -568,7 +569,7 @@ async def get_bbands(
     )
 
 
-@router.get("/indicator/stoch/{symbol}")
+@router.get("/indicator/stoch/{symbol}", response_model=SuccessResponse)
 async def get_stoch(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -582,7 +583,7 @@ async def get_stoch(
     )
 
 
-@router.get("/indicator/adx/{symbol}")
+@router.get("/indicator/adx/{symbol}", response_model=SuccessResponse)
 async def get_adx(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -597,7 +598,7 @@ async def get_adx(
     )
 
 
-@router.get("/indicator/cci/{symbol}")
+@router.get("/indicator/cci/{symbol}", response_model=SuccessResponse)
 async def get_cci(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -612,7 +613,7 @@ async def get_cci(
     )
 
 
-@router.get("/indicator/atr/{symbol}")
+@router.get("/indicator/atr/{symbol}", response_model=SuccessResponse)
 async def get_atr(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -627,7 +628,7 @@ async def get_atr(
     )
 
 
-@router.get("/indicator/obv/{symbol}")
+@router.get("/indicator/obv/{symbol}", response_model=SuccessResponse)
 async def get_obv(
     symbol: str,
     interval: str = Query(default="daily"),
@@ -646,7 +647,7 @@ async def get_obv(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/forex/rate/{from_currency}/{to_currency}")
+@router.get("/forex/rate/{from_currency}/{to_currency}", response_model=SuccessResponse)
 async def get_forex_rate(
     from_currency: str,
     to_currency: str,
@@ -681,7 +682,7 @@ async def get_forex_rate(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/forex/daily/{from_symbol}/{to_symbol}")
+@router.get("/forex/daily/{from_symbol}/{to_symbol}", response_model=SuccessResponse)
 async def get_forex_daily(
     from_symbol: str,
     to_symbol: str,
@@ -721,7 +722,7 @@ async def get_forex_daily(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/crypto/rating/{symbol}")
+@router.get("/crypto/rating/{symbol}", response_model=SuccessResponse)
 async def get_crypto_rating(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -755,7 +756,7 @@ async def get_crypto_rating(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/crypto/daily/{symbol}")
+@router.get("/crypto/daily/{symbol}", response_model=SuccessResponse)
 async def get_crypto_daily(
     symbol: str,
     market: str = Query(default="USD", description="Market currency"),
@@ -795,7 +796,7 @@ async def get_crypto_daily(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/economic/{indicator}")
+@router.get("/economic/{indicator}", response_model=SuccessResponse)
 async def get_economic_indicator(
     indicator: str,
     interval: str = Query(default="annual", description="annual, quarterly, monthly"),
@@ -840,7 +841,7 @@ async def get_economic_indicator(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/calendar/earnings")
+@router.get("/calendar/earnings", response_model=SuccessResponse)
 async def get_earnings_calendar(
     symbol: str | None = Query(default=None, description="Filter by symbol"),
     horizon: str = Query(default="3month", description="Horizon: 3month, 6month, 12month"),
@@ -875,7 +876,7 @@ async def get_earnings_calendar(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/calendar/ipo")
+@router.get("/calendar/ipo", response_model=SuccessResponse)
 async def get_ipo_calendar(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -908,7 +909,7 @@ async def get_ipo_calendar(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/listing-status")
+@router.get("/listing-status", response_model=SuccessResponse)
 async def get_listing_status(
     state: str = Query(default="active", description="active or delisted"),
     date: str | None = Query(default=None, description="Historical date for delisted (YYYY-MM-DD)"),
