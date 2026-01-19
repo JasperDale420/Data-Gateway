@@ -7,6 +7,7 @@ from gateway.api.deps import get_cache, get_registry, require_api_key, require_p
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.registry import ProviderRegistry
+from gateway.schemas import SuccessResponse
 
 logger = structlog.get_logger()
 
@@ -22,7 +23,7 @@ def _cache_key(prefix: str, *args) -> str:
     return ":".join(parts)
 
 
-@router.get("/company/{cik}")
+@router.get("/company/{cik}", response_model=SuccessResponse)
 async def get_company_info(
     cik: str,
     client: Client = Depends(require_api_key),
@@ -48,7 +49,7 @@ async def get_company_info(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/company/ticker/{ticker}")
+@router.get("/company/ticker/{ticker}", response_model=SuccessResponse)
 async def get_company_by_ticker(
     ticker: str,
     client: Client = Depends(require_api_key),
@@ -76,7 +77,7 @@ async def get_company_by_ticker(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/filings/{cik}")
+@router.get("/filings/{cik}", response_model=SuccessResponse)
 async def get_filings(
     cik: str,
     form_type: str | None = Query(
@@ -111,7 +112,7 @@ async def get_filings(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/filings/{cik}/{form_type}")
+@router.get("/filings/{cik}/{form_type}", response_model=SuccessResponse)
 async def get_filings_by_type(
     cik: str,
     form_type: str,
@@ -144,7 +145,7 @@ async def get_filings_by_type(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/13f/{cik}")
+@router.get("/13f/{cik}", response_model=SuccessResponse)
 async def get_13f_holdings(
     cik: str,
     client: Client = Depends(require_api_key),
@@ -175,7 +176,7 @@ async def get_13f_holdings(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/insiders/{cik}")
+@router.get("/insiders/{cik}", response_model=SuccessResponse)
 async def get_insider_trades(
     cik: str,
     limit: int = Query(default=50, le=200, ge=1),
@@ -207,7 +208,7 @@ async def get_insider_trades(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/facts/{cik}")
+@router.get("/facts/{cik}", response_model=SuccessResponse)
 async def get_company_facts(
     cik: str,
     client: Client = Depends(require_api_key),
@@ -238,7 +239,7 @@ async def get_company_facts(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/concept/{cik}/{concept}")
+@router.get("/concept/{cik}/{concept}", response_model=SuccessResponse)
 async def get_company_concept(
     cik: str,
     concept: str,
@@ -266,7 +267,7 @@ async def get_company_concept(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/frames/{concept}/{period}")
+@router.get("/frames/{concept}/{period}", response_model=SuccessResponse)
 async def get_xbrl_frames(
     concept: str,
     period: str,
@@ -301,7 +302,7 @@ async def get_xbrl_frames(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/search")
+@router.get("/search", response_model=SuccessResponse)
 async def search_filings(
     q: str = Query(..., description="Search query"),
     form_type: str | None = Query(default=None, description="Filter by form type"),

@@ -7,6 +7,7 @@ from gateway.api.deps import get_cache, get_registry, require_api_key, require_p
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.registry import ProviderRegistry
+from gateway.schemas import SuccessResponse
 
 logger = structlog.get_logger()
 
@@ -22,7 +23,7 @@ def _cache_key(prefix: str, symbol: str, *args) -> str:
     return ":".join(parts)
 
 
-@router.get("/ticker/{symbol}")
+@router.get("/ticker/{symbol}", response_model=SuccessResponse)
 async def get_ticker_info(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -48,7 +49,7 @@ async def get_ticker_info(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/info")
+@router.get("/ticker/{symbol}/info", response_model=SuccessResponse)
 async def get_company_info(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -74,7 +75,7 @@ async def get_company_info(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/financials")
+@router.get("/ticker/{symbol}/financials", response_model=SuccessResponse)
 async def get_financials(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -100,7 +101,7 @@ async def get_financials(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/earnings")
+@router.get("/ticker/{symbol}/earnings", response_model=SuccessResponse)
 async def get_earnings(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -126,7 +127,7 @@ async def get_earnings(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/history")
+@router.get("/ticker/{symbol}/history", response_model=SuccessResponse)
 async def get_history(
     symbol: str,
     period: str = Query(
@@ -170,7 +171,7 @@ async def get_history(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/options")
+@router.get("/ticker/{symbol}/options", response_model=SuccessResponse)
 async def get_options(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -201,7 +202,7 @@ async def get_options(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/options/{expiration}")
+@router.get("/ticker/{symbol}/options/{expiration}", response_model=SuccessResponse)
 async def get_options_chain(
     symbol: str,
     expiration: str,
@@ -229,7 +230,7 @@ async def get_options_chain(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/recommendations")
+@router.get("/ticker/{symbol}/recommendations", response_model=SuccessResponse)
 async def get_recommendations(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -260,7 +261,7 @@ async def get_recommendations(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/holders")
+@router.get("/ticker/{symbol}/holders", response_model=SuccessResponse)
 async def get_holders(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -287,7 +288,7 @@ async def get_holders(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/calendar")
+@router.get("/ticker/{symbol}/calendar", response_model=SuccessResponse)
 async def get_calendar(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -319,7 +320,7 @@ async def get_calendar(
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/ticker/{symbol}/dividends")
+@router.get("/ticker/{symbol}/dividends", response_model=SuccessResponse)
 async def get_dividends(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -350,7 +351,7 @@ async def get_dividends(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/splits")
+@router.get("/ticker/{symbol}/splits", response_model=SuccessResponse)
 async def get_splits(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -381,7 +382,7 @@ async def get_splits(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/actions")
+@router.get("/ticker/{symbol}/actions", response_model=SuccessResponse)
 async def get_actions(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -408,7 +409,7 @@ async def get_actions(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/news")
+@router.get("/ticker/{symbol}/news", response_model=SuccessResponse)
 async def get_news(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -439,7 +440,7 @@ async def get_news(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/sustainability")
+@router.get("/ticker/{symbol}/sustainability", response_model=SuccessResponse)
 async def get_sustainability(
     symbol: str,
     client: Client = Depends(require_api_key),
@@ -466,7 +467,7 @@ async def get_sustainability(
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
 
-@router.get("/ticker/{symbol}/major-holders")
+@router.get("/ticker/{symbol}/major-holders", response_model=SuccessResponse)
 async def get_major_holders(
     symbol: str,
     client: Client = Depends(require_api_key),
