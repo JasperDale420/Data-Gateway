@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from gateway.api.deps import require_api_key
+from gateway.schemas import SuccessResponse
 from gateway.core.calendar import (
     get_earnings_calendar,
     get_trading_calendar,
@@ -180,6 +181,7 @@ async def get_earnings(
 
 @router.get(
     "/is-open",
+    response_model=SuccessResponse,
     summary="Check if market is open",
     description="Check if the market is currently open for trading.",
 )
@@ -205,6 +207,7 @@ async def is_market_open(
 
 @router.get(
     "/next-trading-day",
+    response_model=SuccessResponse,
     summary="Get next trading day",
     description="Get the next trading day from today or a specified date.",
 )

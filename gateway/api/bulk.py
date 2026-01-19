@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from gateway.api.deps import require_api_key
+from gateway.schemas import SuccessResponse
 from gateway.core.bulk import (
     BulkBarsRequest,
     BulkJobStatus,
@@ -250,6 +251,7 @@ async def download_job_results(
 
 @router.delete(
     "/jobs/{job_id}",
+    response_model=SuccessResponse,
     summary="Cancel job",
     description="Cancel a pending or running bulk job.",
 )
@@ -282,6 +284,7 @@ async def cancel_job(
 
 @router.get(
     "/jobs",
+    response_model=SuccessResponse,
     summary="List jobs",
     description="List all bulk jobs for the authenticated client.",
 )

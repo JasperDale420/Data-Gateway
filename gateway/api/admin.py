@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, Query
 
 from gateway.api.deps import get_cache, get_connection_manager, get_registry, require_api_key
+from gateway.schemas import SuccessResponse
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
@@ -42,7 +43,7 @@ def log_error(error_code: str, message: str, component: str = "gateway") -> None
     _error_counts[error_code] = _error_counts.get(error_code, 0) + 1
 
 
-@router.get("/api/v1/status")
+@router.get("/api/v1/status", response_model=SuccessResponse)
 async def get_status(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -80,7 +81,7 @@ async def get_status(
     }
 
 
-@router.get("/api/v1/admin/logs/recent")
+@router.get("/api/v1/admin/logs/recent", response_model=SuccessResponse)
 async def get_recent_logs(
     level: str = Query(default="ERROR", description="Log level filter"),
     limit: int = Query(default=100, le=1000, description="Max entries"),
@@ -105,7 +106,7 @@ async def get_recent_logs(
     }
 
 
-@router.get("/api/v1/admin/errors/summary")
+@router.get("/api/v1/admin/errors/summary", response_model=SuccessResponse)
 async def get_error_summary(
     client: Client = Depends(require_api_key),
 ):
@@ -126,9 +127,10 @@ async def get_error_summary(
 # ─────────────────────────────────────────────────────────────────────────────
 
 from gateway.api.deps import get_provider_rate_limiter
+from gateway.schemas import SuccessResponse
 
 
-@router.get("/api/v1/admin/rate-limits")
+@router.get("/api/v1/admin/rate-limits", response_model=SuccessResponse)
 async def get_rate_limit_status(
     provider: str | None = Query(default=None, description="Filter by provider"),
     client: Client = Depends(require_api_key),

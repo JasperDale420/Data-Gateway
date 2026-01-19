@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from pydantic import BaseModel, Field
 
 from gateway.api.deps import require_api_key
+from gateway.schemas import SuccessResponse
 from gateway.core.replay import (
     ReplayConfig,
     ReplayState,
@@ -170,6 +171,7 @@ async def get_session_status(
 
 @router.post(
     "/sessions/{session_id}/control",
+    response_model=SuccessResponse,
     summary="Control replay session",
     description="Control a replay session (pause, resume, seek, stop).",
 )
@@ -223,6 +225,7 @@ async def control_session(
 
 @router.delete(
     "/sessions/{session_id}",
+    response_model=SuccessResponse,
     summary="Delete replay session",
     description="Delete a replay session and stop if running.",
 )
@@ -243,6 +246,7 @@ async def delete_session(
 
 @router.get(
     "/sessions",
+    response_model=SuccessResponse,
     summary="List replay sessions",
     description="List all replay sessions.",
 )

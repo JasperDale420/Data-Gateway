@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from gateway.core.symbology import get_symbol_resolver
+from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/symbology", tags=["symbology"])
 
@@ -148,7 +149,7 @@ async def batch_resolve_symbols(
     )
 
 
-@router.get("/convert")
+@router.get("/convert", response_model=SuccessResponse)
 async def convert_symbol(
     symbol: str = Query(..., description="Symbol to convert"),
     provider: str = Query(..., description="Target provider (alpaca, uw, yfinance)"),

@@ -7,6 +7,7 @@ from datetime import date
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
+from gateway.schemas import SuccessResponse
 
 from gateway.core.quality import get_quality_analyzer
 
@@ -42,7 +43,7 @@ class QualitySummaryResponse(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@router.get("/symbol/{symbol}")
+@router.get("/symbol/{symbol}", response_model=SuccessResponse)
 async def get_symbol_quality(
     symbol: str,
     query_date: date = Query(None, alias="date", description="Date to analyze (YYYY-MM-DD)"),
@@ -104,7 +105,7 @@ async def get_symbol_quality(
     }
 
 
-@router.get("/summary")
+@router.get("/summary", response_model=SuccessResponse)
 async def get_quality_summary(
     query_date: date = Query(None, alias="date", description="Date to summarize (YYYY-MM-DD)"),
     symbols: str | None = Query(None, description="Comma-separated list of symbols"),
@@ -143,7 +144,7 @@ async def get_quality_summary(
     )
 
 
-@router.post("/analyze")
+@router.post("/analyze", response_model=SuccessResponse)
 async def analyze_data(
     bars: list[dict] | None = None,
     quotes: list[dict] | None = None,

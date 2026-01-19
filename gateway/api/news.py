@@ -5,6 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.deps import get_cache, require_api_key, require_provider_rate_limit
+from gateway.schemas import SuccessResponse
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.providers.news import NewsProvider
@@ -29,7 +30,7 @@ async def _ensure_initialized(provider: NewsProvider) -> None:
         await provider.initialize({})
 
 
-@router.get("/articles")
+@router.get("/articles", response_model=SuccessResponse)
 async def get_articles(
     symbols: str | None = Query(default=None, description="Comma-separated tickers"),
     keywords: str | None = Query(default=None, description="Search terms"),
@@ -85,7 +86,7 @@ async def get_articles(
         )
 
 
-@router.get("/articles/{article_id}")
+@router.get("/articles/{article_id}", response_model=SuccessResponse)
 async def get_article(
     article_id: str,
     client: Client = Depends(require_api_key),
@@ -126,7 +127,7 @@ async def get_article(
         )
 
 
-@router.get("/sentiment/{symbol}")
+@router.get("/sentiment/{symbol}", response_model=SuccessResponse)
 async def get_sentiment(
     symbol: str,
     client: Client = Depends(require_api_key),
