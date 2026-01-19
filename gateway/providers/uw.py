@@ -2958,3 +2958,279 @@ class UnusualWhalesProvider(DataProvider):
         except Exception as e:
             logger.error("uw_market_tide_etf_failed", error=str(e), etf=etf)
             raise
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Phase 3: Institution Endpoints
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def get_all_institutions(self, limit: int = 100) -> list[dict]:
+        """Get list of all institutions."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.institution import get_institutions
+
+        try:
+            response = get_institutions.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_institutions_list_failed", error=str(e))
+            raise
+
+    async def get_institution_activity(self, institution_id: str) -> list[dict]:
+        """Get latest activity by an institution."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.institution import get_activity
+
+        try:
+            response = get_activity.sync(institution_id, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_institution_activity_failed", error=str(e), institution_id=institution_id)
+            raise
+
+    async def get_institution_holdings(self, institution_id: str) -> list[dict]:
+        """Get current holdings of an institution."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.institution import get_holdings
+
+        try:
+            response = get_holdings.sync(institution_id, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_institution_holdings_failed", error=str(e), institution_id=institution_id)
+            raise
+
+    async def get_institution_sector_exposure(self, institution_id: str) -> list[dict]:
+        """Get sector exposure of an institution."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.institution import get_sector_exposure
+
+        try:
+            response = get_sector_exposure.sync(institution_id, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_institution_sector_failed", error=str(e), institution_id=institution_id)
+            raise
+
+    async def get_institutional_ownership(self, symbol: str) -> list[dict]:
+        """Get institutional ownership for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.institution import get_ownership
+
+        try:
+            response = get_ownership.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_institutional_ownership_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_latest_institutional_filings(self, limit: int = 50) -> list[dict]:
+        """Get latest institutional filings."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.institution import get_latest_filings
+
+        try:
+            response = get_latest_filings.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_latest_filings_failed", error=str(e))
+            raise
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Phase 3: Insider Endpoints
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def get_insider_transactions(self, limit: int = 100) -> list[dict]:
+        """Get all recent insider transactions."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.insider import get_insider_transactions
+
+        try:
+            response = get_insider_transactions.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_insider_transactions_failed", error=str(e))
+            raise
+
+    async def get_insider_sector_flow(self) -> list[dict]:
+        """Get insider trading flow by sector."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.insider import get_insider_sector_flow
+
+        try:
+            response = get_insider_sector_flow.sync(client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_insider_sector_flow_failed", error=str(e))
+            raise
+
+    async def get_insider_ticker_flow(self) -> list[dict]:
+        """Get insider trading flow by ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.insider import get_insider_ticker_flow
+
+        try:
+            response = get_insider_ticker_flow.sync(client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_insider_ticker_flow_failed", error=str(e))
+            raise
+
+    async def get_ticker_insiders(self, symbol: str) -> list[dict]:
+        """Get insiders for a specific ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.insider import get_ticker_insiders
+
+        try:
+            response = get_ticker_insiders.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_ticker_insiders_failed", error=str(e), symbol=symbol)
+            raise
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Phase 5: ETF Endpoints
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def get_etf_info(self, symbol: str) -> dict | None:
+        """Get ETF information."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.etfs import get_info
+
+        try:
+            response = get_info.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data[0] if isinstance(data, list) and data else data
+        except Exception as e:
+            logger.error("uw_etf_info_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_etf_inflow_outflow(self, symbol: str) -> list[dict]:
+        """Get ETF inflow/outflow data."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.etfs import get_in_outflow
+
+        try:
+            response = get_in_outflow.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_etf_inflow_outflow_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_etf_ticker_exposure(self, symbol: str) -> list[dict]:
+        """Get ticker exposure within an ETF."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.etfs import get_ticker_exposure
+
+        try:
+            response = get_ticker_exposure.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_etf_ticker_exposure_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_etf_country_weights(self, symbol: str) -> list[dict]:
+        """Get ETF country weights."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.etfs import get_sector_country_weights
+
+        try:
+            response = get_sector_country_weights.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_etf_country_weights_failed", error=str(e), symbol=symbol)
+            raise
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Phase 5: Screener/Alerts Endpoints
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def get_all_alerts(self, limit: int = 50) -> list[dict]:
+        """Get all alerts."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.alerts import get_alerts
+
+        try:
+            response = get_alerts.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_alerts_failed", error=str(e))
+            raise
+
+    async def get_alerts_configuration(self) -> dict | None:
+        """Get alerts configuration."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.alerts import get_configurations
+
+        try:
+            response = get_configurations.sync(client=self._client)
+            data = self._extract_data(response)
+            return data[0] if isinstance(data, list) and data else data
+        except Exception as e:
+            logger.error("uw_alerts_config_failed", error=str(e))
+            raise
+
+    async def get_analyst_ratings(self, limit: int = 50) -> list[dict]:
+        """Get analyst ratings from screener."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.screener import get_analyst_ratings
+
+        try:
+            response = get_analyst_ratings.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_analyst_ratings_failed", error=str(e))
+            raise

@@ -52,7 +52,7 @@ class AlpacaStreamType(Enum):
         endpoints = {
             AlpacaStreamType.STOCKS_SIP: "wss://stream.data.alpaca.markets/v2/sip",
             AlpacaStreamType.STOCKS_IEX: "wss://stream.data.alpaca.markets/v2/iex",
-            AlpacaStreamType.OPTIONS: "wss://stream.data.alpaca.markets/v1beta1/options",
+            AlpacaStreamType.OPTIONS: "wss://stream.data.alpaca.markets/v1beta1/opra",
             AlpacaStreamType.CRYPTO: "wss://stream.data.alpaca.markets/v1beta3/crypto/us",
             AlpacaStreamType.NEWS: "wss://stream.data.alpaca.markets/v1beta1/news",
         }

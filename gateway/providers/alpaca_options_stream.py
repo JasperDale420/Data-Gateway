@@ -14,7 +14,7 @@ from gateway.core.multiplexer import SubscriptionManager
 
 logger = structlog.get_logger()
 
-ALPACA_OPTIONS_STREAM_URL = "wss://stream.data.alpaca.markets/v1beta1/options"
+ALPACA_OPTIONS_STREAM_URL = "wss://stream.data.alpaca.markets/v1beta1/opra"
 HEARTBEAT_TIMEOUT_SECONDS = 30.0
 HEARTBEAT_CHECK_INTERVAL = 5.0
 

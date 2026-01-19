@@ -2216,3 +2216,511 @@ async def get_market_tide_by_etf(
 
     cache.set(cache_key, response, ttl=60)
     return response
+
+
+# ─────────────────────────────────────────────────────────────────
+# Phase 3: Institution Endpoints
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/institutions", response_model=SuccessResponse)
+async def get_all_institutions(
+    limit: int = Query(default=100, le=500, ge=1),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get list of all institutions."""
+    cache_key = f"uw:institutions:all:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_all_institutions(limit=limit)
+
+    response = _paginate_response(data, limit)
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+@router.get("/institutions/latest-filings", response_model=SuccessResponse)
+async def get_latest_institutional_filings(
+    limit: int = Query(default=50, le=200, ge=1),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get latest institutional filings."""
+    cache_key = f"uw:institutions:filings:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_latest_institutional_filings(limit=limit)
+
+    response = _paginate_response(data, limit)
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/institutions/{institution_id}/activity", response_model=SuccessResponse)
+async def get_institution_activity(
+    institution_id: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get latest activity by an institution."""
+    cache_key = f"uw:institutions:{institution_id}:activity"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_institution_activity(institution_id=institution_id)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"institution_id": institution_id, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+@router.get("/institutions/{institution_id}/holdings", response_model=SuccessResponse)
+async def get_institution_holdings(
+    institution_id: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get current holdings of an institution."""
+    cache_key = f"uw:institutions:{institution_id}:holdings"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_institution_holdings(institution_id=institution_id)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"institution_id": institution_id, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+@router.get("/institutions/{institution_id}/sectors", response_model=SuccessResponse)
+async def get_institution_sector_exposure(
+    institution_id: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get sector exposure of an institution."""
+    cache_key = f"uw:institutions:{institution_id}:sectors"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_institution_sector_exposure(institution_id=institution_id)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"institution_id": institution_id, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+@router.get("/institutions/{symbol}/ownership", response_model=SuccessResponse)
+async def get_institutional_ownership(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get institutional ownership for a ticker."""
+    symbol = symbol.upper()
+    cache_key = f"uw:institutions:ownership:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_institutional_ownership(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+# ─────────────────────────────────────────────────────────────────
+# Phase 3: Insider Endpoints
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/insider/transactions", response_model=SuccessResponse)
+async def get_insider_transactions(
+    limit: int = Query(default=100, le=500, ge=1),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get all recent insider transactions."""
+    cache_key = f"uw:insider:transactions:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_insider_transactions(limit=limit)
+
+    response = _paginate_response(data, limit)
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/insider/sector-flow", response_model=SuccessResponse)
+async def get_insider_sector_flow(
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get insider trading flow by sector."""
+    cache_key = "uw:insider:sector-flow"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_insider_sector_flow()
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/insider/ticker-flow", response_model=SuccessResponse)
+async def get_insider_ticker_flow(
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get insider trading flow by ticker."""
+    cache_key = "uw:insider:ticker-flow"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_insider_ticker_flow()
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/insider/{symbol}/insiders", response_model=SuccessResponse)
+async def get_ticker_insiders(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get insiders for a specific ticker."""
+    symbol = symbol.upper()
+    cache_key = f"uw:insider:insiders:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_ticker_insiders(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+# ─────────────────────────────────────────────────────────────────
+# Phase 5: Additional ETF Endpoints
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/etf/{symbol}/info", response_model=SuccessResponse)
+async def get_etf_info(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get ETF information."""
+    symbol = symbol.upper()
+    cache_key = f"uw:etf:info:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_etf_info(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+@router.get("/etf/{symbol}/inflow-outflow", response_model=SuccessResponse)
+async def get_etf_inflow_outflow(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get ETF inflow/outflow data."""
+    symbol = symbol.upper()
+    cache_key = f"uw:etf:inflow-outflow:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_etf_inflow_outflow(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/etf/{symbol}/ticker-exposure", response_model=SuccessResponse)
+async def get_etf_ticker_exposure(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get ticker exposure within an ETF."""
+    symbol = symbol.upper()
+    cache_key = f"uw:etf:ticker-exposure:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_etf_ticker_exposure(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+@router.get("/etf/{symbol}/country-weights", response_model=SuccessResponse)
+async def get_etf_country_weights(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get ETF country weights."""
+    symbol = symbol.upper()
+    cache_key = f"uw:etf:country-weights:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_etf_country_weights(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+# ─────────────────────────────────────────────────────────────────
+# Phase 5: Screener/Alerts Endpoints
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/screener/analysts", response_model=SuccessResponse)
+async def get_analyst_ratings(
+    limit: int = Query(default=50, le=200, ge=1),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get analyst ratings from screener."""
+    cache_key = f"uw:screener:analysts:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_analyst_ratings(limit=limit)
+
+    response = _paginate_response(data, limit)
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/alerts/all", response_model=SuccessResponse)
+async def get_all_alerts(
+    limit: int = Query(default=50, le=200, ge=1),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get all alerts."""
+    cache_key = f"uw:alerts:all:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_all_alerts(limit=limit)
+
+    response = _paginate_response(data, limit)
+    cache.set(cache_key, response, ttl=60)
+    return response
+
+
+@router.get("/alerts/configuration", response_model=SuccessResponse)
+async def get_alerts_configuration(
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get alerts configuration."""
+    cache_key = "uw:alerts:configuration"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_alerts_configuration()
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
