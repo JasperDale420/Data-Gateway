@@ -3234,3 +3234,322 @@ class UnusualWhalesProvider(DataProvider):
         except Exception as e:
             logger.error("uw_analyst_ratings_failed", error=str(e))
             raise
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Phase 4: Stock Module - Additional Endpoints
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def get_stock_info(self, symbol: str) -> dict | None:
+        """Get stock/ticker information."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_info
+
+        try:
+            response = get_info.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data[0] if isinstance(data, list) and data else data
+        except Exception as e:
+            logger.error("uw_stock_info_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_stock_candles(self, symbol: str, timeframe: str = "1d") -> list[dict]:
+        """Get OHLC candle data for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_candles
+
+        try:
+            response = get_candles.sync(symbol.upper(), client=self._client, timeframe=timeframe)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_stock_candles_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_stock_option_chains(self, symbol: str) -> list[dict]:
+        """Get tradeable option contracts for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_option_chains
+
+        try:
+            response = get_option_chains.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_option_chains_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_stock_option_contracts(self, symbol: str) -> list[dict]:
+        """Get all option contracts for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_option_contracts
+
+        try:
+            response = get_option_contracts.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_option_contracts_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_oi_per_strike(self, symbol: str) -> list[dict]:
+        """Get open interest per strike for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_oi_per_strike
+
+        try:
+            response = get_oi_per_strike.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_oi_per_strike_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_oi_per_expiry(self, symbol: str) -> list[dict]:
+        """Get open interest per expiry for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_oi_per_expiry
+
+        try:
+            response = get_oi_per_expiry.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_oi_per_expiry_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_greeks_by_strike_expiry(self, symbol: str, expiry: str) -> list[dict]:
+        """Get option greeks by strike for a specific expiry."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_greeks_by_strike_expiry
+
+        try:
+            response = get_greeks_by_strike_expiry.sync(symbol.upper(), expiry, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_greeks_by_strike_expiry_failed", error=str(e), symbol=symbol, expiry=expiry)
+            raise
+
+    async def get_greek_exposure_by_strike_expiry(self, symbol: str, expiry: str) -> list[dict]:
+        """Get greek exposure by strike for a specific expiry."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_greek_exposure_by_strike_expiry
+
+        try:
+            response = get_greek_exposure_by_strike_expiry.sync(symbol.upper(), expiry, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_greek_exposure_by_strike_expiry_failed", error=str(e), symbol=symbol, expiry=expiry)
+            raise
+
+    async def get_atm_option_contracts(self, symbol: str) -> list[dict]:
+        """Get ATM option contracts for all expiries."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_atm_option_contracts_for_expiries
+
+        try:
+            response = get_atm_option_contracts_for_expiries.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_atm_options_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_daily_expiry_breakdown(self, symbol: str) -> list[dict]:
+        """Get option order flow grouped by expiry for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_daily_expiry_breakdown
+
+        try:
+            response = get_daily_expiry_breakdown.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_daily_expiry_breakdown_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_flow_per_strike_intraday(self, symbol: str) -> list[dict]:
+        """Get flow per strike for intraday data."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_flow_per_strike_intraday
+
+        try:
+            response = get_flow_per_strike_intraday.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_flow_per_strike_intraday_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_risk_reversal_skew(self, symbol: str, expiry: str) -> list[dict]:
+        """Get historical risk reversal skew by expiry."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_risk_reversal_skew
+
+        try:
+            response = get_risk_reversal_skew.sync(symbol.upper(), expiry, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_risk_reversal_skew_failed", error=str(e), symbol=symbol, expiry=expiry)
+            raise
+
+    async def get_sector_tickers(self, sector: str) -> list[dict]:
+        """Get tickers for a given sector."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_sector_tickers
+
+        try:
+            response = get_sector_tickers.sync(sector, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_sector_tickers_failed", error=str(e), sector=sector)
+            raise
+
+    async def get_stock_state(self, symbol: str) -> dict | None:
+        """Get stock OHLC and volume state."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_stock_state
+
+        try:
+            response = get_stock_state.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data[0] if isinstance(data, list) and data else data
+        except Exception as e:
+            logger.error("uw_stock_state_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_stock_volume_price_levels(self, symbol: str) -> list[dict]:
+        """Get stock volume price levels."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_stock_volume_price_levels
+
+        try:
+            response = get_stock_volume_price_levels.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_stock_volume_price_levels_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_option_volume_by_price_level(self, symbol: str) -> list[dict]:
+        """Get call and put volume per price level."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_option_volume_by_price_level
+
+        try:
+            response = get_option_volume_by_price_level.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_option_volume_by_price_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_volume_oi_by_expiry(self, symbol: str) -> list[dict]:
+        """Get volume and OI per expiry."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_volume_open_interest_by_expiry
+
+        try:
+            response = get_volume_open_interest_by_expiry.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_volume_oi_by_expiry_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_spot_exposures(self, symbol: str) -> list[dict]:
+        """Get spot GEX exposures per minute."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_spot_exposures
+
+        try:
+            response = get_spot_exposures.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_spot_exposures_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_options_volume(self, symbol: str) -> list[dict]:
+        """Get options volume and premium for a trading date."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_options_volume
+
+        try:
+            response = get_options_volume.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_options_volume_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_greek_flow_by_expiry(self, symbol: str, expiry: str) -> list[dict]:
+        """Get greek flow by expiry."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_greek_flow_expiry
+
+        try:
+            response = get_greek_flow_expiry.sync(symbol.upper(), expiry, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_greek_flow_by_expiry_failed", error=str(e), symbol=symbol, expiry=expiry)
+            raise
+
+    async def get_stock_insider_trades(self, symbol: str) -> list[dict]:
+        """Get insider trades for a specific stock."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_insider_trades
+
+        try:
+            response = get_insider_trades.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_stock_insider_trades_failed", error=str(e), symbol=symbol)
+            raise

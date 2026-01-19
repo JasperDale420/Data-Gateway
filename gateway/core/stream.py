@@ -233,29 +233,54 @@ class UpstreamConnection:
         )
         logger.info("connected_upstream", stream=self.stream_type.value)
 
-    async def authenticate(self) -> None:
-        """Send authentication message and wait for response."""
+    def _is_msgpack_stream(self) -> bool:
+        """Check if this stream uses MessagePack format (OPRA options)."""
+        return self.stream_type == AlpacaStreamType.OPTIONS
+
+    def _decode_message(self, message: bytes | str) -> Any:
+        """Decode a message from either JSON or MessagePack format."""
         import json
 
+        import msgpack
+
+        if isinstance(message, bytes):
+            return msgpack.unpackb(message, raw=False)
+        return json.loads(message)
+
+    def _encode_message(self, data: dict[str, Any]) -> bytes | str:
+        """Encode a message to either JSON or MessagePack format."""
+        import json
+
+        import msgpack
+
+        if self._is_msgpack_stream():
+            return msgpack.packb(data)
+        return json.dumps(data)
+
+    async def authenticate(self) -> None:
+        """Send authentication message and wait for response.
+
+        Handles both JSON (most streams) and MessagePack (OPRA options) formats.
+        """
         if not self._ws:
             raise RuntimeError("Not connected")
 
         # Alpaca sends a welcome message first: [{"T":"success","msg":"connected"}]
         welcome = await self._ws.recv()
-        welcome_data = json.loads(welcome)
+        welcome_data = self._decode_message(welcome)
         logger.debug("welcome_received", stream=self.stream_type.value, data=welcome_data)
 
-        # Send auth
+        # Send auth - always encoded in the appropriate format
         auth_msg = {
             "action": "auth",
             "key": self.api_key,
             "secret": self.api_secret,
         }
-        await self._ws.send(json.dumps(auth_msg))
+        await self._ws.send(self._encode_message(auth_msg))
 
         # Wait for auth response
         response = await self._ws.recv()
-        data = json.loads(response)
+        data = self._decode_message(response)
 
         # Alpaca sends array of messages
         if isinstance(data, list):
@@ -290,7 +315,7 @@ class UpstreamConnection:
             msg["trades"] = list(trades)
 
         if len(msg) > 1:  # Has at least one subscription type
-            await self._ws.send(__import__("json").dumps(msg))
+            await self._ws.send(self._encode_message(msg))
             logger.info(
                 "subscribed_upstream",
                 stream=self.stream_type.value,
@@ -317,7 +342,7 @@ class UpstreamConnection:
             msg["trades"] = list(trades)
 
         if len(msg) > 1:
-            await self._ws.send(__import__("json").dumps(msg))
+            await self._ws.send(self._encode_message(msg))
             logger.info(
                 "unsubscribed_upstream",
                 stream=self.stream_type.value,
@@ -374,13 +399,16 @@ class UpstreamConnection:
                 await self._reconnect_with_backoff()
 
     async def _receive_loop(self) -> None:
-        """Receive and dispatch messages."""
+        """Receive and dispatch messages.
+
+        Handles both JSON (stocks, crypto, news) and MessagePack (OPRA options) formats.
+        """
         if not self._ws:
             return
 
         async for message in self._ws:
             try:
-                data = __import__("json").loads(message)
+                data = self._decode_message(message)
 
                 # Alpaca sends arrays of messages
                 if isinstance(data, list):

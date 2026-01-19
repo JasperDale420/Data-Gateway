@@ -28,6 +28,7 @@ dependencies = [
     "psutil>=5.9",
     "yfinance>=0.2",
     "alpaca-py>=0.28",
+    "msgpack>=1.0",
     # unusualwhales SDK is installed separately in Docker via copied local package
 ]
 
