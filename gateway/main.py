@@ -34,7 +34,13 @@ from gateway.api import (
 )
 from gateway.api.deps import get_connection_manager, set_multiplexer, set_registry
 from gateway.api.metrics import router as metrics_router
-from gateway.api.middleware import CacheMiddleware, EventEnvelopeMiddleware, RateLimitMiddleware
+from gateway.api.middleware import (
+    CacheMiddleware,
+    EventEnvelopeMiddleware,
+    GlobalRateLimitMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from gateway.config import get_settings
 from gateway.core.metrics import init_metrics
 from gateway.core.registry import ProviderRegistry
@@ -96,6 +102,9 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
+    import asyncio
+    import signal
+
     settings = get_settings()
 
     # Startup
@@ -128,13 +137,43 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("multiplexer_skipped", reason="Missing Alpaca credentials")
 
+    # SIGHUP handler for hot config reload (PRD 6.5.4)
+    def handle_sighup(signum, frame):
+        logger.info("sighup_received", action="reloading_config")
+        # Clear settings cache to reload on next access
+        get_settings.cache_clear()
+        # Reload client authenticator
+        from gateway.api.deps import get_authenticator
+
+        auth = get_authenticator()
+        auth.reload()
+        logger.info("config_reloaded")
+
+    # Register SIGHUP handler (Unix only)
+    try:
+        signal.signal(signal.SIGHUP, handle_sighup)
+        logger.info("sighup_handler_registered")
+    except (ValueError, OSError):
+        logger.warning("sighup_handler_failed", reason="Not supported on this platform")
+
     yield
 
-    # Shutdown
+    # Shutdown with graceful drain (PRD 6.5, 11.3.4)
+    drain_seconds = settings.shutdown_drain_seconds
+    logger.info("shutdown_drain_starting", drain_seconds=drain_seconds)
+
+    # Stop accepting new connections
+    connections = get_connection_manager()
+    logger.info("shutdown_connections", active=connections.active_count)
+
+    # Wait for drain period
+    await asyncio.sleep(drain_seconds)
+
+    # Shutdown components
     if multiplexer:
         await multiplexer.stop()
     await registry.shutdown()
-    logger.info("gateway_shutting_down")
+    logger.info("gateway_shutdown_complete")
 
 
 def create_app() -> FastAPI:
@@ -151,10 +190,14 @@ def create_app() -> FastAPI:
     )
 
     # Middleware (order matters: first added = outermost)
+    # Security headers should be outermost (applied last, seen first by client)
+    app.add_middleware(SecurityHeadersMiddleware)
     # EventEnvelope wraps responses LAST (outermost) so it sees final cached data
     app.add_middleware(EventEnvelopeMiddleware)
     app.add_middleware(CacheMiddleware, default_ttl=settings.cache_default_ttl)
     app.add_middleware(RateLimitMiddleware, default_limit=settings.rate_limit_default)
+    # Global rate limit (PRD 7.5.1-2) before per-client limits
+    app.add_middleware(GlobalRateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if settings.debug else [],

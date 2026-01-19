@@ -140,3 +140,38 @@ class ProviderRegistry:
             "providers": list(self._providers.keys()),
             "routes": list(self._routes.keys()),
         }
+
+    def has_provider(self, name: str) -> bool:
+        """Check if provider exists."""
+        return name in self._providers
+
+    def get_provider_config(self, name: str) -> Any:
+        """Get provider config by name."""
+        providers_config = self._config.get("providers", {})
+        config = providers_config.get(name)
+        if config:
+            # Return a simple object with enabled/priority
+            class ProviderConfig:
+                def __init__(self, enabled: bool, priority: int):
+                    self.enabled = enabled
+                    self.priority = priority
+            return ProviderConfig(
+                enabled=config.get("enabled", True),
+                priority=config.get("priority", 50),
+            )
+        return None
+
+    def get_capabilities(self, name: str) -> list[str]:
+        """Get provider capabilities."""
+        provider = self._providers.get(name)
+        if provider and hasattr(provider, "capabilities"):
+            return provider.capabilities
+        return []
+
+    def set_provider_enabled(self, name: str, enabled: bool) -> None:
+        """Enable/disable a provider."""
+        providers_config = self._config.get("providers", {})
+        if name in providers_config:
+            providers_config[name]["enabled"] = enabled
+            # Note: This is in-memory only; persisting requires writing to YAML
+            logger.info("provider_enabled_changed", provider=name, enabled=enabled)

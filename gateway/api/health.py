@@ -7,20 +7,20 @@ from fastapi import APIRouter, Depends
 
 from gateway import __version__
 from gateway.api.deps import get_cache, get_connection_manager
-from gateway.schemas import SuccessResponse
+from gateway.schemas import HealthResponse
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
 
 router = APIRouter(prefix="/health", tags=["health"])
 
 
-@router.get("", response_model=SuccessResponse)
+@router.get("", response_model=HealthResponse)
 async def liveness() -> dict[str, str]:
     """Liveness probe - always returns ok if server is running."""
     return {"status": "ok"}
 
 
-@router.get("/ready", response_model=SuccessResponse)
+@router.get("/ready")
 async def readiness(
     cache: InMemoryCache = Depends(get_cache),
     connections: ConnectionManager = Depends(get_connection_manager),
@@ -49,7 +49,7 @@ async def readiness(
     }
 
 
-@router.get("/status", response_model=SuccessResponse)
+@router.get("/status")
 async def detailed_status(
     cache: InMemoryCache = Depends(get_cache),
     connections: ConnectionManager = Depends(get_connection_manager),

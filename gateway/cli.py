@@ -146,6 +146,26 @@ def cmd_hash_key(args):
     return 0
 
 
+def cmd_revoke_client(args):
+    """Revoke/disable a client."""
+    config = load_clients(args.config)
+
+    for client in config.get("clients", []):
+        if client.get("id") == args.client_id:
+            if args.delete:
+                config["clients"].remove(client)
+                save_clients(args.config, config)
+                print(f"Deleted client: {args.client_id}")
+            else:
+                client["enabled"] = False
+                save_clients(args.config, config)
+                print(f"Disabled client: {args.client_id}")
+            return 0
+
+    print(f"Error: Client '{args.client_id}' not found")
+    return 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Gateway CLI for key management",
@@ -179,6 +199,11 @@ def main():
     hash_parser = subparsers.add_parser("hash-key", help="Hash a key")
     hash_parser.add_argument("key", help="Key to hash")
 
+    # revoke-client
+    revoke_parser = subparsers.add_parser("revoke-client", help="Revoke/disable a client")
+    revoke_parser.add_argument("client_id", help="Client ID")
+    revoke_parser.add_argument("--delete", action="store_true", help="Delete instead of disable")
+
     args = parser.parse_args()
 
     commands = {
@@ -187,6 +212,7 @@ def main():
         "rotate-key": cmd_rotate_key,
         "list-clients": cmd_list_clients,
         "hash-key": cmd_hash_key,
+        "revoke-client": cmd_revoke_client,
     }
 
     return commands[args.command](args)

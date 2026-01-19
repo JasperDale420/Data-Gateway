@@ -98,6 +98,50 @@ PROCESS_MEMORY_PERCENT = Gauge(
     "Process memory usage as percentage of total system memory",
 )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SLI Metrics (PRD 11.1.2-4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Availability SLI (11.1.2) - uptime tracking
+UPTIME_SECONDS = Gauge(
+    "gateway_uptime_seconds",
+    "Gateway uptime in seconds since start",
+)
+
+HEALTH_STATUS = Gauge(
+    "gateway_health_status",
+    "Gateway health status (1=healthy, 0=degraded, -1=unhealthy)",
+)
+
+# Error rate tracking for SLI
+ERROR_COUNT = Counter(
+    "gateway_errors_total",
+    "Total error count by type",
+    ["error_type"],  # provider_error, rate_limit, auth_failure, internal
+)
+
+# Latency SLI (11.1.3) - exposed via existing REQUEST_DURATION histogram
+# p50, p99 calculated by Prometheus from histogram buckets
+
+# Message delivery rate SLI (11.1.4)
+MESSAGE_DELIVERED = Counter(
+    "gateway_messages_delivered_total",
+    "Total messages successfully delivered to clients",
+    ["feed"],
+)
+
+MESSAGE_DROPPED = Counter(
+    "gateway_messages_dropped_total",
+    "Total messages dropped due to errors",
+    ["reason"],  # client_disconnected, buffer_full, timeout
+)
+
+# Memory pressure metric (for 11.2.4 alerting)
+MEMORY_PRESSURE = Gauge(
+    "gateway_memory_pressure",
+    "Memory pressure indicator (0-100, percentage of target)",
+)
+
 
 def init_metrics(version: str = "0.1.0") -> None:
     """Initialize gateway info metrics."""
@@ -227,3 +271,56 @@ def _looks_like_date(s: str) -> bool:
     if len(s) == 10 and s[4] == "-" and s[7] == "-":
         return True
     return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SLI Helper Functions (PRD 11.1.2-4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_start_time: float = 0.0
+
+
+def init_uptime() -> None:
+    """Initialize uptime tracking."""
+    import time
+
+    global _start_time
+    _start_time = time.time()
+    UPTIME_SECONDS.set(0)
+    HEALTH_STATUS.set(1)  # Start healthy
+
+
+def update_uptime() -> None:
+    """Update uptime metric."""
+    import time
+
+    if _start_time > 0:
+        UPTIME_SECONDS.set(time.time() - _start_time)
+
+
+def set_health_status(status: int) -> None:
+    """Set health status (1=healthy, 0=degraded, -1=unhealthy)."""
+    HEALTH_STATUS.set(status)
+
+
+def record_error(error_type: str) -> None:
+    """Record an error by type."""
+    ERROR_COUNT.labels(error_type=error_type).inc()
+
+
+def record_message_delivered(feed: str) -> None:
+    """Record successful message delivery."""
+    MESSAGE_DELIVERED.labels(feed=feed).inc()
+
+
+def record_message_dropped(reason: str) -> None:
+    """Record dropped message."""
+    MESSAGE_DROPPED.labels(reason=reason).inc()
+
+
+def update_memory_pressure(current_mb: float, target_mb: float) -> None:
+    """Update memory pressure indicator."""
+    if target_mb > 0:
+        pressure = (current_mb / target_mb) * 100
+        MEMORY_PRESSURE.set(min(pressure, 100))
+

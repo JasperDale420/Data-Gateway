@@ -431,3 +431,199 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 return provider, feed
 
         return "unknown", "data"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Security Headers Middleware (PRD 7.2.2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Adds security headers to all responses.
+
+    Headers added:
+    - Strict-Transport-Security (HSTS): max-age=31536000; includeSubDomains
+    - X-Content-Type-Options: nosniff
+    - X-Frame-Options: DENY
+    - X-XSS-Protection: 1; mode=block
+    - Referrer-Policy: strict-origin-when-cross-origin
+    """
+
+    def __init__(self, app, hsts_max_age: int = 31536000, include_subdomains: bool = True):
+        super().__init__(app)
+        self.hsts_max_age = hsts_max_age
+        self.include_subdomains = include_subdomains
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """Add security headers to response."""
+        response = await call_next(request)
+
+        # HSTS header (PRD 7.2.2)
+        hsts_value = f"max-age={self.hsts_max_age}"
+        if self.include_subdomains:
+            hsts_value += "; includeSubDomains"
+        response.headers["Strict-Transport-Security"] = hsts_value
+
+        # Additional security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        return response
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global Rate Limit Middleware (PRD 7.5.1-2, 7.6.1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class IPConnectionTracker:
+    """Track connections per IP for DDoS protection."""
+
+    requests: int = 0
+    first_request: float = field(default_factory=time.time)
+    blocked_until: float = 0.0
+
+
+class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
+    """Global and per-IP rate limiting.
+
+    Implements:
+    - PRD 7.5.1: Global limit 10,000 req/min
+    - PRD 7.5.2: Per-IP limit 1,000 req/min
+    - PRD 7.6.1: Max 10 concurrent connections per IP
+
+    Uses sliding window for rate limiting.
+    """
+
+    def __init__(
+        self,
+        app,
+        global_limit: int = 10000,
+        per_ip_limit: int = 1000,
+        max_connections_per_ip: int = 10,
+        window_seconds: int = 60,
+    ):
+        super().__init__(app)
+        self.global_limit = global_limit
+        self.per_ip_limit = per_ip_limit
+        self.max_connections_per_ip = max_connections_per_ip
+        self.window_seconds = window_seconds
+
+        # Tracking state
+        self._global_requests = 0
+        self._global_window_start = time.time()
+        self._ip_trackers: dict[str, IPConnectionTracker] = {}
+        self._blocked_ips: set[str] = set()
+
+    def _get_client_ip(self, request: Request) -> str:
+        """Extract client IP from request."""
+        # Check X-Forwarded-For for proxy scenarios
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        # Fall back to direct connection
+        return request.client.host if request.client else "unknown"
+
+    def _reset_window_if_needed(self) -> None:
+        """Reset global window if expired."""
+        now = time.time()
+        if now - self._global_window_start >= self.window_seconds:
+            self._global_requests = 0
+            self._global_window_start = now
+
+    def _check_ip_limit(self, ip: str) -> bool:
+        """Check if IP is within rate limit. Returns True if allowed."""
+        now = time.time()
+
+        # Check if blocked
+        if ip in self._blocked_ips:
+            tracker = self._ip_trackers.get(ip)
+            if tracker and tracker.blocked_until > now:
+                return False
+            # Unblock if time expired
+            self._blocked_ips.discard(ip)
+
+        # Get or create tracker
+        tracker = self._ip_trackers.get(ip)
+        if not tracker or now - tracker.first_request >= self.window_seconds:
+            self._ip_trackers[ip] = IPConnectionTracker(requests=1, first_request=now)
+            return True
+
+        # Check limit
+        tracker.requests += 1
+        if tracker.requests > self.per_ip_limit:
+            # Block for remainder of window
+            tracker.blocked_until = tracker.first_request + self.window_seconds
+            self._blocked_ips.add(ip)
+            logger.warning("ip_rate_limited", ip=ip, requests=tracker.requests)
+            return False
+
+        return True
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """Check global and per-IP limits."""
+        # Skip for health endpoints
+        if request.url.path in ("/health", "/health/ready"):
+            return await call_next(request)
+
+        # Reset window if needed
+        self._reset_window_if_needed()
+
+        # Check global limit (PRD 7.5.1)
+        if self._global_requests >= self.global_limit:
+            logger.warning("global_rate_limit_exceeded", current=self._global_requests)
+            return Response(
+                content=json.dumps({
+                    "success": False,
+                    "error": {
+                        "code": "GW-E4029",
+                        "message": "Global rate limit exceeded",
+                    },
+                }),
+                status_code=429,
+                media_type="application/json",
+            )
+
+        # Check per-IP limit (PRD 7.5.2)
+        client_ip = self._get_client_ip(request)
+        if not self._check_ip_limit(client_ip):
+            return Response(
+                content=json.dumps({
+                    "success": False,
+                    "error": {
+                        "code": "GW-E4029",
+                        "message": "IP rate limit exceeded",
+                    },
+                }),
+                status_code=429,
+                media_type="application/json",
+            )
+
+        # Increment global counter
+        self._global_requests += 1
+
+        return await call_next(request)
+
+    def block_ip(self, ip: str, duration_seconds: int = 3600) -> None:
+        """Manually block an IP (PRD 7.6.3)."""
+        tracker = self._ip_trackers.get(ip)
+        if not tracker:
+            tracker = IPConnectionTracker()
+            self._ip_trackers[ip] = tracker
+        tracker.blocked_until = time.time() + duration_seconds
+        self._blocked_ips.add(ip)
+        logger.info("ip_blocked", ip=ip, duration=duration_seconds)
+
+    def unblock_ip(self, ip: str) -> None:
+        """Remove IP from blocklist."""
+        self._blocked_ips.discard(ip)
+        if ip in self._ip_trackers:
+            self._ip_trackers[ip].blocked_until = 0.0
+        logger.info("ip_unblocked", ip=ip)
+
+    def get_blocked_ips(self) -> list[str]:
+        """Get list of currently blocked IPs."""
+        return list(self._blocked_ips)

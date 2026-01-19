@@ -1,0 +1,108 @@
+# Gateway Prometheus Alerting Rules (PRD 11.2.1-4)
+# Load this file in Prometheus alertmanager configuration
+
+groups:
+  - name: gateway_critical
+    rules:
+      # 11.2.1: GatewayDown alert
+      - alert: GatewayDown
+        expr: up{job="data-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Data Gateway is down"
+          description: "Gateway instance {{ $labels.instance }} has been unreachable for more than 1 minute."
+
+      # 11.2.2: AllUpstreamsDisconnected alert
+      - alert: AllUpstreamsDisconnected
+        expr: sum(gateway_provider_healthy) == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "All upstream providers disconnected"
+          description: "No healthy upstream providers available. Gateway cannot serve data."
+
+  - name: gateway_warning
+    rules:
+      # 11.2.3: HighErrorRate alert
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(gateway_errors_total[5m])) /
+            sum(rate(gateway_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes (threshold: 5%)."
+
+      # 11.2.4: MemoryPressure alert
+      - alert: MemoryPressure
+        expr: gateway_memory_pressure > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway memory pressure high"
+          description: "Memory usage is at {{ $value }}% of target. Consider scaling or investigating memory leaks."
+
+      # Provider health degradation
+      - alert: ProviderUnhealthy
+        expr: gateway_provider_healthy == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Provider {{ $labels.provider }} is unhealthy"
+          description: "Provider {{ $labels.provider }} has been unhealthy for more than 2 minutes."
+
+      # High latency alert
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99, sum(rate(gateway_request_duration_seconds_bucket[5m])) by (le)) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency detected"
+          description: "P99 latency is {{ $value }}s (threshold: 2s)."
+
+      # Rate limiting spike
+      - alert: RateLimitSpike
+        expr: sum(rate(gateway_rate_limit_exceeded_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rate limit exceeded spike"
+          description: "More than 10 rate limit events per second in the last 5 minutes."
+
+  - name: gateway_slo
+    rules:
+      # SLO: 99.9% availability
+      - record: gateway:availability:5m
+        expr: |
+          1 - (
+            sum(rate(gateway_requests_total{status=~"5.."}[5m])) /
+            sum(rate(gateway_requests_total[5m]))
+          )
+
+      # SLO: P99 latency under 500ms
+      - record: gateway:latency_p99:5m
+        expr: |
+          histogram_quantile(0.99, sum(rate(gateway_request_duration_seconds_bucket[5m])) by (le))
+
+      # SLO: P50 latency under 100ms
+      - record: gateway:latency_p50:5m
+        expr: |
+          histogram_quantile(0.50, sum(rate(gateway_request_duration_seconds_bucket[5m])) by (le))
+
+      # Message delivery success rate
+      - record: gateway:message_delivery_rate:5m
+        expr: |
+          sum(rate(gateway_messages_delivered_total[5m])) /
+          (sum(rate(gateway_messages_delivered_total[5m])) + sum(rate(gateway_messages_dropped_total[5m])))

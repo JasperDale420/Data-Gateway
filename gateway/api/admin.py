@@ -5,12 +5,18 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 
-from gateway.api.deps import get_cache, get_connection_manager, get_registry, require_api_key
-from gateway.schemas import SuccessResponse
+from gateway.api.deps import (
+    get_cache,
+    get_connection_manager,
+    get_provider_rate_limiter,
+    get_registry,
+    require_api_key,
+)
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
 from gateway.core.registry import ProviderRegistry
+from gateway.schemas import SuccessResponse
 
 router = APIRouter(tags=["admin"])
 
@@ -126,9 +132,6 @@ async def get_error_summary(
 # Provider Rate Limit Status
 # ─────────────────────────────────────────────────────────────────────────────
 
-from gateway.api.deps import get_provider_rate_limiter
-from gateway.schemas import SuccessResponse
-
 
 @router.get("/api/v1/admin/rate-limits", response_model=SuccessResponse)
 async def get_rate_limit_status(
@@ -151,4 +154,96 @@ async def get_rate_limit_status(
         "meta": {
             "timestamp": datetime.now(UTC).isoformat(),
         },
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Provider Management (PRD 3.7.4-5)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/api/v1/admin/providers", response_model=SuccessResponse)
+async def list_providers(
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """List all registered providers with status.
+
+    Returns:
+    - Provider name and enabled state
+    - Capabilities supported
+    - Current health status
+    """
+    providers = []
+    health_status = await registry.health_check_all()
+
+    for name in registry.list_providers():
+        config = registry.get_provider_config(name)
+        health = health_status.get(name)
+
+        providers.append({
+            "name": name,
+            "enabled": config.enabled if config else True,
+            "priority": config.priority if config else 50,
+            "capabilities": list(registry.get_capabilities(name)),
+            "health": {
+                "healthy": health.healthy if health else False,
+                "latency_ms": health.latency_ms if health else None,
+                "error": health.error if health else "unknown",
+            },
+        })
+
+    return {
+        "success": True,
+        "data": {
+            "providers": providers,
+            "count": len(providers),
+        },
+        "meta": {
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    }
+
+
+@router.post("/api/v1/admin/providers/{name}/enable", response_model=SuccessResponse)
+async def enable_provider(
+    name: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Enable a provider for routing."""
+    if not registry.has_provider(name):
+        return {
+            "success": False,
+            "error": {"code": "GW-E4004", "message": f"Provider '{name}' not found"},
+        }
+
+    registry.set_provider_enabled(name, True)
+
+    return {
+        "success": True,
+        "data": {"provider": name, "enabled": True},
+        "meta": {"timestamp": datetime.now(UTC).isoformat()},
+    }
+
+
+@router.post("/api/v1/admin/providers/{name}/disable", response_model=SuccessResponse)
+async def disable_provider(
+    name: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Disable a provider from routing."""
+    if not registry.has_provider(name):
+        return {
+            "success": False,
+            "error": {"code": "GW-E4004", "message": f"Provider '{name}' not found"},
+        }
+
+    registry.set_provider_enabled(name, False)
+
+    return {
+        "success": True,
+        "data": {"provider": name, "enabled": False},
+        "meta": {"timestamp": datetime.now(UTC).isoformat()},
     }

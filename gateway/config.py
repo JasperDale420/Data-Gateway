@@ -61,6 +61,23 @@ class Settings(BaseSettings):
     # Unusual Whales
     uw_api_key: str = Field(default="", alias="UNUSUAL_WHALES_API_KEY")
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Phase 2: Backend Engineering Limits (PRD 6.2, 6.3, 6.5)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Connection Limits (6.3.3-5)
+    ws_idle_timeout: int = Field(default=300, ge=60)  # 5 min idle timeout
+    ws_max_duration: int = Field(default=86400, ge=3600)  # 24h max connection
+    ws_max_clients: int = Field(default=1000, ge=10)  # Max concurrent clients
+
+    # Memory Limits (6.2.1-4)
+    memory_target_mb: int = Field(default=512, ge=256)  # 512MB target
+    memory_hard_limit_mb: int = Field(default=1024, ge=512)  # 1GB hard limit
+    gc_threshold_pct: int = Field(default=80, ge=50, le=95)  # GC at 80%
+
+    # Graceful Shutdown (6.5.3-4)
+    shutdown_drain_seconds: int = Field(default=30, ge=5, le=60)  # 30s drain
+
 
 @lru_cache
 def get_settings() -> Settings:
