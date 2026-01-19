@@ -3553,3 +3553,315 @@ class UnusualWhalesProvider(DataProvider):
         except Exception as e:
             logger.error("uw_stock_insider_trades_failed", error=str(e), symbol=symbol)
             raise
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Final Batch: Remaining SDK Methods for True 100% Coverage
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # --- Option Contract Module ---
+
+    async def get_option_contract_flow(self, option_symbol: str) -> list[dict]:
+        """Get flow for a specific option contract."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.option_contract import get_flow
+
+        try:
+            response = get_flow.sync(option_symbol, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_option_contract_flow_failed", error=str(e), option_symbol=option_symbol)
+            raise
+
+    async def get_option_contract_historic(self, option_symbol: str) -> list[dict]:
+        """Get historic data for a specific option contract."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.option_contract import get_historic
+
+        try:
+            response = get_historic.sync(option_symbol, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_option_contract_historic_failed", error=str(e), option_symbol=option_symbol)
+            raise
+
+    async def get_option_contract_intraday(self, option_symbol: str) -> list[dict]:
+        """Get intraday data for a specific option contract."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.option_contract import get_intraday
+
+        try:
+            response = get_intraday.sync(option_symbol, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_option_contract_intraday_failed", error=str(e), option_symbol=option_symbol)
+            raise
+
+    async def get_option_contract_volume_profile(self, option_symbol: str) -> list[dict]:
+        """Get volume profile for a specific option contract."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.option_contract import get_volume_profile
+
+        try:
+            response = get_volume_profile.sync(option_symbol, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_option_contract_volume_profile_failed", error=str(e), option_symbol=option_symbol)
+            raise
+
+    # --- Contract Module ---
+
+    async def get_contract_price_history(self, option_symbol: str) -> list[dict]:
+        """Get price history for a contract."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.contract import get_price_history
+
+        try:
+            response = get_price_history.sync(option_symbol, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_contract_price_history_failed", error=str(e), option_symbol=option_symbol)
+            raise
+
+    # --- Congress Module ---
+
+    async def get_congress_late_reports(self, limit: int = 50) -> list[dict]:
+        """Get late congressional trading reports."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.congress import get_late_reports
+
+        try:
+            response = get_late_reports.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_congress_late_reports_failed", error=str(e))
+            raise
+
+    async def get_congress_reports(self, limit: int = 50) -> list[dict]:
+        """Get congressional trading reports."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.congress import get_reports
+
+        try:
+            response = get_reports.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_congress_reports_failed", error=str(e))
+            raise
+
+    # --- Flow Module ---
+
+    async def get_contract_flow(self, option_symbol: str) -> list[dict]:
+        """Get flow for a specific contract."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.flow import get_contract_flow
+
+        try:
+            response = get_contract_flow.sync(option_symbol, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_contract_flow_failed", error=str(e), option_symbol=option_symbol)
+            raise
+
+    async def get_full_tape(self, limit: int = 100) -> list[dict]:
+        """Get full options tape."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.flow import get_full_tape
+
+        try:
+            response = get_full_tape.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_full_tape_failed", error=str(e))
+            raise
+
+    # --- Screener Module ---
+
+    async def get_screener_option_contracts(self, limit: int = 50) -> list[dict]:
+        """Get option contracts from screener."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.screener import get_option_contracts
+
+        try:
+            response = get_option_contracts.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_screener_option_contracts_failed", error=str(e))
+            raise
+
+    async def get_screener_stocks(self, limit: int = 50) -> list[dict]:
+        """Get stocks from screener."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.screener import get_stocks
+
+        try:
+            response = get_stocks.sync(client=self._client)
+            data = self._extract_data(response)
+            result = data if isinstance(data, list) else [data] if data else []
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_screener_stocks_failed", error=str(e))
+            raise
+
+    # --- Seasonality Module ---
+
+    async def get_monthly_top_performers(self, month: int) -> list[dict]:
+        """Get top performing stocks by month."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.seasonality import get_monthly_top_performers
+
+        try:
+            response = get_monthly_top_performers.sync(month, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_monthly_top_performers_failed", error=str(e), month=month)
+            raise
+
+    async def get_price_changes_by_month_year(self, symbol: str) -> list[dict]:
+        """Get price changes by month and year for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.seasonality import get_price_changes_by_month_and_year
+
+        try:
+            response = get_price_changes_by_month_and_year.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_price_changes_by_month_year_failed", error=str(e), symbol=symbol)
+            raise
+
+    # --- Shorts Module ---
+
+    async def get_shorts_data(self, symbol: str) -> list[dict]:
+        """Get short data for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.shorts import get_data
+
+        try:
+            response = get_data.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_shorts_data_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_short_interest_float(self, symbol: str) -> dict | None:
+        """Get short interest as percentage of float."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.shorts import get_interest_float
+
+        try:
+            response = get_interest_float.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data[0] if isinstance(data, list) and data else data
+        except Exception as e:
+            logger.error("uw_short_interest_float_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_short_volumes_by_exchange(self, symbol: str) -> list[dict]:
+        """Get short volumes by exchange."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.shorts import get_volumes_by_exchange
+
+        try:
+            response = get_volumes_by_exchange.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_short_volumes_by_exchange_failed", error=str(e), symbol=symbol)
+            raise
+
+    # --- Market Module ---
+
+    async def get_market_spike(self) -> list[dict]:
+        """Get market spike data."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_spike
+
+        try:
+            response = get_spike.sync(client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_market_spike_failed", error=str(e))
+            raise
+
+    # --- Stock Module (remaining) ---
+
+    async def get_spot_exposures_by_expiry_strike(self, symbol: str, expiry: str) -> list[dict]:
+        """Get spot GEX exposures by expiry and strike."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_spot_exposures_by_expiry_strike
+
+        try:
+            response = get_spot_exposures_by_expiry_strike.sync(symbol.upper(), expiry, client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_spot_exposures_by_expiry_strike_failed", error=str(e), symbol=symbol, expiry=expiry)
+            raise
+
+    async def get_flow_recent(self, symbol: str) -> list[dict]:
+        """Get recent flow for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_flow_recent
+
+        try:
+            response = get_flow_recent.sync(symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data if isinstance(data, list) else [data] if data else []
+        except Exception as e:
+            logger.error("uw_flow_recent_failed", error=str(e), symbol=symbol)
+            raise

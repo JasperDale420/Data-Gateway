@@ -5,6 +5,7 @@ from gateway.api.alpaca import router as alpaca_router
 from gateway.api.alphavantage import router as alphavantage_router
 from gateway.api.bulk import router as bulk_router
 from gateway.api.calendar import router as calendar_router
+from gateway.api.catalog import router as catalog_router
 from gateway.api.corporate import adjustments_router
 from gateway.api.corporate import router as corporate_router
 from gateway.api.finnhub import router as finnhub_router
@@ -36,4 +37,6 @@ __all__ = [
     "corporate_router",
     "adjustments_router",
     "quality_router",
+    "catalog_router",
 ]
+

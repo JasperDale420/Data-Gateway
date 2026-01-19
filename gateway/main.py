@@ -19,6 +19,7 @@ from gateway.api import (
     alphavantage_router,
     bulk_router,
     calendar_router,
+    catalog_router,
     corporate_router,
     finnhub_router,
     health_router,
@@ -181,6 +182,7 @@ def create_app() -> FastAPI:
     app.include_router(corporate_router)
     app.include_router(adjustments_router)
     app.include_router(quality_router)
+    app.include_router(catalog_router)
 
     # Root endpoint
     @app.get("/")

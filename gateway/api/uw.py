@@ -3384,3 +3384,584 @@ async def get_stock_insider_trades(
 
     cache.set(cache_key, response, ttl=300)
     return response
+
+
+# ─────────────────────────────────────────────────────────────────
+# Final Batch: Remaining SDK Endpoints for True 100% Coverage
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/option-contract/{option_symbol}/flow", response_model=SuccessResponse)
+async def get_option_contract_flow(
+    option_symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get flow for a specific option contract."""
+    cache_key = f"uw:option-contract:flow:{option_symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_option_contract_flow(option_symbol=option_symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=60)
+    return response
+
+
+@router.get("/option-contract/{option_symbol}/historic", response_model=SuccessResponse)
+async def get_option_contract_historic(
+    option_symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get historic data for a specific option contract."""
+    cache_key = f"uw:option-contract:historic:{option_symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_option_contract_historic(option_symbol=option_symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/option-contract/{option_symbol}/intraday", response_model=SuccessResponse)
+async def get_option_contract_intraday(
+    option_symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get intraday data for a specific option contract."""
+    cache_key = f"uw:option-contract:intraday:{option_symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_option_contract_intraday(option_symbol=option_symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=60)
+    return response
+
+
+@router.get("/option-contract/{option_symbol}/volume-profile", response_model=SuccessResponse)
+async def get_option_contract_volume_profile(
+    option_symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get volume profile for a specific option contract."""
+    cache_key = f"uw:option-contract:volume-profile:{option_symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_option_contract_volume_profile(option_symbol=option_symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/contract/{option_symbol}/price-history", response_model=SuccessResponse)
+async def get_contract_price_history(
+    option_symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get price history for an option contract."""
+    cache_key = f"uw:contract:price-history:{option_symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_contract_price_history(option_symbol=option_symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/congress/late-reports", response_model=SuccessResponse)
+async def get_congress_late_reports(
+    limit: int = Query(default=50, ge=1, le=500, description="Max results"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get late congressional trading reports."""
+    cache_key = f"uw:congress:late-reports:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_congress_late_reports(limit=limit)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/congress/reports", response_model=SuccessResponse)
+async def get_congress_reports(
+    limit: int = Query(default=50, ge=1, le=500, description="Max results"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get congressional trading reports."""
+    cache_key = f"uw:congress:reports:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_congress_reports(limit=limit)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/flow/contract/{option_symbol}", response_model=SuccessResponse)
+async def get_contract_flow(
+    option_symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get flow for a specific contract."""
+    cache_key = f"uw:flow:contract:{option_symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_contract_flow(option_symbol=option_symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=60)
+    return response
+
+
+@router.get("/flow/full-tape", response_model=SuccessResponse)
+async def get_full_tape(
+    limit: int = Query(default=100, ge=1, le=1000, description="Max results"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get full options tape."""
+    cache_key = f"uw:flow:full-tape:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_full_tape(limit=limit)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=30)
+    return response
+
+
+@router.get("/screener/option-contracts", response_model=SuccessResponse)
+async def get_screener_option_contracts(
+    limit: int = Query(default=50, ge=1, le=500, description="Max results"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get option contracts from screener."""
+    cache_key = f"uw:screener:option-contracts:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_screener_option_contracts(limit=limit)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=60)
+    return response
+
+
+@router.get("/screener/stocks", response_model=SuccessResponse)
+async def get_screener_stocks(
+    limit: int = Query(default=50, ge=1, le=500, description="Max results"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get stocks from screener."""
+    cache_key = f"uw:screener:stocks:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_screener_stocks(limit=limit)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=60)
+    return response
+
+
+@router.get("/seasonality/monthly-top-performers/{month}", response_model=SuccessResponse)
+async def get_monthly_top_performers(
+    month: int,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get top performing stocks by month (1-12)."""
+    cache_key = f"uw:seasonality:monthly-top-performers:{month}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_monthly_top_performers(month=month)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"month": month, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+@router.get("/seasonality/{symbol}/price-changes-by-month", response_model=SuccessResponse)
+async def get_price_changes_by_month_year(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get price changes by month and year for a ticker."""
+    symbol = symbol.upper()
+    cache_key = f"uw:seasonality:price-changes:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_price_changes_by_month_year(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=3600)
+    return response
+
+
+@router.get("/shorts/{symbol}/data", response_model=SuccessResponse)
+async def get_shorts_data(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get short data for a ticker."""
+    symbol = symbol.upper()
+    cache_key = f"uw:shorts:data:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_shorts_data(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/shorts/{symbol}/interest-float", response_model=SuccessResponse)
+async def get_short_interest_float(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get short interest as percentage of float."""
+    symbol = symbol.upper()
+    cache_key = f"uw:shorts:interest-float:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_short_interest_float(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/shorts/{symbol}/volumes-by-exchange", response_model=SuccessResponse)
+async def get_short_volumes_by_exchange(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get short volumes by exchange."""
+    symbol = symbol.upper()
+    cache_key = f"uw:shorts:volumes-by-exchange:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_short_volumes_by_exchange(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=300)
+    return response
+
+
+@router.get("/market/spike", response_model=SuccessResponse)
+async def get_market_spike(
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get market spike data."""
+    cache_key = "uw:market:spike"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_market_spike()
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=60)
+    return response
+
+
+@router.get("/stock/{symbol}/spot-exposures-by-expiry-strike/{expiry}", response_model=SuccessResponse)
+async def get_spot_exposures_by_expiry_strike(
+    symbol: str,
+    expiry: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get spot GEX exposures by expiry and strike."""
+    symbol = symbol.upper()
+    cache_key = f"uw:stock:spot-exposures-expiry-strike:{symbol}:{expiry}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_spot_exposures_by_expiry_strike(symbol=symbol, expiry=expiry)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "expiry": expiry, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=60)
+    return response
+
+
+@router.get("/stock/{symbol}/flow-recent", response_model=SuccessResponse)
+async def get_flow_recent(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get recent flow for a ticker."""
+    symbol = symbol.upper()
+    cache_key = f"uw:stock:flow-recent:{symbol}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    provider = registry.get("unusual_whales")
+    if not provider:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
+
+    await require_provider_rate_limit("unusual_whales")
+    data = await provider.get_flow_recent(symbol=symbol)
+
+    response = {
+        "success": True,
+        "data": data,
+        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
+    }
+
+    cache.set(cache_key, response, ttl=30)
+    return response
