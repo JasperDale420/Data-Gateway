@@ -50,6 +50,12 @@ All notable changes to this project will be documented in this file.
 - **Pydantic Response Models**: Added 60+ typed response schemas for OpenAPI documentation
   - Stock, Options, Crypto, Forex, News, Screener response types
   - Trading API response types (Account, Order, Position, etc.)
+- **Unusual Whales API Full Coverage**: 106 endpoints (100% SDK parity)
+  - Phase 1: News headlines, Politician people/trades/portfolios/holders
+  - Phase 2: Economic/FDA/Market calendars, Market imbalances/options volume/insider trades/sector stats, Market tide by ETF
+  - Phase 3: Institution list/activity/holdings/sectors/ownership/filings, Insider transactions/sector flow/ticker flow/insiders
+  - Phase 4: Stock info/candles/state, OI per strike/expiry, Greeks/Greek exposure by strike-expiry, ATM options, Flow per strike intraday, Risk reversal skew, Spot exposures, Options volume, Greek flow by expiry, Sector tickers, Stock insider trades
+  - Phase 5: ETF info/inflow-outflow/ticker-exposure/country-weights, Screener analysts, Alerts all/configuration
 - **Paper/Live trading support**: Uses `APCA_API_BASE_URL` env var
 - **New dependency**: `alpaca-py>=0.28`
 
