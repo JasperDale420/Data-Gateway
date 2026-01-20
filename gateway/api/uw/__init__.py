@@ -12,6 +12,9 @@ Sub-routers added so far:
 - options: Options analytics (net-premium, max-pain, iv-rank, oi-change)
 - etf: ETF analytics
 - shorts: Short interest, FTDs, short volume
+- volatility: IV term structure, realized vol, vol stats, IV surface
+- seasonality: Market and ticker seasonality
+- options_data: Option volume, intraday, contracts screener
 """
 
 from fastapi import APIRouter
@@ -23,8 +26,11 @@ from gateway.api.uw import (
     greeks,
     market,
     options,
+    options_data,
     screener,
+    seasonality,
     shorts,
+    volatility,
 )
 
 # Create combined router with the original prefix and tags
@@ -39,5 +45,8 @@ router.include_router(screener.router)
 router.include_router(options.router)
 router.include_router(etf.router)
 router.include_router(shorts.router)
+router.include_router(volatility.router)
+router.include_router(seasonality.router)
+router.include_router(options_data.router)
 
 __all__ = ["router"]
