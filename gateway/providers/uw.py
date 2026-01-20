@@ -129,8 +129,19 @@ class UnusualWhalesProvider(DataProvider):
         return []
 
     def _get_data_safe(self, response: Any) -> Any:
-        """Safely get .data from response, handling None/ErrorMessage."""
-        return response.data if response and hasattr(response, "data") else None
+        """Safely get .data from response, handling None/ErrorMessage/empty arrays.
+
+        Returns:
+            - dict: If response.data is a dict (expected case)
+            - None: If response is None, has no data, data is empty list, or data is ErrorMessage
+        """
+        if not response or not hasattr(response, "data"):
+            return None
+        data = response.data
+        # Return None for empty lists - callers expect dict with .get()
+        if isinstance(data, list):
+            return data[0] if len(data) == 1 else None if len(data) == 0 else data
+        return data
 
     async def get_flow_alerts(
         self,
