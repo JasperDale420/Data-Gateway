@@ -27,7 +27,7 @@ clients:
     key: gw_orion_trading_key_55555
     permissions:
       providers: ["alpaca", "uw", "yfinance", "finnhub"]
-      feeds: ["bars", "quotes", "trades", "flow", "news"]
+      feeds: ["bars", "quotes", "trades", "flow", "news", "options"]
       max_symbols: 1000
       rate_limit: 600
     enabled: true
