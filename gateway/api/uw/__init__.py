@@ -1,7 +1,4 @@
-"""Unusual Whales API sub-router package.
-
-This package decomposes the monolithic uw.py into domain-specific sub-routers.
-"""
+"""Unusual Whales API sub-router package."""
 
 from fastapi import APIRouter
 
@@ -13,6 +10,8 @@ from gateway.api.uw import (
     greeks,
     intelligence,
     market,
+    market_data,
+    misc,
     options,
     options_data,
     screener,
@@ -24,7 +23,7 @@ from gateway.api.uw import (
 # Create combined router with the original prefix and tags
 router = APIRouter(prefix="/api/v1/uw", tags=["unusual_whales"])
 
-# Include all sub-routers (they don't have prefix since parent has it)
+# Include all sub-routers
 router.include_router(flow.router)
 router.include_router(market.router)
 router.include_router(greeks.router)
@@ -38,5 +37,7 @@ router.include_router(seasonality.router)
 router.include_router(options_data.router)
 router.include_router(intelligence.router)
 router.include_router(flow_analytics.router)
+router.include_router(market_data.router)
+router.include_router(misc.router)
 
 __all__ = ["router"]
