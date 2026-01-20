@@ -61,7 +61,7 @@ async def get_status(
     provider_status = await registry.health_check_all()
 
     # Cache stats
-    cache_stats = cache.get_stats()
+    cache_stats = cache.get_stats_dict()
 
     # Connection stats
     connection_stats = connections.get_stats()
@@ -181,17 +181,19 @@ async def list_providers(
         config = registry.get_provider_config(name)
         health = health_status.get(name)
 
-        providers.append({
-            "name": name,
-            "enabled": config.enabled if config else True,
-            "priority": config.priority if config else 50,
-            "capabilities": list(registry.get_capabilities(name)),
-            "health": {
-                "healthy": health.healthy if health else False,
-                "latency_ms": health.latency_ms if health else None,
-                "error": health.error if health else "unknown",
-            },
-        })
+        providers.append(
+            {
+                "name": name,
+                "enabled": config.enabled if config else True,
+                "priority": config.priority if config else 50,
+                "capabilities": list(registry.get_capabilities(name)),
+                "health": {
+                    "healthy": health.healthy if health else False,
+                    "latency_ms": health.latency_ms if health else None,
+                    "error": health.error if health else "unknown",
+                },
+            }
+        )
 
     return {
         "success": True,

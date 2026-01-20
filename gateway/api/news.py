@@ -5,10 +5,10 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.deps import get_cache, require_api_key, require_provider_rate_limit
-from gateway.schemas import SuccessResponse
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.providers.news import NewsProvider
+from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/api/v1/news", tags=["news"])
 

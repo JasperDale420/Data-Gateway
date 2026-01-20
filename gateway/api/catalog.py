@@ -12,7 +12,6 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
 
-
 # REST API Provider Catalog
 PROVIDER_CATALOG = {
     "alpaca": {

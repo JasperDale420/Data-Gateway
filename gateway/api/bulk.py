@@ -10,12 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from gateway.api.deps import require_api_key
-from gateway.schemas import SuccessResponse
 from gateway.core.bulk import (
     BulkBarsRequest,
     BulkJobStatus,
     get_bulk_manager,
 )
+from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/api/v1/bulk", tags=["Bulk Data"])
 

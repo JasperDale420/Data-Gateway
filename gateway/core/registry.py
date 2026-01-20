@@ -155,6 +155,7 @@ class ProviderRegistry:
                 def __init__(self, enabled: bool, priority: int):
                     self.enabled = enabled
                     self.priority = priority
+
             return ProviderConfig(
                 enabled=config.get("enabled", True),
                 priority=config.get("priority", 50),

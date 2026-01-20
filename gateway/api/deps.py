@@ -1,6 +1,7 @@
 """FastAPI dependency injection."""
 
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, Header, HTTPException
 
@@ -9,6 +10,10 @@ from gateway.core.auth import Client, ClientAuthenticator
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
 from gateway.core.registry import ProviderRegistry
+
+if TYPE_CHECKING:
+    from gateway.core.data_sink import DataSinkRegistry
+    from gateway.core.multiplexer import StreamMultiplexer
 
 
 @lru_cache
@@ -66,6 +71,21 @@ def get_multiplexer() -> "StreamMultiplexer":
     if _multiplexer is None:
         raise RuntimeError("Stream multiplexer not initialized")
     return _multiplexer
+
+
+# Global data sink registry (initialized in lifespan)
+_sink_registry: "DataSinkRegistry | None" = None
+
+
+def set_sink_registry(registry: "DataSinkRegistry") -> None:
+    """Set the global data sink registry (called during startup)."""
+    global _sink_registry
+    _sink_registry = registry
+
+
+def get_sink_registry() -> "DataSinkRegistry | None":
+    """Get the data sink registry (may be None if not configured)."""
+    return _sink_registry
 
 
 def require_api_key(

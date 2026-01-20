@@ -323,4 +323,3 @@ def update_memory_pressure(current_mb: float, target_mb: float) -> None:
     if target_mb > 0:
         pressure = (current_mb / target_mb) * 100
         MEMORY_PRESSURE.set(min(pressure, 100))
-

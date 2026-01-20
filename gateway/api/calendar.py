@@ -10,11 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from gateway.api.deps import require_api_key
-from gateway.schemas import SuccessResponse
 from gateway.core.calendar import (
     get_earnings_calendar,
     get_trading_calendar,
 )
+from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/api/v1/calendar", tags=["Trading Calendar"])
 

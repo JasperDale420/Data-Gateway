@@ -10,12 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from pydantic import BaseModel, Field
 
 from gateway.api.deps import require_api_key
-from gateway.schemas import SuccessResponse
 from gateway.core.replay import (
     ReplayConfig,
     ReplayState,
     get_replay_manager,
 )
+from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/api/v1/replay", tags=["Historical Replay"])
 

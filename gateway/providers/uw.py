@@ -3,7 +3,7 @@
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 
@@ -932,7 +932,7 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_max_pain_failed", symbol=symbol, error=str(e))
             return []
 
-    async def get_iv_rank(self, symbol: str) -> Optional["NormalizedIVRank"]:
+    async def get_iv_rank(self, symbol: str) -> dict | None:
         """Get IV rank for a ticker."""
         from gateway.schemas import NormalizedIVRank
 
@@ -1345,7 +1345,7 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_iv_term_structure_failed", symbol=symbol, error=str(e))
             return []
 
-    async def get_realized_volatility(self, symbol: str) -> Optional["NormalizedVolatilityStats"]:
+    async def get_realized_volatility(self, symbol: str) -> dict | None:
         """Get realized volatility for a ticker."""
         from gateway.schemas import NormalizedVolatilityStats
 
@@ -1393,7 +1393,7 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_realized_volatility_failed", symbol=symbol, error=str(e))
             return None
 
-    async def get_volatility_stats(self, symbol: str) -> Optional["NormalizedVolatilityStats"]:
+    async def get_volatility_stats(self, symbol: str) -> dict | None:
         """Get volatility stats for a ticker."""
         from gateway.schemas import NormalizedVolatilityStats
 
@@ -2787,9 +2787,7 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_politician_people_failed", error=str(e))
             raise
 
-    async def get_politician_recent_trades(
-        self, limit: int = 50
-    ) -> list[dict]:
+    async def get_politician_recent_trades(self, limit: int = 50) -> list[dict]:
         """Get latest transacted trades by congress members."""
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
@@ -2817,7 +2815,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_politician_portfolios_failed", error=str(e), politician_id=politician_id)
+            logger.error(
+                "uw_politician_portfolios_failed", error=str(e), politician_id=politician_id
+            )
             raise
 
     async def get_politician_holders(self, symbol: str) -> list[dict]:
@@ -2839,7 +2839,7 @@ class UnusualWhalesProvider(DataProvider):
     # Phase 2: Market Calendar & Data Endpoints
     # ─────────────────────────────────────────────────────────────────────────
 
-    async def get_economic_calendar(self) -> list[dict]:
+    async def get_economic_calendar_simple(self) -> list[dict]:
         """Get economic calendar events."""
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
@@ -2991,7 +2991,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_institution_activity_failed", error=str(e), institution_id=institution_id)
+            logger.error(
+                "uw_institution_activity_failed", error=str(e), institution_id=institution_id
+            )
             raise
 
     async def get_institution_holdings(self, institution_id: str) -> list[dict]:
@@ -3006,7 +3008,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_institution_holdings_failed", error=str(e), institution_id=institution_id)
+            logger.error(
+                "uw_institution_holdings_failed", error=str(e), institution_id=institution_id
+            )
             raise
 
     async def get_institution_sector_exposure(self, institution_id: str) -> list[dict]:
@@ -3021,7 +3025,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_institution_sector_failed", error=str(e), institution_id=institution_id)
+            logger.error(
+                "uw_institution_sector_failed", error=str(e), institution_id=institution_id
+            )
             raise
 
     async def get_institutional_ownership(self, symbol: str) -> list[dict]:
@@ -3341,7 +3347,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_greeks_by_strike_expiry_failed", error=str(e), symbol=symbol, expiry=expiry)
+            logger.error(
+                "uw_greeks_by_strike_expiry_failed", error=str(e), symbol=symbol, expiry=expiry
+            )
             raise
 
     async def get_greek_exposure_by_strike_expiry(self, symbol: str, expiry: str) -> list[dict]:
@@ -3352,11 +3360,18 @@ class UnusualWhalesProvider(DataProvider):
         from unusualwhales.api.stock import get_greek_exposure_by_strike_expiry
 
         try:
-            response = get_greek_exposure_by_strike_expiry.sync(symbol.upper(), expiry, client=self._client)
+            response = get_greek_exposure_by_strike_expiry.sync(
+                symbol.upper(), expiry, client=self._client
+            )
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_greek_exposure_by_strike_expiry_failed", error=str(e), symbol=symbol, expiry=expiry)
+            logger.error(
+                "uw_greek_exposure_by_strike_expiry_failed",
+                error=str(e),
+                symbol=symbol,
+                expiry=expiry,
+            )
             raise
 
     async def get_atm_option_contracts(self, symbol: str) -> list[dict]:
@@ -3367,7 +3382,9 @@ class UnusualWhalesProvider(DataProvider):
         from unusualwhales.api.stock import get_atm_option_contracts_for_expiries
 
         try:
-            response = get_atm_option_contracts_for_expiries.sync(symbol.upper(), client=self._client)
+            response = get_atm_option_contracts_for_expiries.sync(
+                symbol.upper(), client=self._client
+            )
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
@@ -3536,7 +3553,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_greek_flow_by_expiry_failed", error=str(e), symbol=symbol, expiry=expiry)
+            logger.error(
+                "uw_greek_flow_by_expiry_failed", error=str(e), symbol=symbol, expiry=expiry
+            )
             raise
 
     async def get_stock_insider_trades(self, symbol: str) -> list[dict]:
@@ -3572,7 +3591,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_option_contract_flow_failed", error=str(e), option_symbol=option_symbol)
+            logger.error(
+                "uw_option_contract_flow_failed", error=str(e), option_symbol=option_symbol
+            )
             raise
 
     async def get_option_contract_historic(self, option_symbol: str) -> list[dict]:
@@ -3587,7 +3608,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_option_contract_historic_failed", error=str(e), option_symbol=option_symbol)
+            logger.error(
+                "uw_option_contract_historic_failed", error=str(e), option_symbol=option_symbol
+            )
             raise
 
     async def get_option_contract_intraday(self, option_symbol: str) -> list[dict]:
@@ -3602,7 +3625,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_option_contract_intraday_failed", error=str(e), option_symbol=option_symbol)
+            logger.error(
+                "uw_option_contract_intraday_failed", error=str(e), option_symbol=option_symbol
+            )
             raise
 
     async def get_option_contract_volume_profile(self, option_symbol: str) -> list[dict]:
@@ -3617,7 +3642,11 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_option_contract_volume_profile_failed", error=str(e), option_symbol=option_symbol)
+            logger.error(
+                "uw_option_contract_volume_profile_failed",
+                error=str(e),
+                option_symbol=option_symbol,
+            )
             raise
 
     # --- Contract Module ---
@@ -3634,7 +3663,9 @@ class UnusualWhalesProvider(DataProvider):
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_contract_price_history_failed", error=str(e), option_symbol=option_symbol)
+            logger.error(
+                "uw_contract_price_history_failed", error=str(e), option_symbol=option_symbol
+            )
             raise
 
     # --- Congress Module ---
@@ -3688,7 +3719,7 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_contract_flow_failed", error=str(e), option_symbol=option_symbol)
             raise
 
-    async def get_full_tape(self, limit: int = 100) -> list[dict]:
+    async def get_full_tape_simple(self, limit: int = 100) -> list[dict]:
         """Get full options tape."""
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
@@ -3844,11 +3875,18 @@ class UnusualWhalesProvider(DataProvider):
         from unusualwhales.api.stock import get_spot_exposures_by_expiry_strike
 
         try:
-            response = get_spot_exposures_by_expiry_strike.sync(symbol.upper(), expiry, client=self._client)
+            response = get_spot_exposures_by_expiry_strike.sync(
+                symbol.upper(), expiry, client=self._client
+            )
             data = self._extract_data(response)
             return data if isinstance(data, list) else [data] if data else []
         except Exception as e:
-            logger.error("uw_spot_exposures_by_expiry_strike_failed", error=str(e), symbol=symbol, expiry=expiry)
+            logger.error(
+                "uw_spot_exposures_by_expiry_strike_failed",
+                error=str(e),
+                symbol=symbol,
+                expiry=expiry,
+            )
             raise
 
     async def get_flow_recent(self, symbol: str) -> list[dict]:

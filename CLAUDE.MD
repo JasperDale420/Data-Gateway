@@ -5,6 +5,7 @@
 **Data Gateway** is a unified financial data gateway for the Empire Trading Framework. It provides a single WebSocket and REST interface for accessing multiple financial data providers with WebSocket multiplexing, REST proxy caching, client authentication, and provider abstraction.
 
 **Tech Stack:**
+
 - Python 3.12+
 - FastAPI (async web framework)
 - WebSockets for real-time streaming
@@ -115,6 +116,7 @@ Data-Gateway/
 ## API Endpoints
 
 ### WebSocket Endpoint
+
 - `ws://localhost:8080/ws` - Real-time streaming connection
   - Authentication: `{"action": "auth", "key": "gw_your_api_key"}`
   - Subscribe: `{"action": "subscribe", "feed": "bars", "symbols": ["AAPL", "TSLA"]}`
@@ -132,8 +134,18 @@ Data-Gateway/
 | `/api/v1/sec/*` | SEC EDGAR | `gateway/api/sec.py` |
 | `/api/v1/calendar/*` | Trading Calendar | `gateway/api/calendar.py` |
 | `/api/v1/symbology/*` | Symbol Resolution | `gateway/api/symbology.py` |
+| `/catalog/*` | API Discovery | `gateway/api/catalog.py` |
 | `/health/*` | Health checks | `gateway/api/health.py` |
 | `/metrics` | Prometheus metrics | `gateway/api/metrics.py` |
+
+### API Discovery Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /catalog/` | API summary and discovery entry point |
+| `GET /catalog/streams` | WebSocket stream metadata (channels, formats, examples) |
+| `GET /catalog/feeds` | Gateway feed name mappings (18 feed types) |
+| `GET /catalog/providers` | REST API provider catalog (7 providers) |
 
 Full API documentation is available at `/docs` when running in debug mode.
 
@@ -142,16 +154,19 @@ Full API documentation is available at `/docs` when running in debug mode.
 ### Environment Variables (`/Users/jacobmcmillan/Empire/Data-Gateway/.env`)
 
 **Core Settings:**
+
 - `GATEWAY_DEBUG` - Enable debug mode (default: `false`)
 - `GATEWAY_LOG_LEVEL` - Log level (default: `INFO`)
 - `GATEWAY_HOST` - Server host (default: `0.0.0.0`)
 - `GATEWAY_PORT` - Server port (default: `8080`)
 
 **Cache Settings:**
+
 - `GATEWAY_CACHE_MAX_SIZE` - Max cache entries (default: `10000`)
 - `GATEWAY_CACHE_DEFAULT_TTL` - Default TTL in seconds (default: `300`)
 
 **WebSocket Settings:**
+
 - `GATEWAY_AUTH_TIMEOUT_SECONDS` - Authentication timeout (default: `10`)
 - `STREAM_USE_IEX` - Use IEX for streaming (default: `false`)
 
@@ -216,6 +231,7 @@ pytest tests/test_auth.py -v
 ### Code Quality
 
 The project uses:
+
 - **ruff** - Fast Python linter
 - **black** - Code formatter (line length: 100)
 - **pyright** - Type checker
@@ -240,21 +256,25 @@ pyright gateway/
 ## Key Files to Know
 
 ### Entry Point
+
 - `gateway/main.py:198` - FastAPI app instance and initialization
 
 ### Configuration
+
 - `gateway/config.py` - Settings using pydantic-settings
 - `.env` - Environment variables (not committed)
 - `clients.yaml` - Client authentication
 - `providers.yaml` - Provider configuration
 
 ### Core Logic
+
 - `gateway/core/stream.py` - WebSocket multiplexing logic
 - `gateway/core/registry.py` - Provider registry and lifecycle
 - `gateway/core/auth.py` - Authentication and permissions
 - `gateway/core/cache.py` - Caching implementation
 
 ### Recent Changes (Git Status)
+
 - Modified: `gateway/providers/uw.py` - Unusual Whales provider implementation
 - Modified: `unusualwhales_sdk` - Custom SDK submodule
 - Untracked: `gateway/api/catalog.py` - New catalog API (not yet committed)
@@ -304,6 +324,7 @@ pyright gateway/
 ## CI/CD
 
 GitHub Actions runs on PRs and pushes to `main`:
+
 1. Pre-commit hooks (ruff, black, pyright, bandit)
 2. pytest with coverage
 3. SonarCloud analysis

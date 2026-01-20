@@ -7,9 +7,9 @@ from datetime import date
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from gateway.schemas import SuccessResponse
 
 from gateway.core.quality import get_quality_analyzer
+from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/quality", tags=["quality"])
 
@@ -71,7 +71,7 @@ async def get_symbol_quality(
 
     # This would typically fetch actual data and analyze it
     # For now, return a mock quality report structure
-    analyzer = get_quality_analyzer()
+    _analyzer = get_quality_analyzer()  # noqa: F841
 
     # In production, would fetch bars/quotes/trades and analyze
     # Mock response showing the structure

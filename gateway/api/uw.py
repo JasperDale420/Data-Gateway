@@ -1985,7 +1985,7 @@ async def get_politician_holders(
 
 
 @router.get("/market/economic-calendar", response_model=SuccessResponse)
-async def get_economic_calendar(
+async def get_economic_calendar_market(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -2296,7 +2296,11 @@ async def get_institution_activity(
     response = {
         "success": True,
         "data": data,
-        "meta": {"institution_id": institution_id, "count": len(data), "provider": "unusual_whales"},
+        "meta": {
+            "institution_id": institution_id,
+            "count": len(data),
+            "provider": "unusual_whales",
+        },
     }
 
     cache.set(cache_key, response, ttl=3600)
@@ -2326,7 +2330,11 @@ async def get_institution_holdings(
     response = {
         "success": True,
         "data": data,
-        "meta": {"institution_id": institution_id, "count": len(data), "provider": "unusual_whales"},
+        "meta": {
+            "institution_id": institution_id,
+            "count": len(data),
+            "provider": "unusual_whales",
+        },
     }
 
     cache.set(cache_key, response, ttl=3600)
@@ -2356,7 +2364,11 @@ async def get_institution_sector_exposure(
     response = {
         "success": True,
         "data": data,
-        "meta": {"institution_id": institution_id, "count": len(data), "provider": "unusual_whales"},
+        "meta": {
+            "institution_id": institution_id,
+            "count": len(data),
+            "provider": "unusual_whales",
+        },
     }
 
     cache.set(cache_key, response, ttl=3600)
@@ -2787,7 +2799,12 @@ async def get_stock_candles(
     response = {
         "success": True,
         "data": data,
-        "meta": {"symbol": symbol, "timeframe": timeframe, "count": len(data), "provider": "unusual_whales"},
+        "meta": {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "count": len(data),
+            "provider": "unusual_whales",
+        },
     }
 
     cache.set(cache_key, response, ttl=60)
@@ -2943,14 +2960,21 @@ async def get_greeks_by_strike_expiry(
     response = {
         "success": True,
         "data": data,
-        "meta": {"symbol": symbol, "expiry": expiry, "count": len(data), "provider": "unusual_whales"},
+        "meta": {
+            "symbol": symbol,
+            "expiry": expiry,
+            "count": len(data),
+            "provider": "unusual_whales",
+        },
     }
 
     cache.set(cache_key, response, ttl=300)
     return response
 
 
-@router.get("/stock/{symbol}/greek-exposure-by-strike-expiry/{expiry}", response_model=SuccessResponse)
+@router.get(
+    "/stock/{symbol}/greek-exposure-by-strike-expiry/{expiry}", response_model=SuccessResponse
+)
 async def get_greek_exposure_by_strike_expiry(
     symbol: str,
     expiry: str,
@@ -2975,7 +2999,12 @@ async def get_greek_exposure_by_strike_expiry(
     response = {
         "success": True,
         "data": data,
-        "meta": {"symbol": symbol, "expiry": expiry, "count": len(data), "provider": "unusual_whales"},
+        "meta": {
+            "symbol": symbol,
+            "expiry": expiry,
+            "count": len(data),
+            "provider": "unusual_whales",
+        },
     }
 
     cache.set(cache_key, response, ttl=300)
@@ -3100,7 +3129,12 @@ async def get_risk_reversal_skew(
     response = {
         "success": True,
         "data": data,
-        "meta": {"symbol": symbol, "expiry": expiry, "count": len(data), "provider": "unusual_whales"},
+        "meta": {
+            "symbol": symbol,
+            "expiry": expiry,
+            "count": len(data),
+            "provider": "unusual_whales",
+        },
     }
 
     cache.set(cache_key, response, ttl=300)
@@ -3348,7 +3382,12 @@ async def get_greek_flow_by_expiry(
     response = {
         "success": True,
         "data": data,
-        "meta": {"symbol": symbol, "expiry": expiry, "count": len(data), "provider": "unusual_whales"},
+        "meta": {
+            "symbol": symbol,
+            "expiry": expiry,
+            "count": len(data),
+            "provider": "unusual_whales",
+        },
     }
 
     cache.set(cache_key, response, ttl=300)
@@ -3632,7 +3671,7 @@ async def get_contract_flow(
 
 
 @router.get("/flow/full-tape", response_model=SuccessResponse)
-async def get_full_tape(
+async def get_full_tape_flow(
     limit: int = Query(default=100, ge=1, le=1000, description="Max results"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -3692,7 +3731,7 @@ async def get_screener_option_contracts(
 
 
 @router.get("/screener/stocks", response_model=SuccessResponse)
-async def get_screener_stocks(
+async def get_screener_stocks_extended(
     limit: int = Query(default=50, ge=1, le=500, description="Max results"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -3904,7 +3943,9 @@ async def get_market_spike(
     return response
 
 
-@router.get("/stock/{symbol}/spot-exposures-by-expiry-strike/{expiry}", response_model=SuccessResponse)
+@router.get(
+    "/stock/{symbol}/spot-exposures-by-expiry-strike/{expiry}", response_model=SuccessResponse
+)
 async def get_spot_exposures_by_expiry_strike(
     symbol: str,
     expiry: str,
@@ -3929,7 +3970,12 @@ async def get_spot_exposures_by_expiry_strike(
     response = {
         "success": True,
         "data": data,
-        "meta": {"symbol": symbol, "expiry": expiry, "count": len(data), "provider": "unusual_whales"},
+        "meta": {
+            "symbol": symbol,
+            "expiry": expiry,
+            "count": len(data),
+            "provider": "unusual_whales",
+        },
     }
 
     cache.set(cache_key, response, ttl=60)

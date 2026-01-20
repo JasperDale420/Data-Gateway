@@ -1603,6 +1603,7 @@ class AlpacaProvider(DataProvider):
     def get_orders(
         self,
         status: str = "open",
+        limit: int = 100,
         direction: str = "desc",
         symbols: list[str] | None = None,
         nested: bool = True,

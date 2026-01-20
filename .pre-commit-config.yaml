@@ -37,6 +37,7 @@ repos:
       - id: bandit
         args: [-r, gateway, -c, pyproject.toml]
         additional_dependencies: ["bandit[toml]"]
+        pass_filenames: false
 
   # Detect-secrets - Prevent secrets from being committed
   - repo: https://github.com/Yelp/detect-secrets

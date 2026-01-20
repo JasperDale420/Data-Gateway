@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     # Graceful Shutdown (6.5.3-4)
     shutdown_drain_seconds: int = Field(default=30, ge=5, le=60)  # 30s drain
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Data Sink (for Heber integration)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    data_sink_enabled: bool = False
+    data_sink_redis_url: str = Field(default="", alias="GATEWAY_DATA_SINK_REDIS_URL")
+    data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
+
 
 @lru_cache
 def get_settings() -> Settings:

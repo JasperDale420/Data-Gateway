@@ -39,4 +39,3 @@ __all__ = [
     "quality_router",
     "catalog_router",
 ]
-

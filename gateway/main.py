@@ -98,6 +98,15 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
                 error=str(e),
             )
 
+    # Publish to data sink for Heber storage (non-blocking)
+    from gateway.api.deps import get_sink_registry
+    from gateway.core.data_sink import Topics
+
+    sink_registry = get_sink_registry()
+    if sink_registry:
+        topic = Topics.from_message_type(envelope.get("T", data_type))
+        await sink_registry.publish_all(topic, envelope)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -136,6 +145,24 @@ async def lifespan(app: FastAPI):
         logger.info("multiplexer_initialized")
     else:
         logger.warning("multiplexer_skipped", reason="Missing Alpaca credentials")
+
+    # Initialize data sink for Heber integration
+    sink_registry = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url:
+        from gateway.api.deps import set_sink_registry
+        from gateway.core.data_sink import DataSinkRegistry
+        from gateway.core.redis_sink import RedisStreamsSink
+
+        sink_registry = DataSinkRegistry()
+        redis_sink = RedisStreamsSink(
+            redis_url=settings.data_sink_redis_url,
+            max_len=settings.data_sink_max_stream_len,
+        )
+        sink_registry.register(redis_sink)
+        set_sink_registry(sink_registry)
+        logger.info("data_sink_initialized", sink="redis_streams")
+    elif settings.data_sink_enabled:
+        logger.warning("data_sink_skipped", reason="Missing GATEWAY_DATA_SINK_REDIS_URL")
 
     # SIGHUP handler for hot config reload (PRD 6.5.4)
     def handle_sighup(signum, frame):

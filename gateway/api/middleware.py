@@ -576,13 +576,15 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         if self._global_requests >= self.global_limit:
             logger.warning("global_rate_limit_exceeded", current=self._global_requests)
             return Response(
-                content=json.dumps({
-                    "success": False,
-                    "error": {
-                        "code": "GW-E4029",
-                        "message": "Global rate limit exceeded",
-                    },
-                }),
+                content=json.dumps(
+                    {
+                        "success": False,
+                        "error": {
+                            "code": "GW-E4029",
+                            "message": "Global rate limit exceeded",
+                        },
+                    }
+                ),
                 status_code=429,
                 media_type="application/json",
             )
@@ -591,13 +593,15 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         client_ip = self._get_client_ip(request)
         if not self._check_ip_limit(client_ip):
             return Response(
-                content=json.dumps({
-                    "success": False,
-                    "error": {
-                        "code": "GW-E4029",
-                        "message": "IP rate limit exceeded",
-                    },
-                }),
+                content=json.dumps(
+                    {
+                        "success": False,
+                        "error": {
+                            "code": "GW-E4029",
+                            "message": "IP rate limit exceeded",
+                        },
+                    }
+                ),
                 status_code=429,
                 media_type="application/json",
             )

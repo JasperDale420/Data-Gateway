@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends
 
 from gateway import __version__
 from gateway.api.deps import get_cache, get_connection_manager
-from gateway.schemas import HealthResponse
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
+from gateway.schemas import HealthResponse
 
 router = APIRouter(prefix="/health", tags=["health"])
 

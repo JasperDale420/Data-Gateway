@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-01-19
+
+### Added
+
+- **API Catalog & Discovery**: Runtime API discovery via `/catalog/` endpoints
+  - `GET /catalog/` — API summary and discovery entry point
+  - `GET /catalog/streams` — WebSocket stream metadata (stocks, options, crypto, news)
+  - `GET /catalog/streams/{id}` — Individual stream details with channels and examples
+  - `GET /catalog/feeds` — Gateway feed name mappings (18 feed types)
+  - `GET /catalog/providers` — REST API provider catalog (7 providers)
+  - `GET /catalog/providers/{id}` — Individual provider endpoint listings
+- **Extended WebSocket Feeds**: Added support for additional Alpaca channels
+  - Stock: `dailyBars`, `updatedBars`, `lulds`, `statuses`, `imbalances`
+  - Crypto: `dailyBars`, `updatedBars`, `orderbooks`
+- **Documentation**: Created `API_REFERENCE.md` with comprehensive endpoint reference
+- **Security Middleware**: `SecurityHeadersMiddleware` for security headers
+- **Global Rate Limiting**: `GlobalRateLimitMiddleware` per PRD 7.5.1-2
+
+### Changed
+
+- **README.md**: Added API Discovery and WebSocket Streaming sections
+- **Graceful Shutdown**: Extended shutdown with drain period per PRD 6.5/11.3.4
+- **SIGHUP Handler**: Hot config reload support per PRD 6.5.4
+
+---
+
 ## [0.5.0] - 2026-01-18
 
 ### Added
