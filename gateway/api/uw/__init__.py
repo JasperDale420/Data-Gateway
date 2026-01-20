@@ -5,9 +5,11 @@ from fastapi import APIRouter
 from gateway.api.uw import (
     alerts,
     calendar,
+    contracts,
     earnings,
     etf,
     etf_extended,
+    extended,
     flow,
     flow_analytics,
     greeks,
@@ -23,6 +25,7 @@ from gateway.api.uw import (
     screener,
     seasonality,
     shorts,
+    stock,
     volatility,
 )
 
@@ -49,5 +52,8 @@ router.include_router(institutions.router)
 router.include_router(insiders.router)
 router.include_router(etf_extended.router)
 router.include_router(alerts.router)
+router.include_router(stock.router)
+router.include_router(contracts.router)
+router.include_router(extended.router)
 
 __all__ = ["router"]
