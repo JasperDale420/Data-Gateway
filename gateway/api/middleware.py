@@ -132,6 +132,7 @@ class CacheEntry:
 
     content: bytes
     media_type: str
+    headers: dict[str, str]
     created_at: float
     ttl: int
 
@@ -182,15 +183,19 @@ class CacheMiddleware(BaseHTTPMiddleware):
         # Check cache
         entry = self._cache.get(cache_key)
         if entry and not entry.is_expired():
+            # Merge cached headers with cache control headers
+            headers = entry.headers.copy()
+            headers.update({
+                "X-Gateway-Cache": "HIT",
+                "X-Gateway-Cache-Age": str(entry.age_ms),
+                "X-Gateway-Cache-TTL": str(entry.ttl_remaining),
+            })
+
             return Response(
                 content=entry.content,
                 status_code=200,
                 media_type=entry.media_type,
-                headers={
-                    "X-Gateway-Cache": "HIT",
-                    "X-Gateway-Cache-Age": str(entry.age_ms),
-                    "X-Gateway-Cache-TTL": str(entry.ttl_remaining),
-                },
+                headers=headers,
             )
 
         # Process request
@@ -202,9 +207,16 @@ class CacheMiddleware(BaseHTTPMiddleware):
             async for chunk in response.body_iterator:
                 body += chunk
 
+            # Store headers (excluding hop-by-hop)
+            cached_headers = {
+                k: v for k, v in response.headers.items()
+                if k.lower() not in ("content-length", "set-cookie", "connection", "keep-alive")
+            }
+
             self._cache[cache_key] = CacheEntry(
                 content=body,
                 media_type=response.media_type or "application/json",
+                headers=cached_headers,
                 created_at=time.time(),
                 ttl=self.default_ttl,
             )
