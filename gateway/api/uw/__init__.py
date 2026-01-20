@@ -1,20 +1,6 @@
 """Unusual Whales API sub-router package.
 
 This package decomposes the monolithic uw.py into domain-specific sub-routers.
-The package maintains backward compatibility by re-exporting the combined router.
-
-Sub-routers added so far:
-- flow: Flow alerts and darkpool trades
-- market: Market tide, institutions, congress, insiders
-- greeks: GEX endpoints
-- earnings: Earnings calendar
-- screener: Stock/option screeners
-- options: Options analytics (net-premium, max-pain, iv-rank, oi-change)
-- etf: ETF analytics
-- shorts: Short interest, FTDs, short volume
-- volatility: IV term structure, realized vol, vol stats, IV surface
-- seasonality: Market and ticker seasonality
-- options_data: Option volume, intraday, contracts screener
 """
 
 from fastapi import APIRouter
@@ -23,7 +9,9 @@ from gateway.api.uw import (
     earnings,
     etf,
     flow,
+    flow_analytics,
     greeks,
+    intelligence,
     market,
     options,
     options_data,
@@ -48,5 +36,7 @@ router.include_router(shorts.router)
 router.include_router(volatility.router)
 router.include_router(seasonality.router)
 router.include_router(options_data.router)
+router.include_router(intelligence.router)
+router.include_router(flow_analytics.router)
 
 __all__ = ["router"]
