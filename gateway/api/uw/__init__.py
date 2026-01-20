@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from gateway.api.uw import (
+    calendar,
     earnings,
     etf,
     flow,
@@ -14,16 +15,15 @@ from gateway.api.uw import (
     misc,
     options,
     options_data,
+    politicians,
     screener,
     seasonality,
     shorts,
     volatility,
 )
 
-# Create combined router with the original prefix and tags
 router = APIRouter(prefix="/api/v1/uw", tags=["unusual_whales"])
 
-# Include all sub-routers
 router.include_router(flow.router)
 router.include_router(market.router)
 router.include_router(greeks.router)
@@ -39,5 +39,7 @@ router.include_router(intelligence.router)
 router.include_router(flow_analytics.router)
 router.include_router(market_data.router)
 router.include_router(misc.router)
+router.include_router(politicians.router)
+router.include_router(calendar.router)
 
 __all__ = ["router"]
