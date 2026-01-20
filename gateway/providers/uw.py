@@ -3,15 +3,18 @@
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, TypeVar
 
 import structlog
+from unusualwhales.types import UNSET, Unset
 
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import (
     NormalizedDarkpoolTrade,
     NormalizedFlowAlert,
+    NormalizedIVRank,
     NormalizedMarketTide,
+    NormalizedVolatilityStats,
 )
 
 logger = structlog.get_logger()
@@ -21,6 +24,14 @@ ERR_NOT_INITIALIZED = "Provider not initialized"
 
 # Timezone constants
 TZ_UTC_SUFFIX = "+00:00"
+
+# Type variable for the _or_unset helper
+T = TypeVar("T")
+
+
+def _or_unset(value: T | None) -> T | Unset:
+    """Convert None to UNSET for SDK compatibility."""
+    return UNSET if value is None else value
 
 
 class UnusualWhalesProvider(DataProvider):
@@ -97,7 +108,7 @@ class UnusualWhalesProvider(DataProvider):
         except Exception as e:
             return HealthStatus(healthy=False, error=str(e))
 
-    def _extract_data(self, response: Any) -> list:
+    def _extract_data(self, response: Any) -> list[dict[str, Any]]:
         """Extract data from SDK response - handles additional_properties or data attribute.
 
         Converts SDK typed objects (with to_dict method) to dicts for uniform access.
@@ -120,6 +131,10 @@ class UnusualWhalesProvider(DataProvider):
 
         return []
 
+    def _get_data_safe(self, response: Any) -> Any:
+        """Safely get .data from response, handling None/ErrorMessage."""
+        return response.data if response and hasattr(response, "data") else None
+
     async def get_flow_alerts(
         self,
         limit: int = 50,
@@ -132,11 +147,15 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import flow
 
-            response = flow.get_order_flow.sync(client=self._client, limit=limit)
+            response = flow.get_order_flow.sync(client=self._client)
 
             alerts = []
             data_items = []
-            if hasattr(response, "additional_properties") and response.additional_properties:
+            if (
+                response
+                and hasattr(response, "additional_properties")
+                and response.additional_properties
+            ):
                 data_items = response.additional_properties.get("data", [])
 
             for item in data_items:
@@ -173,7 +192,11 @@ class UnusualWhalesProvider(DataProvider):
             alerts = []
             # Data is in additional_properties['data'], not response.data
             data_items = []
-            if hasattr(response, "additional_properties") and response.additional_properties:
+            if (
+                response is not None
+                and hasattr(response, "additional_properties")
+                and response.additional_properties
+            ):
                 data_items = response.additional_properties.get("data", [])
 
             for item in data_items:
@@ -204,7 +227,11 @@ class UnusualWhalesProvider(DataProvider):
 
             trades = []
             data_items = []
-            if hasattr(response, "additional_properties") and response.additional_properties:
+            if (
+                response is not None
+                and hasattr(response, "additional_properties")
+                and response.additional_properties
+            ):
                 data_items = response.additional_properties.get("data", [])
 
             for item in data_items:
@@ -236,14 +263,17 @@ class UnusualWhalesProvider(DataProvider):
             if date_str:
                 kwargs["date"] = date_str
             response = darkpool.get_trades_by_ticker.sync(
-                symbol.upper(),
                 client=self._client,
-                **kwargs,
+                ticker=symbol.upper(),
             )
 
             trades = []
             data_items = []
-            if hasattr(response, "additional_properties") and response.additional_properties:
+            if (
+                response is not None
+                and hasattr(response, "additional_properties")
+                and response.additional_properties
+            ):
                 data_items = response.additional_properties.get("data", [])
 
             for item in data_items:
@@ -273,7 +303,10 @@ class UnusualWhalesProvider(DataProvider):
             kwargs = {}
             if date_str:
                 kwargs["date"] = date_str
-            response = market.get_market_tide.sync(client=self._client, **kwargs)
+            response = market.get_market_tide.sync(
+                client=self._client,
+                **kwargs,
+            )
 
             tides = []
             for item in self._extract_data(response):
@@ -424,7 +457,7 @@ class UnusualWhalesProvider(DataProvider):
             response = stock.get_greek_exposure.sync(
                 client=self._client,
                 ticker=symbol.upper(),
-                date=date_str,
+                date=_or_unset(date_str),
             )
 
             results = []
@@ -485,7 +518,7 @@ class UnusualWhalesProvider(DataProvider):
             response = stock.get_greek_exposure_by_strike.sync(
                 client=self._client,
                 ticker=symbol.upper(),
-                date=date_str,
+                date=_or_unset(date_str),
             )
 
             results = []
@@ -531,7 +564,7 @@ class UnusualWhalesProvider(DataProvider):
             response = stock.get_greek_exposure_by_expiry.sync(
                 client=self._client,
                 ticker=symbol.upper(),
-                date=date_str,
+                date=_or_unset(date_str),
             )
 
             results = []
@@ -580,7 +613,7 @@ class UnusualWhalesProvider(DataProvider):
 
             response = earnings.get_premarket.sync(
                 client=self._client,
-                date=date_str,
+                date=_or_unset(date_str),
             )
 
             results = []
@@ -635,7 +668,7 @@ class UnusualWhalesProvider(DataProvider):
 
             response = earnings.get_afterhours.sync(
                 client=self._client,
-                date=date_str,
+                date=_or_unset(date_str),
             )
 
             results = []
@@ -749,7 +782,6 @@ class UnusualWhalesProvider(DataProvider):
 
             response = screener.get_stocks.sync(
                 client=self._client,
-                limit=limit,
             )
 
             results = []
@@ -795,7 +827,6 @@ class UnusualWhalesProvider(DataProvider):
 
             response = screener.get_option_contracts.sync(
                 client=self._client,
-                limit=limit,
             )
 
             results = []
@@ -849,7 +880,7 @@ class UnusualWhalesProvider(DataProvider):
             response = stock.get_net_premium_ticks.sync(
                 client=self._client,
                 ticker=symbol.upper(),
-                date=date_str,
+                date=_or_unset(date_str),
             )
 
             results = []
@@ -902,7 +933,6 @@ class UnusualWhalesProvider(DataProvider):
             response = stock.get_max_pain.sync(
                 client=self._client,
                 ticker=symbol.upper(),
-                expiration=expiry,
             )
 
             results = []
@@ -932,8 +962,17 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_max_pain_failed", symbol=symbol, error=str(e))
             return []
 
-    async def get_iv_rank(self, symbol: str) -> dict | None:
-        """Get IV rank for a ticker."""
+    async def get_iv_rank(
+        self, symbol: str, date_str: str | None = None
+    ) -> NormalizedIVRank | None:
+        """Get IV rank for a ticker.
+
+        Args:
+            symbol: Stock ticker symbol
+            date_str: Date in YYYY-MM-DD format (defaults to today)
+        """
+        from datetime import datetime
+
         from gateway.schemas import NormalizedIVRank
 
         if not self._client:
@@ -943,12 +982,17 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import stock
 
-            response = stock.get_risk_reversal_skew.sync(
+            # Default date to today if not provided
+            if not date_str:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
+            response = stock.get_iv_rank.sync(
                 client=self._client,
                 ticker=symbol.upper(),
+                date=date_str,
             )
 
-            data = response.data
+            data = self._get_data_safe(response)
             if not data:
                 return None
 
@@ -994,7 +1038,7 @@ class UnusualWhalesProvider(DataProvider):
             response = stock.get_open_interest_change.sync(
                 client=self._client,
                 ticker=symbol.upper(),
-                date=date_str,
+                date=_or_unset(date_str),
             )
 
             results = []
@@ -1124,7 +1168,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import etfs as etf
 
-            response = etf.get_in_outflow(
+            response = etf.get_in_outflow.sync(
                 client=self._client,
                 ticker=symbol.upper(),
             )
@@ -1345,7 +1389,7 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_iv_term_structure_failed", symbol=symbol, error=str(e))
             return []
 
-    async def get_realized_volatility(self, symbol: str) -> dict | None:
+    async def get_realized_volatility(self, symbol: str) -> NormalizedVolatilityStats | None:
         """Get realized volatility for a ticker."""
         from gateway.schemas import NormalizedVolatilityStats
 
@@ -1359,9 +1403,10 @@ class UnusualWhalesProvider(DataProvider):
             response = stock.get_candles.sync(
                 client=self._client,
                 ticker=symbol.upper(),
+                candle_size="1D",
             )
 
-            data = response.data
+            data = self._get_data_safe(response)
             if not data:
                 return None
 
@@ -1393,7 +1438,7 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_realized_volatility_failed", symbol=symbol, error=str(e))
             return None
 
-    async def get_volatility_stats(self, symbol: str) -> dict | None:
+    async def get_volatility_stats(self, symbol: str) -> NormalizedVolatilityStats | None:
         """Get volatility stats for a ticker."""
         from gateway.schemas import NormalizedVolatilityStats
 
@@ -1409,7 +1454,7 @@ class UnusualWhalesProvider(DataProvider):
                 ticker=symbol.upper(),
             )
 
-            data = response.data
+            data = self._get_data_safe(response)
             if not data:
                 return None
 
@@ -1558,13 +1603,11 @@ class UnusualWhalesProvider(DataProvider):
             response = stock.get_volume_open_interest_by_expiry.sync(
                 client=self._client,
                 ticker=symbol.upper(),
-                date=date_str,
+                date=_or_unset(date_str),
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -1612,11 +1655,9 @@ class UnusualWhalesProvider(DataProvider):
                 option_symbol=contract_id,
                 date=date_str,
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -1656,14 +1697,12 @@ class UnusualWhalesProvider(DataProvider):
 
             response = screener.get_option_contracts.sync(
                 client=self._client,
-                min_volume=min_volume,
-                min_premium=min_premium,
+                min_volume=_or_unset(min_volume),
+                min_premium=_or_unset(int(min_premium) if min_premium else None),
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data[:limit]:
@@ -1713,11 +1752,9 @@ class UnusualWhalesProvider(DataProvider):
                 client=self._client,
                 ticker=symbol.upper(),
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -1761,23 +1798,35 @@ class UnusualWhalesProvider(DataProvider):
     # Phase 6: Market Intelligence
     # ─────────────────────────────────────────────────────────────────
 
-    async def get_off_lit_levels(self, symbol: str) -> list[dict[str, Any]]:
-        """Get dark pool volume per price level."""
+    async def get_off_lit_levels(
+        self, symbol: str, date_str: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get dark pool volume per price level.
+
+        Args:
+            symbol: Stock ticker symbol
+            date_str: Date in YYYY-MM-DD format (defaults to today)
+        """
+        from datetime import datetime
+
         if not self._client:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
 
-            response = stock.get_dark_pool_price_levels.sync(
+            # Default date to today if not provided
+            if not date_str:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
+            response = stock.get_stock_volume_price_levels.sync(
                 client=self._client,
                 ticker=symbol.upper(),
+                date=date_str,
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -1816,11 +1865,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import congress
 
             response = congress.get_trades.sync(client=self._client)
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data[:limit]:
@@ -1858,11 +1905,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import stock
 
             response = stock.get_nope.sync(client=self._client, ticker=symbol.upper())
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, dict) else {})
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, dict) else {}
 
             get = data.get if isinstance(data, dict) else lambda k, d=None: getattr(data, k, d)
 
@@ -1890,11 +1935,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import stock
 
             response = stock.get_put_call_ratio.sync(client=self._client, ticker=symbol.upper())
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -1936,14 +1979,12 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import stock
 
-            response = stock.get_spot_gex_exposures_by_strike.sync(
+            response = stock.get_spot_exposures_by_strike.sync(
                 client=self._client, ticker=symbol.upper()
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -1983,16 +2024,20 @@ class UnusualWhalesProvider(DataProvider):
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
+            from datetime import datetime
+
             from unusualwhales.api import stock
 
-            response = stock.get_flow_per_strike.sync(
+            # Default to today if not provided
+            if not date_str:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
+            response = stock.get_flow_per_strike_intraday.sync(
                 client=self._client, ticker=symbol.upper(), date=date_str
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2034,16 +2079,20 @@ class UnusualWhalesProvider(DataProvider):
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
+            from datetime import datetime
+
             from unusualwhales.api import stock
 
-            response = stock.get_flow_per_expiry.sync(
+            # Default to today if not provided
+            if not date_str:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
+            response = stock.get_oi_per_expiry.sync(
                 client=self._client, ticker=symbol.upper(), date=date_str
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2086,11 +2135,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import stock
 
             response = stock.get_greek_flow.sync(client=self._client, ticker=symbol.upper())
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2126,11 +2173,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import market
 
             response = market.get_net_flow_by_expiry.sync(client=self._client)
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2176,11 +2221,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import stock
 
             response = stock.get_interpolated_iv.sync(client=self._client, ticker=symbol.upper())
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2227,11 +2270,9 @@ class UnusualWhalesProvider(DataProvider):
             response = market.get_economic_calendar.sync(
                 client=self._client, start_date=start_date, end_date=end_date
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2269,11 +2310,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import market
 
             response = market.get_sector_tide.sync(client=self._client, sector=sector)
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, dict) else {})
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, dict) else {}
 
             get = data.get if isinstance(data, dict) else lambda k, d=None: getattr(data, k, d)
 
@@ -2306,11 +2345,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import market
 
             response = market.get_top_net_premium.sync(client=self._client)
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, dict) else {})
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, dict) else {}
 
             bullish = []
             bearish = []
@@ -2369,11 +2406,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import alerts
 
             response = alerts.get_alerts.sync(client=self._client)
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data[:limit]:
@@ -2413,13 +2448,11 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import market
 
             response = market.get_correlations.sync(
-                client=self._client, start_date=start_date, end_date=end_date
+                client=self._client,
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2459,11 +2492,9 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import etfs as etf
 
             response = etf.get_tide.sync(client=self._client, ticker=symbol.upper())
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, dict) else {})
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, dict) else {}
 
             get = data.get if isinstance(data, dict) else lambda k, d=None: getattr(data, k, d)
 
@@ -2499,11 +2530,9 @@ class UnusualWhalesProvider(DataProvider):
             response = stock.get_option_volume_levels.sync(
                 client=self._client, ticker=symbol.upper()
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2553,11 +2582,9 @@ class UnusualWhalesProvider(DataProvider):
             response = contract.get_volume_profile.sync(
                 client=self._client, option_symbol=contract_id
             )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2598,14 +2625,10 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import stock
 
-            response = stock.get_greek_flow_by_expiry.sync(
-                client=self._client, ticker=symbol.upper()
-            )
-            data = (
-                response.data
-                if hasattr(response, "data")
-                else (response if isinstance(response, list) else [])
-            )
+            response = stock.get_greek_flow_expiry.sync(client=self._client, ticker=symbol.upper())
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
 
             results = []
             for item in data:
@@ -2756,14 +2779,14 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_headlines.sync(
                 client=self._client,
-                sources=sources if sources else None,
-                search_term=search_term if search_term else None,
-                major_only=major_only if major_only is not None else None,
+                sources=_or_unset(sources),
+                search_term=_or_unset(search_term),
+                major_only=_or_unset(major_only),
                 limit=limit,
-                page=page if page else None,
+                page=_or_unset(page),
             )
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_news_headlines_failed", error=str(e))
             raise
@@ -2782,7 +2805,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_people.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_politician_people_failed", error=str(e))
             raise
@@ -2797,7 +2820,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_recent_trades.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_politician_trades_failed", error=str(e))
@@ -2813,7 +2836,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_portfolios.sync(politician_id, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_politician_portfolios_failed", error=str(e), politician_id=politician_id
@@ -2830,7 +2853,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_holders.sync(client=self._client, ticker=symbol.upper())
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_politician_holders_failed", error=str(e), symbol=symbol)
             raise
@@ -2849,7 +2872,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_economic_calendar.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_economic_calendar_failed", error=str(e))
             raise
@@ -2864,7 +2887,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_fda_calendar.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_fda_calendar_failed", error=str(e))
             raise
@@ -2879,7 +2902,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_holidays.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_market_holidays_failed", error=str(e))
             raise
@@ -2894,7 +2917,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_imbalances.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_market_imbalances_failed", error=str(e))
             raise
@@ -2909,7 +2932,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_market_options_volume.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_market_options_volume_failed", error=str(e))
             raise
@@ -2924,7 +2947,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_insider_trades.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_market_insider_trades_failed", error=str(e))
             raise
@@ -2939,7 +2962,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_sector_stats.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_sector_stats_failed", error=str(e))
             raise
@@ -2954,7 +2977,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_market_tide_by_etf.sync(etf.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_market_tide_etf_failed", error=str(e), etf=etf)
             raise
@@ -2973,7 +2996,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_institutions.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_institutions_list_failed", error=str(e))
@@ -2989,7 +3012,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_activity.sync(institution_id, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_institution_activity_failed", error=str(e), institution_id=institution_id
@@ -3006,7 +3029,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_holdings.sync(institution_id, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_institution_holdings_failed", error=str(e), institution_id=institution_id
@@ -3023,7 +3046,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_sector_exposure.sync(institution_id, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_institution_sector_failed", error=str(e), institution_id=institution_id
@@ -3040,7 +3063,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_ownership.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_institutional_ownership_failed", error=str(e), symbol=symbol)
             raise
@@ -3055,7 +3078,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_latest_filings.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_latest_filings_failed", error=str(e))
@@ -3075,7 +3098,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_insider_transactions.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_insider_transactions_failed", error=str(e))
@@ -3091,7 +3114,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_insider_sector_flow.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_insider_sector_flow_failed", error=str(e))
             raise
@@ -3106,7 +3129,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_insider_ticker_flow.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_insider_ticker_flow_failed", error=str(e))
             raise
@@ -3121,7 +3144,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_ticker_insiders.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_ticker_insiders_failed", error=str(e), symbol=symbol)
             raise
@@ -3140,7 +3163,11 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_info.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data[0] if isinstance(data, list) and data else data
+            return (
+                data[0]
+                if isinstance(data, list) and data
+                else (data if isinstance(data, dict) else None)
+            )
         except Exception as e:
             logger.error("uw_etf_info_failed", error=str(e), symbol=symbol)
             raise
@@ -3155,7 +3182,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_in_outflow.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_etf_inflow_outflow_failed", error=str(e), symbol=symbol)
             raise
@@ -3170,7 +3197,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_ticker_exposure.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_etf_ticker_exposure_failed", error=str(e), symbol=symbol)
             raise
@@ -3185,7 +3212,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_sector_country_weights.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_etf_country_weights_failed", error=str(e), symbol=symbol)
             raise
@@ -3204,7 +3231,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_alerts.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_alerts_failed", error=str(e))
@@ -3220,7 +3247,11 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_configurations.sync(client=self._client)
             data = self._extract_data(response)
-            return data[0] if isinstance(data, list) and data else data
+            return (
+                data[0]
+                if isinstance(data, list) and data
+                else (data if isinstance(data, dict) else None)
+            )
         except Exception as e:
             logger.error("uw_alerts_config_failed", error=str(e))
             raise
@@ -3235,7 +3266,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_analyst_ratings.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_analyst_ratings_failed", error=str(e))
@@ -3255,7 +3286,11 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_info.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data[0] if isinstance(data, list) and data else data
+            return (
+                data[0]
+                if isinstance(data, list) and data
+                else (data if isinstance(data, dict) else None)
+            )
         except Exception as e:
             logger.error("uw_stock_info_failed", error=str(e), symbol=symbol)
             raise
@@ -3270,7 +3305,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_candles.sync(symbol.upper(), client=self._client, timeframe=timeframe)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_stock_candles_failed", error=str(e), symbol=symbol)
             raise
@@ -3285,7 +3320,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_option_chains.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_option_chains_failed", error=str(e), symbol=symbol)
             raise
@@ -3300,7 +3335,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_option_contracts.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_option_contracts_failed", error=str(e), symbol=symbol)
             raise
@@ -3315,7 +3350,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_oi_per_strike.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_oi_per_strike_failed", error=str(e), symbol=symbol)
             raise
@@ -3330,7 +3365,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_oi_per_expiry.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_oi_per_expiry_failed", error=str(e), symbol=symbol)
             raise
@@ -3343,9 +3378,13 @@ class UnusualWhalesProvider(DataProvider):
         from unusualwhales.api.stock import get_greeks_by_strike_expiry
 
         try:
-            response = get_greeks_by_strike_expiry.sync(symbol.upper(), expiry, client=self._client)
+            response = get_greeks_by_strike_expiry.sync(
+                symbol.upper(),
+                self._client,
+                expiry=expiry,
+            )
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_greeks_by_strike_expiry_failed", error=str(e), symbol=symbol, expiry=expiry
@@ -3361,10 +3400,12 @@ class UnusualWhalesProvider(DataProvider):
 
         try:
             response = get_greek_exposure_by_strike_expiry.sync(
-                symbol.upper(), expiry, client=self._client
+                symbol.upper(),
+                self._client,
+                expiry=expiry,
             )
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_greek_exposure_by_strike_expiry_failed",
@@ -3386,7 +3427,7 @@ class UnusualWhalesProvider(DataProvider):
                 symbol.upper(), client=self._client
             )
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_atm_options_failed", error=str(e), symbol=symbol)
             raise
@@ -3401,7 +3442,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_daily_expiry_breakdown.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_daily_expiry_breakdown_failed", error=str(e), symbol=symbol)
             raise
@@ -3416,7 +3457,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_flow_per_strike_intraday.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_flow_per_strike_intraday_failed", error=str(e), symbol=symbol)
             raise
@@ -3429,9 +3470,13 @@ class UnusualWhalesProvider(DataProvider):
         from unusualwhales.api.stock import get_risk_reversal_skew
 
         try:
-            response = get_risk_reversal_skew.sync(symbol.upper(), expiry, client=self._client)
+            response = get_risk_reversal_skew.sync(
+                symbol.upper(),
+                self._client,
+                expiry=expiry,
+            )
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_risk_reversal_skew_failed", error=str(e), symbol=symbol, expiry=expiry)
             raise
@@ -3444,9 +3489,12 @@ class UnusualWhalesProvider(DataProvider):
         from unusualwhales.api.stock import get_sector_tickers
 
         try:
-            response = get_sector_tickers.sync(sector, client=self._client)
+            response = get_sector_tickers.sync(
+                sector,
+                client=self._client,
+            )
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_sector_tickers_failed", error=str(e), sector=sector)
             raise
@@ -3461,7 +3509,11 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_stock_state.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data[0] if isinstance(data, list) and data else data
+            return (
+                data[0]
+                if isinstance(data, list) and data
+                else (data if isinstance(data, dict) else None)
+            )
         except Exception as e:
             logger.error("uw_stock_state_failed", error=str(e), symbol=symbol)
             raise
@@ -3476,7 +3528,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_stock_volume_price_levels.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_stock_volume_price_levels_failed", error=str(e), symbol=symbol)
             raise
@@ -3491,7 +3543,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_option_volume_by_price_level.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_option_volume_by_price_failed", error=str(e), symbol=symbol)
             raise
@@ -3506,7 +3558,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_volume_open_interest_by_expiry.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_volume_oi_by_expiry_failed", error=str(e), symbol=symbol)
             raise
@@ -3521,7 +3573,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_spot_exposures.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_spot_exposures_failed", error=str(e), symbol=symbol)
             raise
@@ -3536,7 +3588,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_options_volume.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_options_volume_failed", error=str(e), symbol=symbol)
             raise
@@ -3551,7 +3603,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_greek_flow_expiry.sync(symbol.upper(), expiry, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_greek_flow_by_expiry_failed", error=str(e), symbol=symbol, expiry=expiry
@@ -3568,7 +3620,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_insider_trades.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_stock_insider_trades_failed", error=str(e), symbol=symbol)
             raise
@@ -3589,7 +3641,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_flow.sync(option_symbol, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_option_contract_flow_failed", error=str(e), option_symbol=option_symbol
@@ -3606,7 +3658,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_historic.sync(option_symbol, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_option_contract_historic_failed", error=str(e), option_symbol=option_symbol
@@ -3623,7 +3675,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_intraday.sync(option_symbol, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_option_contract_intraday_failed", error=str(e), option_symbol=option_symbol
@@ -3640,7 +3692,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_volume_profile.sync(option_symbol, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_option_contract_volume_profile_failed",
@@ -3661,7 +3713,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_price_history.sync(option_symbol, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_contract_price_history_failed", error=str(e), option_symbol=option_symbol
@@ -3680,7 +3732,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_late_reports.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_congress_late_reports_failed", error=str(e))
@@ -3696,7 +3748,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_reports.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_congress_reports_failed", error=str(e))
@@ -3714,7 +3766,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_contract_flow.sync(option_symbol, client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_contract_flow_failed", error=str(e), option_symbol=option_symbol)
             raise
@@ -3729,7 +3781,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_full_tape.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_full_tape_failed", error=str(e))
@@ -3747,7 +3799,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_option_contracts.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_screener_option_contracts_failed", error=str(e))
@@ -3763,7 +3815,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_stocks.sync(client=self._client)
             data = self._extract_data(response)
-            result = data if isinstance(data, list) else [data] if data else []
+            result = data
             return result[:limit]
         except Exception as e:
             logger.error("uw_screener_stocks_failed", error=str(e))
@@ -3779,9 +3831,12 @@ class UnusualWhalesProvider(DataProvider):
         from unusualwhales.api.seasonality import get_monthly_top_performers
 
         try:
-            response = get_monthly_top_performers.sync(month, client=self._client)
+            response = get_monthly_top_performers.sync(
+                month,
+                client=self._client,
+            )
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_monthly_top_performers_failed", error=str(e), month=month)
             raise
@@ -3796,7 +3851,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_price_changes_by_month_and_year.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_price_changes_by_month_year_failed", error=str(e), symbol=symbol)
             raise
@@ -3813,7 +3868,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_data.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_shorts_data_failed", error=str(e), symbol=symbol)
             raise
@@ -3828,7 +3883,11 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_interest_float.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data[0] if isinstance(data, list) and data else data
+            return (
+                data[0]
+                if isinstance(data, list) and data
+                else (data if isinstance(data, dict) else None)
+            )
         except Exception as e:
             logger.error("uw_short_interest_float_failed", error=str(e), symbol=symbol)
             raise
@@ -3843,7 +3902,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_volumes_by_exchange.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_short_volumes_by_exchange_failed", error=str(e), symbol=symbol)
             raise
@@ -3860,7 +3919,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_spike.sync(client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_market_spike_failed", error=str(e))
             raise
@@ -3879,7 +3938,7 @@ class UnusualWhalesProvider(DataProvider):
                 symbol.upper(), expiry, client=self._client
             )
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error(
                 "uw_spot_exposures_by_expiry_strike_failed",
@@ -3899,7 +3958,7 @@ class UnusualWhalesProvider(DataProvider):
         try:
             response = get_flow_recent.sync(symbol.upper(), client=self._client)
             data = self._extract_data(response)
-            return data if isinstance(data, list) else [data] if data else []
+            return data
         except Exception as e:
             logger.error("uw_flow_recent_failed", error=str(e), symbol=symbol)
             raise

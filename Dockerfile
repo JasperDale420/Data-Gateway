@@ -7,7 +7,7 @@ WORKDIR /app
 RUN groupadd -r gateway && useradd -r -g gateway gateway
 
 # Copy and install patched Unusual Whales SDK v5.1 first
-COPY unusualwhales_sdk/ /tmp/unusualwhales_sdk/
+COPY vendor/unusualwhales_sdk/ /tmp/unusualwhales_sdk/
 RUN pip install --no-cache-dir /tmp/unusualwhales_sdk/ && rm -rf /tmp/unusualwhales_sdk/
 
 # Copy pyproject.toml first to cache dependency installation
@@ -37,7 +37,7 @@ COPY gateway/ gateway/
 RUN pip install --no-cache-dir --no-deps .
 
 # Copy config files
-COPY clients.yaml providers.yaml ./
+COPY config/ config/
 
 # Switch to non-root user
 USER gateway

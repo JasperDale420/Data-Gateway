@@ -28,10 +28,10 @@ class Settings(BaseSettings):
 
     # Authentication
     auth_timeout_seconds: int = 10
-    clients_config_path: Path = Path("clients.yaml")
+    clients_config_path: Path = Path("config/clients.yaml")
 
     # Providers
-    providers_config_path: Path = Path("providers.yaml")
+    providers_config_path: Path = Path("config/providers.yaml")
 
     # Cache
     cache_max_size: int = Field(default=10000, ge=100)

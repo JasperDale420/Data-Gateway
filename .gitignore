@@ -67,3 +67,5 @@ data_lake/
 .mypy_cache/
 .ruff_cache/
 codebase.md
+codebase.md
+vendor/

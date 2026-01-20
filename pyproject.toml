@@ -105,7 +105,7 @@ disable_error_code = ["assignment", "union-attr", "var-annotated", "index", "ope
 
 # Provider modules with complex dynamic typing
 [[tool.mypy.overrides]]
-module = ["gateway.providers.uw", "gateway.providers.alpaca_stream", "gateway.providers.alpaca", "gateway.providers.finnhub"]
+module = ["gateway.providers.alpaca_stream", "gateway.providers.finnhub"]
 disable_error_code = ["list-item", "return-value", "assignment", "union-attr", "dict-item", "override"]
 
 # Tests - don't need strict typing
