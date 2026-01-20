@@ -1,0 +1,110 @@
+# Data provider configuration
+# Providers are loaded dynamically at startup
+
+providers:
+  alpaca:
+    enabled: true
+    module: gateway.providers.alpaca
+    class: AlpacaProvider
+    priority: 1
+    config:
+      api_key_env: APCA_API_KEY_ID  # pragma: allowlist secret
+      secret_key_env: APCA_API_SECRET_KEY  # pragma: allowlist secret
+      base_url_env: APCA_API_BASE_URL
+      feed: sip  # or iex
+    capabilities:
+      streaming: true
+      historical: true
+      bars: true
+      quotes: true
+      trades: true
+      options: true
+
+  yfinance:
+    enabled: true
+    module: gateway.providers.yfinance
+    class: YFinanceProvider
+    priority: 2
+    config:
+      cache_ttl: 300
+    capabilities:
+      streaming: false
+      historical: true
+      bars: true
+
+  finnhub:
+    enabled: true
+    module: gateway.providers.finnhub
+    class: FinnhubProvider
+    priority: 2
+    config:
+      api_key_env: FINNHUB_API_KEY  # pragma: allowlist secret
+    capabilities:
+      streaming: true
+      historical: true
+      bars: true
+      quotes: true
+      news: true
+
+  alphavantage:
+    enabled: true
+    module: gateway.providers.alphavantage
+    class: AlphaVantageProvider
+    priority: 3
+    config:
+      api_key_env: ALPHAVANTAGE_API_KEY  # pragma: allowlist secret
+    capabilities:
+      streaming: false
+      historical: true
+      bars: true
+      quotes: true
+
+  unusual_whales:
+    enabled: true
+    module: gateway.providers.uw
+    class: UnusualWhalesProvider
+    priority: 1
+    config:
+      api_key_env: UNUSUAL_WHALES_API_KEY  # pragma: allowlist secret
+    capabilities:
+      streaming: false
+      historical: true
+      flow: true
+      darkpool: true
+
+  news:
+    enabled: true
+    module: gateway.providers.news
+    class: NewsProvider
+    priority: 1
+    config:
+      api_key_env: NEWS_API_KEY  # pragma: allowlist secret
+    capabilities:
+      streaming: false
+      historical: true
+      news: true
+
+  sec:
+    enabled: true
+    module: gateway.providers.sec
+    class: SECProvider
+    priority: 1
+    config: {}
+    capabilities:
+      streaming: false
+      historical: true
+      filings: true
+
+# Route configuration (which providers handle which data types)
+routes:
+  stocks:
+    providers: [alpaca, yfinance]
+    fallback_on: [connection_error, timeout, rate_limit]
+
+  options:
+    providers: [alpaca]
+    fallback_on: []
+
+  flow:
+    providers: [unusual_whales]
+    fallback_on: []
