@@ -108,6 +108,11 @@ disable_error_code = ["assignment", "union-attr", "var-annotated", "index", "ope
 module = ["gateway.providers.alpaca_stream", "gateway.providers.finnhub"]
 disable_error_code = ["list-item", "return-value", "assignment", "union-attr", "dict-item", "override"]
 
+# Provider modules with SDK type stub mismatches
+[[tool.mypy.overrides]]
+module = ["gateway.providers.uw", "gateway.providers.alpaca"]
+disable_error_code = ["call-arg", "attr-defined", "arg-type", "misc"]
+
 # Tests - don't need strict typing
 [[tool.mypy.overrides]]
 module = ["tests.*"]
