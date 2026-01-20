@@ -139,9 +139,10 @@ class TestSymbologyEndpoints:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["input"] == "AAPL"
-        assert data["provider"] == "alpaca"
-        assert data["output"] == "AAPL"
+        assert data["success"] is True
+        assert data["data"]["input"] == "AAPL"
+        assert data["data"]["provider"] == "alpaca"
+        assert data["data"]["output"] == "AAPL"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -161,10 +162,12 @@ class TestCalendarEndpoints:
         )
         assert response.status_code == 200
         data = response.json()
-        assert "date" in data
-        assert "market" in data
-        assert "status" in data
-        assert "timezone" in data
+        # Response may have envelope wrapper with data field
+        inner = data.get("data", data)
+        assert "date" in inner
+        assert "market" in inner
+        assert "status" in inner
+        assert "timezone" in inner
 
     def test_market_hours_invalid_date(self, client: TestClient, auth_headers: dict):
         """GET /api/v1/calendar/market-hours rejects invalid date."""
@@ -185,10 +188,12 @@ class TestCalendarEndpoints:
         )
         assert response.status_code == 200
         data = response.json()
-        assert "trading_days" in data
-        assert "holidays" in data
-        assert "early_closes" in data
-        assert len(data["trading_days"]) > 0
+        # Response may have envelope wrapper with data field
+        inner = data.get("data", data)
+        assert "trading_days" in inner
+        assert "holidays" in inner
+        assert "early_closes" in inner
+        assert len(inner["trading_days"]) > 0
 
     def test_trading_days_range_limit(self, client: TestClient, auth_headers: dict):
         """GET /api/v1/calendar/trading-days rejects >1 year range."""
@@ -208,10 +213,11 @@ class TestCalendarEndpoints:
         )
         assert response.status_code == 200
         data = response.json()
-        assert "is_open" in data
-        assert "date" in data
-        assert "status" in data
-        assert isinstance(data["is_open"], bool)
+        inner = data.get("data", data)
+        assert "is_open" in inner
+        assert "date" in inner
+        assert "status" in inner
+        assert isinstance(inner["is_open"], bool)
 
     def test_next_trading_day(self, client: TestClient, auth_headers: dict):
         """GET /api/v1/calendar/next-trading-day returns next day."""
@@ -222,10 +228,11 @@ class TestCalendarEndpoints:
         )
         assert response.status_code == 200
         data = response.json()
-        assert "next_trading_day" in data
-        assert "from" in data
+        inner = data.get("data", data)
+        assert "next_trading_day" in inner
+        assert "from" in inner
         # Next trading day should be >= from date
-        assert data["next_trading_day"] >= data["from"]
+        assert inner["next_trading_day"] >= inner["from"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

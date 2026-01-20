@@ -195,13 +195,16 @@ async def is_market_open(
     hours = calendar.get_market_hours(today)
 
     return {
-        "is_open": is_open,
-        "date": today.isoformat(),
-        "status": hours.status.value,
-        "is_holiday": hours.is_holiday,
-        "is_early_close": hours.is_early_close,
-        "market": calendar.market,
-        "timezone": calendar.timezone,
+        "success": True,
+        "data": {
+            "is_open": is_open,
+            "date": today.isoformat(),
+            "status": hours.status.value,
+            "is_holiday": hours.is_holiday,
+            "is_early_close": hours.is_early_close,
+            "market": calendar.market,
+            "timezone": calendar.timezone,
+        },
     }
 
 
@@ -234,8 +237,11 @@ async def next_trading_day(
     hours = calendar.get_market_hours(next_day)
 
     return {
-        "next_trading_day": next_day.isoformat(),
-        "from": query_date.isoformat(),
-        "status": hours.status.value,
-        "is_early_close": hours.is_early_close,
+        "success": True,
+        "data": {
+            "next_trading_day": next_day.isoformat(),
+            "from": query_date.isoformat(),
+            "status": hours.status.value,
+            "is_early_close": hours.is_early_close,
+        },
     }
