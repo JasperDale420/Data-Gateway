@@ -6,10 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Heber Data Sink Integration**: Enabled Redis Streams data sink for publishing Gateway data to Heber
+- **Heber Data Sink Integration**: All Gateway data now publishes to Redis Streams for Heber lakehouse ingestion
   - Added `GATEWAY_DATA_SINK_ENABLED`, `GATEWAY_DATA_SINK_REDIS_URL`, `GATEWAY_DATA_SINK_MAX_STREAM_LEN` config
   - Enabled Redis service in `docker-compose.yml` with health checks
-  - WebSocket stream data (bars, quotes, trades, news) now publishes to Redis for Heber consumption
+  - WebSocket stream data (bars, quotes, trades, news) publishes to `gateway.stream.*` topics
+  - REST API responses publish to `gateway.rest.*` topics via `EventEnvelopeMiddleware`
 
 ---
 

@@ -376,6 +376,17 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
 
             wrapped_body = json.dumps(wrapped, default=str)
 
+            # Publish to data sink for Heber lakehouse (non-blocking)
+            from gateway.api.deps import get_sink_registry
+
+            sink_registry = get_sink_registry()
+            if sink_registry:
+                import asyncio
+
+                topic = f"gateway.rest.{feed}"
+                # Fire-and-forget publish (DataSinkRegistry handles task lifecycle)
+                asyncio.create_task(sink_registry.publish_all(topic, envelope))
+
             logger.debug(
                 "rest_envelope_wrapped",
                 path=path,
