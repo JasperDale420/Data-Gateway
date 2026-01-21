@@ -96,7 +96,10 @@ async def get_iv_rank(
     data = await provider.get_iv_rank(symbol=symbol)
 
     if not data:
-        raise HTTPException(status_code=404, detail=f"IV rank not found for {symbol}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"IV rank not found for {symbol}. This may be due to market hours, data unavailability, or subscription tier.",
+        )
 
     response = {
         "success": True,

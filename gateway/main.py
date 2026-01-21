@@ -100,12 +100,11 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
 
     # Publish to data sink for Heber storage (non-blocking)
     from gateway.api.deps import get_sink_registry
-    from gateway.core.data_sink import Topics
 
     sink_registry = get_sink_registry()
     if sink_registry:
-        topic = Topics.from_message_type(envelope.get("T", data_type))
-        await sink_registry.publish_all(topic, envelope)
+        # Publish all events to single Heber stream for unified ingestion
+        await sink_registry.publish_all("heber:events", envelope)
 
 
 @asynccontextmanager

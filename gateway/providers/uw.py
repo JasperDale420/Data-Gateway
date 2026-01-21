@@ -117,14 +117,22 @@ class UnusualWhalesProvider(DataProvider):
         if hasattr(response, "additional_properties") and response.additional_properties:
             data = response.additional_properties.get("data", [])
             if data:
-                # Convert SDK objects to dicts if needed
-                return [item.to_dict() if hasattr(item, "to_dict") else item for item in data]
+                # Handle both list and single-object cases
+                if isinstance(data, list):
+                    return [item.to_dict() if hasattr(item, "to_dict") else item for item in data]
+                else:
+                    # Single object - wrap in list
+                    return [data.to_dict() if hasattr(data, "to_dict") else data]
 
         # Then try response.data
         if hasattr(response, "data") and response.data:
-            items = list(response.data) if response.data else []
-            # Convert SDK objects to dicts if needed
-            return [item.to_dict() if hasattr(item, "to_dict") else item for item in items]
+            data = response.data
+            # Check if it's a list or a single object (e.g., TickerInfo, MarketTide)
+            if isinstance(data, list):
+                return [item.to_dict() if hasattr(item, "to_dict") else item for item in data]
+            else:
+                # Single object response - wrap in list after converting
+                return [data.to_dict() if hasattr(data, "to_dict") else data]
 
         return []
 
@@ -136,10 +144,15 @@ class UnusualWhalesProvider(DataProvider):
             - None: If response is None, has no data, data is empty list, or data is ErrorMessage
         """
         if not response or not hasattr(response, "data"):
+            logger.debug(
+                "uw_response_no_data", response_type=type(response).__name__ if response else "None"
+            )
             return None
         data = response.data
         # Return None for empty lists - callers expect dict with .get()
         if isinstance(data, list):
+            if len(data) == 0:
+                logger.debug("uw_response_empty_list")
             return data[0] if len(data) == 1 else None if len(data) == 0 else data
         return data
 

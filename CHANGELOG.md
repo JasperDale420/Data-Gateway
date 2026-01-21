@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3] - 2026-01-21
+
+### Added
+
+- **Heber Data Sink Integration**: Enabled Redis Streams data sink for publishing Gateway data to Heber
+  - Added `GATEWAY_DATA_SINK_ENABLED`, `GATEWAY_DATA_SINK_REDIS_URL`, `GATEWAY_DATA_SINK_MAX_STREAM_LEN` config
+  - Enabled Redis service in `docker-compose.yml` with health checks
+  - WebSocket stream data (bars, quotes, trades, news) now publishes to Redis for Heber consumption
+
+---
+
+## [0.5.2] - 2026-01-20
+
+### Fixed
+
+- **UW SDK StockEarningsTime enum**: Added missing `POSTMARKET` value to handle `"postmarket"` responses from Unusual Whales API that previously caused `ValueError`
+- **UW Provider `_extract_data`**: Fixed `KeyError: 0` when handling single-object responses (e.g., `TickerInfo`, `MarketTide`) by checking `isinstance(data, list)` before iterating
+- **SuccessResponse schema**: Fixed `ResponseValidationError` by changing `data` field from `dict` to `dict | list | None` to support paginated list responses and null responses
+- **Catalog endpoints**: Removed `response_model=SuccessResponse` from catalog discovery endpoints (`/catalog/*`) which return custom discovery structures
+- **IV Rank error message**: Enhanced 404 response to include context about possible causes (market hours, data availability, subscription tier)
+
+### Added
+
+- **Endpoint validation test suite**: Added `test_endpoint_validation.py` with 34 tests covering all API routes to catch schema mismatches early
+
+### Changed
+
+- **UW Provider logging**: Added debug logging to `_get_data_safe()` for empty response handling diagnostics
+
+---
+
 ## [0.5.1] - 2026-01-19
 
 ### Added

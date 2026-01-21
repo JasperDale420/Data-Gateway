@@ -443,8 +443,9 @@ class SuccessResponse(BaseModel):
     """Generic success response."""
 
     success: bool = True
-    data: dict
+    data: dict | list | None = None  # Can be dict, list, or None depending on endpoint
     meta: dict | None = None
+    pagination: dict | None = None  # For paginated endpoints
 
 
 # ─────────────────────────────────────────────────────────────────

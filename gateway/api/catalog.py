@@ -5,8 +5,6 @@ from typing import Any
 import structlog
 from fastapi import APIRouter
 
-from gateway.schemas import SuccessResponse
-
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -542,7 +540,7 @@ STREAM_CATALOG = {
 }
 
 
-@router.get("/streams", response_model=SuccessResponse)
+@router.get("/streams")
 async def get_streams() -> dict[str, Any]:
     """Get all available WebSocket streams and their capabilities.
 
@@ -574,7 +572,7 @@ async def get_streams() -> dict[str, Any]:
     }
 
 
-@router.get("/streams/{stream_id}", response_model=SuccessResponse)
+@router.get("/streams/{stream_id}")
 async def get_stream(stream_id: str) -> dict[str, Any]:
     """Get details for a specific stream.
 
@@ -589,7 +587,7 @@ async def get_stream(stream_id: str) -> dict[str, Any]:
     return STREAM_CATALOG[stream_id]
 
 
-@router.get("/feeds", response_model=SuccessResponse)
+@router.get("/feeds")
 async def get_feeds() -> dict[str, Any]:
     """Get mapping of Gateway feed names to upstream streams.
 
@@ -702,7 +700,7 @@ async def get_feeds() -> dict[str, Any]:
     }
 
 
-@router.get("/providers", response_model=SuccessResponse)
+@router.get("/providers")
 async def get_providers() -> dict[str, Any]:
     """Get all available REST API providers and their endpoints.
 
@@ -718,7 +716,7 @@ async def get_providers() -> dict[str, Any]:
     }
 
 
-@router.get("/providers/{provider_id}", response_model=SuccessResponse)
+@router.get("/providers/{provider_id}")
 async def get_provider(provider_id: str) -> dict[str, Any]:
     """Get details for a specific provider.
 
@@ -733,7 +731,7 @@ async def get_provider(provider_id: str) -> dict[str, Any]:
     return PROVIDER_CATALOG[provider_id]
 
 
-@router.get("/", response_model=SuccessResponse)
+@router.get("/")
 async def get_catalog_summary() -> dict[str, Any]:
     """Get a summary of all available APIs.
 
