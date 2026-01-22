@@ -29,8 +29,13 @@ MORNING_RUSH_START = time(9, 30)
 MORNING_RUSH_END = time(10, 30)
 
 # Poll settings
-DEFAULT_POLL_INTERVAL = 300  # 5 minutes for flow/darkpool
+DEFAULT_POLL_INTERVAL = 300  # 5 minutes for flow
+DARKPOOL_POLL_INTERVAL = 60  # 1 minute for darkpool (API max 200/call)
 MARKET_TIDE_POLL_INTERVAL = 3600  # 1 hour (API returns full day's data)
+
+# Extended hours (darkpool runs here too)
+PREMARKET_START = time(4, 0)  # 4:00 AM ET
+AFTERHOURS_END = time(20, 0)  # 8:00 PM ET
 
 # GICS Sectors for sector tide polling
 GICS_SECTORS = [
@@ -78,13 +83,27 @@ class UWPoller:
         self._seen_ids: dict[str, datetime] = {}
         self._cache_ttl_seconds = 7200  # 2 hours
 
-        # Market tide polls hourly since API returns full day's data
+        # Darkpool tracks its own polling time (runs every minute)
+        self._last_darkpool_poll: datetime | None = None
+        self._darkpool_interval = DARKPOOL_POLL_INTERVAL
+
+        # Market/sector tide polls hourly since API returns full day's data
         self._last_tide_poll: datetime | None = None
         self._tide_interval = MARKET_TIDE_POLL_INTERVAL
 
     def _is_market_hours(self) -> bool:
         """Check if market is currently open using TradingCalendar."""
         return self._calendar.is_market_open()
+
+    def _is_extended_hours(self) -> bool:
+        """Check if we're in extended trading hours (pre-market or after-hours).
+
+        Darkpool trades occur during extended hours as well.
+        """
+        now_et = datetime.now(ET)
+        current_time = now_et.time()
+        # Extended hours: 4:00 AM - 8:00 PM ET on trading days
+        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day()
 
     def _is_morning_rush(self) -> bool:
         """Check if we're in high-volume morning period (first hour of trading)."""
@@ -134,6 +153,13 @@ class UWPoller:
             return True
         elapsed = (datetime.now(UTC) - self._last_tide_poll).total_seconds()
         return elapsed >= self._tide_interval
+
+    def _should_poll_darkpool(self) -> bool:
+        """Check if enough time has passed to poll darkpool again (every minute)."""
+        if self._last_darkpool_poll is None:
+            return True
+        elapsed = (datetime.now(UTC) - self._last_darkpool_poll).total_seconds()
+        return elapsed >= self._darkpool_interval
 
     async def start(self) -> None:
         """Start the background polling task."""
@@ -201,13 +227,15 @@ class UWPoller:
                     "uw_poller_polling", limit=poll_limit, morning_rush=self._is_morning_rush()
                 )
 
-                # Poll flow alerts
-                if self.flow_enabled:
+                # Poll flow alerts (only during market hours)
+                if self.flow_enabled and self._is_market_hours():
                     await self._poll_flow_alerts(sink_registry, poll_limit)
 
-                # Poll darkpool
-                if self.darkpool_enabled:
-                    await self._poll_darkpool(sink_registry, poll_limit)
+                # Poll darkpool (every minute during market AND extended hours)
+                if self.darkpool_enabled and self._should_poll_darkpool():
+                    if self._is_market_hours() or self._is_extended_hours():
+                        await self._poll_darkpool(sink_registry, poll_limit)
+                        self._last_darkpool_poll = datetime.now(UTC)
 
                 # Poll market tide (hourly since API returns full day's data)
                 if self.market_tide_enabled and self._should_poll_tide():
