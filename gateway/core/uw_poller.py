@@ -93,10 +93,14 @@ class UWPoller:
         return MORNING_RUSH_START <= current_time <= MORNING_RUSH_END
 
     def _get_poll_limit(self) -> int:
-        """Get poll limit based on time of day."""
+        """Get poll limit based on time of day.
+
+        Analysis of darkpool trade logs shows 500-800 trades per 5-minute window.
+        Setting limits higher to avoid missing trades.
+        """
         if self._is_morning_rush():
-            return 200  # Higher limit during morning rush
-        return 100  # Standard limit
+            return 1000  # Higher limit during morning rush (actual: ~600/5min)
+        return 800  # Standard limit (actual: up to 800/5min in afternoon)
 
     def _is_duplicate(self, event_id: str) -> bool:
         """Check if event has already been seen."""
