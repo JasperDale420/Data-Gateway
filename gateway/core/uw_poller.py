@@ -32,6 +32,21 @@ MORNING_RUSH_END = time(10, 30)
 DEFAULT_POLL_INTERVAL = 300  # 5 minutes for flow/darkpool
 MARKET_TIDE_POLL_INTERVAL = 3600  # 1 hour (API returns full day's data)
 
+# GICS Sectors for sector tide polling
+GICS_SECTORS = [
+    "Technology",
+    "Healthcare",
+    "Financial",
+    "Consumer Cyclical",
+    "Communication Services",
+    "Industrials",
+    "Consumer Defensive",
+    "Energy",
+    "Basic Materials",
+    "Real Estate",
+    "Utilities",
+]
+
 
 class UWPoller:
     """Background poller for Unusual Whales data.
@@ -46,11 +61,13 @@ class UWPoller:
         flow_enabled: bool = True,
         darkpool_enabled: bool = True,
         market_tide_enabled: bool = True,
+        sector_tide_enabled: bool = True,
     ):
         self.poll_interval = poll_interval_seconds
         self.flow_enabled = flow_enabled
         self.darkpool_enabled = darkpool_enabled
         self.market_tide_enabled = market_tide_enabled
+        self.sector_tide_enabled = sector_tide_enabled
         self._running = False
         self._task: asyncio.Task | None = None
         self._provider = None  # type: ignore[assignment]
@@ -193,6 +210,10 @@ class UWPoller:
                     await self._poll_market_tide(sink_registry)
                     self._last_tide_poll = datetime.now(UTC)
 
+                # Poll sector tides (hourly, same schedule as market tide)
+                if self.sector_tide_enabled and self._should_poll_tide():
+                    await self._poll_sector_tides(sink_registry)
+
                 # Periodic cache cleanup
                 self._cleanup_cache()
 
@@ -311,6 +332,52 @@ class UWPoller:
         except Exception as e:
             logger.error("uw_poller_market_tide_error", error=str(e))
 
+    async def _poll_sector_tides(self, sink_registry) -> None:
+        """Poll and publish sector tide data for all GICS sectors.
+
+        Runs hourly on same schedule as market tide.
+        """
+        total_published = 0
+        total_duplicates = 0
+        sectors_polled = 0
+
+        for sector in GICS_SECTORS:
+            try:
+                tides = await self._provider.get_sector_tide(sector)
+
+                # Take last 5 records for each sector
+                recent_tides = tides[-5:] if len(tides) > 5 else tides
+
+                for tide in recent_tides:
+                    envelope = wrap_event(
+                        event=tide,
+                        provider="unusual_whales",
+                        feed="sector_tide",
+                        source="rest",
+                    )
+
+                    event_id = envelope.get("event_id", "")
+                    if self._is_duplicate(event_id):
+                        total_duplicates += 1
+                        continue
+
+                    await sink_registry.publish_all(HEBER_STREAM, envelope)
+                    self._mark_seen(event_id)
+                    total_published += 1
+
+                sectors_polled += 1
+
+            except Exception as e:
+                logger.error("uw_poller_sector_tide_error", sector=sector, error=str(e))
+
+        if total_published or total_duplicates:
+            logger.info(
+                "uw_poller_sector_tides_published",
+                sectors=sectors_polled,
+                published=total_published,
+                duplicates=total_duplicates,
+            )
+
 
 # Global poller instance
 _uw_poller: UWPoller | None = None
@@ -326,6 +393,7 @@ async def start_uw_poller(
     flow_enabled: bool = True,
     darkpool_enabled: bool = True,
     market_tide_enabled: bool = True,
+    sector_tide_enabled: bool = True,
 ) -> UWPoller:
     """Start the global UW poller."""
     global _uw_poller
@@ -338,6 +406,7 @@ async def start_uw_poller(
         flow_enabled=flow_enabled,
         darkpool_enabled=darkpool_enabled,
         market_tide_enabled=market_tide_enabled,
+        sector_tide_enabled=sector_tide_enabled,
     )
     await _uw_poller.start()
     return _uw_poller
