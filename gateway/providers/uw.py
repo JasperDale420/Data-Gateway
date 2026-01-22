@@ -381,8 +381,8 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_institutions_failed", symbol=symbol, error=str(e))
             return []
 
-    async def get_congress_trades(self, symbol: str) -> list[dict]:
-        """Get congressional trades for a ticker."""
+    async def get_congress_trades(self, symbol: str | None = None, limit: int = 100) -> list[dict]:
+        """Get congressional trades, optionally filtered by ticker."""
         if not self._client:
             logger.warning("uw_client_not_initialized")
             return []
@@ -390,9 +390,8 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import congress
 
-            response = congress.get_trades.sync(client=self._client)
+            response = congress.get_trades.sync(client=self._client, limit=limit)
 
-            # Filter by symbol
             trades = []
             for item in self._extract_data(response):
                 get = (
@@ -401,18 +400,28 @@ class UnusualWhalesProvider(DataProvider):
                     else lambda k, d=None, _item=item: getattr(_item, k, d)
                 )
                 ticker = get("ticker") or get("symbol") or ""
-                if ticker.upper() == symbol.upper():
-                    trades.append(
-                        {
-                            "politician": get("politician") or get("representative"),
-                            "transaction_type": get("transaction_type") or get("type"),
-                            "amount": get("amount") or get("range"),
-                            "transaction_date": get("transaction_date"),
-                            "disclosure_date": get("disclosure_date"),
-                            "party": get("party"),
-                            "chamber": get("chamber"),
-                        }
-                    )
+
+                # Filter by symbol if provided
+                if symbol and ticker.upper() != symbol.upper():
+                    continue
+
+                trades.append(
+                    {
+                        # Match UW Senate Stock schema exactly
+                        "ticker": ticker,
+                        "name": get("name"),
+                        "txn_type": get("txn_type") or get("transaction_type"),
+                        "amounts": get("amounts") or get("amount"),
+                        "transaction_date": get("transaction_date"),
+                        "filed_at_date": get("filed_at_date") or get("disclosure_date"),
+                        "member_type": get("member_type") or get("chamber"),
+                        "politician_id": get("politician_id"),
+                        "reporter": get("reporter"),
+                        "notes": get("notes"),
+                        "issuer": get("issuer"),
+                        "is_active": get("is_active"),
+                    }
+                )
 
             logger.info("uw_congress_fetched", symbol=symbol, count=len(trades))
             return trades
@@ -421,8 +430,8 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_congress_failed", symbol=symbol, error=str(e))
             return []
 
-    async def get_insiders(self, symbol: str) -> list[dict]:
-        """Get insider transactions for a ticker."""
+    async def get_insiders(self, symbol: str | None = None, limit: int = 100) -> list[dict]:
+        """Get insider transactions, optionally filtered by ticker."""
         if not self._client:
             logger.warning("uw_client_not_initialized")
             return []
@@ -432,6 +441,7 @@ class UnusualWhalesProvider(DataProvider):
 
             response = market.get_insider_trades.sync(
                 client=self._client,
+                limit=limit,
             )
 
             transactions = []
@@ -441,15 +451,39 @@ class UnusualWhalesProvider(DataProvider):
                     if isinstance(item, dict)
                     else lambda k, d=None, _item=item: getattr(_item, k, d)
                 )
+
+                ticker = get("ticker") or ""
+
+                # Filter by symbol if provided
+                if symbol and ticker.upper() != symbol.upper():
+                    continue
+
+                # Match UW Insider Trade Agg schema exactly
                 transactions.append(
                     {
-                        "insider": get("insider_name") or get("owner"),
-                        "title": get("title") or get("owner_title"),
-                        "transaction_type": get("transaction_type") or get("trade_type"),
-                        "shares": get("shares") or get("quantity"),
-                        "price": get("price") or get("avg_price"),
-                        "value": get("value") or get("total_value"),
-                        "transaction_date": get("transaction_date") or get("filing_date"),
+                        "ticker": ticker,
+                        "owner_name": get("owner_name"),
+                        "officer_title": get("officer_title"),
+                        "transaction_code": get("transaction_code"),
+                        "amount": get("amount"),
+                        "price": get("price"),
+                        "transaction_date": get("transaction_date"),
+                        "filing_date": get("filing_date"),
+                        "formtype": get("formtype"),
+                        "id": get("id"),
+                        "is_10b5_1": get("is_10b5_1"),
+                        "is_director": get("is_director"),
+                        "is_officer": get("is_officer"),
+                        "is_ten_percent_owner": get("is_ten_percent_owner"),
+                        "sector": get("sector"),
+                        "marketcap": get("marketcap"),
+                        "is_s_p_500": get("is_s_p_500"),
+                        "next_earnings_date": get("next_earnings_date"),
+                        "shares_owned_before": get("shares_owned_before"),
+                        "shares_owned_after": get("shares_owned_after"),
+                        "security_title": get("security_title"),
+                        "natureofownership": get("natureofownership"),
+                        "transactions": get("transactions"),
                     }
                 )
 
@@ -785,6 +819,297 @@ class UnusualWhalesProvider(DataProvider):
         except Exception as e:
             logger.error("uw_earnings_ticker_failed", symbol=symbol, error=str(e))
             return []
+
+    # Raw earnings methods for Heber integration (return all UW fields)
+    async def get_raw_earnings_premarket(
+        self, date_str: str | None = None, limit: int = 50
+    ) -> list[dict]:
+        """Get raw premarket earnings for Heber ingestion.
+
+        Returns all UW API fields with earnings_type='premarket'.
+        """
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api import earnings
+
+        try:
+            response = earnings.get_premarket.sync(
+                client=self._client,
+                date=_or_unset(date_str),
+                limit=limit,
+            )
+            data = self._extract_data(response)
+            results = []
+            for item in data:
+                get = (
+                    item.get
+                    if isinstance(item, dict)
+                    else lambda k, d=None, _item=item: getattr(_item, k, d)
+                )
+                results.append(
+                    {
+                        "symbol": get("symbol") or get("ticker") or "",
+                        "earnings_type": "premarket",
+                        "report_date": get("report_date"),
+                        "report_time": get("report_time"),
+                        "actual_eps": get("actual_eps"),
+                        "street_mean_est": get("street_mean_est"),
+                        "source": get("source"),
+                        "ending_fiscal_quarter": get("ending_fiscal_quarter"),
+                        "expected_move": get("expected_move"),
+                        "expected_move_perc": get("expected_move_perc"),
+                        "full_name": get("full_name"),
+                        "sector": get("sector"),
+                        "marketcap": get("marketcap"),
+                        "has_options": get("has_options"),
+                        "is_s_p_500": get("is_s_p_500"),
+                        "continent": get("continent"),
+                        "country_code": get("country_code"),
+                        "country_name": get("country_name"),
+                        "pre_earnings_close": get("pre_earnings_close"),
+                        "pre_earnings_date": get("pre_earnings_date"),
+                        "post_earnings_close": get("post_earnings_close"),
+                        "post_earnings_date": get("post_earnings_date"),
+                        "reaction": get("reaction"),
+                    }
+                )
+            logger.info("uw_raw_earnings_premarket_fetched", count=len(results))
+            return results
+        except Exception as e:
+            logger.error("uw_raw_earnings_premarket_failed", error=str(e))
+            raise
+
+    async def get_raw_earnings_afterhours(
+        self, date_str: str | None = None, limit: int = 50
+    ) -> list[dict]:
+        """Get raw afterhours earnings for Heber ingestion.
+
+        Returns all UW API fields with earnings_type='afterhours'.
+        """
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api import earnings
+
+        try:
+            response = earnings.get_afterhours.sync(
+                client=self._client,
+                date=_or_unset(date_str),
+                limit=limit,
+            )
+            data = self._extract_data(response)
+            results = []
+            for item in data:
+                get = (
+                    item.get
+                    if isinstance(item, dict)
+                    else lambda k, d=None, _item=item: getattr(_item, k, d)
+                )
+                results.append(
+                    {
+                        "symbol": get("symbol") or get("ticker") or "",
+                        "earnings_type": "afterhours",
+                        "report_date": get("report_date"),
+                        "report_time": get("report_time"),
+                        "actual_eps": get("actual_eps"),
+                        "street_mean_est": get("street_mean_est"),
+                        "source": get("source"),
+                        "ending_fiscal_quarter": get("ending_fiscal_quarter"),
+                        "expected_move": get("expected_move"),
+                        "expected_move_perc": get("expected_move_perc"),
+                        "full_name": get("full_name"),
+                        "sector": get("sector"),
+                        "marketcap": get("marketcap"),
+                        "has_options": get("has_options"),
+                        "is_s_p_500": get("is_s_p_500"),
+                        "continent": get("continent"),
+                        "country_code": get("country_code"),
+                        "country_name": get("country_name"),
+                        "pre_earnings_close": get("pre_earnings_close"),
+                        "pre_earnings_date": get("pre_earnings_date"),
+                        "post_earnings_close": get("post_earnings_close"),
+                        "post_earnings_date": get("post_earnings_date"),
+                        "reaction": get("reaction"),
+                    }
+                )
+            logger.info("uw_raw_earnings_afterhours_fetched", count=len(results))
+            return results
+        except Exception as e:
+            logger.error("uw_raw_earnings_afterhours_failed", error=str(e))
+            raise
+
+    async def get_raw_earnings_ticker(self, symbol: str) -> list[dict]:
+        """Get raw historical earnings for a ticker for Heber ingestion.
+
+        Returns all UW API fields with earnings_type='historical'.
+        """
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api import earnings
+
+        try:
+            response = earnings.get_ticker_earnings.sync(
+                client=self._client,
+                ticker=symbol,
+            )
+            data = self._extract_data(response)
+            results = []
+            for item in data:
+                get = (
+                    item.get
+                    if isinstance(item, dict)
+                    else lambda k, d=None, _item=item: getattr(_item, k, d)
+                )
+                results.append(
+                    {
+                        "symbol": symbol,
+                        "earnings_type": "historical",
+                        "report_date": get("report_date"),
+                        "report_time": get("report_time"),
+                        "actual_eps": get("actual_eps"),
+                        "street_mean_est": get("street_mean_est"),
+                        "source": get("source"),
+                        "ending_fiscal_quarter": get("ending_fiscal_quarter"),
+                        "expected_move": get("expected_move"),
+                        "expected_move_perc": get("expected_move_perc"),
+                        # Historical-specific fields
+                        "pre_earnings_move_1d": get("pre_earnings_move_1d"),
+                        "pre_earnings_move_3d": get("pre_earnings_move_3d"),
+                        "pre_earnings_move_1w": get("pre_earnings_move_1w"),
+                        "pre_earnings_move_2w": get("pre_earnings_move_2w"),
+                        "post_earnings_move_1d": get("post_earnings_move_1d"),
+                        "post_earnings_move_3d": get("post_earnings_move_3d"),
+                        "post_earnings_move_1w": get("post_earnings_move_1w"),
+                        "post_earnings_move_2w": get("post_earnings_move_2w"),
+                        "long_straddle_1d": get("long_straddle_1d"),
+                        "long_straddle_1w": get("long_straddle_1w"),
+                        "short_straddle_1d": get("short_straddle_1d"),
+                        "short_straddle_1w": get("short_straddle_1w"),
+                    }
+                )
+            logger.info("uw_raw_earnings_ticker_fetched", symbol=symbol, count=len(results))
+            return results
+        except Exception as e:
+            logger.error("uw_raw_earnings_ticker_failed", symbol=symbol, error=str(e))
+            raise
+
+    async def get_group_greek_flow(
+        self, flow_group: str, date_str: str | None = None
+    ) -> list[dict]:
+        """Get raw Group Flow Greek flow data for Heber ingestion.
+
+        Returns per-minute delta/vega flow for a flow group (e.g., 'airline', 'tech').
+        """
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api import group_flow
+
+        try:
+            response = group_flow.get_greek_flow.sync(
+                flow_group,
+                client=self._client,
+                date=_or_unset(date_str),
+            )
+            data = self._extract_data(response)
+            results = []
+            for item in data:
+                get = (
+                    item.get
+                    if isinstance(item, dict)
+                    else lambda k, d=None, _item=item: getattr(_item, k, d)
+                )
+                results.append(
+                    {
+                        "flow_group": get("flow_group"),
+                        "timestamp": get("timestamp"),
+                        "dir_delta_flow": get("dir_delta_flow"),
+                        "dir_vega_flow": get("dir_vega_flow"),
+                        "total_delta_flow": get("total_delta_flow"),
+                        "total_vega_flow": get("total_vega_flow"),
+                        "otm_dir_delta_flow": get("otm_dir_delta_flow"),
+                        "otm_dir_vega_flow": get("otm_dir_vega_flow"),
+                        "otm_total_delta_flow": get("otm_total_delta_flow"),
+                        "otm_total_vega_flow": get("otm_total_vega_flow"),
+                        "net_call_premium": get("net_call_premium"),
+                        "net_put_premium": get("net_put_premium"),
+                        "net_call_volume": get("net_call_volume"),
+                        "net_put_volume": get("net_put_volume"),
+                        "volume": get("volume"),
+                        "transactions": get("transactions"),
+                    }
+                )
+            logger.info("uw_group_greek_flow_fetched", flow_group=flow_group, count=len(results))
+            return results
+        except Exception as e:
+            logger.error("uw_group_greek_flow_failed", flow_group=flow_group, error=str(e))
+            raise
+
+    async def get_group_greek_flow_by_expiry(
+        self, flow_group: str, expiry: str, date_str: str | None = None
+    ) -> list[dict]:
+        """Get raw Group Flow Greek flow by expiry for Heber ingestion.
+
+        Returns per-minute-per-expiry delta/vega flow for a flow group.
+        """
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api import group_flow
+
+        try:
+            response = group_flow.get_greek_flow_expiry.sync(
+                flow_group,
+                expiry,
+                client=self._client,
+                date=_or_unset(date_str),
+            )
+            data = self._extract_data(response)
+            results = []
+            for item in data:
+                get = (
+                    item.get
+                    if isinstance(item, dict)
+                    else lambda k, d=None, _item=item: getattr(_item, k, d)
+                )
+                results.append(
+                    {
+                        "flow_group": get("flow_group"),
+                        "timestamp": get("timestamp"),
+                        "expiry": get("expiry"),
+                        "dir_delta_flow": get("dir_delta_flow"),
+                        "dir_vega_flow": get("dir_vega_flow"),
+                        "total_delta_flow": get("total_delta_flow"),
+                        "total_vega_flow": get("total_vega_flow"),
+                        "otm_dir_delta_flow": get("otm_dir_delta_flow"),
+                        "otm_dir_vega_flow": get("otm_dir_vega_flow"),
+                        "otm_total_delta_flow": get("otm_total_delta_flow"),
+                        "otm_total_vega_flow": get("otm_total_vega_flow"),
+                        "net_call_premium": get("net_call_premium"),
+                        "net_put_premium": get("net_put_premium"),
+                        "net_call_volume": get("net_call_volume"),
+                        "net_put_volume": get("net_put_volume"),
+                        "volume": get("volume"),
+                        "transactions": get("transactions"),
+                    }
+                )
+            logger.info(
+                "uw_group_greek_flow_by_expiry_fetched",
+                flow_group=flow_group,
+                expiry=expiry,
+                count=len(results),
+            )
+            return results
+        except Exception as e:
+            logger.error(
+                "uw_group_greek_flow_by_expiry_failed",
+                flow_group=flow_group,
+                expiry=expiry,
+                error=str(e),
+            )
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 1: Screeners
@@ -2322,40 +2647,60 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_economic_calendar_failed", error=str(e))
             return []
 
-    async def get_sector_tide(self, sector: str) -> dict[str, Any]:
-        """Get market tide for a specific sector."""
+    async def get_sector_tide(self, sector: str, date_str: str | None = None) -> list[dict]:
+        """Get market tide for a specific sector.
+
+        Returns data in same format as market/tide (Daily Market Tide schema).
+        """
         if not self._client:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import market
 
-            response = market.get_sector_tide.sync(client=self._client, sector=sector)
-            data = self._get_data_safe(response)
-            if not data:
-                data = response if isinstance(response, dict) else {}
+            kwargs = {"sector": sector}
+            if date_str:
+                kwargs["date"] = date_str
+            response = market.get_sector_tide.sync(client=self._client, **kwargs)
 
-            get = data.get if isinstance(data, dict) else lambda k, d=None: getattr(data, k, d)
+            tides = []
+            for item in self._extract_data(response):
+                get = (
+                    item.get
+                    if isinstance(item, dict)
+                    else lambda k, d=None, _item=item: getattr(_item, k, d)
+                )
 
-            result = {
-                "sector": sector,
-                "bullish_premium": (
-                    float(get("bullish_premium") or 0) if get("bullish_premium") else None
-                ),
-                "bearish_premium": (
-                    float(get("bearish_premium") or 0) if get("bearish_premium") else None
-                ),
-                "net_premium": float(get("net_premium") or 0) if get("net_premium") else None,
-                "call_volume": int(get("call_volume") or 0) if get("call_volume") else None,
-                "put_volume": int(get("put_volume") or 0) if get("put_volume") else None,
-            }
+                net_call = float(get("net_call_premium") or 0)
+                net_put = float(get("net_put_premium") or 0)
 
-            logger.info("uw_sector_tide_fetched", sector=sector)
-            return result
+                # Compute sentiment
+                if net_call > abs(net_put):
+                    sentiment = "bullish"
+                elif abs(net_put) > net_call:
+                    sentiment = "bearish"
+                else:
+                    sentiment = "neutral"
+
+                tides.append(
+                    {
+                        "tide_type": "sector",
+                        "sector": sector,
+                        "date": get("date"),
+                        "timestamp": get("timestamp"),
+                        "net_call_premium": net_call,
+                        "net_put_premium": net_put,
+                        "net_volume": int(get("net_volume") or 0) if get("net_volume") else None,
+                        "sentiment": sentiment,
+                    }
+                )
+
+            logger.info("uw_sector_tide_fetched", sector=sector, count=len(tides))
+            return tides
 
         except Exception as e:
             logger.error("uw_sector_tide_failed", sector=sector, error=str(e))
-            return {}
+            return []
 
     async def get_top_net_impact(self, limit: int = 20) -> dict[str, list[dict[str, Any]]]:
         """Get top tickers by net premium (bullish and bearish)."""
@@ -2504,41 +2849,60 @@ class UnusualWhalesProvider(DataProvider):
     # Phase 9: Final Gaps
     # ─────────────────────────────────────────────────────────────────
 
-    async def get_etf_tide(self, symbol: str) -> dict[str, Any]:
-        """Get ETF-level tide data (premium flow sentiment)."""
+    async def get_etf_tide(self, symbol: str, date_str: str | None = None) -> list[dict]:
+        """Get ETF-level tide data (premium flow sentiment).
+
+        Returns data in same format as market/tide (Daily Market Tide schema).
+        """
         if not self._client:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
-            from unusualwhales.api import etfs as etf
+            from unusualwhales.api import market
 
-            response = etf.get_tide.sync(client=self._client, ticker=symbol.upper())
-            data = self._get_data_safe(response)
-            if not data:
-                data = response if isinstance(response, dict) else {}
+            kwargs = {"ticker": symbol.upper()}
+            if date_str:
+                kwargs["date"] = date_str
+            response = market.get_etf_tide.sync(client=self._client, **kwargs)
 
-            get = data.get if isinstance(data, dict) else lambda k, d=None: getattr(data, k, d)
+            tides = []
+            for item in self._extract_data(response):
+                get = (
+                    item.get
+                    if isinstance(item, dict)
+                    else lambda k, d=None, _item=item: getattr(_item, k, d)
+                )
 
-            result = {
-                "symbol": symbol.upper(),
-                "bullish_premium": (
-                    float(get("bullish_premium") or 0) if get("bullish_premium") else None
-                ),
-                "bearish_premium": (
-                    float(get("bearish_premium") or 0) if get("bearish_premium") else None
-                ),
-                "net_premium": float(get("net_premium") or 0) if get("net_premium") else None,
-                "call_volume": int(get("call_volume") or 0) if get("call_volume") else None,
-                "put_volume": int(get("put_volume") or 0) if get("put_volume") else None,
-                "timestamp": str(get("timestamp") or get("date") or ""),
-            }
+                net_call = float(get("net_call_premium") or 0)
+                net_put = float(get("net_put_premium") or 0)
 
-            logger.info("uw_etf_tide_fetched", symbol=symbol)
-            return result
+                # Compute sentiment
+                if net_call > abs(net_put):
+                    sentiment = "bullish"
+                elif abs(net_put) > net_call:
+                    sentiment = "bearish"
+                else:
+                    sentiment = "neutral"
+
+                tides.append(
+                    {
+                        "tide_type": "etf",
+                        "ticker": symbol.upper(),
+                        "date": get("date"),
+                        "timestamp": get("timestamp"),
+                        "net_call_premium": net_call,
+                        "net_put_premium": net_put,
+                        "net_volume": int(get("net_volume") or 0) if get("net_volume") else None,
+                        "sentiment": sentiment,
+                    }
+                )
+
+            logger.info("uw_etf_tide_fetched", symbol=symbol, count=len(tides))
+            return tides
 
         except Exception as e:
             logger.error("uw_etf_tide_failed", symbol=symbol, error=str(e))
-            return {}
+            return []
 
     async def get_option_volume_levels(self, symbol: str) -> list[dict[str, Any]]:
         """Get option volume levels per price."""
@@ -2686,26 +3050,62 @@ class UnusualWhalesProvider(DataProvider):
             # Handle both dict and object access
             get = data.get if isinstance(data, dict) else lambda k, d=None: getattr(data, k, d)
 
-            timestamp_str = get("timestamp") or get("executed_at")
+            timestamp_str = get("timestamp") or get("created_at") or get("executed_at")
             timestamp = (
                 datetime.fromisoformat(str(timestamp_str).replace("Z", TZ_UTC_SUFFIX))
                 if timestamp_str
                 else datetime.now(UTC)
             )
 
+            # Parse optional decimal fields
+            price = None
+            if get("price") is not None:
+                price = Decimal(str(get("price")))
+
+            underlying_price = None
+            if get("underlying_price") is not None:
+                underlying_price = Decimal(str(get("underlying_price")))
+
+            volume_oi_ratio = None
+            if get("volume_oi_ratio") is not None:
+                volume_oi_ratio = Decimal(str(get("volume_oi_ratio")))
+
+            ask_prem = None
+            if get("total_ask_side_prem") is not None:
+                ask_prem = Decimal(str(get("total_ask_side_prem")))
+
+            bid_prem = None
+            if get("total_bid_side_prem") is not None:
+                bid_prem = Decimal(str(get("total_bid_side_prem")))
+
             return NormalizedFlowAlert(
                 symbol=get("ticker") or get("symbol") or "",
                 timestamp=timestamp,
                 strike=Decimal(str(get("strike") or 0)),
                 expiry=str(get("expiry") or get("expiration_date") or ""),
-                put_call=str(get("put_call") or get("option_type") or "").lower(),
-                premium=Decimal(str(get("premium") or get("total_premium") or 0)),
+                put_call=str(get("type") or get("put_call") or get("option_type") or "").lower(),
+                premium=Decimal(str(get("total_premium") or get("premium") or 0)),
                 volume=int(get("volume") or get("size") or 0),
                 open_interest=int(get("open_interest") or get("oi") or 0),
                 side=str(get("side") or get("aggressor_side") or "mid").lower(),
-                is_sweep=bool(get("is_sweep") or get("sweep")),
+                is_sweep=bool(get("has_sweep") or get("is_sweep") or get("sweep")),
                 is_unusual=bool(get("is_unusual") or get("unusual")),
                 sentiment=get("sentiment"),
+                # Additional UW fields
+                option_chain=get("option_chain"),
+                price=price,
+                underlying_price=underlying_price,
+                alert_rule=get("alert_rule"),
+                total_size=int(get("total_size")) if get("total_size") is not None else None,
+                trade_count=int(get("trade_count")) if get("trade_count") is not None else None,
+                volume_oi_ratio=volume_oi_ratio,
+                total_ask_side_prem=ask_prem,
+                total_bid_side_prem=bid_prem,
+                all_opening_trades=bool(get("all_opening_trades", False)),
+                has_floor=bool(get("has_floor", False)),
+                has_multileg=bool(get("has_multileg", False)),
+                has_singleleg=bool(get("has_singleleg", True)),
+                expiry_count=int(get("expiry_count")) if get("expiry_count") is not None else None,
                 provider="unusual_whales",
             )
         except Exception as e:
@@ -2726,9 +3126,22 @@ class UnusualWhalesProvider(DataProvider):
 
             price = Decimal(str(get("price") or 0))
             size = int(get("size") or get("volume") or 0)
-            notional = get("notional")
+            notional = get("notional") or get("premium")
             if notional is None:
                 notional = price * size
+
+            # Extract NBBO data
+            nbbo_bid = None
+            nbbo_ask = None
+            if get("nbbo_bid") is not None:
+                nbbo_bid = Decimal(str(get("nbbo_bid")))
+            if get("nbbo_ask") is not None:
+                nbbo_ask = Decimal(str(get("nbbo_ask")))
+
+            # Extract tracking_id as string
+            tracking_id = None
+            if get("tracking_id") is not None:
+                tracking_id = str(get("tracking_id"))
 
             return NormalizedDarkpoolTrade(
                 symbol=get("ticker") or get("symbol") or "",
@@ -2736,7 +3149,13 @@ class UnusualWhalesProvider(DataProvider):
                 price=price,
                 size=size,
                 notional=Decimal(str(notional)),
-                exchange=get("exchange") or get("venue"),
+                exchange=get("market_center") or get("exchange") or get("venue"),
+                tracking_id=tracking_id,
+                nbbo_bid=nbbo_bid,
+                nbbo_ask=nbbo_ask,
+                ext_hours=get("ext_hour_sold_codes"),
+                trade_settlement=get("trade_settlement"),
+                canceled=bool(get("canceled", False)),
                 provider="unusual_whales",
             )
         except Exception as e:
@@ -2758,20 +3177,28 @@ class UnusualWhalesProvider(DataProvider):
             net_call = Decimal(str(get("net_call_premium") or get("call_premium") or 0))
             net_put = Decimal(str(get("net_put_premium") or get("put_premium") or 0))
 
-            # Determine sentiment
-            if net_call > net_put:
+            # Extract net_volume from UW API
+            net_volume = None
+            if get("net_volume") is not None:
+                net_volume = int(get("net_volume"))
+
+            # Extract date from UW API
+            date_str = get("date")
+
+            # Determine sentiment based on premium comparison
+            if net_call > abs(net_put):
                 sentiment = "bullish"
-            elif net_put > net_call:
+            elif abs(net_put) > net_call:
                 sentiment = "bearish"
             else:
                 sentiment = "neutral"
 
             return NormalizedMarketTide(
                 timestamp=timestamp,
+                date=date_str,
                 net_call_premium=net_call,
                 net_put_premium=net_put,
-                call_volume=int(get("call_volume") or 0),
-                put_volume=int(get("put_volume") or 0),
+                net_volume=net_volume,
                 sentiment=sentiment,
                 provider="unusual_whales",
             )
@@ -3743,6 +4170,67 @@ class UnusualWhalesProvider(DataProvider):
 
     # --- Congress Module ---
 
+    async def get_congress_trader_reports(
+        self,
+        name: str,
+        ticker: str | None = None,
+        date_str: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Get recent reports by a specific congress member.
+
+        Args:
+            name: The politician's name (e.g., 'Nancy Pelosi')
+            ticker: Optional, filter by stock symbol
+            date_str: Optional, filter by date (YYYY-MM-DD)
+            limit: Maximum results (default 100, max 200)
+
+        Returns:
+            List of dicts matching UW Senate Stock schema.
+        """
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.congress import get_trader
+
+        try:
+            response = get_trader.sync(
+                client=self._client,
+                name=name,
+                ticker=ticker,
+                date=date_str,
+                limit=limit,
+            )
+            data = self._extract_data(response)
+            trades = []
+            for item in data:
+                get = (
+                    item.get
+                    if isinstance(item, dict)
+                    else lambda k, d=None, _item=item: getattr(_item, k, d)
+                )
+                trades.append(
+                    {
+                        "ticker": get("ticker") or get("symbol") or "",
+                        "name": get("name"),
+                        "txn_type": get("txn_type") or get("transaction_type"),
+                        "amounts": get("amounts") or get("amount"),
+                        "transaction_date": get("transaction_date"),
+                        "filed_at_date": get("filed_at_date") or get("disclosure_date"),
+                        "member_type": get("member_type") or get("chamber"),
+                        "politician_id": get("politician_id"),
+                        "reporter": get("reporter"),
+                        "notes": get("notes"),
+                        "issuer": get("issuer"),
+                        "is_active": get("is_active"),
+                    }
+                )
+            logger.info("uw_congress_trader_fetched", name=name, count=len(trades))
+            return trades
+        except Exception as e:
+            logger.error("uw_congress_trader_failed", name=name, error=str(e))
+            raise
+
     async def get_congress_late_reports(self, limit: int = 50) -> list[dict]:
         """Get late congressional trading reports."""
         if not self._initialized:
@@ -3943,6 +4431,21 @@ class UnusualWhalesProvider(DataProvider):
             return data
         except Exception as e:
             logger.error("uw_market_spike_failed", error=str(e))
+            raise
+
+    async def get_sector_etfs(self) -> list[dict]:
+        """Get current trading day statistics for SPDR sector ETFs."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_sector_etfs
+
+        try:
+            response = get_sector_etfs.sync(client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_sector_etfs_failed", error=str(e))
             raise
 
     # --- Stock Module (remaining) ---

@@ -182,6 +182,19 @@ async def lifespan(app: FastAPI):
     except (ValueError, OSError):
         logger.warning("sighup_handler_failed", reason="Not supported on this platform")
 
+    # Start UW background poller (if data sink is enabled)
+    uw_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url:
+        from gateway.core.uw_poller import start_uw_poller
+
+        uw_poller = await start_uw_poller(
+            poll_interval_seconds=300,  # 5 minutes
+            flow_enabled=True,
+            darkpool_enabled=True,
+            market_tide_enabled=True,
+        )
+        logger.info("uw_poller_initialized", interval_seconds=300)
+
     yield
 
     # Shutdown with graceful drain (PRD 6.5, 11.3.4)
@@ -194,6 +207,12 @@ async def lifespan(app: FastAPI):
 
     # Wait for drain period
     await asyncio.sleep(drain_seconds)
+
+    # Shutdown UW poller
+    if uw_poller:
+        from gateway.core.uw_poller import stop_uw_poller
+
+        await stop_uw_poller()
 
     # Shutdown components
     if multiplexer:

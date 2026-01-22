@@ -1749,6 +1749,66 @@ class AlpacaProvider(DataProvider):
             logger.error("alpaca_positions_close_all_error", error=str(e))
             raise
 
+    def exercise_option_position(self, symbol_or_contract_id: str) -> dict[str, Any]:
+        """Exercise an options position.
+
+        Args:
+            symbol_or_contract_id: The OCC symbol or contract ID to exercise
+
+        Returns:
+            Response from the exercise request
+        """
+        if not self._trading_client:
+            raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
+
+        try:
+            # The Alpaca SDK uses exercise_options_position method
+            result = self._trading_client.exercise_options_position(symbol_or_contract_id)
+            data = self._model_to_dict(result) if result else {"status": "exercised"}
+            logger.info("alpaca_option_exercised", symbol=symbol_or_contract_id)
+            return data
+        except APIError as e:
+            logger.error(
+                "alpaca_option_exercise_error",
+                symbol=symbol_or_contract_id,
+                error=str(e),
+            )
+            raise
+
+    def do_not_exercise_option(self, symbol_or_contract_id: str) -> dict[str, Any]:
+        """Mark an options position as do-not-exercise.
+
+        Args:
+            symbol_or_contract_id: The OCC symbol or contract ID to mark as DNE
+
+        Returns:
+            Response from the DNE request
+        """
+        if not self._client:
+            raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
+
+        try:
+            # This endpoint is not in alpaca-py SDK, use REST directly
+            response = httpx.post(
+                f"{self._base_url}/v2/positions/{symbol_or_contract_id}/do-not-exercise",
+                headers={
+                    "APCA-API-KEY-ID": self._api_key,
+                    "APCA-API-SECRET-KEY": self._secret_key,
+                },
+            )
+            response.raise_for_status()
+            data = response.json() if response.content else {"status": "do_not_exercise"}
+            logger.info("alpaca_option_dne", symbol=symbol_or_contract_id)
+            return data
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "alpaca_option_dne_error",
+                symbol=symbol_or_contract_id,
+                status=e.response.status_code,
+                error=str(e),
+            )
+            raise
+
     def get_portfolio_history(
         self,
         period: str | None = None,
@@ -2064,6 +2124,10 @@ class AlpacaProvider(DataProvider):
             bid_size=int(raw["bs"]),
             ask_price=Decimal(str(raw["ap"])),
             ask_size=int(raw["as"]),
+            bid_exchange=raw.get("bx"),
+            ask_exchange=raw.get("ax"),
+            conditions=raw.get("c", []),
+            tape=raw.get("z"),
             provider="alpaca",
         )
 
@@ -2074,8 +2138,11 @@ class AlpacaProvider(DataProvider):
             timestamp=datetime.fromisoformat(raw["t"].replace("Z", UTC_OFFSET)),
             price=Decimal(str(raw["p"])),
             size=int(raw["s"]),
-            exchange=raw.get("x"),
-            conditions=raw.get("c", []),
+            trade_id=str(raw["i"]) if raw.get("i") else None,
+            exchange=raw.get("x"),  # Stocks only
+            conditions=raw.get("c", []),  # Stocks only
+            tape=raw.get("z"),  # Stocks only
+            taker_side=raw.get("tks"),  # Crypto only (B=buy, S=sell)
             provider="alpaca",
         )
 

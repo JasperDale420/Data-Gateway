@@ -363,18 +363,34 @@ class SECProvider(DataProvider):
         self,
         query: str,
         form_type: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Search filings by keywords using EDGAR full-text search."""
+        """Search filings by keywords using EDGAR full-text search.
+
+        Args:
+            query: Search keywords
+            form_type: Optional form type filter (e.g., "10-K", "8-K")
+            start_date: Start date in YYYY-MM-DD format (default: 2020-01-01)
+            end_date: End date in YYYY-MM-DD format (default: today)
+            limit: Max results to return
+        """
         if not self._client:
             raise RuntimeError("Provider not initialized")
+
+        # Default date range if not specified
+        if not start_date:
+            start_date = "2020-01-01"
+        if not end_date:
+            end_date = datetime.now(UTC).strftime("%Y-%m-%d")
 
         # Note: SEC full-text search is at efts.sec.gov
         params = {
             "q": query,
             "dateRange": "custom",
-            "startdt": "2020-01-01",
-            "enddt": "2099-12-31",
+            "startdt": start_date,
+            "enddt": end_date,
         }
         if form_type:
             params["forms"] = form_type
