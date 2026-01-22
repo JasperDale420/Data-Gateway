@@ -95,12 +95,12 @@ class UWPoller:
     def _get_poll_limit(self) -> int:
         """Get poll limit based on time of day.
 
-        Analysis of darkpool trade logs shows 500-800 trades per 5-minute window.
-        Setting limits higher to avoid missing trades.
+        NOTE: UW API limits darkpool endpoint to max 200 per call.
+        Actual trade volume is 500-800 per 5-minute window, so we only
+        capture a subset of trades with current polling approach.
+        Consider more frequent polling or a different strategy for complete coverage.
         """
-        if self._is_morning_rush():
-            return 1000  # Higher limit during morning rush (actual: ~600/5min)
-        return 800  # Standard limit (actual: up to 800/5min in afternoon)
+        return 200  # API max limit
 
     def _is_duplicate(self, event_id: str) -> bool:
         """Check if event has already been seen."""
