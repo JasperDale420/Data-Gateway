@@ -46,7 +46,7 @@ async def get_stock_bars(
         start = end - timedelta(hours=24)
 
     try:
-        await require_provider_rate_limit("alpaca")
+        await require_provider_rate_limit("alpaca", block=True)
         bars = await provider.get_bars(
             symbols=[symbol.upper()],
             timeframe=timeframe,
@@ -86,7 +86,7 @@ async def get_stock_quotes(
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
-        await require_provider_rate_limit("alpaca")
+        await require_provider_rate_limit("alpaca", block=True)
         quotes = await provider.get_quotes(symbols=[symbol.upper()])
 
         if not quotes:
@@ -125,7 +125,7 @@ async def get_stock_trades(
         start = end - timedelta(hours=1)
 
     try:
-        await require_provider_rate_limit("alpaca")
+        await require_provider_rate_limit("alpaca", block=True)
         trades = await provider.get_trades(
             symbols=[symbol.upper()],
             start=start,
@@ -161,7 +161,7 @@ async def get_stock_snapshot(
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
-        await require_provider_rate_limit("alpaca")
+        await require_provider_rate_limit("alpaca", block=True)
         quotes = await provider.get_quotes(symbols=[symbol.upper()])
         end = datetime.now(UTC)
         start = end - timedelta(minutes=5)
@@ -199,7 +199,7 @@ async def get_latest_bars(
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
-        await require_provider_rate_limit("alpaca")
+        await require_provider_rate_limit("alpaca", block=True)
         symbols_list = [s.strip().upper() for s in symbols.split(",")]
         bars = await provider.get_latest_bars(symbols_list)
         return {
@@ -223,7 +223,7 @@ async def get_latest_trades(
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
-        await require_provider_rate_limit("alpaca")
+        await require_provider_rate_limit("alpaca", block=True)
         symbols_list = [s.strip().upper() for s in symbols.split(",")]
         trades = await provider.get_latest_trades(symbols_list)
         return {
@@ -250,7 +250,7 @@ async def get_historical_quotes(
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
-        await require_provider_rate_limit("alpaca")
+        await require_provider_rate_limit("alpaca", block=True)
         symbols_list = [s.strip().upper() for s in symbols.split(",")]
         quotes = await provider.get_historical_quotes(symbols_list, start, end, limit)
         return {
@@ -274,7 +274,7 @@ async def get_snapshots(
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
-        await require_provider_rate_limit("alpaca")
+        await require_provider_rate_limit("alpaca", block=True)
         symbols_list = [s.strip().upper() for s in symbols.split(",")]
         snapshots = await provider.get_snapshots(symbols_list)
         return {
@@ -301,7 +301,7 @@ async def get_auctions(
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
-        await require_provider_rate_limit("alpaca")
+        await require_provider_rate_limit("alpaca", block=True)
         symbols_list = [s.strip().upper() for s in symbols.split(",")]
         auctions = await provider.get_auctions(symbols_list, start, end, limit)
         return {

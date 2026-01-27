@@ -11,7 +11,39 @@ Data Gateway provides a single WebSocket and REST interface for accessing multip
 - **Client authentication** — API key based auth with permissions
 - **Provider abstraction** — Plug-and-play data source integration
 
-## Providers
+## Architecture
+
+```mermaid
+graph LR
+    subgraph Clients
+        C1[Client 1]
+        C2[Client 2]
+        C3[Client N]
+    end
+
+    subgraph Gateway
+        WS[WebSocket Handler]
+        REST[REST Proxy]
+        MUX[Stream Multiplexer]
+        CACHE[Cache Layer]
+        AUTH[Authenticator]
+    end
+
+    subgraph Providers
+        ALP[Alpaca]
+        UW[Unusual Whales]
+        FH[Finnhub]
+        YF[yfinance]
+        SEC[SEC EDGAR]
+    end
+
+    C1 & C2 & C3 --> AUTH
+    AUTH --> WS & REST
+    WS --> MUX
+    REST --> CACHE
+    MUX --> ALP
+    CACHE --> ALP & UW & FH & YF & SEC
+```
 
 | Provider | Data Types | API Key | Status |
 |---|---|---|---|
