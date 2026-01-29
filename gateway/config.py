@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # Cache
     cache_max_size: int = Field(default=10000, ge=100)
     cache_default_ttl: int = Field(default=300, ge=1)  # seconds
+    cache_redis_url: str = Field(default="", alias="GATEWAY_CACHE_REDIS_URL")
+    cache_redis_enabled: bool = Field(default=False, alias="GATEWAY_CACHE_REDIS_ENABLED")
 
     # WebSocket
     ws_heartbeat_interval: int = Field(default=30, ge=5)  # seconds
