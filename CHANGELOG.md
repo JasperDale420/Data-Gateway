@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.4] - 2026-01-29
+
+### Fixed
+
+- **WebSocket Connection Cleanup**: Aggressive connection cleanup on shutdown to prevent "connection limit exceeded" errors on restart
+  - `UpstreamConnection.stop()`: Now sends explicit close frame with timeout, forces socket abort if stuck
+  - `StreamMultiplexer.stop()`: Concurrent connection closure with 10s timeout for all streams
+  - `lifespan`: Multiplexer shutdown now happens FIRST (before drain period) to release Alpaca connection slots immediately
+  - Added detailed shutdown logging for debugging connection issues
+
+---
+
 ## [0.5.3] - 2026-01-21
 
 ### Added

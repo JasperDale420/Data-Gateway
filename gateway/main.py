@@ -199,14 +199,27 @@ async def lifespan(app: FastAPI):
 
     # Shutdown with graceful drain (PRD 6.5, 11.3.4)
     drain_seconds = settings.shutdown_drain_seconds
-    logger.info("shutdown_drain_starting", drain_seconds=drain_seconds)
+    logger.info("shutdown_starting", drain_seconds=drain_seconds)
+
+    # PRIORITY: Stop multiplexer FIRST to release Alpaca WebSocket connections immediately
+    # This prevents "connection limit exceeded" errors on restart
+    if multiplexer:
+        logger.info("multiplexer_shutdown_starting")
+        try:
+            await asyncio.wait_for(multiplexer.stop(), timeout=15.0)
+            logger.info("multiplexer_shutdown_complete")
+        except TimeoutError:
+            logger.error("multiplexer_shutdown_timeout", timeout_seconds=15)
+        except Exception as e:
+            logger.error("multiplexer_shutdown_error", error=str(e))
 
     # Stop accepting new connections
     connections = get_connection_manager()
     logger.info("shutdown_connections", active=connections.active_count)
 
-    # Wait for drain period
-    await asyncio.sleep(drain_seconds)
+    # Wait for drain period (allow in-flight requests to complete)
+    if drain_seconds > 0:
+        await asyncio.sleep(drain_seconds)
 
     # Shutdown UW poller
     if uw_poller:
@@ -214,9 +227,7 @@ async def lifespan(app: FastAPI):
 
         await stop_uw_poller()
 
-    # Shutdown components
-    if multiplexer:
-        await multiplexer.stop()
+    # Shutdown remaining components
     await registry.shutdown()
     logger.info("gateway_shutdown_complete")
 

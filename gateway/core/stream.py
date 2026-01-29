@@ -367,17 +367,50 @@ class UpstreamConnection:
         await self._connect_and_run()
 
     async def stop(self) -> None:
-        """Stop the connection gracefully."""
+        """Stop the connection gracefully with aggressive cleanup.
+
+        Ensures WebSocket is properly closed to release connection slots on Alpaca's
+        side, preventing 'connection limit exceeded' errors on restart.
+        """
         self._running = False
+        self._authenticated = False
+
+        # Cancel receive task first
         if self._receive_task:
             self._receive_task.cancel()
             try:
                 await self._receive_task
             except asyncio.CancelledError:
                 logger.debug("receive_task_cancelled", stream=self.stream_type.value)
+
+        # Aggressively close WebSocket connection
         if self._ws:
-            await self._ws.close()
-            self._ws = None
+            try:
+                # Send explicit close frame with normal closure code
+                await asyncio.wait_for(
+                    self._ws.close(code=1000, reason="Gateway shutdown"),
+                    timeout=3.0,
+                )
+                logger.info("websocket_closed_gracefully", stream=self.stream_type.value)
+            except TimeoutError:
+                logger.warning(
+                    "websocket_close_timeout",
+                    stream=self.stream_type.value,
+                    action="forcing_close",
+                )
+                # Force close the underlying socket
+                try:
+                    self._ws.transport.abort()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(
+                    "websocket_close_error",
+                    stream=self.stream_type.value,
+                    error=str(e),
+                )
+            finally:
+                self._ws = None
 
     async def _connect_and_run(self) -> None:
         """Main connection loop with reconnection."""
@@ -540,19 +573,37 @@ class StreamMultiplexer:
             logger.info("stream_started", stream=stream_type.value)
 
     async def stop(self) -> None:
-        """Stop all upstream connections."""
+        """Stop all upstream connections with aggressive cleanup.
+
+        Ensures all WebSocket connections are properly closed to release
+        Alpaca connection slots, preventing connection limit issues on restart.
+        """
         self._running = False
-        logger.info("multiplexer_stopping")
+        logger.info("multiplexer_stopping", connections=len(self._connections))
 
-        for conn in self._connections.values():
-            await conn.stop()
-
-        for task in self._tasks:
-            task.cancel()
+        # Stop all connections concurrently with timeout
+        stop_tasks = [conn.stop() for conn in self._connections.values()]
+        if stop_tasks:
             try:
-                await task
-            except asyncio.CancelledError:
-                logger.debug("stream_task_cancelled")
+                await asyncio.wait_for(
+                    asyncio.gather(*stop_tasks, return_exceptions=True),
+                    timeout=10.0,
+                )
+                logger.info("all_connections_stopped")
+            except TimeoutError:
+                logger.warning(
+                    "multiplexer_stop_timeout",
+                    action="forcing_task_cancellation",
+                )
+
+        # Cancel stream tasks
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=2.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    logger.debug("stream_task_cancelled")
 
         self._tasks.clear()
         logger.info("multiplexer_stopped")
