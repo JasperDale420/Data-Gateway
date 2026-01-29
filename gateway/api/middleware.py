@@ -22,10 +22,12 @@ class RateLimitBucket:
     limit: int
     remaining: int
     reset_at: float = field(default_factory=lambda: time.time() + 60)
+    last_seen: float = field(default_factory=time.time)
 
     def consume(self) -> bool:
         """Consume one request. Returns True if allowed."""
         now = time.time()
+        self.last_seen = now
 
         # Reset bucket if window expired
         if now >= self.reset_at:
@@ -59,8 +61,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.default_limit = default_limit
         self._buckets: dict[str, RateLimitBucket] = {}
+        self._last_prune = time.time()
+        self._prune_interval = 60.0
+        self._bucket_ttl = 120.0
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        now = time.time()
+        self._prune_buckets(now)
+
         # Extract client identifier and limit
         client_id, client_limit = self._get_client_info(request)
 
@@ -99,6 +107,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             response.headers[key] = value
 
         return response
+
+    def _prune_buckets(self, now: float) -> None:
+        """Prune idle buckets to prevent unbounded growth."""
+        if now - self._last_prune < self._prune_interval:
+            return
+
+        cutoff = now - self._bucket_ttl
+        for client_id, bucket in list(self._buckets.items()):
+            if bucket.last_seen < cutoff:
+                self._buckets.pop(client_id, None)
+
+        self._last_prune = now
 
     def _get_client_info(self, request: Request) -> tuple[str, int]:
         """Extract client ID and rate limit from request."""
@@ -150,9 +170,34 @@ class CacheEntry:
         """Check if entry has expired."""
         return time.time() - self.created_at > self.ttl
 
+    def to_dict(self) -> dict:
+        """Serialize for Redis storage."""
+        import base64
+
+        return {
+            "content": base64.b64encode(self.content).decode("ascii"),
+            "media_type": self.media_type,
+            "created_at": self.created_at,
+            "ttl": self.ttl,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CacheEntry":
+        """Deserialize from Redis storage."""
+        import base64
+
+        return cls(
+            content=base64.b64decode(data["content"]),
+            media_type=data["media_type"],
+            created_at=data["created_at"],
+            ttl=data["ttl"],
+        )
+
 
 class CacheMiddleware(BaseHTTPMiddleware):
     """Adds cache headers and caching for GET requests.
+
+    Uses HybridCache (L1 memory + L2 Redis) when available for durable caching.
 
     Headers added:
     - X-Gateway-Cache: HIT or MISS
@@ -160,10 +205,20 @@ class CacheMiddleware(BaseHTTPMiddleware):
     - X-Gateway-Cache-TTL: Remaining TTL in milliseconds
     """
 
-    def __init__(self, app, default_ttl: int = 60):
+    def __init__(self, app, default_ttl: int = 60, max_size: int = 10000):
         super().__init__(app)
         self.default_ttl = default_ttl
-        self._cache: dict[str, CacheEntry] = {}
+        self._cache = None  # Lazy initialization
+        self._cache_initialized = False
+
+    def _get_cache(self):
+        """Get cache instance (lazy initialization)."""
+        if not self._cache_initialized:
+            from gateway.api.deps import get_cache
+
+            self._cache = get_cache()
+            self._cache_initialized = True
+        return self._cache
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Only cache GET requests
@@ -179,35 +234,50 @@ class CacheMiddleware(BaseHTTPMiddleware):
         # Generate cache key
         cache_key = self._cache_key(request)
 
-        # Check cache
-        entry = self._cache.get(cache_key)
-        if entry and not entry.is_expired():
-            return Response(
-                content=entry.content,
-                status_code=200,
-                media_type=entry.media_type,
-                headers={
-                    "X-Gateway-Cache": "HIT",
-                    "X-Gateway-Cache-Age": str(entry.age_ms),
-                    "X-Gateway-Cache-TTL": str(entry.ttl_remaining),
-                },
-            )
+        # Get cache instance
+        cache = self._get_cache()
+
+        # Check cache (async for HybridCache)
+        try:
+            cached_data = await cache.get(cache_key)
+            if cached_data:
+                entry = CacheEntry.from_dict(cached_data)
+                if not entry.is_expired():
+                    return Response(
+                        content=entry.content,
+                        status_code=200,
+                        media_type=entry.media_type,
+                        headers={
+                            "X-Gateway-Cache": "HIT",
+                            "X-Gateway-Cache-Age": str(entry.age_ms),
+                            "X-Gateway-Cache-TTL": str(entry.ttl_remaining),
+                        },
+                    )
+        except Exception as e:
+            logger.debug("cache_read_error", key=cache_key, error=str(e))
 
         # Process request
         response = await call_next(request)
 
         # Cache successful responses
         if response.status_code == 200:
-            body = b""
+            body_chunks: list[bytes] = []
             async for chunk in response.body_iterator:
-                body += chunk
+                body_chunks.append(chunk)
+            body = b"".join(body_chunks)
 
-            self._cache[cache_key] = CacheEntry(
+            entry = CacheEntry(
                 content=body,
                 media_type=response.media_type or "application/json",
                 created_at=time.time(),
                 ttl=self.default_ttl,
             )
+
+            # Store in cache (async)
+            try:
+                await cache.set(cache_key, entry.to_dict(), ttl=self.default_ttl)
+            except Exception as e:
+                logger.debug("cache_write_error", key=cache_key, error=str(e))
 
             return Response(
                 content=body,
@@ -318,9 +388,10 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
 
         try:
             # Read response body
-            body = b""
+            body_chunks: list[bytes] = []
             async for chunk in response.body_iterator:
-                body += chunk
+                body_chunks.append(chunk)
+            body = b"".join(body_chunks)
 
             # Parse JSON
             data = json.loads(body)
@@ -496,6 +567,7 @@ class IPConnectionTracker:
     requests: int = 0
     first_request: float = field(default_factory=time.time)
     blocked_until: float = 0.0
+    last_seen: float = field(default_factory=time.time)
 
 
 class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
@@ -528,6 +600,8 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         self._global_window_start = time.time()
         self._ip_trackers: dict[str, IPConnectionTracker] = {}
         self._blocked_ips: set[str] = set()
+        self._last_prune = time.time()
+        self._prune_interval = 60.0
 
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP from request."""
@@ -560,11 +634,14 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         # Get or create tracker
         tracker = self._ip_trackers.get(ip)
         if not tracker or now - tracker.first_request >= self.window_seconds:
-            self._ip_trackers[ip] = IPConnectionTracker(requests=1, first_request=now)
+            self._ip_trackers[ip] = IPConnectionTracker(
+                requests=1, first_request=now, last_seen=now
+            )
             return True
 
         # Check limit
         tracker.requests += 1
+        tracker.last_seen = now
         if tracker.requests > self.per_ip_limit:
             # Block for remainder of window
             tracker.blocked_until = tracker.first_request + self.window_seconds
@@ -576,6 +653,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Check global and per-IP limits."""
+        self._prune_ip_trackers()
         # Skip for health endpoints
         if request.url.path in ("/health", "/health/ready"):
             return await call_next(request)
@@ -621,6 +699,28 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         self._global_requests += 1
 
         return await call_next(request)
+
+    def _prune_ip_trackers(self) -> None:
+        """Prune idle IP trackers and expired blocks."""
+        now = time.time()
+        if now - self._last_prune < self._prune_interval:
+            return
+
+        cutoff = now - (self.window_seconds * 2)
+        for ip, tracker in list(self._ip_trackers.items()):
+            if tracker.blocked_until > now:
+                continue
+            if tracker.last_seen < cutoff:
+                self._ip_trackers.pop(ip, None)
+                self._blocked_ips.discard(ip)
+
+        # Clean up expired blocks with no tracker
+        for ip in list(self._blocked_ips):
+            maybe_tracker = self._ip_trackers.get(ip)
+            if maybe_tracker is None or maybe_tracker.blocked_until <= now:
+                self._blocked_ips.discard(ip)
+
+        self._last_prune = now
 
     def block_ip(self, ip: str, duration_seconds: int = 3600) -> None:
         """Manually block an IP (PRD 7.6.3)."""
