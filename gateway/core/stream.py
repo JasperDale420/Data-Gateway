@@ -226,7 +226,16 @@ class UpstreamConnection:
 
     @property
     def is_connected(self) -> bool:
-        return self._ws is not None and self._ws.open and self._authenticated
+        # websockets 16.0 uses .state attribute, not .open/.closed
+        if self._ws is None:
+            return False
+        try:
+            from websockets.protocol import State
+
+            return self._ws.state == State.OPEN and self._authenticated
+        except (AttributeError, ImportError):
+            # Fallback for older versions
+            return getattr(self._ws, "open", False) and self._authenticated
 
     @property
     def subscriptions(self) -> SubscriptionManager:
@@ -517,6 +526,7 @@ class StreamMultiplexer:
         api_secret: str,
         on_data: Callable[[str, str, dict[str, Any]], Awaitable[None]],
         use_iex: bool = False,
+        lazy_connect: bool = True,
     ) -> None:
         """Initialize multiplexer.
 
@@ -525,10 +535,12 @@ class StreamMultiplexer:
             api_secret: Alpaca API secret
             on_data: Callback for data messages (client_id, data_type, message)
             use_iex: Use IEX feed instead of SIP for stocks
+            lazy_connect: If True, only connect to streams when first client subscribes
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.on_data = on_data
+        self._lazy_connect = lazy_connect
 
         stock_type = AlpacaStreamType.STOCKS_IEX if use_iex else AlpacaStreamType.STOCKS_SIP
 
@@ -563,14 +575,25 @@ class StreamMultiplexer:
         self._tasks: list[asyncio.Task] = []
 
     async def start(self) -> None:
-        """Start all upstream connections."""
-        self._running = True
-        logger.info("multiplexer_starting")
+        """Start the multiplexer.
 
-        for stream_type, conn in self._connections.items():
-            task = asyncio.create_task(conn.start())
-            self._tasks.append(task)
-            logger.info("stream_started", stream=stream_type.value)
+        If lazy_connect is True (default), connections are only established
+        when the first client subscribes to a stream. This works with Alpaca's
+        Basic plan which only allows 1 concurrent WebSocket connection.
+        """
+        self._running = True
+        logger.info("multiplexer_starting", lazy_connect=self._lazy_connect)
+
+        if not self._lazy_connect:
+            # Eager mode: start all connections immediately (requires multi-connection plan)
+            for stream_type, conn in self._connections.items():
+                task = asyncio.create_task(conn.start())
+                self._tasks.append(task)
+                logger.info("stream_started", stream=stream_type.value)
+        else:
+            logger.info(
+                "lazy_connect_enabled", message="Streams will connect on first subscription"
+            )
 
     async def stop(self) -> None:
         """Stop all upstream connections with aggressive cleanup.
@@ -608,6 +631,34 @@ class StreamMultiplexer:
         self._tasks.clear()
         logger.info("multiplexer_stopped")
 
+    async def _ensure_connected(self, stream_type: AlpacaStreamType) -> bool:
+        """Ensure connection is established for lazy connect mode.
+
+        Returns True if connection is ready, False if failed.
+        """
+        conn = self._get_connection(stream_type)
+        if not conn:
+            return False
+
+        # Already connected or connecting
+        if conn.is_connected or conn._running:
+            return True
+
+        # Start connection for this stream
+        logger.info("lazy_connect_starting", stream=stream_type.value)
+        task = asyncio.create_task(conn.start())
+        self._tasks.append(task)
+
+        # Wait briefly for connection to establish
+        for _ in range(50):  # 5 second timeout
+            await asyncio.sleep(0.1)
+            if conn.is_connected:
+                logger.info("lazy_connect_established", stream=stream_type.value)
+                return True
+
+        logger.warning("lazy_connect_timeout", stream=stream_type.value)
+        return False
+
     async def client_subscribe(
         self,
         client_id: str,
@@ -629,6 +680,17 @@ class StreamMultiplexer:
                 "error_code": "GW-E3002",
                 "message": f"Stream type not available: {stream_type.value}",
             }
+
+        # Lazy connect: ensure stream is connected before subscribing
+        if self._lazy_connect:
+            connected = await self._ensure_connected(stream_type)
+            if not connected:
+                return {
+                    "type": "subscription_ack",
+                    "status": "error",
+                    "error_code": "GW-E3003",
+                    "message": f"Failed to connect to stream: {stream_type.value}",
+                }
 
         # Track client subscription
         new_bars, new_quotes, new_trades = conn.subscriptions.subscribe(

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # Streaming
     stream_use_iex: bool = False  # Use IEX instead of SIP for stocks
+    stream_lazy_connect: bool = True  # Connect to streams on-demand (works with 1-connection limit)
     stream_reconnect_max_retries: int = Field(default=10, ge=1)
     stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     stream_reconnect_max_delay: float = Field(default=16.0, ge=1.0)

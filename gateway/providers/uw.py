@@ -168,11 +168,13 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import flow
 
-            response = flow.get_order_flow.sync(client=self._client)
+            response = flow.get_ticker_order_flow.sync(client=self._client, limit=limit)
 
             alerts = []
             data_items = []
-            if (
+            if response and hasattr(response, "data") and response.data:
+                data_items = response.data
+            elif (
                 response
                 and hasattr(response, "additional_properties")
                 and response.additional_properties
