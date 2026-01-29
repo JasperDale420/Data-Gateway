@@ -5,7 +5,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import logging
 from contextlib import asynccontextmanager
+
+# Configure stdlib logging for structlog integration
+logging.basicConfig(
+    format="%(message)s",
+    level=logging.INFO,
+)
 
 import structlog
 from fastapi import FastAPI

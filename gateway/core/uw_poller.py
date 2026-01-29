@@ -83,6 +83,10 @@ class UWPoller:
         self._seen_ids: dict[str, datetime] = {}
         self._cache_ttl_seconds = 7200  # 2 hours
 
+        # Flow tracks its own interval (every 5 minutes)
+        self._last_flow_poll: datetime | None = None
+        self._flow_interval = DEFAULT_POLL_INTERVAL
+
         # Darkpool tracks its own polling time (runs every minute)
         self._last_darkpool_poll: datetime | None = None
         self._darkpool_interval = DARKPOOL_POLL_INTERVAL
@@ -103,7 +107,7 @@ class UWPoller:
         now_et = datetime.now(ET)
         current_time = now_et.time()
         # Extended hours: 4:00 AM - 8:00 PM ET on trading days
-        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day()
+        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(now_et.date())
 
     def _is_morning_rush(self) -> bool:
         """Check if we're in high-volume morning period (first hour of trading)."""
@@ -153,6 +157,13 @@ class UWPoller:
             return True
         elapsed = (datetime.now(UTC) - self._last_tide_poll).total_seconds()
         return elapsed >= self._tide_interval
+
+    def _should_poll_flow(self) -> bool:
+        """Check if enough time has passed to poll flow alerts again (every 5 minutes)."""
+        if self._last_flow_poll is None:
+            return True
+        elapsed = (datetime.now(UTC) - self._last_flow_poll).total_seconds()
+        return elapsed >= self._flow_interval
 
     def _should_poll_darkpool(self) -> bool:
         """Check if enough time has passed to poll darkpool again (every minute)."""
@@ -208,43 +219,43 @@ class UWPoller:
         """Main polling loop."""
         from gateway.api.deps import get_sink_registry
 
+        # Base interval is 1 minute (darkpool frequency)
+        base_interval = DARKPOOL_POLL_INTERVAL
+
         while self._running:
             try:
-                # Only poll during market hours
-                if not self._is_market_hours():
-                    logger.debug("uw_poller_outside_market_hours")
-                    await asyncio.sleep(60)  # Check every minute when market is closed
-                    continue
-
                 sink_registry = get_sink_registry()
                 if not sink_registry:
                     logger.debug("uw_poller_no_sink")
-                    await asyncio.sleep(self.poll_interval)
+                    await asyncio.sleep(base_interval)
                     continue
 
                 poll_limit = self._get_poll_limit()
-                logger.info(
-                    "uw_poller_polling", limit=poll_limit, morning_rush=self._is_morning_rush()
-                )
 
-                # Poll flow alerts (only during market hours)
-                if self.flow_enabled and self._is_market_hours():
-                    await self._poll_flow_alerts(sink_registry, poll_limit)
+                # Poll flow alerts (every 5 minutes during market hours)
+                if self.flow_enabled and self._should_poll_flow():
+                    if self._is_market_hours():
+                        logger.info("uw_poller_polling_flow", limit=poll_limit)
+                        await self._poll_flow_alerts(sink_registry, poll_limit)
+                        self._last_flow_poll = datetime.now(UTC)
 
                 # Poll darkpool (every minute during market AND extended hours)
                 if self.darkpool_enabled and self._should_poll_darkpool():
                     if self._is_market_hours() or self._is_extended_hours():
+                        logger.info("uw_poller_polling_darkpool", limit=poll_limit)
                         await self._poll_darkpool(sink_registry, poll_limit)
                         self._last_darkpool_poll = datetime.now(UTC)
 
                 # Poll market tide (hourly since API returns full day's data)
                 if self.market_tide_enabled and self._should_poll_tide():
-                    await self._poll_market_tide(sink_registry)
-                    self._last_tide_poll = datetime.now(UTC)
+                    if self._is_market_hours():
+                        await self._poll_market_tide(sink_registry)
+                        self._last_tide_poll = datetime.now(UTC)
 
                 # Poll sector tides (hourly, same schedule as market tide)
                 if self.sector_tide_enabled and self._should_poll_tide():
-                    await self._poll_sector_tides(sink_registry)
+                    if self._is_market_hours():
+                        await self._poll_sector_tides(sink_registry)
 
                 # Periodic cache cleanup
                 self._cleanup_cache()
@@ -252,7 +263,7 @@ class UWPoller:
             except Exception as e:
                 logger.error("uw_poller_error", error=str(e), exc_info=True)
 
-            await asyncio.sleep(self.poll_interval)
+            await asyncio.sleep(base_interval)
 
     async def _poll_flow_alerts(self, sink_registry, limit: int) -> None:
         """Poll and publish flow alerts with deduplication."""
