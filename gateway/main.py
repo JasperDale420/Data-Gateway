@@ -258,7 +258,11 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     # EventEnvelope wraps responses LAST (outermost) so it sees final cached data
     app.add_middleware(EventEnvelopeMiddleware)
-    app.add_middleware(CacheMiddleware, default_ttl=settings.cache_default_ttl)
+    app.add_middleware(
+        CacheMiddleware,
+        default_ttl=settings.cache_default_ttl,
+        max_size=settings.cache_max_size,
+    )
     app.add_middleware(RateLimitMiddleware, default_limit=settings.rate_limit_default)
     # Global rate limit (PRD 7.5.1-2) before per-client limits
     app.add_middleware(GlobalRateLimitMiddleware)

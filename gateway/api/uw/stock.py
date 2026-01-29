@@ -27,7 +27,7 @@ async def get_stock_info(
     """Get stock/ticker information."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:info:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -41,7 +41,7 @@ async def get_stock_info(
         "meta": {"symbol": symbol, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -56,7 +56,7 @@ async def get_stock_candles(
     """Get OHLC candle data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:candles:{symbol}:{timeframe}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -75,7 +75,7 @@ async def get_stock_candles(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -89,7 +89,7 @@ async def get_stock_option_chains(
     """Get tradeable option contracts for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:option-chains:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -103,7 +103,7 @@ async def get_stock_option_chains(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -117,7 +117,7 @@ async def get_stock_option_contracts(
     """Get all option contracts for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:option-contracts:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -131,7 +131,7 @@ async def get_stock_option_contracts(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -145,7 +145,7 @@ async def get_oi_per_strike(
     """Get open interest per strike for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:oi-strike:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -159,7 +159,7 @@ async def get_oi_per_strike(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -173,7 +173,7 @@ async def get_oi_per_expiry(
     """Get open interest per expiry for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:oi-expiry:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -187,7 +187,7 @@ async def get_oi_per_expiry(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -202,7 +202,7 @@ async def get_greeks_by_strike_expiry(
     """Get option greeks by strike for a specific expiry."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:greeks-strike-expiry:{symbol}:{expiry}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -221,7 +221,7 @@ async def get_greeks_by_strike_expiry(
         },
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -238,7 +238,7 @@ async def get_greek_exposure_by_strike_expiry(
     """Get greek exposure by strike for a specific expiry."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:greek-exp-strike-expiry:{symbol}:{expiry}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -257,7 +257,7 @@ async def get_greek_exposure_by_strike_expiry(
         },
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -271,7 +271,7 @@ async def get_atm_option_contracts(
     """Get ATM option contracts for all expiries."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:atm-options:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -285,7 +285,7 @@ async def get_atm_option_contracts(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -299,7 +299,7 @@ async def get_daily_expiry_breakdown(
     """Get option order flow grouped by expiry for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:daily-expiry-breakdown:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -313,7 +313,7 @@ async def get_daily_expiry_breakdown(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -327,7 +327,7 @@ async def get_flow_per_strike_intraday(
     """Get flow per strike for intraday data."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:flow-strike-intraday:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -341,7 +341,7 @@ async def get_flow_per_strike_intraday(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -356,7 +356,7 @@ async def get_risk_reversal_skew(
     """Get historical risk reversal skew by expiry."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:risk-reversal:{symbol}:{expiry}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -375,7 +375,7 @@ async def get_risk_reversal_skew(
         },
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -388,7 +388,7 @@ async def get_sector_tickers(
 ):
     """Get tickers for a given sector."""
     cache_key = f"uw:sectors:tickers:{sector}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -402,7 +402,7 @@ async def get_sector_tickers(
         "meta": {"sector": sector, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -416,7 +416,7 @@ async def get_stock_state(
     """Get stock OHLC and volume state."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:state:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -430,7 +430,7 @@ async def get_stock_state(
         "meta": {"symbol": symbol, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -444,7 +444,7 @@ async def get_stock_volume_price_levels(
     """Get stock volume price levels."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:volume-price-levels:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -458,7 +458,7 @@ async def get_stock_volume_price_levels(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -472,7 +472,7 @@ async def get_option_volume_by_price_level(
     """Get call and put volume per price level."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:option-volume-price:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -486,7 +486,7 @@ async def get_option_volume_by_price_level(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -500,7 +500,7 @@ async def get_volume_oi_by_expiry(
     """Get volume and OI per expiry."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:volume-oi-expiry:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -514,7 +514,7 @@ async def get_volume_oi_by_expiry(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -528,7 +528,7 @@ async def get_spot_exposures(
     """Get spot GEX exposures per minute."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:spot-exposures:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -542,7 +542,7 @@ async def get_spot_exposures(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -556,7 +556,7 @@ async def get_options_volume(
     """Get options volume and premium for a trading date."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:options-volume:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -570,7 +570,7 @@ async def get_options_volume(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -585,7 +585,7 @@ async def get_greek_flow_by_expiry(
     """Get greek flow by expiry."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:greek-flow-expiry:{symbol}:{expiry}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -604,7 +604,7 @@ async def get_greek_flow_by_expiry(
         },
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -618,7 +618,7 @@ async def get_stock_insider_trades(
     """Get insider trades for a specific stock."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:insider-trades:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -632,7 +632,7 @@ async def get_stock_insider_trades(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -649,7 +649,7 @@ async def get_spot_exposures_by_expiry_strike(
     """Get spot GEX exposures by expiry and strike."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:spot-exposures-expiry-strike:{symbol}:{expiry}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -668,7 +668,7 @@ async def get_spot_exposures_by_expiry_strike(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -682,7 +682,7 @@ async def get_flow_recent(
     """Get recent flow for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:stock:flow-recent:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -696,5 +696,5 @@ async def get_flow_recent(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=30)
+    await cache.set(cache_key, response, ttl=30)
     return response

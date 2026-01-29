@@ -45,7 +45,7 @@ async def get_technical_indicator(
         str(time_period),
         series_type,
     )
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -58,7 +58,7 @@ async def get_technical_indicator(
         data = await provider.get_technical_indicator(
             symbol, indicator, interval, time_period, series_type
         )
-        cache.set(key, data, ttl=CACHE_TTL_INDICATOR)
+        await cache.set(key, data, ttl=CACHE_TTL_INDICATOR)
         return {
             "success": True,
             "data": data,

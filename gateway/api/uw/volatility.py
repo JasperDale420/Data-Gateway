@@ -28,7 +28,7 @@ async def get_iv_term_structure(
     """Get IV term structure for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:iv-term-structure:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -42,7 +42,7 @@ async def get_iv_term_structure(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -56,7 +56,7 @@ async def get_realized_vol(
     """Get realized volatility for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:realized-vol:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -73,7 +73,7 @@ async def get_realized_vol(
         "meta": {"symbol": symbol, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -87,7 +87,7 @@ async def get_vol_stats(
     """Get volatility stats for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:vol-stats:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -104,7 +104,7 @@ async def get_vol_stats(
         "meta": {"symbol": symbol, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -118,7 +118,7 @@ async def get_iv_surface(
     """Get implied volatility surface for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:iv-surface:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -132,5 +132,5 @@ async def get_iv_surface(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response

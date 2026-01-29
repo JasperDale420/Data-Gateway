@@ -33,7 +33,7 @@ async def get_earnings_calendar(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:earnings", start, end)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -47,7 +47,7 @@ async def get_earnings_calendar(
         end_dt = datetime.fromisoformat(end) if end else None
 
         earnings = await provider.get_earnings_calendar(start=start_dt, end=end_dt)
-        cache.set(key, earnings, ttl=3600)
+        await cache.set(key, earnings, ttl=3600)
         return {
             "success": True,
             "data": earnings,
@@ -70,7 +70,7 @@ async def get_recommendations(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:recommendations", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -81,7 +81,7 @@ async def get_recommendations(
     try:
         await require_provider_rate_limit("finnhub")
         recs = await provider.get_recommendation_trends(symbol)
-        cache.set(key, recs, ttl=3600)
+        await cache.set(key, recs, ttl=3600)
         return {
             "success": True,
             "data": recs,
@@ -105,7 +105,7 @@ async def get_eps_estimates(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:eps-estimates", symbol.upper(), freq)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -116,7 +116,7 @@ async def get_eps_estimates(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_eps_estimates(symbol, freq=freq)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -140,7 +140,7 @@ async def get_revenue_estimates(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:revenue-estimates", symbol.upper(), freq)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -151,7 +151,7 @@ async def get_revenue_estimates(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_revenue_estimates(symbol, freq=freq)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -175,7 +175,7 @@ async def get_ebit_estimates(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:ebit-estimates", symbol.upper(), freq)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -186,7 +186,7 @@ async def get_ebit_estimates(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_ebit_estimates(symbol, freq=freq)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -210,7 +210,7 @@ async def get_ebitda_estimates(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:ebitda-estimates", symbol.upper(), freq)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -221,7 +221,7 @@ async def get_ebitda_estimates(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_ebitda_estimates(symbol, freq=freq)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -244,7 +244,7 @@ async def get_price_target(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:price-target", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -255,7 +255,7 @@ async def get_price_target(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_price_target(symbol)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,

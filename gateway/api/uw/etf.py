@@ -29,7 +29,7 @@ async def get_etf_holdings(
     """Get ETF holdings."""
     symbol = symbol.upper()
     cache_key = f"uw:etf:holdings:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -38,7 +38,7 @@ async def get_etf_holdings(
     data = await provider.get_etf_holdings(symbol=symbol)
 
     response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -53,7 +53,7 @@ async def get_etf_exposure(
     """Get ETF exposure for a stock (which ETFs hold it)."""
     symbol = symbol.upper()
     cache_key = f"uw:etf:exposure:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -62,7 +62,7 @@ async def get_etf_exposure(
     data = await provider.get_etf_exposure(symbol=symbol)
 
     response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -77,7 +77,7 @@ async def get_etf_flows(
     """Get ETF inflow/outflow data."""
     symbol = symbol.upper()
     cache_key = f"uw:etf:flows:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -86,5 +86,5 @@ async def get_etf_flows(
     data = await provider.get_etf_flows(symbol=symbol)
 
     response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response

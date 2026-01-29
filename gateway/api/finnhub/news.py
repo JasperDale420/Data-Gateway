@@ -34,7 +34,7 @@ async def get_company_news(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:news", symbol.upper(), start, end)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -49,7 +49,7 @@ async def get_company_news(
 
         articles = await provider.get_news(symbol, start=start_dt, end=end_dt)
         data = {"symbol": symbol.upper(), "articles": articles}
-        cache.set(key, data, ttl=300)
+        await cache.set(key, data, ttl=300)
         return {
             "success": True,
             "data": data,
@@ -72,7 +72,7 @@ async def get_market_news(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:market-news", category)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -84,7 +84,7 @@ async def get_market_news(
         await require_provider_rate_limit("finnhub")
         articles = await provider.get_market_news(category=category)
         data = {"category": category, "articles": articles}
-        cache.set(key, data, ttl=300)
+        await cache.set(key, data, ttl=300)
         return {
             "success": True,
             "data": data,

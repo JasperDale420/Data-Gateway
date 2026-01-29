@@ -33,7 +33,7 @@ async def get_quote(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:quote", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -48,7 +48,7 @@ async def get_quote(
             raise HTTPException(status_code=404, detail=f"No data for symbol: {symbol}")
 
         data = quote.model_dump(mode="json")
-        cache.set(key, data, ttl=CACHE_TTL_QUOTE)
+        await cache.set(key, data, ttl=CACHE_TTL_QUOTE)
         return {
             "success": True,
             "data": data,
@@ -75,7 +75,7 @@ async def get_intraday(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:intraday", symbol.upper(), interval, outputsize)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -91,7 +91,7 @@ async def get_intraday(
             "interval": interval,
             "bars": [bar.model_dump(mode="json") for bar in bars],
         }
-        cache.set(key, data, ttl=CACHE_TTL_BARS)
+        await cache.set(key, data, ttl=CACHE_TTL_BARS)
         return {
             "success": True,
             "data": data,
@@ -116,7 +116,7 @@ async def get_daily(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:daily", symbol.upper(), outputsize, str(adjusted))
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -132,7 +132,7 @@ async def get_daily(
             "adjusted": adjusted,
             "bars": [bar.model_dump(mode="json") for bar in bars],
         }
-        cache.set(key, data, ttl=CACHE_TTL_BARS)
+        await cache.set(key, data, ttl=CACHE_TTL_BARS)
         return {
             "success": True,
             "data": data,
@@ -156,7 +156,7 @@ async def get_weekly(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:weekly", symbol.upper(), str(adjusted))
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -172,7 +172,7 @@ async def get_weekly(
             "adjusted": adjusted,
             "bars": [bar.model_dump(mode="json") for bar in bars],
         }
-        cache.set(key, data, ttl=CACHE_TTL_BARS)
+        await cache.set(key, data, ttl=CACHE_TTL_BARS)
         return {
             "success": True,
             "data": data,
@@ -196,7 +196,7 @@ async def get_monthly(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:monthly", symbol.upper(), str(adjusted))
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -208,7 +208,7 @@ async def get_monthly(
         await require_provider_rate_limit("alphavantage")
         bars = await provider.get_monthly(symbol, adjusted=adjusted)
         data = [bar.model_dump() for bar in bars]
-        cache.set(key, data, ttl=CACHE_TTL_BARS)
+        await cache.set(key, data, ttl=CACHE_TTL_BARS)
         return {
             "success": True,
             "data": data,
@@ -231,7 +231,7 @@ async def search_symbols(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:search", q.lower())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -242,7 +242,7 @@ async def search_symbols(
     try:
         await require_provider_rate_limit("alphavantage")
         results = await provider.search_symbols(q)
-        cache.set(key, results, ttl=86400)
+        await cache.set(key, results, ttl=86400)
         return {
             "success": True,
             "data": results,

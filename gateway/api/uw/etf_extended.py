@@ -27,7 +27,7 @@ async def get_etf_info(
     """Get ETF information."""
     symbol = symbol.upper()
     cache_key = f"uw:etf:info:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -41,7 +41,7 @@ async def get_etf_info(
         "meta": {"symbol": symbol, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -55,7 +55,7 @@ async def get_etf_inflow_outflow(
     """Get ETF inflow/outflow data."""
     symbol = symbol.upper()
     cache_key = f"uw:etf:inflow-outflow:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -69,7 +69,7 @@ async def get_etf_inflow_outflow(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -83,7 +83,7 @@ async def get_etf_ticker_exposure(
     """Get ticker exposure within an ETF."""
     symbol = symbol.upper()
     cache_key = f"uw:etf:ticker-exposure:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -97,7 +97,7 @@ async def get_etf_ticker_exposure(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -111,7 +111,7 @@ async def get_etf_country_weights(
     """Get ETF country weights."""
     symbol = symbol.upper()
     cache_key = f"uw:etf:country-weights:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -125,5 +125,5 @@ async def get_etf_country_weights(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response

@@ -1,11 +1,15 @@
 """yfinance API endpoints for fundamentals and financials."""
 
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.deps import get_cache, get_registry, require_api_key, require_provider_rate_limit
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
+from gateway.core.dedup import get_deduplicator
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
@@ -16,11 +20,18 @@ router = APIRouter(prefix="/api/v1/yf", tags=["yfinance"])
 PROVIDER_NOT_AVAILABLE = "yfinance provider not available"
 CACHE_TTL = 300  # 5 minutes per PRD
 
+T = TypeVar("T")
+
 
 def _cache_key(prefix: str, symbol: str, *args) -> str:
     """Generate cache key for yfinance data."""
     parts = [prefix, symbol.upper()] + [str(a) for a in args if a]
     return ":".join(parts)
+
+
+async def _dedupe(cache_key: str, fetcher: Callable[[], Awaitable[T]]) -> T:
+    """Deduplicate in-flight provider calls by cache key."""
+    return await get_deduplicator().dedupe(cache_key, fetcher)
 
 
 @router.get("/ticker/{symbol}", response_model=SuccessResponse)
@@ -36,14 +47,18 @@ async def get_ticker_info(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:ticker", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        data = await provider.get_ticker_info(symbol)
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            return await provider.get_ticker_info(symbol)
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -62,14 +77,18 @@ async def get_company_info(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:info", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        data = await provider.get_company_info(symbol)
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            return await provider.get_company_info(symbol)
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -88,14 +107,18 @@ async def get_financials(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:financials", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        data = await provider.get_financials(symbol)
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            return await provider.get_financials(symbol)
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -114,14 +137,18 @@ async def get_earnings(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:earnings", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        data = await provider.get_earnings(symbol)
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            return await provider.get_earnings(symbol)
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -146,26 +173,30 @@ async def get_history(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:history", symbol, period, interval, start, end)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        bars = await provider.get_history(
-            symbol, period=period, interval=interval, start=start, end=end
-        )
-        data = {
-            "symbol": symbol.upper(),
-            "period": period,
-            "interval": interval,
-            "bars": [bar.model_dump(mode="json") for bar in bars],
-        }
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            bars = await provider.get_history(
+                symbol, period=period, interval=interval, start=start, end=end
+            )
+            return {
+                "symbol": symbol.upper(),
+                "period": period,
+                "interval": interval,
+                "bars": [bar.model_dump(mode="json") for bar in bars],
+            }
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
-            "meta": {"count": len(bars), "cached": False, "provider": "yfinance"},
+            "meta": {"count": len(data.get("bars", [])), "cached": False, "provider": "yfinance"},
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -184,19 +215,27 @@ async def get_options(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:options", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        expirations = await provider.get_options_expirations(symbol)
-        data = {"symbol": symbol.upper(), "expirations": expirations}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            expirations = await provider.get_options_expirations(symbol)
+            return {"symbol": symbol.upper(), "expirations": expirations}
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
-            "meta": {"count": len(expirations), "cached": False, "provider": "yfinance"},
+            "meta": {
+                "count": len(data.get("expirations", [])),
+                "cached": False,
+                "provider": "yfinance",
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -216,15 +255,19 @@ async def get_options_chain(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:chain", symbol, expiration)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        chain = await provider.get_options_chain(symbol, expiration)
-        data = {"symbol": symbol.upper(), "expiration": expiration, **chain}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            chain = await provider.get_options_chain(symbol, expiration)
+            return {"symbol": symbol.upper(), "expiration": expiration, **chain}
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -243,19 +286,27 @@ async def get_recommendations(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:recs", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        recs = await provider.get_recommendations(symbol)
-        data = {"symbol": symbol.upper(), "recommendations": recs}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            recs = await provider.get_recommendations(symbol)
+            return {"symbol": symbol.upper(), "recommendations": recs}
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
-            "meta": {"count": len(recs), "cached": False, "provider": "yfinance"},
+            "meta": {
+                "count": len(data.get("recommendations", [])),
+                "cached": False,
+                "provider": "yfinance",
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -274,15 +325,20 @@ async def get_holders(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:holders", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        data = await provider.get_holders(symbol)
-        data["symbol"] = symbol.upper()
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            data = await provider.get_holders(symbol)
+            data["symbol"] = symbol.upper()
+            return data
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -301,15 +357,20 @@ async def get_calendar(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:calendar", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        data = await provider.get_calendar(symbol)
-        data["symbol"] = symbol.upper()
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            data = await provider.get_calendar(symbol)
+            data["symbol"] = symbol.upper()
+            return data
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -333,19 +394,27 @@ async def get_dividends(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:dividends", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        divs = await provider.get_dividends(symbol)
-        data = {"symbol": symbol.upper(), "dividends": divs}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            divs = await provider.get_dividends(symbol)
+            return {"symbol": symbol.upper(), "dividends": divs}
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
-            "meta": {"count": len(divs), "cached": False, "provider": "yfinance"},
+            "meta": {
+                "count": len(data.get("dividends", [])),
+                "cached": False,
+                "provider": "yfinance",
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -364,19 +433,27 @@ async def get_splits(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:splits", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        splits = await provider.get_splits(symbol)
-        data = {"symbol": symbol.upper(), "splits": splits}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            splits = await provider.get_splits(symbol)
+            return {"symbol": symbol.upper(), "splits": splits}
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
-            "meta": {"count": len(splits), "cached": False, "provider": "yfinance"},
+            "meta": {
+                "count": len(data.get("splits", [])),
+                "cached": False,
+                "provider": "yfinance",
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -395,15 +472,19 @@ async def get_actions(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:actions", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        actions = await provider.get_actions(symbol)
-        data = {"symbol": symbol.upper(), "actions": actions}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            actions = await provider.get_actions(symbol)
+            return {"symbol": symbol.upper(), "actions": actions}
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -422,19 +503,27 @@ async def get_news(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:news", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        news = await provider.get_news(symbol)
-        data = {"symbol": symbol.upper(), "articles": news}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            news = await provider.get_news(symbol)
+            return {"symbol": symbol.upper(), "articles": news}
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
-            "meta": {"count": len(news), "cached": False, "provider": "yfinance"},
+            "meta": {
+                "count": len(data.get("articles", [])),
+                "cached": False,
+                "provider": "yfinance",
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -453,15 +542,19 @@ async def get_sustainability(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:sustainability", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        sus = await provider.get_sustainability(symbol)
-        data = {"symbol": symbol.upper(), "sustainability": sus}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            sus = await provider.get_sustainability(symbol)
+            return {"symbol": symbol.upper(), "sustainability": sus}
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -480,15 +573,19 @@ async def get_major_holders(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("yf:major-holders", symbol)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "yfinance"}}
 
     try:
-        await require_provider_rate_limit("yfinance")
-        holders = await provider.get_major_holders(symbol)
-        data = {"symbol": symbol.upper(), "major_holders": holders}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+
+        async def _fetch():
+            await require_provider_rate_limit("yfinance")
+            holders = await provider.get_major_holders(symbol)
+            return {"symbol": symbol.upper(), "major_holders": holders}
+
+        data = await _dedupe(cache_key, _fetch)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")

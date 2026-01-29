@@ -32,7 +32,7 @@ async def get_forex_rate(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:forex-rate", from_currency.upper(), to_currency.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -43,7 +43,7 @@ async def get_forex_rate(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_forex_rate(from_currency, to_currency)
-        cache.set(key, data, ttl=60)
+        await cache.set(key, data, ttl=60)
         return {
             "success": True,
             "data": data,
@@ -67,7 +67,7 @@ async def get_forex_daily(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:forex-daily", from_symbol.upper(), to_symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -78,7 +78,7 @@ async def get_forex_daily(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_forex_daily(from_symbol, to_symbol)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,

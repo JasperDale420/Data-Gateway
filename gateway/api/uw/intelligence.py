@@ -29,7 +29,7 @@ async def get_off_lit_levels(
     """Get dark pool volume per price level."""
     symbol = symbol.upper()
     cache_key = f"uw:off-lit-levels:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -43,7 +43,7 @@ async def get_off_lit_levels(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -56,7 +56,7 @@ async def get_recent_congress_trades(
 ):
     """Get recent congressional trades across all tickers."""
     cache_key = f"uw:congress-recent:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -67,7 +67,7 @@ async def get_recent_congress_trades(
     response = paginate_response(data, limit)
     response["meta"] = {"count": len(data), "provider": "unusual_whales"}
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -81,7 +81,7 @@ async def get_nope(
     """Get NOPE (Net Options Pricing Effect) for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:nope:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -98,7 +98,7 @@ async def get_nope(
         "meta": {"symbol": symbol, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -112,7 +112,7 @@ async def get_put_call_ratio(
     """Get historical put/call ratio for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:pc-ratio:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -126,5 +126,5 @@ async def get_put_call_ratio(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response

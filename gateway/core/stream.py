@@ -90,6 +90,11 @@ class SubscriptionManager:
 
     def __init__(self) -> None:
         self._subscriptions: dict[str, ClientSubscription] = {}
+        self._index: dict[str, dict[str, set[str]]] = {
+            "bars": {},
+            "quotes": {},
+            "trades": {},
+        }
 
     def subscribe(
         self,
@@ -103,21 +108,43 @@ class SubscriptionManager:
             self._subscriptions[client_id] = ClientSubscription(client_id=client_id)
 
         sub = self._subscriptions[client_id]
-        old_aggregate = self._aggregate()
+        new_bars: set[str] = set()
+        new_quotes: set[str] = set()
+        new_trades: set[str] = set()
 
         if bars:
-            sub.bars.update(bars)
+            for symbol in bars:
+                if symbol in sub.bars:
+                    continue
+                sub.bars.add(symbol)
+                clients = self._index["bars"].get(symbol)
+                if clients is None:
+                    self._index["bars"][symbol] = {client_id}
+                    new_bars.add(symbol)
+                else:
+                    clients.add(client_id)
         if quotes:
-            sub.quotes.update(quotes)
+            for symbol in quotes:
+                if symbol in sub.quotes:
+                    continue
+                sub.quotes.add(symbol)
+                clients = self._index["quotes"].get(symbol)
+                if clients is None:
+                    self._index["quotes"][symbol] = {client_id}
+                    new_quotes.add(symbol)
+                else:
+                    clients.add(client_id)
         if trades:
-            sub.trades.update(trades)
-
-        new_aggregate = self._aggregate()
-
-        # Return only newly added symbols (need upstream subscription)
-        new_bars = new_aggregate[0] - old_aggregate[0]
-        new_quotes = new_aggregate[1] - old_aggregate[1]
-        new_trades = new_aggregate[2] - old_aggregate[2]
+            for symbol in trades:
+                if symbol in sub.trades:
+                    continue
+                sub.trades.add(symbol)
+                clients = self._index["trades"].get(symbol)
+                if clients is None:
+                    self._index["trades"][symbol] = {client_id}
+                    new_trades.add(symbol)
+                else:
+                    clients.add(client_id)
 
         return new_bars, new_quotes, new_trades
 
@@ -133,21 +160,43 @@ class SubscriptionManager:
             return set(), set(), set()
 
         sub = self._subscriptions[client_id]
-        old_aggregate = self._aggregate()
+        removed_bars: set[str] = set()
+        removed_quotes: set[str] = set()
+        removed_trades: set[str] = set()
 
         if bars:
-            sub.bars -= set(bars)
+            for symbol in bars:
+                if symbol not in sub.bars:
+                    continue
+                sub.bars.discard(symbol)
+                clients = self._index["bars"].get(symbol)
+                if clients:
+                    clients.discard(client_id)
+                    if not clients:
+                        self._index["bars"].pop(symbol, None)
+                        removed_bars.add(symbol)
         if quotes:
-            sub.quotes -= set(quotes)
+            for symbol in quotes:
+                if symbol not in sub.quotes:
+                    continue
+                sub.quotes.discard(symbol)
+                clients = self._index["quotes"].get(symbol)
+                if clients:
+                    clients.discard(client_id)
+                    if not clients:
+                        self._index["quotes"].pop(symbol, None)
+                        removed_quotes.add(symbol)
         if trades:
-            sub.trades -= set(trades)
-
-        new_aggregate = self._aggregate()
-
-        # Return symbols no longer needed by any client
-        removed_bars = old_aggregate[0] - new_aggregate[0]
-        removed_quotes = old_aggregate[1] - new_aggregate[1]
-        removed_trades = old_aggregate[2] - new_aggregate[2]
+            for symbol in trades:
+                if symbol not in sub.trades:
+                    continue
+                sub.trades.discard(symbol)
+                clients = self._index["trades"].get(symbol)
+                if clients:
+                    clients.discard(client_id)
+                    if not clients:
+                        self._index["trades"].pop(symbol, None)
+                        removed_trades.add(symbol)
 
         return removed_bars, removed_quotes, removed_trades
 
@@ -156,37 +205,48 @@ class SubscriptionManager:
         if client_id not in self._subscriptions:
             return set(), set(), set()
 
-        old_aggregate = self._aggregate()
-        del self._subscriptions[client_id]
-        new_aggregate = self._aggregate()
+        sub = self._subscriptions.pop(client_id)
+        removed_bars: set[str] = set()
+        removed_quotes: set[str] = set()
+        removed_trades: set[str] = set()
 
-        removed_bars = old_aggregate[0] - new_aggregate[0]
-        removed_quotes = old_aggregate[1] - new_aggregate[1]
-        removed_trades = old_aggregate[2] - new_aggregate[2]
+        for symbol in sub.bars:
+            clients = self._index["bars"].get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    self._index["bars"].pop(symbol, None)
+                    removed_bars.add(symbol)
+
+        for symbol in sub.quotes:
+            clients = self._index["quotes"].get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    self._index["quotes"].pop(symbol, None)
+                    removed_quotes.add(symbol)
+
+        for symbol in sub.trades:
+            clients = self._index["trades"].get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    self._index["trades"].pop(symbol, None)
+                    removed_trades.add(symbol)
 
         return removed_bars, removed_quotes, removed_trades
 
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
         """Get all clients subscribed to a symbol for a data type."""
-        clients = []
-        for client_id, sub in self._subscriptions.items():
-            symbol_set = getattr(sub, data_type, set())
-            if symbol in symbol_set:
-                clients.append(client_id)
-        return clients
+        return list(self._index.get(data_type, {}).get(symbol, ()))
 
     def _aggregate(self) -> tuple[set[str], set[str], set[str]]:
         """Compute union of all client subscriptions."""
-        all_bars: set[str] = set()
-        all_quotes: set[str] = set()
-        all_trades: set[str] = set()
-
-        for sub in self._subscriptions.values():
-            all_bars.update(sub.bars)
-            all_quotes.update(sub.quotes)
-            all_trades.update(sub.trades)
-
-        return all_bars, all_quotes, all_trades
+        return (
+            set(self._index["bars"].keys()),
+            set(self._index["quotes"].keys()),
+            set(self._index["trades"].keys()),
+        )
 
     def get_all_subscriptions(self) -> tuple[set[str], set[str], set[str]]:
         """Get current aggregate subscriptions for resubscription on reconnect."""
@@ -573,6 +633,7 @@ class StreamMultiplexer:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self._fanout_semaphore = asyncio.Semaphore(100)
 
     async def start(self) -> None:
         """Start the multiplexer.
@@ -793,10 +854,11 @@ class StreamMultiplexer:
             stream_type=stream_type.value if stream_type else None,
         )
 
-        # Fan out envelope to each subscribed client
-        for client_id in clients:
+        # Fan out envelope to each subscribed client with bounded concurrency
+        async def _send(client_id: str) -> None:
             try:
-                await self.on_data(client_id, data_type, envelope)
+                async with self._fanout_semaphore:
+                    await self.on_data(client_id, data_type, envelope)
             except Exception as e:
                 logger.error(
                     "fanout_error",
@@ -805,3 +867,5 @@ class StreamMultiplexer:
                     event_id=envelope.get("event_id", "unknown"),
                     error=str(e),
                 )
+
+        await asyncio.gather(*(_send(client_id) for client_id in clients))

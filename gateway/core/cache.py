@@ -45,7 +45,7 @@ class InMemoryCache:
         self._custom_cache: OrderedDict[str, _CustomCacheEntry] = OrderedDict()
         self._stats = CacheStats(max_size=max_size)
 
-    def get(self, key: str) -> Any | None:
+    async def get(self, key: str) -> Any | None:
         """Get value from cache."""
         try:
             value = self._cache[key]
@@ -66,7 +66,7 @@ class InMemoryCache:
             self._stats.misses += 1
             return None
 
-    def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Set value in cache with optional custom TTL."""
         if ttl and ttl != self.default_ttl:
             expires_at = time.time() + ttl
@@ -310,8 +310,8 @@ class HybridCache:
 
         On L2 hit, populates L1 for future fast access.
         """
-        # Check L1 (sync, fast)
-        value = self._l1.get(key)
+        # Check L1 (fast memory cache)
+        value = await self._l1.get(key)
         if value is not None:
             return value
 
@@ -319,14 +319,14 @@ class HybridCache:
         value = await self._l2.get(key)
         if value is not None:
             # Populate L1 from L2
-            self._l1.set(key, value)
+            await self._l1.set(key, value)
             return value
 
         return None
 
     async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Set value in both L1 and L2."""
-        self._l1.set(key, value, ttl)
+        await self._l1.set(key, value, ttl)
         await self._l2.set(key, value, ttl)
 
     async def delete(self, key: str) -> bool:

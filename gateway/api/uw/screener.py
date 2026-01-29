@@ -26,7 +26,7 @@ async def get_screener_stocks(
 ):
     """Get stock screener results."""
     cache_key = f"uw:screener:stocks:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -43,7 +43,7 @@ async def get_screener_stocks(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -56,7 +56,7 @@ async def get_screener_options(
 ):
     """Get hottest option chains/contracts."""
     cache_key = f"uw:screener:options:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -73,5 +73,5 @@ async def get_screener_options(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response

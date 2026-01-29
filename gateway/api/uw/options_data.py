@@ -30,7 +30,7 @@ async def get_historic_option_volume(
     """Get historic option volume and open interest by expiry."""
     symbol = symbol.upper()
     cache_key = f"uw:option-volume:{symbol}:{date or 'latest'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -44,7 +44,7 @@ async def get_historic_option_volume(
         "meta": {"symbol": symbol, "date": date, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -58,7 +58,7 @@ async def get_intraday_option_data(
 ):
     """Get intraday 1-min OHLC data for an option contract."""
     cache_key = f"uw:intraday:{contract_id}:{date or 'latest'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -77,7 +77,7 @@ async def get_intraday_option_data(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -92,7 +92,7 @@ async def get_options_screener(
 ):
     """Get option contracts screener with filters."""
     cache_key = f"uw:contracts-screener:{min_volume}:{min_premium}:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -105,5 +105,5 @@ async def get_options_screener(
     response = paginate_response(data, limit)
     response["meta"] = {"count": len(data), "provider": "unusual_whales"}
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response

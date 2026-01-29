@@ -28,7 +28,7 @@ async def get_etf_tide(
     """Get ETF-level tide data (premium flow sentiment)."""
     symbol = symbol.upper()
     cache_key = f"uw:etf-tide:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -45,7 +45,7 @@ async def get_etf_tide(
         "meta": {"symbol": symbol, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -59,7 +59,7 @@ async def get_option_volume_levels(
     """Get option volume levels per price."""
     symbol = symbol.upper()
     cache_key = f"uw:volume-levels:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -73,7 +73,7 @@ async def get_option_volume_levels(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -86,7 +86,7 @@ async def get_full_tape(
 ):
     """Get full options trade tape for a date."""
     cache_key = f"uw:full-tape:{date}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -100,7 +100,7 @@ async def get_full_tape(
         "meta": {"date": date, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -113,7 +113,7 @@ async def get_volume_profile(
 ):
     """Get volume profile of an option contract by fill price."""
     cache_key = f"uw:volume-profile:{contract_id}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -127,7 +127,7 @@ async def get_volume_profile(
         "meta": {"contract": contract_id, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -141,7 +141,7 @@ async def get_greek_flow_expiry(
     """Get greek flow data aggregated by expiration."""
     symbol = symbol.upper()
     cache_key = f"uw:greek-flow-expiry:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -155,7 +155,7 @@ async def get_greek_flow_expiry(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -172,7 +172,7 @@ async def get_news_headlines(
 ):
     """Get latest financial news headlines."""
     cache_key = f"uw:news:headlines:{sources or 'all'}:{search_term or 'none'}:{major_only}:{limit}:{page or 1}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -193,5 +193,5 @@ async def get_news_headlines(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response

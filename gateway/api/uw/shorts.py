@@ -29,7 +29,7 @@ async def get_short_interest(
     """Get short interest data."""
     symbol = symbol.upper()
     cache_key = f"uw:short-interest:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -38,7 +38,7 @@ async def get_short_interest(
     data = await provider.get_short_interest(symbol=symbol)
 
     response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -53,7 +53,7 @@ async def get_ftds(
     """Get failures to deliver data."""
     symbol = symbol.upper()
     cache_key = f"uw:ftds:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -62,7 +62,7 @@ async def get_ftds(
     data = await provider.get_ftds(symbol=symbol)
 
     response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -77,7 +77,7 @@ async def get_short_volume(
     """Get short volume data."""
     symbol = symbol.upper()
     cache_key = f"uw:short-volume:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -86,5 +86,5 @@ async def get_short_volume(
     data = await provider.get_short_volume(symbol=symbol)
 
     response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response

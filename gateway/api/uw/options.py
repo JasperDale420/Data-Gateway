@@ -30,7 +30,7 @@ async def get_net_premium(
     """Get net premium ticks for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:net-premium:{symbol}:{date or 'latest'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -44,7 +44,7 @@ async def get_net_premium(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -59,7 +59,7 @@ async def get_max_pain(
     """Get max pain data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:max-pain:{symbol}:{expiry or 'all'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -73,7 +73,7 @@ async def get_max_pain(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -87,7 +87,7 @@ async def get_iv_rank(
     """Get IV rank for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:iv-rank:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -107,7 +107,7 @@ async def get_iv_rank(
         "meta": {"symbol": symbol, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -122,7 +122,7 @@ async def get_oi_change(
     """Get OI change data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:oi-change:{symbol}:{date or 'latest'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -136,5 +136,5 @@ async def get_oi_change(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response

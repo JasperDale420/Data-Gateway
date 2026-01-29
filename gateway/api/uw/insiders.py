@@ -27,7 +27,7 @@ async def get_insider_transactions(
 ):
     """Get all recent insider transactions."""
     cache_key = f"uw:insider:transactions:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -36,7 +36,7 @@ async def get_insider_transactions(
     data = await provider.get_insider_transactions(limit=limit)
 
     response = paginate_response(data, limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -48,7 +48,7 @@ async def get_insider_sector_flow(
 ):
     """Get insider trading flow by sector."""
     cache_key = "uw:insider:sector-flow"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -62,7 +62,7 @@ async def get_insider_sector_flow(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -74,7 +74,7 @@ async def get_insider_ticker_flow(
 ):
     """Get insider trading flow by ticker."""
     cache_key = "uw:insider:ticker-flow"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -88,7 +88,7 @@ async def get_insider_ticker_flow(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -102,7 +102,7 @@ async def get_ticker_insiders(
     """Get insiders for a specific ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:insider:insiders:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -116,5 +116,5 @@ async def get_ticker_insiders(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response

@@ -25,7 +25,7 @@ async def get_economic_calendar_market(
 ):
     """Get economic calendar events."""
     cache_key = "uw:market:economic-calendar"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -39,7 +39,7 @@ async def get_economic_calendar_market(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -51,7 +51,7 @@ async def get_fda_calendar(
 ):
     """Get FDA calendar events."""
     cache_key = "uw:market:fda-calendar"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -65,7 +65,7 @@ async def get_fda_calendar(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -77,7 +77,7 @@ async def get_market_holidays(
 ):
     """Get market holidays."""
     cache_key = "uw:market:holidays"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -91,7 +91,7 @@ async def get_market_holidays(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=86400)
+    await cache.set(cache_key, response, ttl=86400)
     return response
 
 
@@ -103,7 +103,7 @@ async def get_market_imbalances(
 ):
     """Get market imbalances data."""
     cache_key = "uw:market:imbalances"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -117,7 +117,7 @@ async def get_market_imbalances(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -129,7 +129,7 @@ async def get_market_options_volume(
 ):
     """Get total market options volume."""
     cache_key = "uw:market:options-volume"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -143,7 +143,7 @@ async def get_market_options_volume(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -155,7 +155,7 @@ async def get_market_insider_trades(
 ):
     """Get market-wide insider trades."""
     cache_key = "uw:market:insider-trades"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -169,7 +169,7 @@ async def get_market_insider_trades(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -181,7 +181,7 @@ async def get_sector_stats(
 ):
     """Get sector statistics."""
     cache_key = "uw:market:sector-stats"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -195,7 +195,7 @@ async def get_sector_stats(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -209,7 +209,7 @@ async def get_market_tide_by_etf(
     """Get market tide data for a specific ETF."""
     etf = etf.upper()
     cache_key = f"uw:market:etf-tide:{etf}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -223,5 +223,5 @@ async def get_market_tide_by_etf(
         "meta": {"etf": etf, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response

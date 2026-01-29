@@ -27,7 +27,7 @@ async def get_all_institutions(
 ):
     """Get list of all institutions."""
     cache_key = f"uw:institutions:all:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -36,7 +36,7 @@ async def get_all_institutions(
     data = await provider.get_all_institutions(limit=limit)
 
     response = paginate_response(data, limit)
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -49,7 +49,7 @@ async def get_latest_institutional_filings(
 ):
     """Get latest institutional filings."""
     cache_key = f"uw:institutions:filings:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -58,7 +58,7 @@ async def get_latest_institutional_filings(
     data = await provider.get_latest_institutional_filings(limit=limit)
 
     response = paginate_response(data, limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -71,7 +71,7 @@ async def get_institution_activity(
 ):
     """Get latest activity by an institution."""
     cache_key = f"uw:institutions:{institution_id}:activity"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -89,7 +89,7 @@ async def get_institution_activity(
         },
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -102,7 +102,7 @@ async def get_institution_holdings(
 ):
     """Get current holdings of an institution."""
     cache_key = f"uw:institutions:{institution_id}:holdings"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -120,7 +120,7 @@ async def get_institution_holdings(
         },
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -133,7 +133,7 @@ async def get_institution_sector_exposure(
 ):
     """Get sector exposure of an institution."""
     cache_key = f"uw:institutions:{institution_id}:sectors"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -151,7 +151,7 @@ async def get_institution_sector_exposure(
         },
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -165,7 +165,7 @@ async def get_institutional_ownership(
     """Get institutional ownership for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:institutions:ownership:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -179,5 +179,5 @@ async def get_institutional_ownership(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response

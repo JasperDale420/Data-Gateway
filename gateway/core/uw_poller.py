@@ -11,12 +11,16 @@ Features:
 
 import asyncio
 from datetime import UTC, datetime, time
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import structlog
 
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
+
+if TYPE_CHECKING:
+    from gateway.providers.uw import UnusualWhalesProvider
 
 logger = structlog.get_logger()
 
@@ -75,7 +79,7 @@ class UWPoller:
         self.sector_tide_enabled = sector_tide_enabled
         self._running = False
         self._task: asyncio.Task | None = None
-        self._provider = None  # type: ignore[assignment]
+        self._provider: UnusualWhalesProvider | None = None
         self._calendar = TradingCalendar()
 
         # Deduplication cache (event_id -> timestamp)
@@ -107,7 +111,9 @@ class UWPoller:
         now_et = datetime.now(ET)
         current_time = now_et.time()
         # Extended hours: 4:00 AM - 8:00 PM ET on trading days
-        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(now_et.date())
+        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(
+            now_et.date()
+        )
 
     def _is_morning_rush(self) -> bool:
         """Check if we're in high-volume morning period (first hour of trading)."""
@@ -267,6 +273,7 @@ class UWPoller:
 
     async def _poll_flow_alerts(self, sink_registry, limit: int) -> None:
         """Poll and publish flow alerts with deduplication."""
+        assert self._provider is not None
         try:
             alerts = await self._provider.get_flow_alerts(limit=limit)
             published = 0
@@ -300,6 +307,7 @@ class UWPoller:
 
     async def _poll_darkpool(self, sink_registry, limit: int) -> None:
         """Poll and publish darkpool trades with deduplication."""
+        assert self._provider is not None
         try:
             trades = await self._provider.get_darkpool_recent(limit=limit)
             published = 0
@@ -338,6 +346,7 @@ class UWPoller:
         we fetch all tides and take the last 5 to avoid missing data.
         Deduplication ensures we don't republish overlapping records.
         """
+        assert self._provider is not None
         try:
             tides = await self._provider.get_market_tide()
 
@@ -380,6 +389,7 @@ class UWPoller:
 
         Runs hourly on same schedule as market tide.
         """
+        assert self._provider is not None
         total_published = 0
         total_duplicates = 0
         sectors_polled = 0

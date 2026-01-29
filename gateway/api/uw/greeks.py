@@ -29,7 +29,7 @@ async def get_gex(
     """Get Greek exposure (GEX) data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:gex:{symbol}:{date or 'latest'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -47,7 +47,7 @@ async def get_gex(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -62,7 +62,7 @@ async def get_gex_by_strike(
     """Get Greek exposure by strike price for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:gex:strike:{symbol}:{date or 'latest'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -80,7 +80,7 @@ async def get_gex_by_strike(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -95,7 +95,7 @@ async def get_gex_by_expiry(
     """Get Greek exposure by expiration date for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:gex:expiry:{symbol}:{date or 'latest'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -113,5 +113,5 @@ async def get_gex_by_expiry(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response

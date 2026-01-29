@@ -26,7 +26,7 @@ async def get_politician_people(
 ):
     """Get all politician names and IDs."""
     cache_key = "uw:politicians:people"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -40,7 +40,7 @@ async def get_politician_people(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -53,7 +53,7 @@ async def get_politician_recent_trades(
 ):
     """Get latest transacted trades by congress members."""
     cache_key = f"uw:politicians:trades:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -62,7 +62,7 @@ async def get_politician_recent_trades(
     data = await provider.get_politician_recent_trades(limit=limit)
 
     response = paginate_response(data, limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -75,7 +75,7 @@ async def get_politician_portfolios(
 ):
     """Get all portfolios and holdings for a politician."""
     cache_key = f"uw:politicians:{politician_id}:portfolios"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -89,7 +89,7 @@ async def get_politician_portfolios(
         "meta": {"politician_id": politician_id, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -103,7 +103,7 @@ async def get_politician_holders(
     """Get politician portfolio holders for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:politicians:holders:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -117,5 +117,5 @@ async def get_politician_holders(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response

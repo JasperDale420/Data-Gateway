@@ -31,7 +31,7 @@ async def get_insider_sentiment(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:insider-sentiment", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -42,7 +42,7 @@ async def get_insider_sentiment(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_insider_sentiment(symbol)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -65,7 +65,7 @@ async def get_upgrade_downgrade(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:upgrade-downgrade", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -76,7 +76,7 @@ async def get_upgrade_downgrade(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_upgrade_downgrade(symbol)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": {"symbol": symbol.upper(), "history": data},
@@ -99,7 +99,7 @@ async def get_social_sentiment(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:social-sentiment", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -110,7 +110,7 @@ async def get_social_sentiment(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_social_sentiment(symbol)
-        cache.set(key, data, ttl=1800)
+        await cache.set(key, data, ttl=1800)
         return {
             "success": True,
             "data": data,
@@ -134,7 +134,7 @@ async def get_support_resistance(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:support-resistance", symbol.upper(), resolution)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -145,7 +145,7 @@ async def get_support_resistance(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_support_resistance(symbol, resolution=resolution)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -169,7 +169,7 @@ async def get_pattern_recognition(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:patterns", symbol.upper(), resolution)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -180,7 +180,7 @@ async def get_pattern_recognition(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_pattern_recognition(symbol, resolution=resolution)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,

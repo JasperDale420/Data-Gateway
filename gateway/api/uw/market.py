@@ -31,7 +31,7 @@ async def get_institutions(
     """Get 13F institutional holdings for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:institutions:{symbol}:{limit}:{cursor or 'start'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -40,7 +40,7 @@ async def get_institutions(
     holdings = await provider.get_institutions(symbol=symbol)
 
     response = paginate_response(holdings, limit, cursor)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -56,7 +56,7 @@ async def get_congress(
     """Get congressional trades for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:congress:{symbol}:{limit}:{cursor or 'start'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -65,7 +65,7 @@ async def get_congress(
     trades = await provider.get_congress_trades(symbol=symbol)
 
     response = paginate_response(trades, limit, cursor)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -81,7 +81,7 @@ async def get_insiders(
     """Get insider transactions for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:insiders:{symbol}:{limit}:{cursor or 'start'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -90,7 +90,7 @@ async def get_insiders(
     transactions = await provider.get_insiders(symbol=symbol)
 
     response = paginate_response(transactions, limit, cursor)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -103,7 +103,7 @@ async def get_market_tide(
 ):
     """Get market tide/sentiment data."""
     cache_key = f"uw:market:tide:{date or 'latest'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -121,5 +121,5 @@ async def get_market_tide(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response

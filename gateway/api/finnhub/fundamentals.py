@@ -32,7 +32,7 @@ async def get_company_profile(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:profile", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -46,7 +46,7 @@ async def get_company_profile(
         if not data:
             raise HTTPException(status_code=404, detail=f"No profile for symbol: {symbol}")
 
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -71,7 +71,7 @@ async def get_financials(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:financials", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -82,7 +82,7 @@ async def get_financials(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_financials(symbol)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -105,7 +105,7 @@ async def get_peers(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:peers", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -117,7 +117,7 @@ async def get_peers(
         await require_provider_rate_limit("finnhub")
         peers = await provider.get_peers(symbol)
         data = {"symbol": symbol.upper(), "peers": peers}
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -141,7 +141,7 @@ async def get_metrics(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:metrics", symbol.upper(), metric)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -152,7 +152,7 @@ async def get_metrics(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_metrics(symbol, metric=metric)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -175,7 +175,7 @@ async def get_executives(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:executives", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -187,7 +187,7 @@ async def get_executives(
         await require_provider_rate_limit("finnhub")
         execs = await provider.get_executives(symbol)
         data = {"symbol": symbol.upper(), "executives": execs}
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -211,7 +211,7 @@ async def get_ownership(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:ownership", symbol.upper(), str(limit))
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -222,7 +222,7 @@ async def get_ownership(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_ownership(symbol, limit=limit)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -246,7 +246,7 @@ async def get_fund_ownership(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:fund-ownership", symbol.upper(), str(limit))
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -257,7 +257,7 @@ async def get_fund_ownership(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_fund_ownership(symbol, limit=limit)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -282,7 +282,7 @@ async def get_insider_transactions(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:insider-tx", symbol.upper(), start, end)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -297,7 +297,7 @@ async def get_insider_transactions(
 
         txs = await provider.get_insider_transactions(symbol, start=start_dt, end=end_dt)
         data = {"symbol": symbol.upper(), "transactions": txs}
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,

@@ -29,7 +29,7 @@ async def get_flow_all(
 ):
     """Get all recent options flow alerts."""
     cache_key = f"uw:flow:all:{limit}:{cursor or 'start'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -39,7 +39,7 @@ async def get_flow_all(
     data = [a.model_dump(mode="json") for a in alerts]
 
     response = paginate_response(data, limit, cursor)
-    cache.set(cache_key, response, ttl=30)
+    await cache.set(cache_key, response, ttl=30)
     return response
 
 
@@ -56,7 +56,7 @@ async def get_flow_symbol(
     """Get options flow for a specific ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:flow:{symbol}:{limit}:{date or 'latest'}:{cursor or 'start'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -66,7 +66,7 @@ async def get_flow_symbol(
     data = [a.model_dump(mode="json") for a in alerts]
 
     response = paginate_response(data, limit, cursor)
-    cache.set(cache_key, response, ttl=30)
+    await cache.set(cache_key, response, ttl=30)
     return response
 
 
@@ -80,7 +80,7 @@ async def get_darkpool_all(
 ):
     """Get all recent darkpool trades."""
     cache_key = f"uw:darkpool:all:{limit}:{cursor or 'start'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -90,7 +90,7 @@ async def get_darkpool_all(
     data = [t.model_dump(mode="json") for t in trades]
 
     response = paginate_response(data, limit, cursor)
-    cache.set(cache_key, response, ttl=30)
+    await cache.set(cache_key, response, ttl=30)
     return response
 
 
@@ -107,7 +107,7 @@ async def get_darkpool_symbol(
     """Get darkpool trades for a specific ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:darkpool:{symbol}:{limit}:{date or 'latest'}:{cursor or 'start'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -117,5 +117,5 @@ async def get_darkpool_symbol(
     data = [t.model_dump(mode="json") for t in trades]
 
     response = paginate_response(data, limit, cursor)
-    cache.set(cache_key, response, ttl=30)
+    await cache.set(cache_key, response, ttl=30)
     return response

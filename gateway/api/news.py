@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from gateway.api.deps import get_cache, require_api_key, require_provider_rate_limit
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
+from gateway.core.dedup import get_deduplicator
 from gateway.providers.news import NewsProvider
 from gateway.schemas import SuccessResponse
 
@@ -55,23 +56,28 @@ async def get_articles(
 
     # Build cache key
     cache_key = f"news:articles:{symbols}:{keywords}:{start}:{end}:{limit}:{cursor}:{sort}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "cached": True}
 
     try:
-        await require_provider_rate_limit("news")
-        result = await provider.get_articles(
-            symbols=symbol_list,
-            keywords=keywords,
-            start=start_dt,
-            end=end_dt,
-            limit=limit,
-            cursor=cursor,
-            sort=sort,
-        )
+        deduper = get_deduplicator()
+
+        async def _fetch():
+            await require_provider_rate_limit("news")
+            return await provider.get_articles(
+                symbols=symbol_list,
+                keywords=keywords,
+                start=start_dt,
+                end=end_dt,
+                limit=limit,
+                cursor=cursor,
+                sort=sort,
+            )
+
+        result = await deduper.dedupe(cache_key, _fetch)
         # Cache for 60s per PRD
-        cache.set(cache_key, result, ttl=60)
+        await cache.set(cache_key, result, ttl=60)
         return {"success": True, "data": result, "cached": False}
 
     except RuntimeError as e:
@@ -97,20 +103,26 @@ async def get_article(
     await _ensure_initialized(provider)
 
     cache_key = f"news:article:{article_id}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "cached": True}
 
     try:
-        await require_provider_rate_limit("news")
-        result = await provider.get_article(article_id)
-        if not result:
-            raise HTTPException(
-                status_code=404,
-                detail={"error_code": "GW-E5004", "message": "Article not found"},
-            )
+        deduper = get_deduplicator()
+
+        async def _fetch():
+            await require_provider_rate_limit("news")
+            data = await provider.get_article(article_id)
+            if not data:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error_code": "GW-E5004", "message": "Article not found"},
+                )
+            return data
+
+        result = await deduper.dedupe(cache_key, _fetch)
         # Cache for 60s
-        cache.set(cache_key, result, ttl=60)
+        await cache.set(cache_key, result, ttl=60)
         return {"success": True, "data": result, "cached": False}
 
     except HTTPException:
@@ -139,15 +151,20 @@ async def get_sentiment(
 
     symbol = symbol.upper()
     cache_key = f"news:sentiment:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "cached": True}
 
     try:
-        await require_provider_rate_limit("news")
-        result = await provider.get_sentiment(symbol)
+        deduper = get_deduplicator()
+
+        async def _fetch():
+            await require_provider_rate_limit("news")
+            return await provider.get_sentiment(symbol)
+
+        result = await deduper.dedupe(cache_key, _fetch)
         # Cache for 60s
-        cache.set(cache_key, result, ttl=60)
+        await cache.set(cache_key, result, ttl=60)
         return {"success": True, "data": result, "cached": False}
 
     except RuntimeError as e:

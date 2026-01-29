@@ -15,6 +15,7 @@ Provider Limits (Free Tier):
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -88,12 +89,13 @@ class RateLimitBucket:
 
     limit: int
     window_seconds: int
-    timestamps: list[float] = field(default_factory=list)
+    timestamps: deque[float] = field(default_factory=deque)
 
     def _cleanup(self, now: float) -> None:
         """Remove expired timestamps."""
         cutoff = now - self.window_seconds
-        self.timestamps = [ts for ts in self.timestamps if ts > cutoff]
+        while self.timestamps and self.timestamps[0] <= cutoff:
+            self.timestamps.popleft()
 
     @property
     def remaining(self) -> int:
@@ -106,7 +108,7 @@ class RateLimitBucket:
         """Seconds until oldest request expires."""
         if not self.timestamps:
             return 0
-        oldest = min(self.timestamps)
+        oldest = self.timestamps[0]
         return max(0, self.window_seconds - (time.time() - oldest))
 
     def try_acquire(self) -> bool:

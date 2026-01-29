@@ -33,7 +33,7 @@ async def get_quote(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:quote", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -48,7 +48,7 @@ async def get_quote(
             raise HTTPException(status_code=404, detail=f"No data for symbol: {symbol}")
 
         data = quote.model_dump(mode="json")
-        cache.set(key, data, ttl=CACHE_TTL)
+        await cache.set(key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
@@ -76,7 +76,7 @@ async def get_bars(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:bars", symbol.upper(), resolution, start, end)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -95,7 +95,7 @@ async def get_bars(
             "resolution": resolution,
             "bars": [bar.model_dump(mode="json") for bar in bars],
         }
-        cache.set(key, data, ttl=300)
+        await cache.set(key, data, ttl=300)
         return {
             "success": True,
             "data": data,

@@ -31,7 +31,7 @@ async def get_etf_profile(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:etf-profile", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -42,7 +42,7 @@ async def get_etf_profile(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_etf_profile(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -65,7 +65,7 @@ async def get_etf_holdings(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:etf-holdings", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -76,7 +76,7 @@ async def get_etf_holdings(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_etf_holdings(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -99,7 +99,7 @@ async def get_etf_sector(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:etf-sector", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -110,7 +110,7 @@ async def get_etf_sector(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_etf_sector(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -133,7 +133,7 @@ async def get_etf_country(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:etf-country", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -144,7 +144,7 @@ async def get_etf_country(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_etf_country(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -167,7 +167,7 @@ async def get_index_constituents(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:index-constituents", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -178,7 +178,7 @@ async def get_index_constituents(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_index_constituents(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -201,7 +201,7 @@ async def get_index_historical(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:index-historical", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -212,7 +212,7 @@ async def get_index_historical(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_index_historical(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,

@@ -34,6 +34,7 @@ class ConnectionManager:
     def __init__(self):
         self._connections: dict[str, Connection] = {}
         self._lock = asyncio.Lock()
+        self._broadcast_semaphore = asyncio.Semaphore(100)
 
     async def connect(self, connection_id: str, websocket: WebSocket) -> Connection:
         """Register a new connection."""
@@ -110,23 +111,25 @@ class ConnectionManager:
         Returns:
             Number of connections that received the message.
         """
-        sent = 0
 
-        for connection in self._connections.values():
+        async def _send(connection: Connection) -> bool:
             if not connection.authenticated:
-                continue
-
+                return False
             if client_ids and connection.client_id not in client_ids:
-                continue
-
+                return False
             try:
-                await connection.websocket.send_json(message)
-                sent += 1
+                async with self._broadcast_semaphore:
+                    await connection.websocket.send_json(message)
+                return True
             except Exception as e:
                 logger.warning(
                     "broadcast_send_failed",
                     client_id=connection.client_id,
                     error=str(e),
                 )
+                return False
 
-        return sent
+        results = await asyncio.gather(
+            *(_send(connection) for connection in self._connections.values())
+        )
+        return sum(1 for sent in results if sent)

@@ -31,7 +31,7 @@ async def get_crypto_rating(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:crypto-rating", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -42,7 +42,7 @@ async def get_crypto_rating(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_crypto_rating(symbol)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -66,7 +66,7 @@ async def get_crypto_daily(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:crypto-daily", symbol.upper(), market.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -77,7 +77,7 @@ async def get_crypto_daily(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_crypto_daily(symbol, market)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,

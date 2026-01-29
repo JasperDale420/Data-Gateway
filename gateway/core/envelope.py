@@ -287,7 +287,8 @@ def wrap_event(
 
     # Create envelope
     try:
-        envelope = EventEnvelope(
+        # Use model_construct to skip validation overhead on hot paths.
+        envelope = EventEnvelope.model_construct(
             event_id=event_id,
             provider=provider,
             feed=feed,

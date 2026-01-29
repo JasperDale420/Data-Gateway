@@ -25,7 +25,7 @@ async def get_market_seasonality(
 ):
     """Get market-wide seasonality data."""
     cache_key = "uw:seasonality:market"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -39,7 +39,7 @@ async def get_market_seasonality(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -53,7 +53,7 @@ async def get_ticker_seasonality(
     """Get monthly returns/seasonality for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:seasonality:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -67,5 +67,5 @@ async def get_ticker_seasonality(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response

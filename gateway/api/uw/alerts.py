@@ -27,7 +27,7 @@ async def get_analyst_ratings(
 ):
     """Get analyst ratings from screener."""
     cache_key = f"uw:screener:analysts:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -36,7 +36,7 @@ async def get_analyst_ratings(
     data = await provider.get_analyst_ratings(limit=limit)
 
     response = paginate_response(data, limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -49,7 +49,7 @@ async def get_all_alerts(
 ):
     """Get all alerts."""
     cache_key = f"uw:alerts:all:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -58,7 +58,7 @@ async def get_all_alerts(
     data = await provider.get_all_alerts(limit=limit)
 
     response = paginate_response(data, limit)
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -70,7 +70,7 @@ async def get_alerts_configuration(
 ):
     """Get alerts configuration."""
     cache_key = "uw:alerts:configuration"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -84,5 +84,5 @@ async def get_alerts_configuration(
         "meta": {"provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response

@@ -26,7 +26,7 @@ async def get_congress_late_reports(
 ):
     """Get late congressional trading reports."""
     cache_key = f"uw:congress:late-reports:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -40,7 +40,7 @@ async def get_congress_late_reports(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -53,7 +53,7 @@ async def get_congress_reports(
 ):
     """Get congressional trading reports."""
     cache_key = f"uw:congress:reports:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -67,7 +67,7 @@ async def get_congress_reports(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -80,7 +80,7 @@ async def get_monthly_top_performers(
 ):
     """Get top performing stocks by month (1-12)."""
     cache_key = f"uw:seasonality:monthly-top-performers:{month}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -94,7 +94,7 @@ async def get_monthly_top_performers(
         "meta": {"month": month, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -108,7 +108,7 @@ async def get_price_changes_by_month_year(
     """Get price changes by month and year for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:seasonality:price-changes:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -122,7 +122,7 @@ async def get_price_changes_by_month_year(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -136,7 +136,7 @@ async def get_shorts_data(
     """Get short data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:shorts:data:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -150,7 +150,7 @@ async def get_shorts_data(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -164,7 +164,7 @@ async def get_short_interest_float(
     """Get short interest as percentage of float."""
     symbol = symbol.upper()
     cache_key = f"uw:shorts:interest-float:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -178,7 +178,7 @@ async def get_short_interest_float(
         "meta": {"symbol": symbol, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -192,7 +192,7 @@ async def get_short_volumes_by_exchange(
     """Get short volumes by exchange."""
     symbol = symbol.upper()
     cache_key = f"uw:shorts:volumes-by-exchange:{symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -206,7 +206,7 @@ async def get_short_volumes_by_exchange(
         "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -218,7 +218,7 @@ async def get_market_spike(
 ):
     """Get market spike data."""
     cache_key = "uw:market:spike"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -232,5 +232,5 @@ async def get_market_spike(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response

@@ -32,7 +32,7 @@ async def get_company_overview(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:overview", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -46,7 +46,7 @@ async def get_company_overview(
         if not data:
             raise HTTPException(status_code=404, detail=f"No data for symbol: {symbol}")
 
-        cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
+        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
         return {
             "success": True,
             "data": data,
@@ -71,7 +71,7 @@ async def get_earnings(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:earnings", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -82,7 +82,7 @@ async def get_earnings(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_earnings(symbol)
-        cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
+        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
         return {
             "success": True,
             "data": data,
@@ -105,7 +105,7 @@ async def get_income_statement(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:income", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -116,7 +116,7 @@ async def get_income_statement(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_income_statement(symbol)
-        cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
+        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
         return {
             "success": True,
             "data": data,
@@ -139,7 +139,7 @@ async def get_balance_sheet(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:balance", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -150,7 +150,7 @@ async def get_balance_sheet(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_balance_sheet(symbol)
-        cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
+        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
         return {
             "success": True,
             "data": data,
@@ -173,7 +173,7 @@ async def get_cash_flow(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:cashflow", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -184,7 +184,7 @@ async def get_cash_flow(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_cash_flow(symbol)
-        cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
+        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
         return {
             "success": True,
             "data": data,

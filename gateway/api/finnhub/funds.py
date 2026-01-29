@@ -31,7 +31,7 @@ async def get_mutual_fund_profile(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:mf-profile", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -42,7 +42,7 @@ async def get_mutual_fund_profile(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_mutual_fund_profile(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -65,7 +65,7 @@ async def get_mutual_fund_holdings(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:mf-holdings", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -76,7 +76,7 @@ async def get_mutual_fund_holdings(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_mutual_fund_holdings(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -99,7 +99,7 @@ async def get_mutual_fund_sector(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:mf-sector", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -110,7 +110,7 @@ async def get_mutual_fund_sector(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_mutual_fund_sector(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,

@@ -31,7 +31,7 @@ async def get_fda_calendar(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:fda-calendar")
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -42,7 +42,7 @@ async def get_fda_calendar(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_fda_calendar()
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -68,7 +68,7 @@ async def get_congress_trading(
 
     symbol_key = symbol.upper() if symbol else "all"
     key = cache_key("finnhub:congress-trading", symbol_key, start, end)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -82,7 +82,7 @@ async def get_congress_trading(
         end_dt = datetime.fromisoformat(end) if end else None
 
         data = await provider.get_congress_trading(symbol=symbol, start=start_dt, end=end_dt)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": data,
@@ -107,7 +107,7 @@ async def get_lobbying(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:lobbying", symbol.upper(), start, end)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -121,7 +121,7 @@ async def get_lobbying(
         end_dt = datetime.fromisoformat(end) if end else None
 
         data = await provider.get_lobbying(symbol, start=start_dt, end=end_dt)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": {"symbol": symbol.upper(), "lobbying": data},
@@ -146,7 +146,7 @@ async def get_usa_spending(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:usa-spending", symbol.upper(), start, end)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -160,7 +160,7 @@ async def get_usa_spending(
         end_dt = datetime.fromisoformat(end) if end else None
 
         data = await provider.get_usa_spending(symbol, start=start_dt, end=end_dt)
-        cache.set(key, data, ttl=3600)
+        await cache.set(key, data, ttl=3600)
         return {
             "success": True,
             "data": {"symbol": symbol.upper(), "spending": data},

@@ -34,7 +34,7 @@ async def get_earnings_calendar(
 
     symbol_key = symbol.upper() if symbol else "all"
     key = cache_key("av:earnings-calendar", symbol_key, horizon)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -45,7 +45,7 @@ async def get_earnings_calendar(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_earnings_calendar(symbol=symbol, horizon=horizon)
-        cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
+        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
         return {
             "success": True,
             "data": data,
@@ -67,7 +67,7 @@ async def get_ipo_calendar(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:ipo-calendar")
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -78,7 +78,7 @@ async def get_ipo_calendar(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_ipo_calendar()
-        cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
+        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
         return {
             "success": True,
             "data": data,
@@ -102,7 +102,7 @@ async def get_listing_status(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:listing-status", state, date or "current")
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -113,7 +113,7 @@ async def get_listing_status(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_listing_status(state=state, date=date)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,

@@ -26,7 +26,7 @@ async def get_option_contract_flow(
 ):
     """Get flow for a specific option contract."""
     cache_key = f"uw:option-contract:flow:{option_symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -40,7 +40,7 @@ async def get_option_contract_flow(
         "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -53,7 +53,7 @@ async def get_option_contract_historic(
 ):
     """Get historic data for a specific option contract."""
     cache_key = f"uw:option-contract:historic:{option_symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -67,7 +67,7 @@ async def get_option_contract_historic(
         "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -80,7 +80,7 @@ async def get_option_contract_intraday(
 ):
     """Get intraday data for a specific option contract."""
     cache_key = f"uw:option-contract:intraday:{option_symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -94,7 +94,7 @@ async def get_option_contract_intraday(
         "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -107,7 +107,7 @@ async def get_option_contract_volume_profile(
 ):
     """Get volume profile for a specific option contract."""
     cache_key = f"uw:option-contract:volume-profile:{option_symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -121,7 +121,7 @@ async def get_option_contract_volume_profile(
         "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -134,7 +134,7 @@ async def get_contract_price_history(
 ):
     """Get price history for an option contract."""
     cache_key = f"uw:contract:price-history:{option_symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -148,7 +148,7 @@ async def get_contract_price_history(
         "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -161,7 +161,7 @@ async def get_contract_flow(
 ):
     """Get flow for a specific contract."""
     cache_key = f"uw:flow:contract:{option_symbol}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -175,7 +175,7 @@ async def get_contract_flow(
         "meta": {"option_symbol": option_symbol, "count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -188,7 +188,7 @@ async def get_full_tape_flow(
 ):
     """Get full options tape."""
     cache_key = f"uw:flow:full-tape:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -202,7 +202,7 @@ async def get_full_tape_flow(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=30)
+    await cache.set(cache_key, response, ttl=30)
     return response
 
 
@@ -215,7 +215,7 @@ async def get_screener_option_contracts(
 ):
     """Get option contracts from screener."""
     cache_key = f"uw:screener:option-contracts:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -229,7 +229,7 @@ async def get_screener_option_contracts(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -242,7 +242,7 @@ async def get_screener_stocks_extended(
 ):
     """Get stocks from screener."""
     cache_key = f"uw:screener:stocks:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -256,5 +256,5 @@ async def get_screener_stocks_extended(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response

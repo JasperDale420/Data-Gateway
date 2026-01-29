@@ -29,7 +29,7 @@ async def get_earnings_premarket(
 ):
     """Get premarket earnings calendar."""
     cache_key = f"uw:earnings:premarket:{date or 'latest'}:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -38,7 +38,7 @@ async def get_earnings_premarket(
     data = await provider.get_earnings_premarket(date_str=date)
 
     response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -52,7 +52,7 @@ async def get_earnings_afterhours(
 ):
     """Get afterhours earnings calendar."""
     cache_key = f"uw:earnings:afterhours:{date or 'latest'}:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -61,7 +61,7 @@ async def get_earnings_afterhours(
     data = await provider.get_earnings_afterhours(date_str=date)
 
     response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -76,7 +76,7 @@ async def get_earnings_ticker(
     """Get historical earnings for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:earnings:{symbol}:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -85,5 +85,5 @@ async def get_earnings_ticker(
     data = await provider.get_earnings_ticker(symbol=symbol)
 
     response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response

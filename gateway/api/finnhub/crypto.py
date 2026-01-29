@@ -31,7 +31,7 @@ async def get_crypto_exchanges(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:crypto-exchanges")
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -42,7 +42,7 @@ async def get_crypto_exchanges(
     try:
         await require_provider_rate_limit("finnhub")
         exchanges = await provider.get_crypto_exchanges()
-        cache.set(key, exchanges, ttl=86400)
+        await cache.set(key, exchanges, ttl=86400)
         return {
             "success": True,
             "data": {"exchanges": exchanges},
@@ -65,7 +65,7 @@ async def get_crypto_symbols(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:crypto-symbols", exchange)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -77,7 +77,7 @@ async def get_crypto_symbols(
         await require_provider_rate_limit("finnhub")
         symbols = await provider.get_crypto_symbols(exchange)
         data = {"exchange": exchange, "symbols": symbols}
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,
@@ -103,7 +103,7 @@ async def get_crypto_candles(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:crypto-candles", symbol, resolution, start, end)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -119,7 +119,7 @@ async def get_crypto_candles(
         data = await provider.get_crypto_candles(
             symbol, resolution=resolution, start=start_dt, end=end_dt
         )
-        cache.set(key, data, ttl=300)
+        await cache.set(key, data, ttl=300)
         return {
             "success": True,
             "data": data,
@@ -142,7 +142,7 @@ async def get_crypto_profile(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("finnhub:crypto-profile", symbol.upper())
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -153,7 +153,7 @@ async def get_crypto_profile(
     try:
         await require_provider_rate_limit("finnhub")
         data = await provider.get_crypto_profile(symbol)
-        cache.set(key, data, ttl=86400)
+        await cache.set(key, data, ttl=86400)
         return {
             "success": True,
             "data": data,

@@ -33,8 +33,8 @@ async def readiness(
 
     # Verify cache is operational
     try:
-        cache.set("__health_check__", True)
-        if not cache.get("__health_check__"):
+        await cache.set("__health_check__", True)
+        if not await cache.get("__health_check__"):
             checks["cache"] = "error"
         cache.delete("__health_check__")
     except Exception:

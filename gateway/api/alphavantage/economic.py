@@ -38,7 +38,7 @@ async def get_economic_indicator(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     key = cache_key("av:economic", indicator.upper(), interval)
-    cached = cache.get(key)
+    cached = await cache.get(key)
     if cached:
         return {
             "success": True,
@@ -49,7 +49,7 @@ async def get_economic_indicator(
     try:
         await require_provider_rate_limit("alphavantage")
         data = await provider.get_economic_indicator(indicator, interval)
-        cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
+        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
         return {
             "success": True,
             "data": data,

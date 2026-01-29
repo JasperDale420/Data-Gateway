@@ -29,7 +29,7 @@ async def get_economic_calendar(
 ):
     """Get economic calendar events."""
     cache_key = f"uw:calendar:{start_date or 'start'}:{end_date or 'end'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -43,7 +43,7 @@ async def get_economic_calendar(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
 
 
@@ -56,7 +56,7 @@ async def get_sector_tide(
 ):
     """Get market tide for a specific sector."""
     cache_key = f"uw:sector-tide:{sector}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -73,7 +73,7 @@ async def get_sector_tide(
         "meta": {"sector": sector, "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=300)
+    await cache.set(cache_key, response, ttl=300)
     return response
 
 
@@ -86,7 +86,7 @@ async def get_top_net_impact(
 ):
     """Get top tickers by net premium (bullish and bearish)."""
     cache_key = f"uw:top-impact:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -104,7 +104,7 @@ async def get_top_net_impact(
         },
     }
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -119,7 +119,7 @@ async def get_custom_alerts(
 ):
     """Get custom filtered flow alerts."""
     cache_key = f"uw:alerts:{min_premium}:{min_volume}:{limit}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -132,7 +132,7 @@ async def get_custom_alerts(
     response = paginate_response(data, limit)
     response["meta"] = {"count": len(data), "provider": "unusual_whales"}
 
-    cache.set(cache_key, response, ttl=60)
+    await cache.set(cache_key, response, ttl=60)
     return response
 
 
@@ -146,7 +146,7 @@ async def get_market_correlations(
 ):
     """Get cross-asset correlations."""
     cache_key = f"uw:correlations:{start_date or 'start'}:{end_date or 'end'}"
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return cached
 
@@ -160,5 +160,5 @@ async def get_market_correlations(
         "meta": {"count": len(data), "provider": "unusual_whales"},
     }
 
-    cache.set(cache_key, response, ttl=3600)
+    await cache.set(cache_key, response, ttl=3600)
     return response
