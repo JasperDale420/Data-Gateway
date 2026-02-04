@@ -9,6 +9,10 @@ services:
     environment:
       - GATEWAY_DEBUG=true
       - GATEWAY_LOG_LEVEL=DEBUG
+      # Override Redis URLs for container networking (redis = service name)
+      - GATEWAY_CACHE_REDIS_URL=redis://redis:6379/0
+      - GATEWAY_DATA_SINK_REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://redis:6379/0
     env_file:
       - .env
     volumes:

@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
   - `StreamMultiplexer.stop()`: Concurrent connection closure with 10s timeout for all streams
   - `lifespan`: Multiplexer shutdown now happens FIRST (before drain period) to release Alpaca connection slots immediately
   - Added detailed shutdown logging for debugging connection issues
+- **Redis Docker Networking**: Fixed Redis connection errors in Docker by overriding `GATEWAY_CACHE_REDIS_URL`, `GATEWAY_DATA_SINK_REDIS_URL`, and `REDIS_URL` in `docker-compose.yml` to use container hostname (`redis://redis:6379/0`) instead of localhost
 
 ---
 
