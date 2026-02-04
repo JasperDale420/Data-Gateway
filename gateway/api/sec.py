@@ -36,14 +36,14 @@ async def get_company_info(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:company", cik)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
     try:
         await require_provider_rate_limit("sec")
         data = await provider.get_company_info(cik)
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "sec"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -62,14 +62,14 @@ async def get_company_by_ticker(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:ticker", ticker.upper())
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
     try:
         await require_provider_rate_limit("sec")
         data = await provider.get_company_by_ticker(ticker)
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "sec"}}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -94,7 +94,7 @@ async def get_filings(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:filings", cik, form_type, str(limit))
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
@@ -102,7 +102,7 @@ async def get_filings(
         await require_provider_rate_limit("sec")
         filings = await provider.get_filings(cik, form_type=form_type, limit=limit)
         data = {"cik": cik, "form_type": form_type, "filings": filings}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
@@ -127,7 +127,7 @@ async def get_filings_by_type(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:filings", cik, form_type.upper(), str(limit))
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
@@ -135,7 +135,7 @@ async def get_filings_by_type(
         await require_provider_rate_limit("sec")
         filings = await provider.get_filings(cik, form_type=form_type.upper(), limit=limit)
         data = {"cik": cik, "form_type": form_type.upper(), "filings": filings}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
@@ -158,7 +158,7 @@ async def get_13f_holdings(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:13f", cik)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
@@ -166,7 +166,7 @@ async def get_13f_holdings(
         await require_provider_rate_limit("sec")
         filings = await provider.get_13f_holdings(cik)
         data = {"cik": cik, "filings": filings}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
@@ -190,7 +190,7 @@ async def get_insider_trades(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:insiders", cik, str(limit))
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
@@ -198,7 +198,7 @@ async def get_insider_trades(
         await require_provider_rate_limit("sec")
         filings = await provider.get_insider_trades(cik, limit=limit)
         data = {"cik": cik, "filings": filings}
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
@@ -221,14 +221,14 @@ async def get_company_facts(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:facts", cik)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
     try:
         await require_provider_rate_limit("sec")
         data = await provider.get_company_facts(cik)
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "sec"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -254,14 +254,14 @@ async def get_company_concept(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:concept", cik, taxonomy, concept)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
     try:
         await require_provider_rate_limit("sec")
         data = await provider.get_company_concept(cik, taxonomy=taxonomy, concept=concept)
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "sec"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -283,7 +283,7 @@ async def get_xbrl_frames(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:frames", taxonomy, concept, unit, period)
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
@@ -292,7 +292,7 @@ async def get_xbrl_frames(
         data = await provider.get_xbrl_frames(
             taxonomy=taxonomy, concept=concept, unit=unit, period=period
         )
-        cache.set(cache_key, data, ttl=CACHE_TTL)
+        await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
@@ -317,7 +317,7 @@ async def search_filings(
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
     cache_key = _cache_key("sec:search", q, form_type, str(limit))
-    cached = cache.get(cache_key)
+    cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "meta": {"cached": True, "provider": "sec"}}
 
@@ -325,7 +325,7 @@ async def search_filings(
         await require_provider_rate_limit("sec")
         results = await provider.search_filings(query=q, form_type=form_type, limit=limit)
         data = {"query": q, "results": results}
-        cache.set(cache_key, data, ttl=300)  # Shorter TTL for search
+        await cache.set(cache_key, data, ttl=300)  # Shorter TTL for search
         return {
             "success": True,
             "data": data,

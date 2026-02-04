@@ -5,7 +5,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import logging
 from contextlib import asynccontextmanager
+
+# Configure stdlib logging for structlog integration
+logging.basicConfig(
+    format="%(message)s",
+    level=logging.INFO,
+)
 
 import structlog
 from fastapi import FastAPI
@@ -100,12 +107,11 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
 
     # Publish to data sink for Heber storage (non-blocking)
     from gateway.api.deps import get_sink_registry
-    from gateway.core.data_sink import Topics
 
     sink_registry = get_sink_registry()
     if sink_registry:
-        topic = Topics.from_message_type(envelope.get("T", data_type))
-        await sink_registry.publish_all(topic, envelope)
+        # Publish all events to single Heber stream for unified ingestion
+        await sink_registry.publish_all("heber:events", envelope)
 
 
 @asynccontextmanager
@@ -139,10 +145,11 @@ async def lifespan(app: FastAPI):
             api_secret=settings.alpaca_secret_key,
             on_data=_on_stream_data,
             use_iex=settings.stream_use_iex,
+            lazy_connect=settings.stream_lazy_connect,
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()
-        logger.info("multiplexer_initialized")
+        logger.info("multiplexer_initialized", lazy_connect=settings.stream_lazy_connect)
     else:
         logger.warning("multiplexer_skipped", reason="Missing Alpaca credentials")
 
@@ -183,22 +190,52 @@ async def lifespan(app: FastAPI):
     except (ValueError, OSError):
         logger.warning("sighup_handler_failed", reason="Not supported on this platform")
 
+    # Start UW background poller (if data sink is enabled)
+    uw_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url:
+        from gateway.core.uw_poller import start_uw_poller
+
+        uw_poller = await start_uw_poller(
+            poll_interval_seconds=300,  # 5 minutes
+            flow_enabled=True,
+            darkpool_enabled=True,
+            market_tide_enabled=True,
+        )
+        logger.info("uw_poller_initialized", interval_seconds=300)
+
     yield
 
     # Shutdown with graceful drain (PRD 6.5, 11.3.4)
     drain_seconds = settings.shutdown_drain_seconds
-    logger.info("shutdown_drain_starting", drain_seconds=drain_seconds)
+    logger.info("shutdown_starting", drain_seconds=drain_seconds)
+
+    # PRIORITY: Stop multiplexer FIRST to release Alpaca WebSocket connections immediately
+    # This prevents "connection limit exceeded" errors on restart
+    if multiplexer:
+        logger.info("multiplexer_shutdown_starting")
+        try:
+            await asyncio.wait_for(multiplexer.stop(), timeout=15.0)
+            logger.info("multiplexer_shutdown_complete")
+        except TimeoutError:
+            logger.error("multiplexer_shutdown_timeout", timeout_seconds=15)
+        except Exception as e:
+            logger.error("multiplexer_shutdown_error", error=str(e))
 
     # Stop accepting new connections
     connections = get_connection_manager()
     logger.info("shutdown_connections", active=connections.active_count)
 
-    # Wait for drain period
-    await asyncio.sleep(drain_seconds)
+    # Wait for drain period (allow in-flight requests to complete)
+    if drain_seconds > 0:
+        await asyncio.sleep(drain_seconds)
 
-    # Shutdown components
-    if multiplexer:
-        await multiplexer.stop()
+    # Shutdown UW poller
+    if uw_poller:
+        from gateway.core.uw_poller import stop_uw_poller
+
+        await stop_uw_poller()
+
+    # Shutdown remaining components
     await registry.shutdown()
     logger.info("gateway_shutdown_complete")
 
@@ -221,7 +258,11 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     # EventEnvelope wraps responses LAST (outermost) so it sees final cached data
     app.add_middleware(EventEnvelopeMiddleware)
-    app.add_middleware(CacheMiddleware, default_ttl=settings.cache_default_ttl)
+    app.add_middleware(
+        CacheMiddleware,
+        default_ttl=settings.cache_default_ttl,
+        max_size=settings.cache_max_size,
+    )
     app.add_middleware(RateLimitMiddleware, default_limit=settings.rate_limit_default)
     # Global rate limit (PRD 7.5.1-2) before per-client limits
     app.add_middleware(GlobalRateLimitMiddleware)

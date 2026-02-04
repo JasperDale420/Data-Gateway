@@ -80,6 +80,10 @@ class NormalizedQuote(BaseModel):
     bid_size: int
     ask_price: Decimal
     ask_size: int
+    bid_exchange: str | None = None  # Alpaca WS: bx
+    ask_exchange: str | None = None  # Alpaca WS: ax
+    conditions: list[str] = Field(default_factory=list)  # Alpaca WS: c
+    tape: str | None = None  # Alpaca WS: z (A=NYSE, B=ARCA, C=NASDAQ)
     provider: str
 
 
@@ -90,51 +94,74 @@ class NormalizedTrade(BaseModel):
     timestamp: datetime
     price: Decimal
     size: int
-    trade_id: str | None = None  # Unique trade identifier
-    exchange: str | None = None
-    conditions: list[str] = Field(default_factory=list)
+    trade_id: str | None = None  # Alpaca WS: i - Unique trade identifier
+    exchange: str | None = None  # Alpaca WS: x (stocks only)
+    conditions: list[str] = Field(default_factory=list)  # Alpaca WS: c (stocks only)
+    tape: str | None = None  # Alpaca WS: z (stocks: A=NYSE, B=ARCA, C=NASDAQ)
+    taker_side: str | None = None  # Alpaca WS: tks (crypto: B=buy, S=sell)
     provider: str
 
 
 class NormalizedFlowAlert(BaseModel):
-    """Normalized options flow alert."""
+    """Normalized options flow alert from UW flow endpoint."""
 
-    symbol: str
-    timestamp: datetime
+    symbol: str  # ticker in UW
+    timestamp: datetime  # created_at in UW
     strike: Decimal
     expiry: str  # YYYY-MM-DD format
-    put_call: str  # "put" or "call"
-    premium: Decimal
+    put_call: str  # "put" or "call" (type in UW)
+    premium: Decimal  # total_premium in UW
     volume: int
     open_interest: int
     side: str  # "bid", "ask", "mid"
-    is_sweep: bool = False
+    is_sweep: bool = False  # has_sweep in UW
     is_unusual: bool = False
     sentiment: str | None = None  # "bullish", "bearish"
+    # Additional UW fields
+    option_chain: str | None = None  # OCC contract symbol (e.g., MSFT231222C00375000)
+    price: Decimal | None = None  # Option price at alert
+    underlying_price: Decimal | None = None  # Stock price at alert
+    alert_rule: str | None = None  # RepeatedHits, FloorTrade, etc.
+    total_size: int | None = None  # Total contracts traded
+    trade_count: int | None = None  # Number of trades in alert
+    volume_oi_ratio: Decimal | None = None  # Volume / OI ratio
+    total_ask_side_prem: Decimal | None = None  # Ask-side premium
+    total_bid_side_prem: Decimal | None = None  # Bid-side premium
+    all_opening_trades: bool = False  # All trades are opening
+    has_floor: bool = False  # Has floor trades
+    has_multileg: bool = False  # Multi-leg order
+    has_singleleg: bool = True  # Single-leg order
+    expiry_count: int | None = None  # Number of expiries in alert
     provider: str = "unusual_whales"
 
 
 class NormalizedDarkpoolTrade(BaseModel):
-    """Normalized darkpool trade."""
+    """Normalized darkpool trade from UW darkpool endpoint."""
 
     symbol: str
     timestamp: datetime
     price: Decimal
     size: int
-    notional: Decimal
-    exchange: str | None = None
+    notional: Decimal  # premium in UW (price * size)
+    exchange: str | None = None  # market_center in UW
+    tracking_id: str | None = None  # Unique trade ID for dedup
+    nbbo_bid: Decimal | None = None  # NBBO bid at time of trade
+    nbbo_ask: Decimal | None = None  # NBBO ask at time of trade
+    ext_hours: str | None = None  # ext_hour_sold_codes
+    trade_settlement: str | None = None  # regular_settlement, etc.
+    canceled: bool = False  # Whether trade was cancelled
     provider: str = "unusual_whales"
 
 
 class NormalizedMarketTide(BaseModel):
-    """Market sentiment snapshot."""
+    """Market sentiment snapshot from UW market/tide endpoint."""
 
     timestamp: datetime
+    date: str | None = None  # Trading date YYYY-MM-DD
     net_call_premium: Decimal
     net_put_premium: Decimal
-    call_volume: int
-    put_volume: int
-    sentiment: str  # "bullish", "bearish", "neutral"
+    net_volume: int | None = None  # Net volume from UW (call - put)
+    sentiment: str  # "bullish", "bearish", "neutral" (computed)
     provider: str = "unusual_whales"
 
 
@@ -443,8 +470,9 @@ class SuccessResponse(BaseModel):
     """Generic success response."""
 
     success: bool = True
-    data: dict
+    data: dict | list | None = None  # Can be dict, list, or None depending on endpoint
     meta: dict | None = None
+    pagination: dict | None = None  # For paginated endpoints
 
 
 # ─────────────────────────────────────────────────────────────────

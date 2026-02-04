@@ -1,5 +1,7 @@
 """In-memory cache with TTL support."""
 
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +29,12 @@ class CacheStats:
         return self.hits / total if total > 0 else 0.0
 
 
+@dataclass
+class _CustomCacheEntry:
+    value: Any
+    expires_at: float
+
+
 class InMemoryCache:
     """In-memory cache with TTL and statistics."""
 
@@ -34,60 +42,98 @@ class InMemoryCache:
         self.max_size = max_size
         self.default_ttl = default_ttl
         self._cache: TTLCache = TTLCache(maxsize=max_size, ttl=default_ttl)
+        self._custom_cache: OrderedDict[str, _CustomCacheEntry] = OrderedDict()
         self._stats = CacheStats(max_size=max_size)
 
-    def get(self, key: str) -> Any | None:
+    async def get(self, key: str) -> Any | None:
         """Get value from cache."""
         try:
             value = self._cache[key]
             self._stats.hits += 1
             return value
         except KeyError:
+            entry = self._custom_cache.get(key)
+            if entry:
+                if entry.expires_at <= time.time():
+                    del self._custom_cache[key]
+                    self._stats.misses += 1
+                    return None
+                # LRU: mark as recently used
+                self._custom_cache.move_to_end(key)
+                self._stats.hits += 1
+                return entry.value
+
             self._stats.misses += 1
             return None
 
-    def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Set value in cache with optional custom TTL."""
+        if ttl and ttl != self.default_ttl:
+            expires_at = time.time() + ttl
+            self._custom_cache[key] = _CustomCacheEntry(value=value, expires_at=expires_at)
+            self._custom_cache.move_to_end(key)
+            # Remove from default cache if present to avoid stale duplicates
+            if key in self._cache:
+                del self._cache[key]
+
+            self._stats.sets += 1
+            self._prune_custom_expired()
+            self._enforce_max_size()
+            self._stats.size = len(self._cache) + len(self._custom_cache)
+            return
+
         # Track evictions (approximate)
         prev_size = len(self._cache)
 
-        if ttl and ttl != self.default_ttl:
-            # For custom TTL, we need to manually handle expiry
-            # cachetools TTLCache uses single TTL for all items
-            # For simplicity, we use default TTL; custom TTL would need separate implementation
-            pass
+        # Remove from custom cache if present so default TTL wins
+        if key in self._custom_cache:
+            del self._custom_cache[key]
 
         self._cache[key] = value
         self._stats.sets += 1
-        self._stats.size = len(self._cache)
+        self._enforce_max_size()
+        self._stats.size = len(self._cache) + len(self._custom_cache)
 
-        # If size decreased after set, eviction occurred
+        # If size decreased after set, eviction occurred in default cache
         if len(self._cache) <= prev_size and prev_size >= self.max_size:
             self._stats.evictions += 1
 
     def delete(self, key: str) -> bool:
         """Delete key from cache."""
-        try:
+        deleted = False
+        if key in self._cache:
             del self._cache[key]
-            self._stats.size = len(self._cache)
-            return True
-        except KeyError:
-            return False
+            deleted = True
+        if key in self._custom_cache:
+            del self._custom_cache[key]
+            deleted = True
+        if deleted:
+            self._stats.size = len(self._cache) + len(self._custom_cache)
+        return deleted
 
     def clear(self) -> None:
         """Clear all cache entries."""
         self._cache.clear()
+        self._custom_cache.clear()
         self._stats.size = 0
         logger.info("cache_cleared")
 
     def exists(self, key: str) -> bool:
         """Check if key exists in cache."""
-        return key in self._cache
+        if key in self._cache:
+            return True
+        entry = self._custom_cache.get(key)
+        if not entry:
+            return False
+        if entry.expires_at <= time.time():
+            del self._custom_cache[key]
+            return False
+        return True
 
     @property
     def stats(self) -> CacheStats:
         """Get cache statistics."""
-        self._stats.size = len(self._cache)
+        self._stats.size = len(self._cache) + len(self._custom_cache)
         return self._stats
 
     def get_stats_dict(self) -> dict:
@@ -102,3 +148,226 @@ class InMemoryCache:
             "max_size": stats.max_size,
             "hit_rate": round(stats.hit_rate, 4),
         }
+
+    def _prune_custom_expired(self) -> None:
+        """Remove expired custom TTL entries."""
+        now = time.time()
+        expired_keys = [k for k, v in self._custom_cache.items() if v.expires_at <= now]
+        for key in expired_keys:
+            del self._custom_cache[key]
+
+    def _enforce_max_size(self) -> None:
+        """Enforce total max size across default and custom caches."""
+        while len(self._cache) + len(self._custom_cache) > self.max_size:
+            if self._custom_cache:
+                self._custom_cache.popitem(last=False)
+                self._stats.evictions += 1
+                continue
+            try:
+                self._cache.popitem()
+                self._stats.evictions += 1
+            except KeyError:
+                break
+
+
+class RedisCache:
+    """Async Redis cache backend (L2 layer).
+
+    Provides durable cache storage that persists across restarts.
+    All keys are prefixed with 'cache:' to avoid collisions.
+    """
+
+    KEY_PREFIX = "cache:"
+
+    def __init__(self, redis_url: str, default_ttl: int = 300) -> None:
+        """Initialize Redis cache.
+
+        Args:
+            redis_url: Redis connection URL
+            default_ttl: Default TTL in seconds
+        """
+        self._redis_url = redis_url
+        self.default_ttl = default_ttl
+        self._redis: Any | None = None
+        self._connected = False
+        self._stats = CacheStats()
+
+    async def _ensure_connected(self) -> None:
+        """Lazy connection to Redis."""
+        if self._redis is None:
+            try:
+                import redis.asyncio as aioredis
+
+                self._redis = aioredis.from_url(
+                    self._redis_url,
+                    decode_responses=True,
+                )
+                self._connected = True
+                logger.info("redis_cache_connected")
+            except ImportError:
+                logger.error("redis_cache_import_error", msg="redis package not installed")
+                raise
+
+    async def get(self, key: str) -> Any | None:
+        """Get value from Redis cache."""
+        try:
+            await self._ensure_connected()
+            assert self._redis is not None
+            value = await self._redis.get(f"{self.KEY_PREFIX}{key}")
+            if value is not None:
+                import json
+
+                self._stats.hits += 1
+                return json.loads(value)
+            self._stats.misses += 1
+            return None
+        except Exception as e:
+            logger.warning("redis_cache_get_error", key=key, error=str(e))
+            self._stats.misses += 1
+            return None
+
+    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+        """Set value in Redis cache with TTL."""
+        try:
+            await self._ensure_connected()
+            assert self._redis is not None
+            import json
+
+            serialized = json.dumps(value, default=str)
+            await self._redis.setex(
+                f"{self.KEY_PREFIX}{key}",
+                ttl or self.default_ttl,
+                serialized,
+            )
+            self._stats.sets += 1
+        except Exception as e:
+            logger.warning("redis_cache_set_error", key=key, error=str(e))
+
+    async def delete(self, key: str) -> bool:
+        """Delete key from Redis cache."""
+        try:
+            await self._ensure_connected()
+            assert self._redis is not None
+            result = await self._redis.delete(f"{self.KEY_PREFIX}{key}")
+            return result > 0
+        except Exception as e:
+            logger.warning("redis_cache_delete_error", key=key, error=str(e))
+            return False
+
+    async def exists(self, key: str) -> bool:
+        """Check if key exists in Redis cache."""
+        try:
+            await self._ensure_connected()
+            assert self._redis is not None
+            return await self._redis.exists(f"{self.KEY_PREFIX}{key}") > 0
+        except Exception:
+            return False
+
+    @property
+    def stats(self) -> CacheStats:
+        """Get Redis cache statistics."""
+        return self._stats
+
+    async def close(self) -> None:
+        """Close Redis connection."""
+        if self._redis:
+            await self._redis.close()
+            self._redis = None
+            self._connected = False
+
+
+class HybridCache:
+    """Two-tier cache: L1 (memory) + L2 (Redis).
+
+    Provides fast in-memory caching with Redis fallback for durability.
+    On L1 miss, checks L2 and populates L1 on hit.
+
+    Usage:
+        cache = HybridCache("redis://localhost:6379")
+        await cache.set("key", {"data": "value"})
+        result = await cache.get("key")  # Returns from L1 or L2
+    """
+
+    def __init__(
+        self,
+        redis_url: str,
+        max_size: int = 10000,
+        default_ttl: int = 300,
+    ) -> None:
+        """Initialize hybrid cache.
+
+        Args:
+            redis_url: Redis connection URL for L2
+            max_size: Max entries in L1 memory cache
+            default_ttl: Default TTL in seconds
+        """
+        self._l1 = InMemoryCache(max_size=max_size, default_ttl=default_ttl)
+        self._l2 = RedisCache(redis_url=redis_url, default_ttl=default_ttl)
+        self.default_ttl = default_ttl
+
+    async def get(self, key: str) -> Any | None:
+        """Get value from cache (L1 first, then L2).
+
+        On L2 hit, populates L1 for future fast access.
+        """
+        # Check L1 (fast memory cache)
+        value = await self._l1.get(key)
+        if value is not None:
+            return value
+
+        # Check L2 (async, durable)
+        value = await self._l2.get(key)
+        if value is not None:
+            # Populate L1 from L2
+            await self._l1.set(key, value)
+            return value
+
+        return None
+
+    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+        """Set value in both L1 and L2."""
+        await self._l1.set(key, value, ttl)
+        await self._l2.set(key, value, ttl)
+
+    async def delete(self, key: str) -> bool:
+        """Delete from both L1 and L2."""
+        l1_deleted = self._l1.delete(key)
+        l2_deleted = await self._l2.delete(key)
+        return l1_deleted or l2_deleted
+
+    async def exists(self, key: str) -> bool:
+        """Check if key exists in L1 or L2."""
+        if self._l1.exists(key):
+            return True
+        return await self._l2.exists(key)
+
+    def clear(self) -> None:
+        """Clear L1 cache only (L2 uses TTL for cleanup)."""
+        self._l1.clear()
+
+    @property
+    def stats(self) -> dict:
+        """Get combined stats from both layers."""
+        l1_stats = self._l1.stats
+        l2_stats = self._l2.stats
+        return {
+            "l1": {
+                "hits": l1_stats.hits,
+                "misses": l1_stats.misses,
+                "size": l1_stats.size,
+                "hit_rate": round(l1_stats.hit_rate, 4),
+            },
+            "l2": {
+                "hits": l2_stats.hits,
+                "misses": l2_stats.misses,
+                "hit_rate": round(l2_stats.hit_rate, 4),
+            },
+        }
+
+    def get_stats_dict(self) -> dict:
+        """Get stats as dictionary for API responses."""
+        return self.stats
+
+    async def close(self) -> None:
+        """Close L2 Redis connection."""
+        await self._l2.close()

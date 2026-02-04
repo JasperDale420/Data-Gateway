@@ -28,14 +28,16 @@ class Settings(BaseSettings):
 
     # Authentication
     auth_timeout_seconds: int = 10
-    clients_config_path: Path = Path("clients.yaml")
+    clients_config_path: Path = Path("config/clients.yaml")
 
     # Providers
-    providers_config_path: Path = Path("providers.yaml")
+    providers_config_path: Path = Path("config/providers.yaml")
 
     # Cache
     cache_max_size: int = Field(default=10000, ge=100)
     cache_default_ttl: int = Field(default=300, ge=1)  # seconds
+    cache_redis_url: str = Field(default="", alias="GATEWAY_CACHE_REDIS_URL")
+    cache_redis_enabled: bool = Field(default=False, alias="GATEWAY_CACHE_REDIS_ENABLED")
 
     # WebSocket
     ws_heartbeat_interval: int = Field(default=30, ge=5)  # seconds
@@ -43,6 +45,7 @@ class Settings(BaseSettings):
 
     # Streaming
     stream_use_iex: bool = False  # Use IEX instead of SIP for stocks
+    stream_lazy_connect: bool = True  # Connect to streams on-demand for efficiency
     stream_reconnect_max_retries: int = Field(default=10, ge=1)
     stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     stream_reconnect_max_delay: float = Field(default=16.0, ge=1.0)

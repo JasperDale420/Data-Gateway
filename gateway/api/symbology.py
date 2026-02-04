@@ -166,7 +166,10 @@ async def convert_symbol(
         provider_symbol = result.symbol
 
     return {
-        "input": symbol,
-        "provider": provider,
-        "output": provider_symbol,
+        "success": True,
+        "data": {
+            "input": symbol,
+            "provider": provider,
+            "output": provider_symbol,
+        },
     }

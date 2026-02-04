@@ -276,7 +276,9 @@ def wrap_event(
     if stream_type:
         lineage["stream_type"] = str(stream_type)
     if "sequence" in payload or "x" in payload:
-        lineage["sequence"] = payload.get("sequence", payload.get("x"))
+        seq_val = payload.get("sequence", payload.get("x"))
+        if seq_val is not None:
+            lineage["sequence"] = str(seq_val)
 
     # Quality flags
     quality_flags = ["validated"]
@@ -285,7 +287,8 @@ def wrap_event(
 
     # Create envelope
     try:
-        envelope = EventEnvelope(
+        # Use model_construct to skip validation overhead on hot paths.
+        envelope = EventEnvelope.model_construct(
             event_id=event_id,
             provider=provider,
             feed=feed,

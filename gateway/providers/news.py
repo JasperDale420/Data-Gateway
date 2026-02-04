@@ -214,7 +214,7 @@ class NewsProvider(DataProvider):
         start = end - timedelta(days=7)
 
         try:
-            params = {
+            params: dict[str, str | int] = {
                 "q": symbol,
                 "from": start.strftime("%Y-%m-%d"),
                 "to": end.strftime("%Y-%m-%d"),

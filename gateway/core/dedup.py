@@ -52,20 +52,20 @@ class RequestDeduplicator:
         self._stats["total_requests"] += 1
 
         async with self._lock:
-            if key in self._pending:
+            existing = self._pending.get(key)
+            if existing:
                 self._stats["deduplicated"] += 1
                 logger.debug("request_deduplicated", key=key)
+                future = existing
+                is_new = False
+            else:
+                loop = asyncio.get_running_loop()
+                future = loop.create_future()
+                self._pending[key] = future
+                is_new = True
 
-        # If there's a pending request, wait for it
-        if key in self._pending:
-            return await self._pending[key]
-
-        # Create a new future for this request
-        loop = asyncio.get_event_loop()
-        future: asyncio.Future = loop.create_future()
-
-        async with self._lock:
-            self._pending[key] = future
+        if not is_new:
+            return await future
 
         try:
             result = await fetcher()

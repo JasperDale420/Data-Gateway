@@ -7,15 +7,18 @@ from typing import Any
 
 import httpx
 import structlog
-from alpaca.common.exceptions import APIError
 
 # Alpaca SDK imports for Trading API
+from alpaca.common.enums import Sort
+from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import (
     ActivityType,
     AssetClass,
+    AssetExchange,
     AssetStatus,
     OrderSide,
+    QueryOrderStatus,
     TimeInForce,
 )
 from alpaca.trading.requests import (
@@ -271,7 +274,7 @@ class AlpacaProvider(DataProvider):
         results: list[NormalizedTrade] = []
         symbols_param = ",".join(symbols)
 
-        params = {
+        params: dict[str, str | int] = {
             "symbols": symbols_param,
             "start": start.isoformat(),
             "end": end.isoformat(),
@@ -366,7 +369,7 @@ class AlpacaProvider(DataProvider):
         results: list[NormalizedQuote] = []
         symbols_param = ",".join(symbols)
 
-        params = {
+        params: dict[str, str | int] = {
             "symbols": symbols_param,
             "start": start.isoformat(),
             "end": end.isoformat(),
@@ -528,7 +531,7 @@ class AlpacaProvider(DataProvider):
         results: list[NormalizedBar] = []
         symbols_param = ",".join(contracts)
 
-        params = {
+        params: dict[str, str | int] = {
             "symbols": symbols_param,
             "timeframe": self._convert_timeframe(timeframe),
             "start": start.isoformat(),
@@ -1093,7 +1096,7 @@ class AlpacaProvider(DataProvider):
 
         results: list[NormalizedMostActive] = []
 
-        params = {
+        params: dict[str, str | int] = {
             "by": by,  # "volume" or "trades"
             "top": min(top, 100),  # Max 100 per Alpaca API
         }
@@ -1305,7 +1308,7 @@ class AlpacaProvider(DataProvider):
             )
             raise
 
-    async def get_crypto_orderbook(self, pair: str) -> dict:
+    async def get_crypto_orderbook(self, pair: str) -> dict[str, Any]:
         """Get crypto orderbook for a trading pair."""
         from gateway.schemas import NormalizedOrderbook, NormalizedOrderbookLevel
 
@@ -1360,7 +1363,7 @@ class AlpacaProvider(DataProvider):
             )
 
             logger.info("alpaca_crypto_orderbook_fetched", pair=pair)
-            return result
+            return result.model_dump()
 
         except httpx.HTTPStatusError as e:
             logger.error(
@@ -1455,7 +1458,7 @@ class AlpacaProvider(DataProvider):
     async def subscribe(self, symbols: list[str], feeds: list[str]) -> None:
         """Subscribe to real-time data via WebSocket."""
         # Build subscription message
-        subscribe_msg: dict[str, list[str]] = {"action": "subscribe"}
+        subscribe_msg: dict[str, str | list[str]] = {"action": "subscribe"}
 
         for feed in feeds:
             if feed == "bars":
@@ -1544,7 +1547,9 @@ class AlpacaProvider(DataProvider):
         tif = tif_map.get(time_in_force.lower(), TimeInForce.DAY)
 
         try:
-            # Build appropriate order request based on type
+            request: (
+                MarketOrderRequest | LimitOrderRequest | StopOrderRequest | StopLimitOrderRequest
+            )
             if order_type.lower() == "market":
                 request = MarketOrderRequest(
                     symbol=symbol.upper(),
@@ -1615,9 +1620,9 @@ class AlpacaProvider(DataProvider):
 
         try:
             request = GetOrdersRequest(
-                status=status,
+                status=QueryOrderStatus(status),
                 limit=min(limit, 500),
-                direction=direction,
+                direction=Sort(direction),
                 symbols=symbols,
                 nested=nested,
                 side=OrderSide(side) if side else None,
@@ -1744,6 +1749,66 @@ class AlpacaProvider(DataProvider):
             logger.error("alpaca_positions_close_all_error", error=str(e))
             raise
 
+    def exercise_option_position(self, symbol_or_contract_id: str) -> dict[str, Any]:
+        """Exercise an options position.
+
+        Args:
+            symbol_or_contract_id: The OCC symbol or contract ID to exercise
+
+        Returns:
+            Response from the exercise request
+        """
+        if not self._trading_client:
+            raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
+
+        try:
+            # The Alpaca SDK uses exercise_options_position method
+            result = self._trading_client.exercise_options_position(symbol_or_contract_id)
+            data = self._model_to_dict(result) if result else {"status": "exercised"}
+            logger.info("alpaca_option_exercised", symbol=symbol_or_contract_id)
+            return data
+        except APIError as e:
+            logger.error(
+                "alpaca_option_exercise_error",
+                symbol=symbol_or_contract_id,
+                error=str(e),
+            )
+            raise
+
+    def do_not_exercise_option(self, symbol_or_contract_id: str) -> dict[str, Any]:
+        """Mark an options position as do-not-exercise.
+
+        Args:
+            symbol_or_contract_id: The OCC symbol or contract ID to mark as DNE
+
+        Returns:
+            Response from the DNE request
+        """
+        if not self._client:
+            raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
+
+        try:
+            # This endpoint is not in alpaca-py SDK, use REST directly
+            response = httpx.post(
+                f"{self._base_url}/v2/positions/{symbol_or_contract_id}/do-not-exercise",
+                headers={
+                    "APCA-API-KEY-ID": self._api_key,
+                    "APCA-API-SECRET-KEY": self._secret_key,
+                },
+            )
+            response.raise_for_status()
+            data = response.json() if response.content else {"status": "do_not_exercise"}
+            logger.info("alpaca_option_dne", symbol=symbol_or_contract_id)
+            return data
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "alpaca_option_dne_error",
+                symbol=symbol_or_contract_id,
+                status=e.response.status_code,
+                error=str(e),
+            )
+            raise
+
     def get_portfolio_history(
         self,
         period: str | None = None,
@@ -1785,7 +1850,7 @@ class AlpacaProvider(DataProvider):
             request = GetAssetsRequest(
                 status=AssetStatus(status) if status else None,
                 asset_class=AssetClass(asset_class) if asset_class else None,
-                exchange=exchange,
+                exchange=AssetExchange(exchange) if exchange else None,
             )
             assets = self._trading_client.get_all_assets(request)
             result = [self._model_to_dict(a) for a in assets]
@@ -1884,9 +1949,6 @@ class AlpacaProvider(DataProvider):
     def get_account_activities(
         self,
         activity_types: list[str] | None = None,
-        direction: str = "desc",
-        page_size: int = 100,
-        page_token: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get account activities."""
         if not self._trading_client:
@@ -2023,7 +2085,7 @@ class AlpacaProvider(DataProvider):
         try:
             tif = TimeInForce(time_in_force) if time_in_force else None
             request = ReplaceOrderRequest(
-                qty=qty,
+                qty=int(qty) if qty else None,
                 limit_price=limit_price,
                 stop_price=stop_price,
                 time_in_force=tif,
@@ -2062,6 +2124,10 @@ class AlpacaProvider(DataProvider):
             bid_size=int(raw["bs"]),
             ask_price=Decimal(str(raw["ap"])),
             ask_size=int(raw["as"]),
+            bid_exchange=raw.get("bx"),
+            ask_exchange=raw.get("ax"),
+            conditions=raw.get("c", []),
+            tape=raw.get("z"),
             provider="alpaca",
         )
 
@@ -2072,8 +2138,11 @@ class AlpacaProvider(DataProvider):
             timestamp=datetime.fromisoformat(raw["t"].replace("Z", UTC_OFFSET)),
             price=Decimal(str(raw["p"])),
             size=int(raw["s"]),
-            exchange=raw.get("x"),
-            conditions=raw.get("c", []),
+            trade_id=str(raw["i"]) if raw.get("i") else None,
+            exchange=raw.get("x"),  # Stocks only
+            conditions=raw.get("c", []),  # Stocks only
+            tape=raw.get("z"),  # Stocks only
+            taker_side=raw.get("tks"),  # Crypto only (B=buy, S=sell)
             provider="alpaca",
         )
 

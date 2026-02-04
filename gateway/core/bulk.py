@@ -170,6 +170,7 @@ class BulkJobManager:
         self._jobs: dict[str, BulkJob] = {}
         self._lock = asyncio.Lock()
         self._fetch_bars_func: Any | None = None
+        self._max_concurrency = 10
 
     def set_bars_fetcher(self, func: Any) -> None:
         """Set the function used to fetch bars for a symbol."""
@@ -268,31 +269,44 @@ class BulkJobManager:
         request: BulkBarsRequest = job.request
 
         try:
-            for symbol in request.symbols:
+            sem = asyncio.Semaphore(self._max_concurrency)
+
+            async def _fetch_symbol(symbol: str) -> list[dict[str, Any]] | None:
                 if job.status == BulkJobStatus.FAILED:
-                    # Job was cancelled
-                    break
+                    return None
+                async with sem:
+                    try:
+                        return await self._fetch_symbol_bars(
+                            symbol=symbol,
+                            start=request.start,
+                            end=request.end,
+                            timeframe=request.timeframe,
+                            adjusted=request.adjusted,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "bulk_symbol_fetch_failed",
+                            job_id=job.job_id,
+                            symbol=symbol,
+                            error=str(e),
+                        )
+                        return None
 
+            tasks = [asyncio.create_task(_fetch_symbol(symbol)) for symbol in request.symbols]
+            for task in asyncio.as_completed(tasks):
                 try:
-                    # Fetch bars for this symbol
-                    bars = await self._fetch_symbol_bars(
-                        symbol=symbol,
-                        start=request.start,
-                        end=request.end,
-                        timeframe=request.timeframe,
-                        adjusted=request.adjusted,
-                    )
-
-                    job.results.extend(bars)
-                    job.records_fetched += len(bars)
-
+                    bars = await task
                 except Exception as e:
                     logger.warning(
-                        "bulk_symbol_fetch_failed",
+                        "bulk_symbol_task_failed",
                         job_id=job.job_id,
-                        symbol=symbol,
                         error=str(e),
                     )
+                    bars = None
+
+                if bars:
+                    job.results.extend(bars)
+                    job.records_fetched += len(bars)
 
                 job.symbols_complete += 1
 

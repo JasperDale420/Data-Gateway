@@ -7,7 +7,7 @@ from fastapi import Depends, Header, HTTPException
 
 from gateway.config import get_settings
 from gateway.core.auth import Client, ClientAuthenticator
-from gateway.core.cache import InMemoryCache
+from gateway.core.cache import HybridCache, InMemoryCache
 from gateway.core.connections import ConnectionManager
 from gateway.core.registry import ProviderRegistry
 
@@ -24,9 +24,19 @@ def get_authenticator() -> ClientAuthenticator:
 
 
 @lru_cache
-def get_cache() -> InMemoryCache:
-    """Get cached in-memory cache instance."""
+def get_cache() -> InMemoryCache | HybridCache:
+    """Get cached cache instance.
+
+    Returns HybridCache (L1 memory + L2 Redis) if Redis is configured,
+    otherwise returns InMemoryCache.
+    """
     settings = get_settings()
+    if settings.cache_redis_enabled and settings.cache_redis_url:
+        return HybridCache(
+            redis_url=settings.cache_redis_url,
+            max_size=settings.cache_max_size,
+            default_ttl=settings.cache_default_ttl,
+        )
     return InMemoryCache(
         max_size=settings.cache_max_size,
         default_ttl=settings.cache_default_ttl,

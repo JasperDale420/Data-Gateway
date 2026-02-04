@@ -174,7 +174,7 @@ def main():
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("clients.yaml"),
+        default=Path("config/clients.yaml"),
         help="Path to clients config file",
     )
 

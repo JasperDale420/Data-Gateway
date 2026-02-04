@@ -90,6 +90,11 @@ class SubscriptionManager:
 
     def __init__(self) -> None:
         self._subscriptions: dict[str, ClientSubscription] = {}
+        self._index: dict[str, dict[str, set[str]]] = {
+            "bars": {},
+            "quotes": {},
+            "trades": {},
+        }
 
     def subscribe(
         self,
@@ -103,21 +108,43 @@ class SubscriptionManager:
             self._subscriptions[client_id] = ClientSubscription(client_id=client_id)
 
         sub = self._subscriptions[client_id]
-        old_aggregate = self._aggregate()
+        new_bars: set[str] = set()
+        new_quotes: set[str] = set()
+        new_trades: set[str] = set()
 
         if bars:
-            sub.bars.update(bars)
+            for symbol in bars:
+                if symbol in sub.bars:
+                    continue
+                sub.bars.add(symbol)
+                clients = self._index["bars"].get(symbol)
+                if clients is None:
+                    self._index["bars"][symbol] = {client_id}
+                    new_bars.add(symbol)
+                else:
+                    clients.add(client_id)
         if quotes:
-            sub.quotes.update(quotes)
+            for symbol in quotes:
+                if symbol in sub.quotes:
+                    continue
+                sub.quotes.add(symbol)
+                clients = self._index["quotes"].get(symbol)
+                if clients is None:
+                    self._index["quotes"][symbol] = {client_id}
+                    new_quotes.add(symbol)
+                else:
+                    clients.add(client_id)
         if trades:
-            sub.trades.update(trades)
-
-        new_aggregate = self._aggregate()
-
-        # Return only newly added symbols (need upstream subscription)
-        new_bars = new_aggregate[0] - old_aggregate[0]
-        new_quotes = new_aggregate[1] - old_aggregate[1]
-        new_trades = new_aggregate[2] - old_aggregate[2]
+            for symbol in trades:
+                if symbol in sub.trades:
+                    continue
+                sub.trades.add(symbol)
+                clients = self._index["trades"].get(symbol)
+                if clients is None:
+                    self._index["trades"][symbol] = {client_id}
+                    new_trades.add(symbol)
+                else:
+                    clients.add(client_id)
 
         return new_bars, new_quotes, new_trades
 
@@ -133,21 +160,43 @@ class SubscriptionManager:
             return set(), set(), set()
 
         sub = self._subscriptions[client_id]
-        old_aggregate = self._aggregate()
+        removed_bars: set[str] = set()
+        removed_quotes: set[str] = set()
+        removed_trades: set[str] = set()
 
         if bars:
-            sub.bars -= set(bars)
+            for symbol in bars:
+                if symbol not in sub.bars:
+                    continue
+                sub.bars.discard(symbol)
+                clients = self._index["bars"].get(symbol)
+                if clients:
+                    clients.discard(client_id)
+                    if not clients:
+                        self._index["bars"].pop(symbol, None)
+                        removed_bars.add(symbol)
         if quotes:
-            sub.quotes -= set(quotes)
+            for symbol in quotes:
+                if symbol not in sub.quotes:
+                    continue
+                sub.quotes.discard(symbol)
+                clients = self._index["quotes"].get(symbol)
+                if clients:
+                    clients.discard(client_id)
+                    if not clients:
+                        self._index["quotes"].pop(symbol, None)
+                        removed_quotes.add(symbol)
         if trades:
-            sub.trades -= set(trades)
-
-        new_aggregate = self._aggregate()
-
-        # Return symbols no longer needed by any client
-        removed_bars = old_aggregate[0] - new_aggregate[0]
-        removed_quotes = old_aggregate[1] - new_aggregate[1]
-        removed_trades = old_aggregate[2] - new_aggregate[2]
+            for symbol in trades:
+                if symbol not in sub.trades:
+                    continue
+                sub.trades.discard(symbol)
+                clients = self._index["trades"].get(symbol)
+                if clients:
+                    clients.discard(client_id)
+                    if not clients:
+                        self._index["trades"].pop(symbol, None)
+                        removed_trades.add(symbol)
 
         return removed_bars, removed_quotes, removed_trades
 
@@ -156,37 +205,48 @@ class SubscriptionManager:
         if client_id not in self._subscriptions:
             return set(), set(), set()
 
-        old_aggregate = self._aggregate()
-        del self._subscriptions[client_id]
-        new_aggregate = self._aggregate()
+        sub = self._subscriptions.pop(client_id)
+        removed_bars: set[str] = set()
+        removed_quotes: set[str] = set()
+        removed_trades: set[str] = set()
 
-        removed_bars = old_aggregate[0] - new_aggregate[0]
-        removed_quotes = old_aggregate[1] - new_aggregate[1]
-        removed_trades = old_aggregate[2] - new_aggregate[2]
+        for symbol in sub.bars:
+            clients = self._index["bars"].get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    self._index["bars"].pop(symbol, None)
+                    removed_bars.add(symbol)
+
+        for symbol in sub.quotes:
+            clients = self._index["quotes"].get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    self._index["quotes"].pop(symbol, None)
+                    removed_quotes.add(symbol)
+
+        for symbol in sub.trades:
+            clients = self._index["trades"].get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    self._index["trades"].pop(symbol, None)
+                    removed_trades.add(symbol)
 
         return removed_bars, removed_quotes, removed_trades
 
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
         """Get all clients subscribed to a symbol for a data type."""
-        clients = []
-        for client_id, sub in self._subscriptions.items():
-            symbol_set = getattr(sub, data_type, set())
-            if symbol in symbol_set:
-                clients.append(client_id)
-        return clients
+        return list(self._index.get(data_type, {}).get(symbol, ()))
 
     def _aggregate(self) -> tuple[set[str], set[str], set[str]]:
         """Compute union of all client subscriptions."""
-        all_bars: set[str] = set()
-        all_quotes: set[str] = set()
-        all_trades: set[str] = set()
-
-        for sub in self._subscriptions.values():
-            all_bars.update(sub.bars)
-            all_quotes.update(sub.quotes)
-            all_trades.update(sub.trades)
-
-        return all_bars, all_quotes, all_trades
+        return (
+            set(self._index["bars"].keys()),
+            set(self._index["quotes"].keys()),
+            set(self._index["trades"].keys()),
+        )
 
     def get_all_subscriptions(self) -> tuple[set[str], set[str], set[str]]:
         """Get current aggregate subscriptions for resubscription on reconnect."""
@@ -226,7 +286,16 @@ class UpstreamConnection:
 
     @property
     def is_connected(self) -> bool:
-        return self._ws is not None and self._ws.open and self._authenticated
+        # websockets 16.0 uses .state attribute, not .open/.closed
+        if self._ws is None:
+            return False
+        try:
+            from websockets.protocol import State
+
+            return self._ws.state == State.OPEN and self._authenticated
+        except (AttributeError, ImportError):
+            # Fallback for older versions
+            return getattr(self._ws, "open", False) and self._authenticated
 
     @property
     def subscriptions(self) -> SubscriptionManager:
@@ -367,17 +436,50 @@ class UpstreamConnection:
         await self._connect_and_run()
 
     async def stop(self) -> None:
-        """Stop the connection gracefully."""
+        """Stop the connection gracefully with aggressive cleanup.
+
+        Ensures WebSocket is properly closed to release connection slots on Alpaca's
+        side, preventing 'connection limit exceeded' errors on restart.
+        """
         self._running = False
+        self._authenticated = False
+
+        # Cancel receive task first
         if self._receive_task:
             self._receive_task.cancel()
             try:
                 await self._receive_task
             except asyncio.CancelledError:
                 logger.debug("receive_task_cancelled", stream=self.stream_type.value)
+
+        # Aggressively close WebSocket connection
         if self._ws:
-            await self._ws.close()
-            self._ws = None
+            try:
+                # Send explicit close frame with normal closure code
+                await asyncio.wait_for(
+                    self._ws.close(code=1000, reason="Gateway shutdown"),
+                    timeout=3.0,
+                )
+                logger.info("websocket_closed_gracefully", stream=self.stream_type.value)
+            except TimeoutError:
+                logger.warning(
+                    "websocket_close_timeout",
+                    stream=self.stream_type.value,
+                    action="forcing_close",
+                )
+                # Force close the underlying socket
+                try:
+                    self._ws.transport.abort()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(
+                    "websocket_close_error",
+                    stream=self.stream_type.value,
+                    error=str(e),
+                )
+            finally:
+                self._ws = None
 
     async def _connect_and_run(self) -> None:
         """Main connection loop with reconnection."""
@@ -484,6 +586,7 @@ class StreamMultiplexer:
         api_secret: str,
         on_data: Callable[[str, str, dict[str, Any]], Awaitable[None]],
         use_iex: bool = False,
+        lazy_connect: bool = True,
     ) -> None:
         """Initialize multiplexer.
 
@@ -492,10 +595,12 @@ class StreamMultiplexer:
             api_secret: Alpaca API secret
             on_data: Callback for data messages (client_id, data_type, message)
             use_iex: Use IEX feed instead of SIP for stocks
+            lazy_connect: If True, only connect to streams when first client subscribes
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.on_data = on_data
+        self._lazy_connect = lazy_connect
 
         stock_type = AlpacaStreamType.STOCKS_IEX if use_iex else AlpacaStreamType.STOCKS_SIP
 
@@ -528,34 +633,92 @@ class StreamMultiplexer:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self._fanout_semaphore = asyncio.Semaphore(100)
 
     async def start(self) -> None:
-        """Start all upstream connections."""
-        self._running = True
-        logger.info("multiplexer_starting")
+        """Start the multiplexer.
 
-        for stream_type, conn in self._connections.items():
-            task = asyncio.create_task(conn.start())
-            self._tasks.append(task)
-            logger.info("stream_started", stream=stream_type.value)
+        If lazy_connect is True (default), connections are only established
+        when the first client subscribes to a stream. This works with Alpaca's
+        Basic plan which only allows 1 concurrent WebSocket connection.
+        """
+        self._running = True
+        logger.info("multiplexer_starting", lazy_connect=self._lazy_connect)
+
+        if not self._lazy_connect:
+            # Eager mode: start all connections immediately (requires multi-connection plan)
+            for stream_type, conn in self._connections.items():
+                task = asyncio.create_task(conn.start())
+                self._tasks.append(task)
+                logger.info("stream_started", stream=stream_type.value)
+        else:
+            logger.info(
+                "lazy_connect_enabled", message="Streams will connect on first subscription"
+            )
 
     async def stop(self) -> None:
-        """Stop all upstream connections."""
+        """Stop all upstream connections with aggressive cleanup.
+
+        Ensures all WebSocket connections are properly closed to release
+        Alpaca connection slots, preventing connection limit issues on restart.
+        """
         self._running = False
-        logger.info("multiplexer_stopping")
+        logger.info("multiplexer_stopping", connections=len(self._connections))
 
-        for conn in self._connections.values():
-            await conn.stop()
-
-        for task in self._tasks:
-            task.cancel()
+        # Stop all connections concurrently with timeout
+        stop_tasks = [conn.stop() for conn in self._connections.values()]
+        if stop_tasks:
             try:
-                await task
-            except asyncio.CancelledError:
-                logger.debug("stream_task_cancelled")
+                await asyncio.wait_for(
+                    asyncio.gather(*stop_tasks, return_exceptions=True),
+                    timeout=10.0,
+                )
+                logger.info("all_connections_stopped")
+            except TimeoutError:
+                logger.warning(
+                    "multiplexer_stop_timeout",
+                    action="forcing_task_cancellation",
+                )
+
+        # Cancel stream tasks
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=2.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    logger.debug("stream_task_cancelled")
 
         self._tasks.clear()
         logger.info("multiplexer_stopped")
+
+    async def _ensure_connected(self, stream_type: AlpacaStreamType) -> bool:
+        """Ensure connection is established for lazy connect mode.
+
+        Returns True if connection is ready, False if failed.
+        """
+        conn = self._get_connection(stream_type)
+        if not conn:
+            return False
+
+        # Already connected or connecting
+        if conn.is_connected or conn._running:
+            return True
+
+        # Start connection for this stream
+        logger.info("lazy_connect_starting", stream=stream_type.value)
+        task = asyncio.create_task(conn.start())
+        self._tasks.append(task)
+
+        # Wait briefly for connection to establish
+        for _ in range(50):  # 5 second timeout
+            await asyncio.sleep(0.1)
+            if conn.is_connected:
+                logger.info("lazy_connect_established", stream=stream_type.value)
+                return True
+
+        logger.warning("lazy_connect_timeout", stream=stream_type.value)
+        return False
 
     async def client_subscribe(
         self,
@@ -578,6 +741,17 @@ class StreamMultiplexer:
                 "error_code": "GW-E3002",
                 "message": f"Stream type not available: {stream_type.value}",
             }
+
+        # Lazy connect: ensure stream is connected before subscribing
+        if self._lazy_connect:
+            connected = await self._ensure_connected(stream_type)
+            if not connected:
+                return {
+                    "type": "subscription_ack",
+                    "status": "error",
+                    "error_code": "GW-E3003",
+                    "message": f"Failed to connect to stream: {stream_type.value}",
+                }
 
         # Track client subscription
         new_bars, new_quotes, new_trades = conn.subscriptions.subscribe(
@@ -680,10 +854,11 @@ class StreamMultiplexer:
             stream_type=stream_type.value if stream_type else None,
         )
 
-        # Fan out envelope to each subscribed client
-        for client_id in clients:
+        # Fan out envelope to each subscribed client with bounded concurrency
+        async def _send(client_id: str) -> None:
             try:
-                await self.on_data(client_id, data_type, envelope)
+                async with self._fanout_semaphore:
+                    await self.on_data(client_id, data_type, envelope)
             except Exception as e:
                 logger.error(
                     "fanout_error",
@@ -692,3 +867,5 @@ class StreamMultiplexer:
                     event_id=envelope.get("event_id", "unknown"),
                     error=str(e),
                 )
+
+        await asyncio.gather(*(_send(client_id) for client_id in clients))

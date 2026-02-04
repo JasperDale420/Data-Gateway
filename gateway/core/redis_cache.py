@@ -225,28 +225,27 @@ class HybridCache:
         if self._use_redis:
             await self.redis.disconnect()
 
-    def get(self, key: str) -> Any | None:
-        """Get from cache (sync wrapper for compatibility)."""
-        # For sync access, use memory cache
-        return self.memory.get(key)
-
-    async def get_async(self, key: str) -> Any | None:
+    async def get(self, key: str) -> Any | None:
         """Get from cache (async)."""
         if self._use_redis:
             value = await self.redis.get(key)
             if value is not None:
                 return value
-        return self.memory.get(key)
+        return await self.memory.get(key)
 
-    def set(self, key: str, value: Any, ttl: int | None = None) -> None:
-        """Set in cache (sync wrapper - stores in memory only)."""
-        self.memory.set(key, value, ttl)
+    async def get_async(self, key: str) -> Any | None:
+        """Get from cache (async) - alias for compatibility."""
+        return await self.get(key)
 
-    async def set_async(self, key: str, value: Any, ttl: int | None = None) -> None:
+    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Set in cache (async - stores in both if Redis available)."""
-        self.memory.set(key, value, ttl)
+        await self.memory.set(key, value, ttl)
         if self._use_redis:
             await self.redis.set(key, value, ttl)
+
+    async def set_async(self, key: str, value: Any, ttl: int | None = None) -> None:
+        """Set in cache (async) - alias for compatibility."""
+        await self.set(key, value, ttl)
 
     def delete(self, key: str) -> bool:
         """Delete from cache (sync)."""
