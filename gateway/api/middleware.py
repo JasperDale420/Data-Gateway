@@ -152,6 +152,7 @@ class CacheEntry:
 
     content: bytes
     media_type: str
+    headers: dict[str, str]
     created_at: float
     ttl: int
 
@@ -177,6 +178,7 @@ class CacheEntry:
         return {
             "content": base64.b64encode(self.content).decode("ascii"),
             "media_type": self.media_type,
+            "headers": self.headers,
             "created_at": self.created_at,
             "ttl": self.ttl,
         }
@@ -189,6 +191,7 @@ class CacheEntry:
         return cls(
             content=base64.b64decode(data["content"]),
             media_type=data["media_type"],
+            headers=data.get("headers", {}),
             created_at=data["created_at"],
             ttl=data["ttl"],
         )
@@ -243,15 +246,19 @@ class CacheMiddleware(BaseHTTPMiddleware):
             if cached_data:
                 entry = CacheEntry.from_dict(cached_data)
                 if not entry.is_expired():
+                    headers = dict(entry.headers or {})
+                    headers.update(
+                        {
+                            "X-Gateway-Cache": "HIT",
+                            "X-Gateway-Cache-Age": str(entry.age_ms),
+                            "X-Gateway-Cache-TTL": str(entry.ttl_remaining),
+                        }
+                    )
                     return Response(
                         content=entry.content,
                         status_code=200,
                         media_type=entry.media_type,
-                        headers={
-                            "X-Gateway-Cache": "HIT",
-                            "X-Gateway-Cache-Age": str(entry.age_ms),
-                            "X-Gateway-Cache-TTL": str(entry.ttl_remaining),
-                        },
+                        headers=headers,
                     )
         except Exception as e:
             logger.debug("cache_read_error", key=cache_key, error=str(e))
@@ -266,9 +273,17 @@ class CacheMiddleware(BaseHTTPMiddleware):
                 body_chunks.append(chunk)
             body = b"".join(body_chunks)
 
+            # Store headers (excluding hop-by-hop)
+            cached_headers = {
+                k: v
+                for k, v in response.headers.items()
+                if k.lower() not in ("content-length", "set-cookie", "connection", "keep-alive")
+            }
+
             entry = CacheEntry(
                 content=body,
                 media_type=response.media_type or "application/json",
+                headers=cached_headers,
                 created_at=time.time(),
                 ttl=self.default_ttl,
             )

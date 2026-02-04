@@ -312,7 +312,11 @@ def wrap_event(
             ts_event=ts_event.isoformat(),
         )
 
-        return envelope.model_dump(mode="json")
+        # Optimize serialization: avoid deep traversal of payload
+        # payload is already a dict/list and doesn't need Pydantic validation/conversion
+        dump = envelope.model_dump(mode="json", exclude={"payload"})
+        dump["payload"] = payload
+        return dump
 
     except Exception as e:
         logger.error(
