@@ -4,7 +4,7 @@ Implements bulk data retrieval endpoints as specified in PRD.
 """
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -20,6 +20,10 @@ from gateway.core.bulk import (
 )
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
+from gateway.types.provider_protocols import (
+    SupportsAlpacaBars,
+    SupportsAlpacaOptionsChain,
+)
 
 router = APIRouter(prefix="/api/v1/bulk", tags=["Bulk Data"])
 
@@ -166,7 +170,7 @@ async def create_bulk_bars_job(
     manager = get_bulk_manager()
     settings = get_settings()
 
-    provider: Any = registry.get("alpaca")
+    provider = cast(SupportsAlpacaBars | None, registry.get("alpaca"))
     if provider:
 
         async def _fetch_bars(
@@ -400,7 +404,7 @@ async def create_bulk_options_job(
     manager = get_bulk_manager()
     settings = get_settings()
 
-    provider: Any = registry.get("alpaca")
+    provider = cast(SupportsAlpacaOptionsChain | None, registry.get("alpaca"))
     if not provider:
         if settings.allow_stub_data:
             # Allow stub behavior if explicitly enabled

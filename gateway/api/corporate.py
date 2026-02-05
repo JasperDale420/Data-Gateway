@@ -6,7 +6,7 @@ as specified in PRD (lines 1126-1204).
 
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
-from typing import Any
+from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ from gateway.core.corporate_actions import (
     get_corporate_actions_service,
 )
 from gateway.core.registry import ProviderRegistry
+from gateway.types.provider_protocols import SupportsAlpacaCorporateActions
 
 base_router = APIRouter()
 base_adjustments_router = APIRouter()
@@ -85,7 +86,7 @@ def _configure_corporate_fetcher(
     registry: ProviderRegistry,
 ) -> None:
     service = get_corporate_actions_service()
-    provider: Any = registry.get("alpaca")
+    provider = cast(SupportsAlpacaCorporateActions | None, registry.get("alpaca"))
     if provider:
         type_map = {
             ActionType.DIVIDEND: "dividends",

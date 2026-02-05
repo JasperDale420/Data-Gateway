@@ -5,7 +5,7 @@ Implements market hours, trading days, and earnings calendar as specified in PRD
 
 import asyncio
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -25,6 +25,10 @@ from gateway.core.calendar import (
 )
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
+from gateway.types.provider_protocols import (
+    SupportsAlpacaCalendar,
+    SupportsFinnhubEarningsCalendar,
+)
 
 router = APIRouter(prefix="/api/v1/calendar", tags=["Trading Calendar"])
 
@@ -102,7 +106,7 @@ async def get_market_hours(
         )
 
     calendar = get_trading_calendar()
-    provider: Any = registry.get("alpaca")
+    provider = cast(SupportsAlpacaCalendar | None, registry.get("alpaca"))
 
     if provider:
         try:
@@ -193,7 +197,7 @@ async def get_trading_days(
         raise HTTPException(status_code=400, detail="Date range cannot exceed 1 year")
 
     calendar = get_trading_calendar()
-    provider: Any = registry.get("alpaca")
+    provider = cast(SupportsAlpacaCalendar | None, registry.get("alpaca"))
 
     if provider:
         try:
@@ -292,7 +296,7 @@ async def get_earnings(
         raise HTTPException(status_code=400, detail="Maximum 100 symbols allowed")
 
     earnings_calendar = get_earnings_calendar()
-    provider: Any = registry.get("finnhub")
+    provider = cast(SupportsFinnhubEarningsCalendar | None, registry.get("finnhub"))
     if provider:
 
         async def _fetch_earnings(
