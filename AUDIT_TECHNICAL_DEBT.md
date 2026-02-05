@@ -328,6 +328,35 @@ Impact: Memory pressure for large responses and breaks streaming responses.
 Recommendation: Add size caps or bypass for large/streaming responses.
 **Status:** Fixed (2026-02-05)
 
+### Post-Remediation Findings (2026-02-05)
+
+**TD-032: Provider API reference drift is severe**
+Evidence: Static comparison between `API_REFERENCE.md` provider tables and router implementations:
+- UW: docs 19 endpoints vs code 125 endpoints (`gateway/api/uw/*.py`)
+- Finnhub: docs 16 endpoints vs code 45 endpoints (`gateway/api/finnhub/*.py`)
+- Alpha Vantage: docs 16 endpoints vs code 30 endpoints (`gateway/api/alphavantage/*.py`)
+- yfinance: docs 11 endpoints vs code 16 endpoints (`gateway/api/yf.py`)
+Impact: Client integrations built from docs will call incorrect paths or miss available functionality.
+Recommendation: Generate provider endpoint tables from OpenAPI or router introspection and stop manually curating long endpoint lists.
+**Status:** Open
+
+**TD-033: Provider error contracts are inconsistent with gateway error-code shape**
+Evidence: HTTP exception scan shows provider routers raise plain detail strings/dicts without gateway error codes:
+- UW: 7 uncoded `HTTPException` raises
+- Finnhub: 92 uncoded raises
+- Alpha Vantage: 42 uncoded raises
+- SEC: 21 uncoded raises
+- yfinance: 32 uncoded raises
+Impact: Consumers cannot reliably parse/route provider errors by stable `GW-EXXXX` codes.
+Recommendation: Introduce provider error helpers returning standard envelope (`success=false`, `error.code`, `error.message`) and migrate all provider routers.
+**Status:** Open
+
+**TD-034: PRD provider endpoint contract is under-specified**
+Evidence: `PRD.md` contains only partial endpoint examples for UW/yfinance and no exhaustive endpoint matrix for Finnhub/Alpha Vantage/SEC.
+Impact: "PRD alignment" cannot be objectively validated for most provider REST paths.
+Recommendation: Add an authoritative endpoint contract section (or reference generated OpenAPI snapshots) in PRD and pin it per release.
+**Status:** Open
+
 ## Remediation Plan (Suggested Starting Point)
 
 **Phase 0 — Safety and correctness (1–2 days)**
@@ -357,7 +386,7 @@ Recommendation: Add size caps or bypass for large/streaming responses.
 
 ## Open Questions for Future Audit Runs
 
-- Remaining: Are UW, Finnhub, AlphaVantage, SEC, and yfinance endpoint implementations fully aligned with PRD error codes and schemas?
+- Remaining: Are UW, Finnhub, AlphaVantage, SEC, and yfinance endpoint implementations fully aligned with PRD error codes and schemas? (See TD-032/033/034.)
 - Resolved (2026-02-05): `gateway/core/auth.py` remains the API key/RBAC source of truth; `gateway/core/security.py` remains for input validation and utility models.
 - Resolved (2026-02-05): Path/auth policy is now explicit:
   - `/api/v1/symbology/*` authenticated (with `/symbology/*` legacy alias retained)

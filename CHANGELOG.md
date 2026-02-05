@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [0.5.6] - 2026-02-05
 
+### Added
+
+- **Provider alignment audit report**: Added `PROVIDER_ALIGNMENT_AUDIT.md` with route inventory, doc-drift analysis, and error-contract findings for UW/Finnhub/Alpha Vantage/SEC/yfinance.
+
 ### Fixed
 
 - **Middleware streaming safety (TD-031)**:
