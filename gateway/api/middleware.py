@@ -375,6 +375,14 @@ FEED_MAPPING = {
     "iv_rank": "analytics",
     "seasonality": "analytics",
     "max_pain": "analytics",
+    # Forex
+    "forex": "forex",
+    "rates": "forex",
+    # Company fundamentals
+    "company_overview": "fundamentals",
+    "income_statement": "fundamentals",
+    "balance_sheet": "fundamentals",
+    "cash_flow": "fundamentals",
 }
 
 # Paths to skip envelope wrapping (health, metrics, admin, etc)

@@ -196,6 +196,8 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
     "institutions": [("transaction_id", "id", ""), ("date", "filing_date", "")],
     "politicians": [("transaction_id", "id", ""), ("date", "filing_date", "")],
     "analytics": [("expiry", None, ""), ("metric_type", None, "")],
+    "forex": [("pair", None, ""), ("bid", None, 0), ("ask", None, 0)],
+    "fundamentals": [("symbol", None, ""), ("market_cap", None, 0)],
 }
 
 

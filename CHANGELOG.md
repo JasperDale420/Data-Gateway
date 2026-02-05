@@ -30,6 +30,9 @@ All notable changes to this project will be documented in this file.
   - `NormalizedInsiderTrade` - SEC Form 4 insider trading data
   - `NormalizedInstitutionHolding` - 13F institutional holdings
   - `NormalizedPoliticianTrade` - Congressional trade disclosures
+- **Normalized schemas for forex and fundamentals**:
+  - `NormalizedForexRate` - Currency pair bid/ask/OHLC data
+  - `NormalizedFundamentals` - Company financial metrics (PE, market cap, margins, etc.)
 
 ### Refactored
 

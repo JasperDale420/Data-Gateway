@@ -468,6 +468,58 @@ class NormalizedPoliticianTrade(BaseModel):
     provider: str = "unusual_whales"
 
 
+class NormalizedForexRate(BaseModel):
+    """Forex currency pair rate."""
+
+    pair: str  # e.g., "EUR/USD"
+    timestamp: datetime
+    bid: Decimal
+    ask: Decimal
+    mid: Decimal | None = None  # Computed: (bid + ask) / 2
+    open: Decimal | None = None  # For bars
+    high: Decimal | None = None
+    low: Decimal | None = None
+    close: Decimal | None = None
+    provider: str
+
+
+class NormalizedFundamentals(BaseModel):
+    """Company fundamentals from various providers."""
+
+    symbol: str
+    name: str | None = None
+    sector: str | None = None
+    industry: str | None = None
+    market_cap: Decimal | None = None
+    pe_ratio: Decimal | None = None  # Price/Earnings
+    forward_pe: Decimal | None = None
+    peg_ratio: Decimal | None = None  # P/E to Growth
+    pb_ratio: Decimal | None = None  # Price/Book
+    ps_ratio: Decimal | None = None  # Price/Sales
+    dividend_yield: Decimal | None = None
+    dividend_per_share: Decimal | None = None
+    eps: Decimal | None = None  # Earnings per share
+    eps_growth: Decimal | None = None  # YoY EPS growth
+    revenue: Decimal | None = None
+    revenue_growth: Decimal | None = None
+    profit_margin: Decimal | None = None
+    operating_margin: Decimal | None = None
+    roe: Decimal | None = None  # Return on equity
+    roa: Decimal | None = None  # Return on assets
+    debt_to_equity: Decimal | None = None
+    current_ratio: Decimal | None = None
+    beta: Decimal | None = None
+    week_52_high: Decimal | None = None
+    week_52_low: Decimal | None = None
+    shares_outstanding: int | None = None
+    float_shares: int | None = None
+    avg_volume: int | None = None
+    exchange: str | None = None
+    country: str | None = None
+    description: str | None = None
+    provider: str
+
+
 # ─────────────────────────────────────────────────────────────────
 # Phase 3: Advanced Analytics Schemas
 # ─────────────────────────────────────────────────────────────────
