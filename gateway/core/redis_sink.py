@@ -77,16 +77,40 @@ class RedisStreamsSink(DataSink):
             payload = {"data": json.dumps(data, default=str)}
 
             # Add to stream with automatic trimming
-            await self._redis.xadd(
+            message_id = await self._redis.xadd(
                 topic,
                 payload,
                 maxlen=self._max_len,
                 approximate=self._approximate,
             )
+
+            # Log successful publish at debug level for tracing
+            logger.debug(
+                "redis_sink_published",
+                topic=topic,
+                message_id=str(message_id),
+                event_id=data.get("event_id", "unknown"),
+            )
+
+            # Record metrics
+            try:
+                from gateway.core.metrics import record_sink_publish
+
+                record_sink_publish(sink=self.name, topic=topic, success=True)
+            except ImportError:
+                pass
+
             return True
 
         except Exception as e:
             logger.warning("redis_sink_publish_error", topic=topic, error=str(e))
+            # Record error metrics
+            try:
+                from gateway.core.metrics import record_sink_publish
+
+                record_sink_publish(sink=self.name, topic=topic, success=False)
+            except ImportError:
+                pass
             return False
 
     async def health_check(self) -> bool:

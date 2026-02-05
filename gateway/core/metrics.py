@@ -99,6 +99,22 @@ PROCESS_MEMORY_PERCENT = Gauge(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Data Sink & Envelope Metrics
+# ─────────────────────────────────────────────────────────────────────────────
+
+ENVELOPE_CREATED = Counter(
+    "gateway_envelopes_created_total",
+    "Total EventEnvelopes created",
+    ["provider", "feed"],
+)
+
+SINK_PUBLISH = Counter(
+    "gateway_sink_publish_total",
+    "Total data sink publish operations",
+    ["sink", "topic", "status"],  # status: success, error
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SLI Metrics (PRD 11.1.2-4)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -323,3 +339,19 @@ def update_memory_pressure(current_mb: float, target_mb: float) -> None:
     if target_mb > 0:
         pressure = (current_mb / target_mb) * 100
         MEMORY_PRESSURE.set(min(pressure, 100))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data Sink & Envelope Helper Functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def record_envelope_created(provider: str, feed: str) -> None:
+    """Record EventEnvelope creation."""
+    ENVELOPE_CREATED.labels(provider=provider, feed=feed).inc()
+
+
+def record_sink_publish(sink: str, topic: str, success: bool) -> None:
+    """Record data sink publish result."""
+    status = "success" if success else "error"
+    SINK_PUBLISH.labels(sink=sink, topic=topic, status=status).inc()

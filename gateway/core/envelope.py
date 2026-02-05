@@ -316,6 +316,14 @@ def wrap_event(
             ts_event=ts_event.isoformat(),
         )
 
+        # Record metrics
+        try:
+            from gateway.core.metrics import record_envelope_created
+
+            record_envelope_created(provider=provider, feed=feed)
+        except ImportError:
+            pass  # Metrics not available
+
         # Optimize serialization: avoid deep traversal of payload
         # payload is already a dict/list and doesn't need Pydantic validation/conversion
         dump = envelope.model_dump(mode="json", exclude={"payload"})

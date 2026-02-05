@@ -10,6 +10,13 @@ All notable changes to this project will be documented in this file.
 - **Import sorting in uw_poller.py**: Fixed ruff I001 import block formatting
 - **Type parameter style in yf.py**: Migrated from `TypeVar("T")` to PEP 695 type parameter syntax (`async def _dedupe[T](...)`)
 
+### Added
+
+- **Redis sink debug logging**: Successful Redis publishes now log at debug level with `redis_sink_published` event containing topic, message_id, and event_id for full traceability
+- **Prometheus metrics for data pipeline**:
+  - `gateway_envelopes_created_total{provider, feed}` - tracks EventEnvelope creation rate by provider and feed
+  - `gateway_sink_publish_total{sink, topic, status}` - tracks data sink publish operations with success/error status
+
 ---
 
 ## [0.5.4] - 2026-01-29

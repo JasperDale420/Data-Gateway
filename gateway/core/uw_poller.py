@@ -130,6 +130,15 @@ class UWPoller:
         current_time = now_et.time()
         return MORNING_RUSH_START <= current_time <= MORNING_RUSH_END
 
+    @staticmethod
+    def _parse_ts(ts_value: str | None) -> datetime | None:
+        if not ts_value:
+            return None
+        try:
+            return datetime.fromisoformat(ts_value.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
+
     def _get_poll_limit(self) -> int:
         """Get poll limit based on time of day.
 
@@ -287,6 +296,8 @@ class UWPoller:
             alerts = await self._provider.get_flow_alerts(limit=limit)
             published = 0
             duplicates = 0
+            out_of_order = 0
+            prev_ts: datetime | None = None
 
             for alert in alerts:
                 envelope = wrap_event(
@@ -297,6 +308,16 @@ class UWPoller:
                 )
 
                 event_id = envelope.get("event_id", "")
+                ts_event = self._parse_ts(envelope.get("ts_event"))
+                if ts_event and prev_ts and ts_event < prev_ts:
+                    out_of_order += 1
+                    logger.warning(
+                        "uw_flow_out_of_order_ts",
+                        prev_ts=prev_ts.isoformat(),
+                        curr_ts=ts_event.isoformat(),
+                    )
+                if ts_event:
+                    prev_ts = ts_event
                 if not event_id:
                     logger.warning("uw_flow_missing_event_id")
                 else:
@@ -322,6 +343,7 @@ class UWPoller:
                 fetched=len(alerts),
                 published=published,
                 duplicates=duplicates,
+                out_of_order=out_of_order,
             )
         except Exception as e:
             logger.error("uw_poller_flow_error", error=str(e))
@@ -333,6 +355,8 @@ class UWPoller:
             trades = await self._provider.get_darkpool_recent(limit=limit)
             published = 0
             duplicates = 0
+            out_of_order = 0
+            prev_ts: datetime | None = None
 
             for trade in trades:
                 envelope = wrap_event(
@@ -343,6 +367,16 @@ class UWPoller:
                 )
 
                 event_id = envelope.get("event_id", "")
+                ts_event = self._parse_ts(envelope.get("ts_event"))
+                if ts_event and prev_ts and ts_event < prev_ts:
+                    out_of_order += 1
+                    logger.warning(
+                        "uw_darkpool_out_of_order_ts",
+                        prev_ts=prev_ts.isoformat(),
+                        curr_ts=ts_event.isoformat(),
+                    )
+                if ts_event:
+                    prev_ts = ts_event
                 if not event_id:
                     logger.warning("uw_darkpool_missing_event_id")
                 else:
@@ -368,6 +402,7 @@ class UWPoller:
                 fetched=len(trades),
                 published=published,
                 duplicates=duplicates,
+                out_of_order=out_of_order,
             )
         except Exception as e:
             logger.error("uw_poller_darkpool_error", error=str(e))
@@ -388,6 +423,8 @@ class UWPoller:
 
             published = 0
             duplicates = 0
+            out_of_order = 0
+            prev_ts: datetime | None = None
 
             for tide in recent_tides:
                 envelope = wrap_event(
@@ -398,6 +435,16 @@ class UWPoller:
                 )
 
                 event_id = envelope.get("event_id", "")
+                ts_event = self._parse_ts(envelope.get("ts_event"))
+                if ts_event and prev_ts and ts_event < prev_ts:
+                    out_of_order += 1
+                    logger.warning(
+                        "uw_market_tide_out_of_order_ts",
+                        prev_ts=prev_ts.isoformat(),
+                        curr_ts=ts_event.isoformat(),
+                    )
+                if ts_event:
+                    prev_ts = ts_event
                 if not event_id:
                     logger.warning("uw_market_tide_missing_event_id")
                 else:
@@ -425,6 +472,7 @@ class UWPoller:
                     recent=len(recent_tides),
                     published=published,
                     duplicates=duplicates,
+                    out_of_order=out_of_order,
                 )
         except Exception as e:
             logger.error("uw_poller_market_tide_error", error=str(e))
@@ -437,6 +485,7 @@ class UWPoller:
         assert self._provider is not None
         total_published = 0
         total_duplicates = 0
+        total_out_of_order = 0
         sectors_polled = 0
 
         for sector in GICS_SECTORS:
@@ -445,6 +494,7 @@ class UWPoller:
 
                 # Take last 5 records for each sector
                 recent_tides = tides[-5:] if len(tides) > 5 else tides
+                prev_ts: datetime | None = None
 
                 for tide in recent_tides:
                     envelope = wrap_event(
@@ -455,6 +505,17 @@ class UWPoller:
                     )
 
                     event_id = envelope.get("event_id", "")
+                    ts_event = self._parse_ts(envelope.get("ts_event"))
+                    if ts_event and prev_ts and ts_event < prev_ts:
+                        total_out_of_order += 1
+                        logger.warning(
+                            "uw_sector_tide_out_of_order_ts",
+                            sector=sector,
+                            prev_ts=prev_ts.isoformat(),
+                            curr_ts=ts_event.isoformat(),
+                        )
+                    if ts_event:
+                        prev_ts = ts_event
                     if not event_id:
                         logger.warning("uw_sector_tide_missing_event_id")
                     else:
@@ -488,6 +549,7 @@ class UWPoller:
                 sectors=sectors_polled,
                 published=total_published,
                 duplicates=total_duplicates,
+                out_of_order=total_out_of_order,
             )
 
 
