@@ -328,6 +328,7 @@ ROUTE_PATTERNS = [
 
 # Map endpoint patterns to feed types
 FEED_MAPPING = {
+    # Core market data
     "quote": "quotes",
     "quotes": "quotes",
     "bars": "bars",
@@ -337,8 +338,14 @@ FEED_MAPPING = {
     "monthly": "bars",
     "trades": "trades",
     "trade": "trades",
+    # Options & flow
     "flow": "flow",
     "darkpool": "darkpool",
+    "options": "options",
+    "chain": "options",
+    "greeks": "greeks",
+    "gex": "greeks",
+    # Fundamentals & news
     "news": "news",
     "articles": "news",
     "profile": "fundamentals",
@@ -347,11 +354,27 @@ FEED_MAPPING = {
     "financials": "fundamentals",
     "filings": "filings",
     "facts": "filings",
-    "insiders": "filings",
-    "options": "options",
-    "chain": "options",
-    "greeks": "greeks",
-    "gex": "greeks",
+    # UW market sentiment
+    "tide": "market_tide",
+    "market_tide": "market_tide",
+    "sector_tide": "sector_tide",
+    # UW alternative data
+    "etf": "etf",
+    "holdings": "etf",
+    "flows": "etf",
+    "shorts": "shorts",
+    "short_interest": "shorts",
+    "ftd": "shorts",
+    "screener": "screener",
+    # UW political/institutional
+    "insiders": "insiders",
+    "institutions": "institutions",
+    "politicians": "politicians",
+    # Analytics
+    "volatility": "analytics",
+    "iv_rank": "analytics",
+    "seasonality": "analytics",
+    "max_pain": "analytics",
 }
 
 # Paths to skip envelope wrapping (health, metrics, admin, etc)

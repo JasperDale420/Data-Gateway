@@ -147,41 +147,72 @@ def compute_event_id(
     return hashlib.sha256(data.encode("utf-8")).hexdigest()[:32]
 
 
+# Feed-specific unique field extractors for event ID computation
+# Format: feed -> list of (key, fallback_key, default_value)
+FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
+    "trades": [("trade_id", "i", "")],
+    "bars": [("timeframe", "x", "1Min"), ("timestamp", "t", "")],
+    "quotes": [
+        ("bid_price", "bp", 0),
+        ("ask_price", "ap", 0),
+        ("bid_size", "bs", 0),
+        ("ask_size", "as", 0),
+    ],
+    "flow": [
+        ("expiry", None, ""),
+        ("strike", None, 0),
+        ("put_call", None, ""),
+        ("premium", None, 0),
+        ("volume", None, 0),
+    ],
+    "darkpool": [
+        ("expiry", None, ""),
+        ("strike", None, 0),
+        ("put_call", None, ""),
+        ("premium", None, 0),
+        ("volume", None, 0),
+    ],
+    "news": [("article_id", "id", "")],
+    "etf": [("etf_symbol", None, ""), ("holding_symbol", "symbol", ""), ("date", None, "")],
+    "shorts": [("date", None, ""), ("short_interest", "quantity", 0)],
+    "screener": [("screen_type", None, ""), ("rank", "position", 0)],
+    "market_tide": [
+        ("date", None, ""),
+        ("sector", None, ""),
+        ("net_call_premium", None, 0),
+        ("net_put_premium", None, 0),
+    ],
+    "sector_tide": [
+        ("date", None, ""),
+        ("sector", None, ""),
+        ("net_call_premium", None, 0),
+        ("net_put_premium", None, 0),
+    ],
+    "insiders": [
+        ("transaction_id", "id", ""),
+        ("filing_date", None, ""),
+        ("insider_name", None, ""),
+    ],
+    "institutions": [("transaction_id", "id", ""), ("date", "filing_date", "")],
+    "politicians": [("transaction_id", "id", ""), ("date", "filing_date", "")],
+    "analytics": [("expiry", None, ""), ("metric_type", None, "")],
+}
+
+
 def _extract_unique_fields(feed: str, payload: dict) -> list[Any]:
     """Extract feed-specific unique fields for event ID computation."""
-
-    if feed == "trades":
-        return [payload.get("trade_id", payload.get("i", ""))]
-
-    elif feed == "bars":
-        return [
-            payload.get("timeframe", payload.get("x", "1Min")),
-            payload.get("timestamp", payload.get("t", "")),
-        ]
-
-    elif feed == "quotes":
-        return [
-            payload.get("bid_price", payload.get("bp", 0)),
-            payload.get("ask_price", payload.get("ap", 0)),
-            payload.get("bid_size", payload.get("bs", 0)),
-            payload.get("ask_size", payload.get("as", 0)),
-        ]
-
-    elif feed in ("flow", "darkpool"):
-        return [
-            payload.get("expiry", ""),
-            payload.get("strike", 0),
-            payload.get("put_call", ""),
-            payload.get("premium", 0),
-            payload.get("volume", 0),
-        ]
-
-    elif feed == "news":
-        return [payload.get("article_id", payload.get("id", ""))]
-
-    else:
-        # Generic: use timestamp only
+    field_spec = FEED_UNIQUE_FIELDS.get(feed)
+    if not field_spec:
         return []
+
+    result = []
+    for primary_key, fallback_key, default in field_spec:
+        if fallback_key:
+            value = payload.get(primary_key, payload.get(fallback_key, default))
+        else:
+            value = payload.get(primary_key, default)
+        result.append(value)
+    return result
 
 
 def _infer_instrument_type(feed: str, symbol: str, payload: dict) -> str:

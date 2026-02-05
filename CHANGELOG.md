@@ -20,6 +20,16 @@ All notable changes to this project will be documented in this file.
   - Checks `dedup:publish:{event_id}` before publishing; skips if already sent
   - 24h TTL on dedup keys; fail-open on cache errors
   - ~1-2ms latency per event for data integrity
+- **Expanded FEED_MAPPING**: Added 21 new feed type mappings for UW endpoints
+  - Market sentiment: `tide`, `market_tide`, `sector_tide`
+  - Alternative data: `etf`, `holdings`, `flows`, `shorts`, `short_interest`, `ftd`, `screener`
+  - Political/institutional: `insiders`, `institutions`, `politicians`
+  - Analytics: `volatility`, `iv_rank`, `seasonality`, `max_pain`
+- **Extended event ID unique fields**: Added feed-specific unique field extraction for etf, shorts, screener, market_tide, insiders, institutions, politicians, analytics feeds
+
+### Refactored
+
+- **envelope.py `_extract_unique_fields`**: Converted from if/elif chain to mapping-based lookup with `FEED_UNIQUE_FIELDS` dict to reduce cognitive complexity
 
 ---
 
