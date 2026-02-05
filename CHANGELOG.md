@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - **Middleware regression coverage**:
   - Added tests validating bypass behavior for streaming/large payloads and preserving envelope wrapping for small JSON payloads.
 - **Calendar trading-day loop syntax**: Fixed indentation in `TradingCalendar.get_trading_days()` that prevented module import and blocked test execution.
+- **Retired duplicate Alpaca stream handlers (TD-014 follow-up)**: Removed unused legacy modules `gateway/providers/alpaca_stream.py`, `gateway/providers/alpaca_options_stream.py`, `gateway/providers/alpaca_crypto_stream.py`, and `gateway/providers/alpaca_news_stream.py` to keep `gateway/core/stream.py` as the single streaming implementation.
 
 ## [0.5.5] - 2026-02-04
 

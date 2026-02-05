@@ -222,6 +222,7 @@ Evidence: `gateway/core/stream.py` multiplexer plus `gateway/providers/alpaca_st
 Impact: Increased maintenance, unclear source of truth, risk of divergence.
 Recommendation: Choose one streaming implementation and delete or deprecate the other.
 **Status:** Fixed (2026-02-05)
+Note: Legacy `gateway/providers/alpaca_stream*.py` handlers were removed; `gateway/core/stream.py` is the only streaming path.
 
 **TD‑015: WebSocket protocol schema mismatch**
 Evidence: `gateway/schemas/__init__.py` defines `SubscribeMessage` with `feeds`, but `gateway/api/websocket.py` expects `feed` singular.
@@ -356,7 +357,11 @@ Recommendation: Add size caps or bypass for large/streaming responses.
 
 ## Open Questions for Future Audit Runs
 
-- Are UW, Finnhub, AlphaVantage, SEC, and yfinance endpoint implementations fully aligned with PRD error codes and schemas?
-- Should `gateway/core/security.py` replace `gateway/core/auth.py`, or be removed to avoid duplication?
-- What is the intended path and auth policy for `/symbology`, `/catalog`, `/metrics`, and `/health`?
-- Is the Alpaca stream stack in `gateway/providers/alpaca_stream*.py` still intended to be used?
+- Remaining: Are UW, Finnhub, AlphaVantage, SEC, and yfinance endpoint implementations fully aligned with PRD error codes and schemas?
+- Resolved (2026-02-05): `gateway/core/auth.py` remains the API key/RBAC source of truth; `gateway/core/security.py` remains for input validation and utility models.
+- Resolved (2026-02-05): Path/auth policy is now explicit:
+  - `/api/v1/symbology/*` authenticated (with `/symbology/*` legacy alias retained)
+  - `/catalog/*` authenticated
+  - `/metrics` authenticated
+  - `/health/*` public
+- Resolved (2026-02-05): Legacy `gateway/providers/alpaca_stream*.py` stack is retired and removed.
