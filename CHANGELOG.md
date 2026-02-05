@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.6] - 2026-02-05
+
+### Fixed
+
+- **Middleware streaming safety (TD-031)**:
+  - `EventEnvelopeMiddleware` now skips envelope wrapping for unknown-length, streamed, and oversized responses.
+  - `CacheMiddleware` now skips caching for streamed event payloads (`text/event-stream`, `application/x-ndjson`) to avoid body buffering.
+  - `main.py` now passes `cache_max_body_bytes` into `EventEnvelopeMiddleware` so both cache and envelope logic use the same body-size guard.
+- **Middleware regression coverage**:
+  - Added tests validating bypass behavior for streaming/large payloads and preserving envelope wrapping for small JSON payloads.
+
 ## [0.5.5] - 2026-02-04
 
 ### Fixed
@@ -257,7 +268,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **Provider framework**: `DataProvider` base class with capabilities and lifecycle hooks
-- **Provider registry**: Dynamic provider loading from `providers.yaml`
+- **Provider registry**: Dynamic provider loading from `config/providers.yaml`
 - **AlpacaProvider**: Full REST API support for bars, quotes, trades
 - **AlpacaStreamHandler**: WebSocket streaming with reconnection logic
 - **REST API**: Alpaca endpoints at `/api/v1/alpaca/stocks/*` (PRD-aligned)
