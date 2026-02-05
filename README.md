@@ -252,6 +252,7 @@ clients:
 pip install -e ".[dev]"
 pre-commit install
 pre-commit run --all-files
+python scripts/generate_provider_contract.py --check
 ```
 
 **Tools:** ruff, black, pyright, bandit, detect-secrets

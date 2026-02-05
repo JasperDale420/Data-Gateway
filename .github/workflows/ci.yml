@@ -38,6 +38,9 @@ jobs:
       - name: Run pre-commit hooks
         run: pre-commit run --all-files
 
+      - name: Verify provider endpoint contract is up-to-date
+        run: python scripts/generate_provider_contract.py --check
+
       - name: Run tests with coverage
         run: |
           pytest --cov=gateway --cov-report=xml --cov-report=term-missing
