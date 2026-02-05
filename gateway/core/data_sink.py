@@ -10,6 +10,9 @@ from typing import Any
 
 import structlog
 
+from gateway.core.circuit_breaker import CircuitOpenError, CircuitState, get_circuit_breaker
+from gateway.core.metrics import record_sink_publish
+
 logger = structlog.get_logger()
 
 
@@ -43,6 +46,11 @@ class DataSink(ABC):
     async def health_check(self) -> bool:
         """Check if the sink is healthy and connected."""
         ...
+
+    @property
+    def record_publish_metrics(self) -> bool:
+        """Whether the sink records publish metrics internally."""
+        return False
 
     async def close(self) -> None:
         """Close the sink connection. Override if cleanup is needed."""
@@ -142,20 +150,43 @@ class DataSinkRegistry:
     async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any]) -> None:
         """Publish with error handling."""
         try:
-            await sink.publish(topic, data)
-        except Exception as e:
+            breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+
+            async def _call():
+                result = await sink.publish(topic, data)
+                if result is False:
+                    raise RuntimeError("sink_publish_failed")
+                return result
+
+            await breaker.call(_call)
+            if not sink.record_publish_metrics:
+                record_sink_publish(sink=sink.name, topic=topic, success=True)
+        except CircuitOpenError as e:
             logger.warning(
+                "data_sink_circuit_open",
+                sink=sink.name,
+                topic=topic,
+                retry_after=round(e.retry_after, 2),
+            )
+            record_sink_publish(sink=sink.name, topic=topic, success=False)
+        except Exception:
+            logger.exception(
                 "data_sink_publish_failed",
                 sink=sink.name,
                 topic=topic,
-                error=str(e),
             )
+            if not sink.record_publish_metrics:
+                record_sink_publish(sink=sink.name, topic=topic, success=False)
 
     async def health_check_all(self) -> dict[str, bool]:
         """Check health of all sinks."""
         results = {}
         for sink in self._sinks:
             try:
+                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+                if breaker.state == CircuitState.OPEN:
+                    results[sink.name] = False
+                    continue
                 results[sink.name] = await sink.health_check()
             except Exception:
                 results[sink.name] = False

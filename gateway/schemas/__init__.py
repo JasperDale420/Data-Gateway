@@ -23,6 +23,7 @@ class SubscribeMessage(BaseModel):
     action: Literal["subscribe"]
     symbols: list[str]
     feeds: list[str] = Field(default_factory=lambda: ["bars"])
+    feed: str | None = Field(default=None, description="Legacy: use feeds instead")
     request_id: str | None = None
 
 
@@ -31,6 +32,8 @@ class UnsubscribeMessage(BaseModel):
 
     action: Literal["unsubscribe"]
     symbols: list[str]
+    feeds: list[str] | None = None
+    feed: str | None = Field(default=None, description="Legacy: use feeds instead")
     request_id: str | None = None
 
 
@@ -50,6 +53,7 @@ class SubscriptionAck(BaseModel):
     type: Literal["subscription_ack"]
     subscribed: list[str]
     failed: list[str] = Field(default_factory=list)
+    feeds: list[str] | None = None
 
 
 # Normalized Data Schemas

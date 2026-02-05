@@ -19,6 +19,9 @@ For security vulnerabilities, please contact the maintainers directly rather tha
 - **Key Format**: `gw_<client_id>_<random>` with 256-bit entropy
 - **Key Storage**: SHA-256 hashed, never stored in plaintext
 - **Timeout**: Authentication must complete within 10 seconds
+- **Roles**: Admin endpoints require a client role of `admin` or `super_admin`
+- **Replay WebSocket**: `X-Gateway-Key` header is required during the handshake
+- **Trading**: Alpaca account/trading endpoints require a client role of `trader`, `admin`, or `super_admin`
 
 ### Rate Limiting
 
@@ -27,6 +30,14 @@ For security vulnerabilities, please contact the maintainers directly rather tha
 | Global | 10,000 requests/min |
 | Per-IP | 1,000 requests/min |
 | Per-Client | 600 requests/min (configurable) |
+
+### Authorization
+
+- Provider access is enforced via `permissions.providers` in `config/clients.yaml`.
+- Feed access is enforced via `permissions.feeds`.
+- Per-request symbol limits are enforced via `permissions.max_symbols`.
+- WebSocket subscription limits are enforced via `permissions.ws_subscriptions_max`.
+- Bulk jobs and replay sessions are scoped to the client that created them.
 
 ### Transport Security
 
@@ -60,7 +71,7 @@ For security vulnerabilities, please contact the maintainers directly rather tha
 
 2. **Use hashed API keys**
    - Generate keys with: `python -m gateway.cli generate-key`
-   - Store `key_hash` in `clients.yaml`, not plaintext
+   - Store `key_hash` in `config/clients.yaml`, not plaintext
 
 3. **Set appropriate rate limits**
 

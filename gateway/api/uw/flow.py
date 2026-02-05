@@ -8,6 +8,7 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    decode_cursor,
     get_cache,
     get_registry,
     get_uw_provider,
@@ -35,7 +36,9 @@ async def get_flow_all(
 
     provider = get_uw_provider(registry)
     await require_provider_rate_limit("unusual_whales")
-    alerts = await provider.get_flow_alerts(limit=limit + 1)
+    offset = decode_cursor(cursor)
+    fetch_limit = limit + offset + 1
+    alerts = await provider.get_flow_alerts(limit=fetch_limit)
     data = [a.model_dump(mode="json") for a in alerts]
 
     response = paginate_response(data, limit, cursor)
@@ -62,7 +65,9 @@ async def get_flow_symbol(
 
     provider = get_uw_provider(registry)
     await require_provider_rate_limit("unusual_whales")
-    alerts = await provider.get_ticker_flow(symbol=symbol, date_str=date)
+    offset = decode_cursor(cursor)
+    fetch_limit = limit + offset + 1
+    alerts = await provider.get_ticker_flow(symbol=symbol, date_str=date, limit=fetch_limit)
     data = [a.model_dump(mode="json") for a in alerts]
 
     response = paginate_response(data, limit, cursor)
@@ -86,7 +91,9 @@ async def get_darkpool_all(
 
     provider = get_uw_provider(registry)
     await require_provider_rate_limit("unusual_whales")
-    trades = await provider.get_darkpool_recent(limit=limit + 1)
+    offset = decode_cursor(cursor)
+    fetch_limit = limit + offset + 1
+    trades = await provider.get_darkpool_recent(limit=fetch_limit)
     data = [t.model_dump(mode="json") for t in trades]
 
     response = paginate_response(data, limit, cursor)
@@ -113,7 +120,13 @@ async def get_darkpool_symbol(
 
     provider = get_uw_provider(registry)
     await require_provider_rate_limit("unusual_whales")
-    trades = await provider.get_darkpool_ticker(symbol=symbol, date_str=date)
+    offset = decode_cursor(cursor)
+    fetch_limit = limit + offset + 1
+    trades = await provider.get_darkpool_ticker(
+        symbol=symbol,
+        date_str=date,
+        limit=fetch_limit,
+    )
     data = [t.model_dump(mode="json") for t in trades]
 
     response = paginate_response(data, limit, cursor)

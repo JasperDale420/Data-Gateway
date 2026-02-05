@@ -41,7 +41,19 @@ __all__ = [
 ]
 
 
+def _normalize_cache_arg(value) -> str:
+    if value is None:
+        return "<none>"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value == "":
+        return "<empty>"
+    return str(value)
+
+
 def cache_key(prefix: str, *args) -> str:
     """Generate cache key."""
-    parts = [prefix] + [str(a) for a in args if a]
+    parts = [prefix] + [_normalize_cache_arg(a) for a in args]
     return ":".join(parts)

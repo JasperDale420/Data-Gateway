@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 
 from gateway.config import get_settings
 from gateway.core.auth import Client, ClientAuthenticator
@@ -99,6 +99,7 @@ def get_sink_registry() -> "DataSinkRegistry | None":
 
 
 def require_api_key(
+    request: Request,
     x_gateway_key: str | None = Header(None, alias="X-Gateway-Key"),
     authenticator: ClientAuthenticator = Depends(get_authenticator),
 ) -> Client:
@@ -121,7 +122,134 @@ def require_api_key(
             detail={"code": "GW-E2002", "message": "Invalid API key"},
         )
 
+    # Attach client to request state for downstream middleware
+    request.state.client = client
+
+    # Enforce role-based access for admin endpoints
+    _enforce_admin_role(request.url.path, client)
+    # Enforce role-based access for trading endpoints
+    _enforce_trading_role(request.url.path, client)
+
+    # Enforce provider permissions based on path
+    provider = _extract_provider_from_path(request.url.path)
+    if provider:
+        _enforce_provider_permission(client, provider)
+
+    # Enforce per-request symbol limits on common list query params
+    _enforce_symbol_limits(request, client)
+
     return client
+
+
+def _enforce_admin_role(path: str, client: Client) -> None:
+    """Restrict admin endpoints to admin/super_admin roles."""
+    if path.startswith("/api/v1/admin") or path == "/api/v1/status":
+        if client.role not in ("admin", "super_admin"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "GW-E2005",
+                    "message": "Admin access required",
+                },
+            )
+
+
+def _enforce_trading_role(path: str, client: Client) -> None:
+    """Restrict Alpaca trading/account endpoints to trader/admin roles."""
+    trading_prefixes = (
+        "/api/v1/alpaca/account",
+        "/api/v1/alpaca/orders",
+        "/api/v1/alpaca/positions",
+        "/api/v1/alpaca/portfolio",
+        "/api/v1/alpaca/watchlists",
+        "/api/v1/alpaca/assets",
+        "/api/v1/alpaca/clock",
+        "/api/v1/alpaca/calendar",
+    )
+    if path.startswith(trading_prefixes):
+        if client.role not in ("trader", "admin", "super_admin"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "GW-E2008",
+                    "message": "Trading access required",
+                },
+            )
+
+
+def _extract_provider_from_path(path: str) -> str | None:
+    """Extract provider name from /api/v1/{provider}/... paths."""
+    if not path.startswith("/api/v1/"):
+        return None
+    parts = path.split("/")
+    if len(parts) < 4:
+        return None
+    provider = parts[3]
+    allowed = {
+        "alpaca",
+        "uw",
+        "finnhub",
+        "alphavantage",
+        "yf",
+        "sec",
+        "news",
+    }
+    return provider if provider in allowed else None
+
+
+def _enforce_provider_permission(client: Client, provider: str) -> None:
+    """Ensure client has access to provider."""
+    allowed = set(client.permissions.providers or [])
+    if not allowed:
+        return
+
+    # Normalize aliases
+    aliases = {
+        "uw": "unusual_whales",
+        "yf": "yfinance",
+    }
+    provider_normalized = aliases.get(provider, provider)
+
+    if provider in allowed:
+        return
+    if provider_normalized in allowed:
+        return
+    # Allow alias forms in client config
+    if provider == "uw" and "unusual_whales" in allowed:
+        return
+    if provider == "yf" and "yfinance" in allowed:
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "GW-E2006",
+            "message": f"Provider access denied: {provider}",
+        },
+    )
+
+
+def _enforce_symbol_limits(request: Request, client: Client) -> None:
+    """Enforce per-request symbol limits on common comma-separated params."""
+    max_symbols = client.permissions.max_symbols
+    if max_symbols <= 0:
+        return
+
+    list_params = ("symbols", "contracts", "pairs", "isins", "underlyings")
+    for key in list_params:
+        value = request.query_params.get(key)
+        if value is None:
+            continue
+        items = [s for s in value.split(",") if s.strip()]
+        if len(items) > max_symbols:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "GW-E8002",
+                    "message": f"Maximum {max_symbols} {key} allowed",
+                    "value": len(items),
+                },
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

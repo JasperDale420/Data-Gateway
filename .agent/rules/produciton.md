@@ -13,7 +13,7 @@ trigger: always_on
 
 ### Provider Plugin System
 - All data sources implement the `DataProvider` abstract base class
-- Providers are registered via `providers.yaml`, not hardcoded
+- Providers are registered via `config/providers.yaml`, not hardcoded
 - Use normalized schemas (`NormalizedBar`, `NormalizedQuote`, etc.)
 - Provider additions require: implementation + config + tests
 
@@ -31,7 +31,7 @@ trigger: always_on
 
 ### Adding a New Provider
 1. Create `gateway/providers/{name}.py` implementing `DataProvider`
-2. Add entry to `providers.yaml`
+2. Add entry to `config/providers.yaml`
 3. Write tests: `tests/providers/test_{name}.py`
 4. Verify: initialization, health check, data normalization
 

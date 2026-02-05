@@ -8,6 +8,7 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    decode_cursor,
     get_cache,
     get_registry,
     get_uw_provider,
@@ -37,7 +38,9 @@ async def get_institutions(
 
     provider = get_uw_provider(registry)
     await require_provider_rate_limit("unusual_whales")
-    holdings = await provider.get_institutions(symbol=symbol)
+    offset = decode_cursor(cursor)
+    fetch_limit = limit + offset + 1
+    holdings = await provider.get_institutions(symbol=symbol, limit=fetch_limit)
 
     response = paginate_response(holdings, limit, cursor)
     await cache.set(cache_key, response, ttl=300)
@@ -62,7 +65,9 @@ async def get_congress(
 
     provider = get_uw_provider(registry)
     await require_provider_rate_limit("unusual_whales")
-    trades = await provider.get_congress_trades(symbol=symbol)
+    offset = decode_cursor(cursor)
+    fetch_limit = limit + offset + 1
+    trades = await provider.get_congress_trades(symbol=symbol, limit=fetch_limit)
 
     response = paginate_response(trades, limit, cursor)
     await cache.set(cache_key, response, ttl=300)
@@ -87,7 +92,9 @@ async def get_insiders(
 
     provider = get_uw_provider(registry)
     await require_provider_rate_limit("unusual_whales")
-    transactions = await provider.get_insiders(symbol=symbol)
+    offset = decode_cursor(cursor)
+    fetch_limit = limit + offset + 1
+    transactions = await provider.get_insiders(symbol=symbol, limit=fetch_limit)
 
     response = paginate_response(transactions, limit, cursor)
     await cache.set(cache_key, response, ttl=300)

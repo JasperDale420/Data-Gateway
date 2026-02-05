@@ -3,13 +3,25 @@
 Symbol resolution and format conversion as specified in PRD (lines 459-523).
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from gateway.api.deps import require_api_key
 from gateway.core.symbology import get_symbol_resolver
 from gateway.schemas import SuccessResponse
 
-router = APIRouter(prefix="/symbology", tags=["symbology"])
+base_router = APIRouter()
+router = APIRouter(
+    prefix="/api/v1/symbology",
+    tags=["symbology"],
+    dependencies=[Depends(require_api_key)],
+)
+legacy_router = APIRouter(
+    prefix="/symbology",
+    tags=["symbology"],
+    include_in_schema=False,
+    dependencies=[Depends(require_api_key)],
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +63,7 @@ class BatchResolveResponse(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@router.get("/resolve", response_model=SymbolResolveResponse)
+@base_router.get("/resolve", response_model=SymbolResolveResponse)
 async def resolve_symbol(
     symbol: str = Query(..., description="Symbol in any supported format"),
 ) -> SymbolResolveResponse:
@@ -92,7 +104,7 @@ async def resolve_symbol(
     )
 
 
-@router.get("/validate", response_model=SymbolValidateResponse)
+@base_router.get("/validate", response_model=SymbolValidateResponse)
 async def validate_symbol(
     symbol: str = Query(..., description="Symbol to validate"),
 ) -> SymbolValidateResponse:
@@ -110,7 +122,7 @@ async def validate_symbol(
     )
 
 
-@router.post("/batch", response_model=BatchResolveResponse)
+@base_router.post("/batch", response_model=BatchResolveResponse)
 async def batch_resolve_symbols(
     request: BatchResolveRequest,
 ) -> BatchResolveResponse:
@@ -149,7 +161,7 @@ async def batch_resolve_symbols(
     )
 
 
-@router.get("/convert", response_model=SuccessResponse)
+@base_router.get("/convert", response_model=SuccessResponse)
 async def convert_symbol(
     symbol: str = Query(..., description="Symbol to convert"),
     provider: str = Query(..., description="Target provider (alpaca, uw, yfinance)"),
@@ -173,3 +185,7 @@ async def convert_symbol(
             "output": provider_symbol,
         },
     }
+
+
+router.include_router(base_router)
+legacy_router.include_router(base_router)

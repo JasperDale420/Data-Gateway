@@ -273,7 +273,7 @@
 | 5.1.1 | `DataProvider` abstract base class | ✅ | `core/provider.py` DataProvider |
 | 5.1.2 | `ProviderCapabilities` dataclass | ✅ | Imported in all providers |
 | 5.1.3 | Config-based provider registration | ✅ | Via config/providers |
-| 5.1.4 | `providers.yaml` configuration | ✅ | Provider config YAML |
+| 5.1.4 | `config/providers.yaml` configuration | ✅ | Provider config YAML |
 | 5.1.5 | Provider runtime registration | ✅ | 7 providers registered |
 
 ### 5.2 Provider Lifecycle

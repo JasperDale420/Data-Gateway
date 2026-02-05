@@ -99,12 +99,24 @@ class UnusualWhalesProvider(DataProvider):
                 error="Provider not initialized",
             )
 
-        # Simple health check - try to get flow alerts
+        # Lightweight health check to validate upstream connectivity
         try:
-            # Just verify the client is configured (don't make actual API call)
-            return HealthStatus(healthy=True, latency_ms=0)
+            from unusualwhales.api import market
+
+            start = datetime.now(UTC)
+            await self._call_sync(market.get_market_tide.sync, client=self._client)
+            latency = (datetime.now(UTC) - start).total_seconds() * 1000
+            return HealthStatus(
+                healthy=True,
+                latency_ms=latency,
+                last_check=datetime.now(UTC),
+            )
         except Exception as e:
-            return HealthStatus(healthy=False, error=str(e))
+            return HealthStatus(
+                healthy=False,
+                error=str(e),
+                last_check=datetime.now(UTC),
+            )
 
     def _extract_data(self, response: Any) -> list[dict[str, Any]]:
         """Extract data from SDK response - handles additional_properties or data attribute.
@@ -203,7 +215,8 @@ class UnusualWhalesProvider(DataProvider):
     async def get_ticker_flow(
         self,
         symbol: str,
-        _date_str: str | None = None,
+        date_str: str | None = None,
+        limit: int | None = None,
     ) -> list[NormalizedFlowAlert]:
         """Get flow data for a specific ticker."""
         if not self._client:
@@ -214,11 +227,20 @@ class UnusualWhalesProvider(DataProvider):
             from unusualwhales.api import flow
 
             # SDK uses sync method with ticker_symbol parameter
-            response = await self._call_sync(
-                flow.get_ticker_order_flow.sync,
-                client=self._client,
-                ticker_symbol=symbol.upper(),
-            )
+            kwargs: dict[str, Any] = {
+                "client": self._client,
+                "ticker_symbol": symbol.upper(),
+            }
+            if date_str:
+                kwargs["date"] = date_str
+            if limit is not None:
+                kwargs["limit"] = limit
+
+            try:
+                response = await self._call_sync(flow.get_ticker_order_flow.sync, **kwargs)
+            except TypeError:
+                kwargs.pop("limit", None)
+                response = await self._call_sync(flow.get_ticker_order_flow.sync, **kwargs)
 
             alerts = []
             # Data is in additional_properties['data'], not response.data
@@ -283,6 +305,7 @@ class UnusualWhalesProvider(DataProvider):
         self,
         symbol: str,
         date_str: str | None = None,
+        limit: int | None = None,
     ) -> list[NormalizedDarkpoolTrade]:
         """Get darkpool trades for a specific ticker."""
         if not self._client:
@@ -292,14 +315,17 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import darkpool
 
-            kwargs = {}
+            kwargs: dict[str, Any] = {"client": self._client, "ticker": symbol.upper()}
             if date_str:
                 kwargs["date"] = date_str
-            response = await self._call_sync(
-                darkpool.get_trades_by_ticker.sync,
-                client=self._client,
-                ticker=symbol.upper(),
-            )
+            if limit is not None:
+                kwargs["limit"] = limit
+
+            try:
+                response = await self._call_sync(darkpool.get_trades_by_ticker.sync, **kwargs)
+            except TypeError:
+                kwargs.pop("limit", None)
+                response = await self._call_sync(darkpool.get_trades_by_ticker.sync, **kwargs)
 
             trades = []
             data_items = []
@@ -356,7 +382,7 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_market_tide_failed", error=str(e))
             return []
 
-    async def get_institutions(self, symbol: str) -> list[dict]:
+    async def get_institutions(self, symbol: str, limit: int | None = None) -> list[dict]:
         """Get 13F institutional holdings for a ticker."""
         if not self._client:
             logger.warning("uw_client_not_initialized")
@@ -365,11 +391,19 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import institution
 
-            response = await self._call_sync(
-                institution.get_ownership.sync,
-                symbol.upper(),
-                client=self._client,
-            )
+            kwargs: dict[str, Any] = {"client": self._client, "limit": limit}
+            try:
+                response = await self._call_sync(
+                    institution.get_ownership.sync,
+                    symbol.upper(),
+                    **{k: v for k, v in kwargs.items() if v is not None},
+                )
+            except TypeError:
+                response = await self._call_sync(
+                    institution.get_ownership.sync,
+                    symbol.upper(),
+                    client=self._client,
+                )
 
             holdings = []
             for item in self._extract_data(response):

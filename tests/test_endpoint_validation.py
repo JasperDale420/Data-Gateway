@@ -97,31 +97,31 @@ class TestHealthEndpointsValidation:
 class TestCatalogEndpointsValidation:
     """Validate catalog/discovery endpoints return valid responses."""
 
-    def test_catalog_root(self, client: TestClient):
+    def test_catalog_root(self, client: TestClient, auth_headers: dict):
         """GET /catalog returns valid response."""
-        response = client.get("/catalog/")
+        response = client.get("/catalog/", headers=auth_headers)
         assert response.status_code == 200
         # Catalogs can return dict directly (not wrapped in SuccessResponse)
         data = response.json()
         assert isinstance(data, dict)
 
-    def test_catalog_streams(self, client: TestClient):
+    def test_catalog_streams(self, client: TestClient, auth_headers: dict):
         """GET /catalog/streams returns valid response."""
-        response = client.get("/catalog/streams")
+        response = client.get("/catalog/streams", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, dict)
 
-    def test_catalog_feeds(self, client: TestClient):
+    def test_catalog_feeds(self, client: TestClient, auth_headers: dict):
         """GET /catalog/feeds returns valid response."""
-        response = client.get("/catalog/feeds")
+        response = client.get("/catalog/feeds", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, dict)
 
-    def test_catalog_providers(self, client: TestClient):
+    def test_catalog_providers(self, client: TestClient, auth_headers: dict):
         """GET /catalog/providers returns valid response."""
-        response = client.get("/catalog/providers")
+        response = client.get("/catalog/providers", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, dict)
@@ -130,9 +130,13 @@ class TestCatalogEndpointsValidation:
 class TestSymbologyEndpointsValidation:
     """Validate symbology endpoints return valid responses."""
 
-    def test_symbology_resolve(self, client: TestClient):
-        """GET /symbology/resolve returns valid response."""
-        response = client.get("/symbology/resolve", params={"symbol": "AAPL"})
+    def test_symbology_resolve(self, client: TestClient, auth_headers: dict):
+        """GET /api/v1/symbology/resolve returns valid response."""
+        response = client.get(
+            "/api/v1/symbology/resolve",
+            params={"symbol": "AAPL"},
+            headers=auth_headers,
+        )
         assert response.status_code == 200
         data = response.json()
         assert "success" in data
@@ -140,16 +144,24 @@ class TestSymbologyEndpointsValidation:
         if data.get("success"):
             assert "data" in data
 
-    def test_symbology_validate(self, client: TestClient):
-        """GET /symbology/validate returns valid response."""
-        response = client.get("/symbology/validate", params={"symbol": "AAPL"})
+    def test_symbology_validate(self, client: TestClient, auth_headers: dict):
+        """GET /api/v1/symbology/validate returns valid response."""
+        response = client.get(
+            "/api/v1/symbology/validate",
+            params={"symbol": "AAPL"},
+            headers=auth_headers,
+        )
         assert response.status_code == 200
         data = response.json()
         assert "valid" in data
 
-    def test_symbology_batch(self, client: TestClient):
-        """POST /symbology/batch returns valid response."""
-        response = client.post("/symbology/batch", json={"symbols": ["AAPL", "MSFT"]})
+    def test_symbology_batch(self, client: TestClient, auth_headers: dict):
+        """POST /api/v1/symbology/batch returns valid response."""
+        response = client.post(
+            "/api/v1/symbology/batch",
+            json={"symbols": ["AAPL", "MSFT"]},
+            headers=auth_headers,
+        )
         assert response.status_code == 200
         data = response.json()
         assert "success" in data
@@ -269,10 +281,14 @@ class TestUWEndpointsValidation:
 class TestResponseSchemaValidation:
     """Test that responses conform to expected schemas."""
 
-    def test_success_response_with_list_data(self, client: TestClient):
+    def test_success_response_with_list_data(self, client: TestClient, auth_headers: dict):
         """Verify SuccessResponse accepts list data (fixed in v0.5.2)."""
         # Catalog endpoints return dicts, symbology returns SuccessResponse
-        response = client.get("/symbology/resolve", params={"symbol": "AAPL"})
+        response = client.get(
+            "/api/v1/symbology/resolve",
+            params={"symbol": "AAPL"},
+            headers=auth_headers,
+        )
         assert response.status_code == 200
         data = response.json()
         # Should have success field
@@ -303,13 +319,13 @@ class TestBulkEndpointValidation:
         ("/health/ready", "GET", False, {}),
         ("/health/status", "GET", False, {}),
         # Catalog
-        ("/catalog/", "GET", False, {}),
-        ("/catalog/streams", "GET", False, {}),
-        ("/catalog/feeds", "GET", False, {}),
-        ("/catalog/providers", "GET", False, {}),
+        ("/catalog/", "GET", True, {}),
+        ("/catalog/streams", "GET", True, {}),
+        ("/catalog/feeds", "GET", True, {}),
+        ("/catalog/providers", "GET", True, {}),
         # Symbology
-        ("/symbology/resolve", "GET", False, {"symbol": "AAPL"}),
-        ("/symbology/validate", "GET", False, {"symbol": "AAPL"}),
+        ("/api/v1/symbology/resolve", "GET", True, {"symbol": "AAPL"}),
+        ("/api/v1/symbology/validate", "GET", True, {"symbol": "AAPL"}),
         # Calendar (auth required)
         ("/api/v1/calendar/is-open", "GET", True, {}),
         ("/api/v1/calendar/market-hours", "GET", True, {"date": "2024-01-15"}),

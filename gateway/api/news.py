@@ -125,6 +125,11 @@ async def get_article(
         await cache.set(cache_key, result, ttl=60)
         return {"success": True, "data": result, "cached": False}
 
+    except NotImplementedError as e:
+        raise HTTPException(
+            status_code=501,
+            detail={"error_code": "GW-E5010", "message": str(e)},
+        )
     except HTTPException:
         raise
     except RuntimeError as e:

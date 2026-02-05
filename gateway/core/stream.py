@@ -16,6 +16,7 @@ import websockets
 from websockets.client import WebSocketClientProtocol
 
 from gateway.core.envelope import wrap_event
+from gateway.core.validator import get_validator
 
 logger = structlog.get_logger()
 
@@ -79,6 +80,7 @@ class ClientSubscription:
     bars: set[str] = field(default_factory=set)
     quotes: set[str] = field(default_factory=set)
     trades: set[str] = field(default_factory=set)
+    news: set[str] = field(default_factory=set)
 
 
 class SubscriptionManager:
@@ -94,6 +96,7 @@ class SubscriptionManager:
             "bars": {},
             "quotes": {},
             "trades": {},
+            "news": {},
         }
 
     def subscribe(
@@ -102,7 +105,8 @@ class SubscriptionManager:
         bars: list[str] | None = None,
         quotes: list[str] | None = None,
         trades: list[str] | None = None,
-    ) -> tuple[set[str], set[str], set[str]]:
+        news: list[str] | None = None,
+    ) -> tuple[set[str], set[str], set[str], set[str]]:
         """Add subscriptions for a client. Returns newly added symbols."""
         if client_id not in self._subscriptions:
             self._subscriptions[client_id] = ClientSubscription(client_id=client_id)
@@ -111,6 +115,7 @@ class SubscriptionManager:
         new_bars: set[str] = set()
         new_quotes: set[str] = set()
         new_trades: set[str] = set()
+        new_news: set[str] = set()
 
         if bars:
             for symbol in bars:
@@ -145,8 +150,19 @@ class SubscriptionManager:
                     new_trades.add(symbol)
                 else:
                     clients.add(client_id)
+        if news:
+            for symbol in news:
+                if symbol in sub.news:
+                    continue
+                sub.news.add(symbol)
+                clients = self._index["news"].get(symbol)
+                if clients is None:
+                    self._index["news"][symbol] = {client_id}
+                    new_news.add(symbol)
+                else:
+                    clients.add(client_id)
 
-        return new_bars, new_quotes, new_trades
+        return new_bars, new_quotes, new_trades, new_news
 
     def unsubscribe(
         self,
@@ -154,15 +170,17 @@ class SubscriptionManager:
         bars: list[str] | None = None,
         quotes: list[str] | None = None,
         trades: list[str] | None = None,
-    ) -> tuple[set[str], set[str], set[str]]:
+        news: list[str] | None = None,
+    ) -> tuple[set[str], set[str], set[str], set[str]]:
         """Remove subscriptions for a client. Returns symbols to unsubscribe upstream."""
         if client_id not in self._subscriptions:
-            return set(), set(), set()
+            return set(), set(), set(), set()
 
         sub = self._subscriptions[client_id]
         removed_bars: set[str] = set()
         removed_quotes: set[str] = set()
         removed_trades: set[str] = set()
+        removed_news: set[str] = set()
 
         if bars:
             for symbol in bars:
@@ -197,18 +215,30 @@ class SubscriptionManager:
                     if not clients:
                         self._index["trades"].pop(symbol, None)
                         removed_trades.add(symbol)
+        if news:
+            for symbol in news:
+                if symbol not in sub.news:
+                    continue
+                sub.news.discard(symbol)
+                clients = self._index["news"].get(symbol)
+                if clients:
+                    clients.discard(client_id)
+                    if not clients:
+                        self._index["news"].pop(symbol, None)
+                        removed_news.add(symbol)
 
-        return removed_bars, removed_quotes, removed_trades
+        return removed_bars, removed_quotes, removed_trades, removed_news
 
-    def remove_client(self, client_id: str) -> tuple[set[str], set[str], set[str]]:
+    def remove_client(self, client_id: str) -> tuple[set[str], set[str], set[str], set[str]]:
         """Remove all subscriptions for a client."""
         if client_id not in self._subscriptions:
-            return set(), set(), set()
+            return set(), set(), set(), set()
 
         sub = self._subscriptions.pop(client_id)
         removed_bars: set[str] = set()
         removed_quotes: set[str] = set()
         removed_trades: set[str] = set()
+        removed_news: set[str] = set()
 
         for symbol in sub.bars:
             clients = self._index["bars"].get(symbol)
@@ -234,21 +264,30 @@ class SubscriptionManager:
                     self._index["trades"].pop(symbol, None)
                     removed_trades.add(symbol)
 
-        return removed_bars, removed_quotes, removed_trades
+        for symbol in sub.news:
+            clients = self._index["news"].get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    self._index["news"].pop(symbol, None)
+                    removed_news.add(symbol)
+
+        return removed_bars, removed_quotes, removed_trades, removed_news
 
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
         """Get all clients subscribed to a symbol for a data type."""
         return list(self._index.get(data_type, {}).get(symbol, ()))
 
-    def _aggregate(self) -> tuple[set[str], set[str], set[str]]:
+    def _aggregate(self) -> tuple[set[str], set[str], set[str], set[str]]:
         """Compute union of all client subscriptions."""
         return (
             set(self._index["bars"].keys()),
             set(self._index["quotes"].keys()),
             set(self._index["trades"].keys()),
+            set(self._index["news"].keys()),
         )
 
-    def get_all_subscriptions(self) -> tuple[set[str], set[str], set[str]]:
+    def get_all_subscriptions(self) -> tuple[set[str], set[str], set[str], set[str]]:
         """Get current aggregate subscriptions for resubscription on reconnect."""
         return self._aggregate()
 
@@ -381,6 +420,7 @@ class UpstreamConnection:
         bars: set[str] | None = None,
         quotes: set[str] | None = None,
         trades: set[str] | None = None,
+        news: set[str] | None = None,
     ) -> None:
         """Subscribe to symbols upstream."""
         if not self.is_connected:
@@ -394,6 +434,8 @@ class UpstreamConnection:
             msg["quotes"] = list(quotes)
         if trades:
             msg["trades"] = list(trades)
+        if news:
+            msg["news"] = list(news)
 
         if len(msg) > 1:  # Has at least one subscription type
             await self._ws.send(self._encode_message(msg))
@@ -402,6 +444,8 @@ class UpstreamConnection:
                 stream=self.stream_type.value,
                 bars=list(bars) if bars else [],
                 quotes=list(quotes) if quotes else [],
+                trades=list(trades) if trades else [],
+                news=list(news) if news else [],
             )
 
     async def unsubscribe(
@@ -409,6 +453,7 @@ class UpstreamConnection:
         bars: set[str] | None = None,
         quotes: set[str] | None = None,
         trades: set[str] | None = None,
+        news: set[str] | None = None,
     ) -> None:
         """Unsubscribe from symbols upstream."""
         if not self.is_connected:
@@ -421,6 +466,8 @@ class UpstreamConnection:
             msg["quotes"] = list(quotes)
         if trades:
             msg["trades"] = list(trades)
+        if news:
+            msg["news"] = list(news)
 
         if len(msg) > 1:
             await self._ws.send(self._encode_message(msg))
@@ -428,6 +475,9 @@ class UpstreamConnection:
                 "unsubscribed_upstream",
                 stream=self.stream_type.value,
                 bars=list(bars) if bars else [],
+                quotes=list(quotes) if quotes else [],
+                trades=list(trades) if trades else [],
+                news=list(news) if news else [],
             )
 
     async def start(self) -> None:
@@ -489,9 +539,9 @@ class UpstreamConnection:
                 await self.authenticate()
 
                 # Resubscribe to all symbols
-                bars, quotes, trades = self._subscriptions.get_all_subscriptions()
-                if bars or quotes or trades:
-                    await self.subscribe(bars, quotes, trades)
+                bars, quotes, trades, news = self._subscriptions.get_all_subscriptions()
+                if bars or quotes or trades or news:
+                    await self.subscribe(bars, quotes, trades, news)
 
                 # Start receive loop
                 await self._receive_loop()
@@ -503,8 +553,8 @@ class UpstreamConnection:
                     code=e.code,
                     reason=e.reason,
                 )
-            except Exception as e:
-                logger.error("connection_error", stream=self.stream_type.value, error=str(e))
+            except Exception:
+                logger.exception("connection_error", stream=self.stream_type.value)
 
             self._authenticated = False
             self._ws = None
@@ -556,9 +606,9 @@ class UpstreamConnection:
                 await self.connect()
                 await self.authenticate()
 
-                bars, quotes, trades = self._subscriptions.get_all_subscriptions()
-                if bars or quotes or trades:
-                    await self.subscribe(bars, quotes, trades)
+                bars, quotes, trades, news = self._subscriptions.get_all_subscriptions()
+                if bars or quotes or trades or news:
+                    await self.subscribe(bars, quotes, trades, news)
 
                 logger.info("reconnected", stream=self.stream_type.value, attempt=attempt + 1)
                 return
@@ -727,6 +777,7 @@ class StreamMultiplexer:
         bars: list[str] | None = None,
         quotes: list[str] | None = None,
         trades: list[str] | None = None,
+        news: list[str] | None = None,
     ) -> dict[str, Any]:
         """Subscribe a client to symbols.
 
@@ -754,15 +805,15 @@ class StreamMultiplexer:
                 }
 
         # Track client subscription
-        new_bars, new_quotes, new_trades = conn.subscriptions.subscribe(
-            client_id, bars, quotes, trades
+        new_bars, new_quotes, new_trades, new_news = conn.subscriptions.subscribe(
+            client_id, bars, quotes, trades, news
         )
 
         # Subscribe upstream only for new symbols
-        if new_bars or new_quotes or new_trades:
-            await conn.subscribe(new_bars, new_quotes, new_trades)
+        if new_bars or new_quotes or new_trades or new_news:
+            await conn.subscribe(new_bars, new_quotes, new_trades, new_news)
 
-        subscribed = list(set((bars or []) + (quotes or []) + (trades or [])))
+        subscribed = list(set((bars or []) + (quotes or []) + (trades or []) + (news or [])))
         return {
             "type": "subscription_ack",
             "status": "ok",
@@ -777,21 +828,22 @@ class StreamMultiplexer:
         bars: list[str] | None = None,
         quotes: list[str] | None = None,
         trades: list[str] | None = None,
+        news: list[str] | None = None,
     ) -> dict[str, Any]:
         """Unsubscribe a client from symbols."""
         conn = self._get_connection(stream_type)
         if not conn:
             return {"type": "unsubscription_ack", "status": "ok", "unsubscribed": []}
 
-        removed_bars, removed_quotes, removed_trades = conn.subscriptions.unsubscribe(
-            client_id, bars, quotes, trades
+        removed_bars, removed_quotes, removed_trades, removed_news = conn.subscriptions.unsubscribe(
+            client_id, bars, quotes, trades, news
         )
 
         # Unsubscribe upstream only for symbols no client wants
-        if removed_bars or removed_quotes or removed_trades:
-            await conn.unsubscribe(removed_bars, removed_quotes, removed_trades)
+        if removed_bars or removed_quotes or removed_trades or removed_news:
+            await conn.unsubscribe(removed_bars, removed_quotes, removed_trades, removed_news)
 
-        unsubscribed = list(set((bars or []) + (quotes or []) + (trades or [])))
+        unsubscribed = list(set((bars or []) + (quotes or []) + (trades or []) + (news or [])))
         return {
             "type": "unsubscription_ack",
             "status": "ok",
@@ -801,11 +853,11 @@ class StreamMultiplexer:
     async def client_disconnect(self, client_id: str) -> None:
         """Remove all subscriptions for a disconnecting client."""
         for conn in self._connections.values():
-            removed_bars, removed_quotes, removed_trades = conn.subscriptions.remove_client(
-                client_id
+            removed_bars, removed_quotes, removed_trades, removed_news = (
+                conn.subscriptions.remove_client(client_id)
             )
-            if removed_bars or removed_quotes or removed_trades:
-                await conn.unsubscribe(removed_bars, removed_quotes, removed_trades)
+            if removed_bars or removed_quotes or removed_trades or removed_news:
+                await conn.unsubscribe(removed_bars, removed_quotes, removed_trades, removed_news)
 
     def _get_connection(self, stream_type: AlpacaStreamType) -> UpstreamConnection | None:
         """Get connection for stream type, handling SIP/IEX mapping."""
@@ -823,7 +875,6 @@ class StreamMultiplexer:
     async def _handle_message(self, stream_type: AlpacaStreamType, message: dict[str, Any]) -> None:
         """Route incoming message to subscribed clients."""
         msg_type = message.get("T", "")
-        symbol = message.get("S", "")
 
         # Map Alpaca message types to our data types
         data_type_map = {
@@ -834,16 +885,85 @@ class StreamMultiplexer:
         }
 
         data_type = data_type_map.get(msg_type)
-        if not data_type or not symbol:
+        if not data_type:
             # System message, heartbeat, etc.
             return
+
+        if data_type in {"bars", "quotes", "trades"}:
+            validator = get_validator()
+            if data_type == "bars":
+                result = validator.validate_bar(
+                    {
+                        "symbol": message.get("S"),
+                        "timestamp": message.get("t"),
+                        "open": message.get("o"),
+                        "high": message.get("h"),
+                        "low": message.get("l"),
+                        "close": message.get("c"),
+                        "volume": message.get("v"),
+                    }
+                )
+            elif data_type == "quotes":
+                result = validator.validate_quote(
+                    {
+                        "symbol": message.get("S"),
+                        "timestamp": message.get("t"),
+                        "bid_price": message.get("bp"),
+                        "ask_price": message.get("ap"),
+                        "bid_size": message.get("bs"),
+                        "ask_size": message.get("as"),
+                    }
+                )
+            else:
+                result = validator.validate_trade(
+                    {
+                        "symbol": message.get("S"),
+                        "timestamp": message.get("t"),
+                        "price": message.get("p"),
+                        "size": message.get("s"),
+                    }
+                )
+
+            if not result.valid:
+                logger.warning(
+                    "stream_validation_failed",
+                    error_codes=result.error_codes,
+                    data_type=data_type,
+                    symbol=message.get("S"),
+                )
+                return
 
         # Find connection and get subscribed clients
         conn = self._get_connection(stream_type)
         if not conn:
             return
 
-        clients = conn.subscriptions.get_clients_for_symbol(symbol, data_type)
+        symbols: list[str]
+        if data_type == "news":
+            symbols = []
+            symbol_field = message.get("S")
+            if symbol_field:
+                symbols.append(symbol_field)
+            raw_symbols = message.get("symbols")
+            if isinstance(raw_symbols, list):
+                symbols.extend([s for s in raw_symbols if s])
+            if not symbols:
+                symbols = ["*"]
+            symbol_for_log = symbols[0] if symbols else "*"
+        else:
+            symbol = message.get("S", "")
+            if not symbol:
+                return
+            symbols = [symbol]
+            symbol_for_log = symbol
+
+        clients: set[str] = set()
+        if data_type == "news":
+            clients.update(conn.subscriptions.get_clients_for_symbol("*", data_type))
+        for sym in symbols:
+            clients.update(conn.subscriptions.get_clients_for_symbol(sym, data_type))
+        if not clients:
+            return
 
         # Wrap event in EventEnvelope for downstream consumers
         envelope = wrap_event(
@@ -863,7 +983,7 @@ class StreamMultiplexer:
                 logger.error(
                     "fanout_error",
                     client_id=client_id,
-                    symbol=symbol,
+                    symbol=symbol_for_log,
                     event_id=envelope.get("event_id", "unknown"),
                     error=str(e),
                 )

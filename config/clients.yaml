@@ -1,5 +1,6 @@
 # Client API keys for gateway authentication
 # Keys are stored as plaintext for development; use hashed keys in production
+# Optional: role can be set to "trader", "admin", or "super_admin" for restricted endpoints
 
 clients:
   # Cerberus trading system

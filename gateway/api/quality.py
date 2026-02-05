@@ -5,13 +5,19 @@ Per-symbol quality metrics as specified in PRD (lines 918-984).
 
 from datetime import date
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from gateway.api.deps import require_api_key
+from gateway.config import get_settings
 from gateway.core.quality import get_quality_analyzer
 from gateway.schemas import SuccessResponse
 
-router = APIRouter(prefix="/quality", tags=["quality"])
+router = APIRouter(
+    prefix="/quality",
+    tags=["quality"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -65,6 +71,13 @@ async def get_symbol_quality(
     - Q005: Price outside normal range (>20% move)
     - Q006: Timestamp out of sequence
     """
+    settings = get_settings()
+    if not settings.allow_stub_data:
+        raise HTTPException(
+            status_code=501,
+            detail="Quality metrics are not configured (stub disabled)",
+        )
+
     # Use today if no date provided
     if query_date is None:
         query_date = date.today()
@@ -115,6 +128,13 @@ async def get_quality_summary(
     Returns aggregate quality metrics for the specified symbols
     or default watchlist if none provided.
     """
+    settings = get_settings()
+    if not settings.allow_stub_data:
+        raise HTTPException(
+            status_code=501,
+            detail="Quality summary is not configured (stub disabled)",
+        )
+
     if query_date is None:
         query_date = date.today()
 

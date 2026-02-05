@@ -34,10 +34,10 @@ docker-compose up --build
 
 **Three-layer design:** API routes (`gateway/api/`) -> Core logic (`gateway/core/`) -> Provider implementations (`gateway/providers/`).
 
-- **Provider Registry** (`gateway/core/registry.py`): Loads providers from `providers.yaml`, manages their lifecycle. Each provider in `gateway/providers/` implements the base interface from `gateway/core/provider.py`.
+- **Provider Registry** (`gateway/core/registry.py`): Loads providers from `config/providers.yaml`, manages their lifecycle. Each provider in `gateway/providers/` implements the base interface from `gateway/core/provider.py`.
 - **Stream Multiplexer** (`gateway/core/stream.py`): Shares one upstream WebSocket across all clients. Handles event deduplication and routing for real-time market data.
 - **REST Proxy**: Each provider has a router in `gateway/api/` that proxies REST calls through caching (`gateway/core/cache.py`, `gateway/api/middleware.py:CacheMiddleware`) and rate limiting (`gateway/core/rate_limiter.py`).
-- **Auth** (`gateway/core/auth.py`): API key auth with per-client permissions defined in `clients.yaml`.
+- **Auth** (`gateway/core/auth.py`): API key auth with per-client permissions defined in `config/clients.yaml`.
 - **Dependency Injection** (`gateway/api/deps.py`): FastAPI dependencies for registry, auth, etc. Used by all route handlers.
 - **App Entry** (`gateway/main.py`): FastAPI app initialization and router registration.
 - **Config** (`gateway/config.py`): pydantic-settings, reads from `.env`.
@@ -67,7 +67,7 @@ The base loop wakes every 60 seconds and checks which pollers are due. Market-aw
 1. Implement provider in `gateway/providers/<name>.py` inheriting from `gateway/core/provider.py`
 2. Add router in `gateway/api/<name>.py` using deps from `gateway/api/deps.py`
 3. Register router in `gateway/main.py`
-4. Add config to `providers.yaml`
+4. Add config to `config/providers.yaml`
 
 ## Adding a New Endpoint
 

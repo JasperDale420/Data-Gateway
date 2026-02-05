@@ -20,9 +20,21 @@ PROVIDER_NOT_AVAILABLE = "yfinance provider not available"
 CACHE_TTL = 300  # 5 minutes per PRD
 
 
+def _normalize_cache_arg(value) -> str:
+    if value is None:
+        return "<none>"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value == "":
+        return "<empty>"
+    return str(value)
+
+
 def _cache_key(prefix: str, symbol: str, *args) -> str:
     """Generate cache key for yfinance data."""
-    parts = [prefix, symbol.upper()] + [str(a) for a in args if a]
+    parts = [prefix, symbol.upper()] + [_normalize_cache_arg(a) for a in args]
     return ":".join(parts)
 
 

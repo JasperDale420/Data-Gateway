@@ -37,16 +37,16 @@ def paginate_response(
     cursor: str | None = None,
 ) -> dict:
     """Build paginated response per PRD spec."""
-    offset = 0
-    if cursor:
-        try:
-            offset = int(base64.b64decode(cursor).decode())
-        except Exception:
-            offset = 0
+    offset = decode_cursor(cursor)
 
     total_count = len(data)
-    has_more = total_count > limit
-    paginated_data = data[:limit]
+    if offset < 0:
+        offset = 0
+    if offset > total_count:
+        offset = total_count
+
+    paginated_data = data[offset : offset + limit]
+    has_more = total_count > offset + limit
 
     next_cursor = None
     if has_more:
@@ -61,6 +61,17 @@ def paginate_response(
             "total_count": total_count,
         },
     }
+
+
+def decode_cursor(cursor: str | None) -> int:
+    """Decode cursor to integer offset."""
+    if not cursor:
+        return 0
+    try:
+        offset = int(base64.b64decode(cursor).decode())
+        return max(offset, 0)
+    except Exception:
+        return 0
 
 
 def get_uw_provider(registry: ProviderRegistry):
@@ -115,6 +126,7 @@ __all__ = [
     "logger",
     "make_list_response",
     "make_response",
+    "decode_cursor",
     "paginate_response",
     "PROVIDER_NOT_AVAILABLE",
     "ProviderRegistry",

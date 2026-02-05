@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 import structlog
 
+from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
 
@@ -55,6 +56,7 @@ class AlphaVantageProvider(DataProvider):
 
         self._client = httpx.AsyncClient(
             timeout=30.0,
+            event_hooks=httpx_event_hooks("alphavantage"),
         )
         logger.info("alphavantage_provider_initialized")
 

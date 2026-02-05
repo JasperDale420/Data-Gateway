@@ -35,6 +35,7 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
+from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
@@ -114,6 +115,7 @@ class AlpacaProvider(DataProvider):
                 "APCA-API-SECRET-KEY": self._secret_key,
             },
             timeout=30.0,
+            event_hooks=httpx_event_hooks("alpaca"),
         )
 
         # Create SDK TradingClient for Trading API
@@ -202,7 +204,7 @@ class AlpacaProvider(DataProvider):
             "timeframe": self._convert_timeframe(timeframe),
             "start": start.isoformat(),
             "end": end.isoformat(),
-            "feed": self._feed,
+            "feed": kwargs.get("feed", self._feed),
             "adjustment": kwargs.get("adjustment", "raw"),
             "limit": kwargs.get("limit", 10000),
         }

@@ -40,7 +40,7 @@ providers:
     config:
       api_key_env: FINNHUB_API_KEY  # pragma: allowlist secret
     capabilities:
-      streaming: true
+      streaming: false
       historical: true
       bars: true
       quotes: true
@@ -89,7 +89,8 @@ providers:
     module: gateway.providers.sec
     class: SECProvider
     priority: 1
-    config: {}
+    config:
+      user_agent_env: SEC_USER_AGENT
     capabilities:
       streaming: false
       historical: true

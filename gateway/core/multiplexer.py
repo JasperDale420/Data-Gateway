@@ -1,4 +1,8 @@
-"""WebSocket multiplexer for upstream connections."""
+"""Legacy WebSocket subscription manager (deprecated).
+
+Superseded by gateway.core.stream.StreamMultiplexer.
+Retained for backward compatibility only.
+"""
 
 import asyncio
 from collections import defaultdict

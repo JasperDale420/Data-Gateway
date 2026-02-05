@@ -355,3 +355,18 @@ def record_sink_publish(sink: str, topic: str, success: bool) -> None:
     """Record data sink publish result."""
     status = "success" if success else "error"
     SINK_PUBLISH.labels(sink=sink, topic=topic, status=status).inc()
+
+
+def httpx_event_hooks(provider: str) -> dict[str, list]:
+    """Create httpx event hooks to record provider metrics."""
+    import time
+
+    async def _on_request(request) -> None:
+        request.extensions["gateway_metrics_start"] = time.perf_counter()
+
+    async def _on_response(response) -> None:
+        start = response.request.extensions.get("gateway_metrics_start")
+        duration = time.perf_counter() - start if start else 0.0
+        record_provider_request(provider, response.is_success, duration)
+
+    return {"request": [_on_request], "response": [_on_response]}
