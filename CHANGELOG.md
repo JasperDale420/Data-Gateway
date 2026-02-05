@@ -22,6 +22,7 @@ All notable changes to this project will be documented in this file.
 - **Standardized HTTP error contract (TD-033)**: Added global HTTPException normalization so API errors consistently return `success=false` with stable `error.code`/`error.message`.
 - **Provider docs and PRD contract alignment (TD-032/TD-034)**: Updated API docs to reference generated route contract and added PRD reference to generated endpoint contract.
 - **Contract drift guard in CI**: Added CI step to enforce `python scripts/generate_provider_contract.py --check`.
+- **Integration auth fixture drift**: Centralized test API-key fixtures in `tests/conftest.py` and removed hardcoded keys from auth/integration/smoke tests to prevent `401` regressions when client keys change.
 
 ## [0.5.5] - 2026-02-04
 

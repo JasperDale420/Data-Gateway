@@ -1,9 +1,9 @@
 """Tests for authentication."""
 
 
-def test_authenticate_valid_key(test_authenticator):
+def test_authenticate_valid_key(test_authenticator, test_api_key):
     """Valid key returns client."""
-    client = test_authenticator.authenticate("gw_test_key_12345")
+    client = test_authenticator.authenticate(test_api_key)
     assert client is not None
     assert client.id == "test"
     assert client.enabled is True
@@ -15,15 +15,15 @@ def test_authenticate_invalid_key(test_authenticator):
     assert client is None
 
 
-def test_authenticate_disabled_client(test_authenticator):
+def test_authenticate_disabled_client(test_authenticator, disabled_api_key):
     """Disabled client returns None."""
-    client = test_authenticator.authenticate("gw_disabled_key")
+    client = test_authenticator.authenticate(disabled_api_key)
     assert client is None
 
 
-def test_client_permissions(test_authenticator):
+def test_client_permissions(test_authenticator, test_api_key):
     """Client has expected permissions."""
-    client = test_authenticator.authenticate("gw_test_key_12345")
+    client = test_authenticator.authenticate(test_api_key)
     assert client is not None
 
     assert "alpaca" in client.permissions.providers

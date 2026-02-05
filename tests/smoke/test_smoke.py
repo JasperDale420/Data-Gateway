@@ -45,11 +45,11 @@ class TestAuthWorks:
         )
         assert response.status_code == 401
 
-    def test_valid_auth_endpoint_exists(self, client, test_authenticator):
+    def test_valid_auth_endpoint_exists(self, client, test_api_key):
         """Test that authenticated endpoint responds (not 404)."""
         response = client.get(
             "/api/v1/alpaca/stocks/AAPL/bars?timeframe=1Day",
-            headers={"X-Gateway-Key": "gw_test_key_12345"},
+            headers={"X-Gateway-Key": test_api_key},
         )
         # Endpoint exists - may return various errors in test mode
         assert response.status_code in (200, 401, 500, 502, 503)
@@ -67,9 +67,9 @@ class TestRestWorks:
         # Endpoint exists (not 404) - may return 500 if registry not initialized
         assert response.status_code != 404
 
-    def test_metrics_endpoint(self, client):
+    def test_metrics_endpoint(self, client, auth_headers):
         """Metrics endpoint should be accessible."""
-        response = client.get("/metrics")
+        response = client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200
         assert "gateway_" in response.text or "process_" in response.text
 
