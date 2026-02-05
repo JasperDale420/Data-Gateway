@@ -1,6 +1,7 @@
 """WebSocket endpoint with authentication and heartbeat."""
 
 import asyncio
+import json
 import time
 import uuid
 from typing import Any
@@ -12,6 +13,7 @@ from gateway.api.deps import get_authenticator, get_connection_manager
 from gateway.config import Settings, get_settings
 from gateway.core.auth import ClientAuthenticator
 from gateway.core.connections import ConnectionManager
+from gateway.core.security import get_input_validator
 
 logger = structlog.get_logger()
 
@@ -72,6 +74,20 @@ async def websocket_endpoint(
     finally:
         if heartbeat_task:
             heartbeat_task.cancel()
+        # Ensure upstream subscriptions are cleaned up
+        try:
+            from gateway.api.deps import get_multiplexer
+
+            multiplexer = get_multiplexer()
+            await multiplexer.client_disconnect(connection_id)
+        except RuntimeError:
+            # Multiplexer not initialized
+            pass
+        except Exception as e:
+            logger.warning(
+                "multiplexer_disconnect_error", connection_id=connection_id, error=str(e)
+            )
+
         await connections.disconnect(connection_id)
 
 
@@ -191,9 +207,45 @@ async def _message_loop(
     """Handle messages after authentication."""
     while True:
         try:
-            message = await websocket.receive_json()
+            raw = await websocket.receive()
+            if raw.get("text") is not None:
+                raw_text = raw["text"]
+                max_bytes = get_settings().ws_max_message_size
+                if len(raw_text.encode("utf-8")) > max_bytes:
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "error_code": "GW-E8005",
+                            "message": "WebSocket message exceeds size limit",
+                        }
+                    )
+                    continue
+                message = json.loads(raw_text)
+            elif raw.get("bytes") is not None:
+                raw_bytes = raw["bytes"]
+                max_bytes = get_settings().ws_max_message_size
+                if len(raw_bytes) > max_bytes:
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "error_code": "GW-E8005",
+                            "message": "WebSocket message exceeds size limit",
+                        }
+                    )
+                    continue
+                message = json.loads(raw_bytes.decode("utf-8"))
+            else:
+                continue
         except WebSocketDisconnect:
             raise
+        except RuntimeError as e:
+            # Starlette raises RuntimeError after a disconnect frame is received.
+            # Treat it as a terminal disconnect so we don't spin indefinitely.
+            if "disconnect message has been received" in str(e):
+                logger.info("receive_after_disconnect", connection_id=connection_id)
+                break
+            logger.warning("receive_runtime_error", connection_id=connection_id, error=str(e))
+            continue
         except Exception as e:
             logger.warning("receive_error", connection_id=connection_id, error=str(e))
             continue
@@ -215,6 +267,7 @@ async def _handle_message(
     connections: ConnectionManager,
 ) -> dict[str, Any]:
     """Route and handle a message."""
+    validator = get_input_validator()
     action = message.get("action", "")
 
     if action == "heartbeat":
@@ -226,8 +279,75 @@ async def _handle_message(
 
     if action == "subscribe":
         provider = message.get("provider", "alpaca")
-        feed = message.get("feed", "stock_bars")
+        feeds = message.get("feeds")
+        if feeds is None:
+            feed = message.get("feed", "stock_bars")
+            feeds = [feed]
+        if not isinstance(feeds, list) or not feeds:
+            return {
+                "type": "error",
+                "error_code": "GW-E8001",
+                "message": "feeds must be a non-empty list",
+            }
+        feeds = list(dict.fromkeys(feeds))
+
         symbols = message.get("symbols", [])
+        if not isinstance(symbols, list):
+            return {
+                "type": "error",
+                "error_code": "GW-E8001",
+                "message": "symbols must be a list",
+            }
+
+        connection = connections.get(connection_id)
+        if not connection or not connection.client:
+            return {
+                "type": "error",
+                "error_code": "GW-E2001",
+                "message": "Not authenticated",
+            }
+
+        validation_error = validator.validate_symbols_array(
+            symbols, max_symbols=connection.client.permissions.max_symbols
+        )
+        if validation_error:
+            return {
+                "type": "error",
+                "error_code": validation_error.code,
+                "message": validation_error.message,
+            }
+
+        # Enforce provider permissions
+        if not _has_provider_permission(connection.client, provider):
+            return {
+                "type": "error",
+                "error_code": "GW-E2006",
+                "message": f"Provider access denied: {provider}",
+            }
+
+        # Enforce feed permissions
+        for feed in feeds:
+            required_feed = _normalize_feed_permission(feed)
+            if not _has_feed_permission(connection.client, required_feed):
+                return {
+                    "type": "error",
+                    "error_code": "GW-E2007",
+                    "message": f"Feed access denied: {required_feed}",
+                }
+
+        # Enforce total subscription limit
+        new_entries = {f"{feed}:{s}" for feed in feeds for s in symbols}
+        current = len(connection.subscriptions)
+        total_after = current + len(new_entries - connection.subscriptions)
+        if total_after > connection.client.permissions.ws_subscriptions_max:
+            return {
+                "type": "error",
+                "error_code": "GW-E8002",
+                "message": (
+                    f"Maximum {connection.client.permissions.ws_subscriptions_max} "
+                    "subscriptions allowed"
+                ),
+            }
 
         # Try to use multiplexer if available
         try:
@@ -235,38 +355,127 @@ async def _handle_message(
             from gateway.core.stream import AlpacaStreamType
 
             multiplexer = get_multiplexer()
-            stream_type = AlpacaStreamType.from_feed(feed)
+            responses = []
+            subscribed_feeds: list[str] = []
+            for feed in feeds:
+                stream_type = AlpacaStreamType.from_feed(feed)
 
-            # Map feed to subscription type
-            bars = symbols if "bars" in feed else None
-            quotes = symbols if "quotes" in feed else None
-            trades = symbols if "trades" in feed else None
+                # Map feed to subscription type
+                bars = symbols if "bars" in feed else None
+                quotes = symbols if "quotes" in feed else None
+                trades = symbols if "trades" in feed else None
+                news = symbols if "news" in feed else None
 
-            response = await multiplexer.client_subscribe(
-                client_id=connection_id,
-                stream_type=stream_type,
-                bars=bars,
-                quotes=quotes,
-                trades=trades,
-            )
-            response["provider"] = provider
-            response["feed"] = feed
-            return response
-        except RuntimeError:
-            # Multiplexer not initialized, return stub response
+                response = await multiplexer.client_subscribe(
+                    client_id=connection_id,
+                    stream_type=stream_type,
+                    bars=bars,
+                    quotes=quotes,
+                    trades=trades,
+                    news=news,
+                )
+                if response.get("status") == "error":
+                    # Roll back any prior subscriptions for this request
+                    for rollback_feed in subscribed_feeds:
+                        rollback_stream = AlpacaStreamType.from_feed(rollback_feed)
+                        rollback_bars = symbols if "bars" in rollback_feed else None
+                        rollback_quotes = symbols if "quotes" in rollback_feed else None
+                        rollback_trades = symbols if "trades" in rollback_feed else None
+                        rollback_news = symbols if "news" in rollback_feed else None
+                        await multiplexer.client_unsubscribe(
+                            client_id=connection_id,
+                            stream_type=rollback_stream,
+                            bars=rollback_bars,
+                            quotes=rollback_quotes,
+                            trades=rollback_trades,
+                            news=rollback_news,
+                        )
+                    return {
+                        "type": "subscription_ack",
+                        "status": "error",
+                        "provider": provider,
+                        "feeds": feeds,
+                        "error_code": response.get("error_code"),
+                        "message": response.get("message"),
+                    }
+
+                subscribed_feeds.append(feed)
+                responses.append(response)
+
+            subscribed: set[str] = set()
+            failed: list[str] = []
+            for response in responses:
+                subscribed.update(response.get("subscribed", []))
+                failed.extend(response.get("failed", []))
+
+            # Track subscriptions locally
+            connection.subscriptions.update({f"{feed}:{s}" for feed in feeds for s in symbols})
             return {
                 "type": "subscription_ack",
                 "status": "ok",
                 "provider": provider,
-                "feed": feed,
-                "subscribed": symbols,
+                "feeds": feeds,
+                "subscribed": sorted(subscribed),
+                "failed": failed,
+            }
+        except RuntimeError:
+            # Multiplexer not initialized, return stub response
+            connection.subscriptions.update({f"{feed}:{s}" for feed in feeds for s in symbols})
+            return {
+                "type": "subscription_ack",
+                "status": "ok",
+                "provider": provider,
+                "feeds": feeds,
+                "subscribed": sorted(set(symbols)),
                 "failed": [],
             }
 
     if action == "unsubscribe":
         provider = message.get("provider", "alpaca")
-        feed = message.get("feed", "stock_bars")
+        feeds = message.get("feeds")
+        if feeds is None:
+            feed = message.get("feed", "stock_bars")
+            feeds = [feed]
+        if not isinstance(feeds, list) or not feeds:
+            return {
+                "type": "error",
+                "error_code": "GW-E8001",
+                "message": "feeds must be a non-empty list",
+            }
+        feeds = list(dict.fromkeys(feeds))
         symbols = message.get("symbols", [])
+        if not isinstance(symbols, list):
+            return {
+                "type": "error",
+                "error_code": "GW-E8001",
+                "message": "symbols must be a list",
+            }
+        connection = connections.get(connection_id)
+        if not connection or not connection.client:
+            return {
+                "type": "error",
+                "error_code": "GW-E2001",
+                "message": "Not authenticated",
+            }
+
+        if symbols:
+            validation_error = validator.validate_symbols_array(
+                symbols, max_symbols=connection.client.permissions.max_symbols
+            )
+            if validation_error:
+                return {
+                    "type": "error",
+                    "error_code": validation_error.code,
+                    "message": validation_error.message,
+                }
+
+        # Enforce provider permissions
+        if not _has_provider_permission(connection.client, provider):
+            return {
+                "type": "error",
+                "error_code": "GW-E2006",
+                "message": f"Provider access denied: {provider}",
+            }
 
         # Try to use multiplexer if available
         try:
@@ -274,30 +483,45 @@ async def _handle_message(
             from gateway.core.stream import AlpacaStreamType
 
             multiplexer = get_multiplexer()
-            stream_type = AlpacaStreamType.from_feed(feed)
+            for feed in feeds:
+                stream_type = AlpacaStreamType.from_feed(feed)
 
-            bars = symbols if "bars" in feed else None
-            quotes = symbols if "quotes" in feed else None
-            trades = symbols if "trades" in feed else None
+                bars = symbols if "bars" in feed else None
+                quotes = symbols if "quotes" in feed else None
+                trades = symbols if "trades" in feed else None
+                news = symbols if "news" in feed else None
 
-            response = await multiplexer.client_unsubscribe(
-                client_id=connection_id,
-                stream_type=stream_type,
-                bars=bars,
-                quotes=quotes,
-                trades=trades,
-            )
-            response["provider"] = provider
-            response["feed"] = feed
-            return response
-        except RuntimeError:
-            # Multiplexer not initialized
+                await multiplexer.client_unsubscribe(
+                    client_id=connection_id,
+                    stream_type=stream_type,
+                    bars=bars,
+                    quotes=quotes,
+                    trades=trades,
+                    news=news,
+                )
+
+            # Track subscriptions locally
+            for feed in feeds:
+                for symbol in symbols:
+                    connection.subscriptions.discard(f"{feed}:{symbol}")
             return {
                 "type": "unsubscription_ack",
                 "status": "ok",
                 "provider": provider,
-                "feed": feed,
-                "unsubscribed": symbols,
+                "feeds": feeds,
+                "unsubscribed": sorted(set(symbols)),
+            }
+        except RuntimeError:
+            # Multiplexer not initialized
+            for feed in feeds:
+                for symbol in symbols:
+                    connection.subscriptions.discard(f"{feed}:{symbol}")
+            return {
+                "type": "unsubscription_ack",
+                "status": "ok",
+                "provider": provider,
+                "feeds": feeds,
+                "unsubscribed": sorted(set(symbols)),
             }
 
     if action == "status":
@@ -315,3 +539,39 @@ async def _handle_message(
         "error_code": "GW-E3001",
         "message": f"Unknown action: {action}",
     }
+
+
+def _has_provider_permission(client: Any, provider: str) -> bool:
+    allowed = set(client.permissions.providers or [])
+    if not allowed:
+        return True
+    provider = provider.lower()
+    if provider in allowed:
+        return True
+    if provider == "uw" and "unusual_whales" in allowed:
+        return True
+    if provider == "yf" and "yfinance" in allowed:
+        return True
+    return False
+
+
+def _normalize_feed_permission(feed: str) -> str:
+    f = (feed or "").lower()
+    if "option" in f:
+        return "options"
+    if "news" in f:
+        return "news"
+    if "bars" in f:
+        return "bars"
+    if "quotes" in f:
+        return "quotes"
+    if "trades" in f:
+        return "trades"
+    return f
+
+
+def _has_feed_permission(client: Any, required_feed: str) -> bool:
+    allowed = set(client.permissions.feeds or [])
+    if not allowed:
+        return True
+    return required_feed in allowed

@@ -23,6 +23,7 @@ All notable changes to this project will be documented in this file.
 - **Provider docs and PRD contract alignment (TD-032/TD-034)**: Updated API docs to reference generated route contract and added PRD reference to generated endpoint contract.
 - **Contract drift guard in CI**: Added CI step to enforce `python scripts/generate_provider_contract.py --check`.
 - **Integration auth fixture drift**: Centralized test API-key fixtures in `tests/conftest.py` and removed hardcoded keys from auth/integration/smoke tests to prevent `401` regressions when client keys change.
+- **WebSocket disconnect busy-loop**: Stopped `_message_loop` from spinning on post-disconnect `RuntimeError` by treating disconnect-runtime errors as terminal and exiting cleanly.
 
 ## [0.5.5] - 2026-02-04
 
