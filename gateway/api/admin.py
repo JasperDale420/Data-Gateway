@@ -1,5 +1,6 @@
 """Admin and status endpoints."""
 
+import logging
 from collections import deque
 from datetime import UTC, datetime, timedelta
 
@@ -47,6 +48,41 @@ def log_error(error_code: str, message: str, component: str = "gateway") -> None
     )
 
     _error_counts[error_code] = _error_counts.get(error_code, 0) + 1
+
+
+class ErrorBufferHandler(logging.Handler):
+    """Logging handler that records ERROR logs in the admin error buffer."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno < logging.ERROR:
+            return
+
+        event = record.__dict__.get("event")
+        error_code = record.__dict__.get("error_code") or record.__dict__.get("code")
+        if not error_code and isinstance(event, str) and event:
+            error_code = event
+
+        message = record.getMessage()
+        if not message and isinstance(record.msg, str):
+            message = record.msg
+
+        log_error(
+            error_code or "log_error",
+            message or "unknown error",
+            component=record.name,
+        )
+
+
+def attach_error_buffer_handler() -> None:
+    """Attach the error buffer handler to the root logger once."""
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        if isinstance(handler, ErrorBufferHandler):
+            return
+
+    handler = ErrorBufferHandler()
+    handler.setLevel(logging.ERROR)
+    root_logger.addHandler(handler)
 
 
 @router.get("/api/v1/status", response_model=SuccessResponse)

@@ -212,7 +212,7 @@ async def reconnect_with_backoff(self):
 |----------|-----------|-----------|
 | **Alpaca** | Historical bars, trades, quotes, snapshots, account | 1-60s depending on endpoint |
 | **Unusual Whales** | All SDK endpoints (flow, dark pool, institutions, etc.) | 30-300s |
-| **News API (EventRegistry)** | Articles, events, sentiment | 60s |
+| **News API (NewsAPI.org)** | Articles, events, sentiment | 60s |
 | **yfinance** | Tickers, fundamentals, financials, earnings, options chains | 300s |
 | **Alpha Vantage** | _Stub for future: fundamentals, earnings_ | 300s |
 | **Finnhub** | _Stub for future: insider trades, recommendations_ | 300s |
@@ -2143,6 +2143,10 @@ GET /api/v1/alpaca/stocks/AAPL/bars?timeframe=1Min&start=2026-01-14T09:30:00Z&li
 
 #### Unusual Whales Endpoints
 
+> [!IMPORTANT]
+> The authoritative provider endpoint contract is generated from live routes in `PROVIDER_ENDPOINT_CONTRACT.md`.
+> Regenerate with: `python scripts/generate_provider_contract.py`
+
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/uw/flow/{symbol}` | Options flow for ticker |
@@ -2180,7 +2184,7 @@ GET /api/v1/uw/flow/AAPL?limit=50&cursor=eyJsYXN0X...
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/news/articles` | Search news articles |
-| GET | `/news/articles/{id}` | Get specific article |
+| GET | `/news/articles/{id}` | Not supported by NewsAPI.org (returns 501) |
 | GET | `/news/sentiment/{symbol}` | Aggregated sentiment |
 
 **Query Parameters for `/news/articles`:**
@@ -2246,8 +2250,8 @@ GET /api/v1/yf/ticker/AAPL/options/2026-01-17
 | **Unusual Whales** | Flow, Dark Pool, Institutions | X-Gateway-Key | Cursor-based |
 | **News** | Articles, Sentiment | X-Gateway-Key | Cursor-based |
 | **yfinance** | Tickers, Fundamentals, Financials | X-Gateway-Key | — |
-| **Alpha Vantage** | _(stub)_ | X-Gateway-Key | — |
-| **Finnhub** | _(stub)_ | X-Gateway-Key | — |
+| **Alpha Vantage** | Time series, indicators, forex, economic | X-Gateway-Key | — |
+| **Finnhub** | Fundamentals, earnings, alternative data | X-Gateway-Key | — |
 
 ---
 
@@ -2265,7 +2269,7 @@ ALPACA_SECRET_KEY_2=xxxxx
 # Unusual Whales
 UW_API_KEY=xxxxx
 
-# News API (EventRegistry)
+# News API (NewsAPI.org)
 NEWS_API_KEY=xxxxx
 
 # Alpha Vantage (stub)
@@ -2321,7 +2325,7 @@ data-gateway/
 │   │   ├── base.py           # Provider abstract base
 │   │   ├── alpaca.py         # Alpaca REST + WS
 │   │   ├── uw.py             # Unusual Whales SDK wrapper
-│   │   ├── news.py           # EventRegistry client
+│   │   ├── news.py           # NewsAPI.org client
 │   │   ├── alphavantage.py   # Stub
 │   │   └── finnhub.py        # Stub
 │   │
@@ -2574,7 +2578,7 @@ class ProviderCapabilities:
 
 Providers are registered via configuration, not code:
 
-**providers.yaml:**
+**config/providers.yaml:**
 
 ```yaml
 providers:
@@ -2800,7 +2804,7 @@ class PolygonProvider(DataProvider):
 #### Step 2: Add to Configuration
 
 ```yaml
-# providers.yaml
+# config/providers.yaml
 providers:
   polygon:
     enabled: true
@@ -4345,7 +4349,7 @@ Incident commander engaged
 
 ### Phase 3: Additional Providers
 - [ ] Unusual Whales SDK integration
-- [ ] News API (EventRegistry) integration
+- [x] News API (NewsAPI.org) integration (partial)
 - [ ] Alpha Vantage stub
 - [ ] Finnhub stub
 

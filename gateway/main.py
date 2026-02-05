@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 # Configure stdlib logging for structlog integration
 logging.basicConfig(
@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from gateway import __version__
@@ -30,6 +30,9 @@ from gateway.api import (
     corporate_router,
     finnhub_router,
     health_router,
+    legacy_adjustments_router,
+    legacy_corporate_router,
+    legacy_symbology_router,
     news_router,
     quality_router,
     replay_router,
@@ -39,17 +42,21 @@ from gateway.api import (
     websocket_router,
     yf_router,
 )
+from gateway.api.admin import attach_error_buffer_handler
 from gateway.api.deps import get_connection_manager, set_multiplexer, set_registry
+from gateway.api.errors import gateway_http_exception_handler
 from gateway.api.metrics import router as metrics_router
 from gateway.api.middleware import (
     CacheMiddleware,
     EventEnvelopeMiddleware,
     GlobalRateLimitMiddleware,
+    InputValidationMiddleware,
     RateLimitMiddleware,
+    RequestMetricsMiddleware,
     SecurityHeadersMiddleware,
 )
 from gateway.config import get_settings
-from gateway.core.metrics import init_metrics
+from gateway.core.metrics import init_metrics, init_uptime, update_uptime
 from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import StreamMultiplexer
 
@@ -71,6 +78,7 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
+attach_error_buffer_handler()
 
 
 async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> None:
@@ -131,6 +139,17 @@ async def lifespan(app: FastAPI):
 
     # Initialize metrics
     init_metrics(version=__version__)
+    init_uptime()
+
+    async def _uptime_loop() -> None:
+        try:
+            while True:
+                update_uptime()
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+
+    uptime_task = asyncio.create_task(_uptime_loop())
 
     # Initialize provider registry
     registry = ProviderRegistry()
@@ -246,6 +265,9 @@ async def lifespan(app: FastAPI):
 
     # Shutdown remaining components
     await registry.shutdown()
+    uptime_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await uptime_task
     logger.info("gateway_shutdown_complete")
 
 
@@ -261,16 +283,22 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
     )
+    app.add_exception_handler(HTTPException, gateway_http_exception_handler)
 
     # Middleware (order matters: first added = outermost)
     # Security headers should be outermost (applied last, seen first by client)
     app.add_middleware(SecurityHeadersMiddleware)
+    # Request metrics should wrap the stack to capture end-to-end timing
+    app.add_middleware(RequestMetricsMiddleware)
+    # Input validation for request size/limits
+    app.add_middleware(InputValidationMiddleware)
     # EventEnvelope wraps responses LAST (outermost) so it sees final cached data
-    app.add_middleware(EventEnvelopeMiddleware)
+    app.add_middleware(EventEnvelopeMiddleware, max_body_bytes=settings.cache_max_body_bytes)
     app.add_middleware(
         CacheMiddleware,
         default_ttl=settings.cache_default_ttl,
         max_size=settings.cache_max_size,
+        max_body_bytes=settings.cache_max_body_bytes,
     )
     app.add_middleware(RateLimitMiddleware, default_limit=settings.rate_limit_default)
     # Global rate limit (PRD 7.5.1-2) before per-client limits
@@ -299,8 +327,11 @@ def create_app() -> FastAPI:
     app.include_router(replay_router)
     app.include_router(calendar_router)
     app.include_router(symbology_router)
+    app.include_router(legacy_symbology_router)
     app.include_router(corporate_router)
     app.include_router(adjustments_router)
+    app.include_router(legacy_corporate_router)
+    app.include_router(legacy_adjustments_router)
     app.include_router(quality_router)
     app.include_router(catalog_router)
 

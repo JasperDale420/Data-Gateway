@@ -89,7 +89,7 @@ Impact:
 
 ## Audit Outcome
 
-- New technical debt introduced in `AUDIT_TECHNICAL_DEBT.md`:
-  - `TD-032` provider API-reference drift
-  - `TD-033` provider error-shape inconsistency
-  - `TD-034` PRD under-specification for provider endpoint contracts
+- Debt items tracked in `AUDIT_TECHNICAL_DEBT.md` and resolved on 2026-02-05:
+  - `TD-032` provider API-reference drift: addressed by generated contract artifact (`PROVIDER_ENDPOINT_CONTRACT.md`) and API reference updates.
+  - `TD-033` provider error-shape inconsistency: addressed with global HTTPException normalization in `gateway/api/errors.py`.
+  - `TD-034` PRD under-specification: addressed by PRD references to generated endpoint contract.
