@@ -26,6 +26,10 @@ All notable changes to this project will be documented in this file.
   - Political/institutional: `insiders`, `institutions`, `politicians`
   - Analytics: `volatility`, `iv_rank`, `seasonality`, `max_pain`
 - **Extended event ID unique fields**: Added feed-specific unique field extraction for etf, shorts, screener, market_tide, insiders, institutions, politicians, analytics feeds
+- **Normalized schemas for alternative data**: Added three new schemas for UW alternative data feeds:
+  - `NormalizedInsiderTrade` - SEC Form 4 insider trading data
+  - `NormalizedInstitutionHolding` - 13F institutional holdings
+  - `NormalizedPoliticianTrade` - Congressional trade disclosures
 
 ### Refactored
 

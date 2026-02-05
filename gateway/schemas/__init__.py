@@ -162,6 +162,23 @@ class NormalizedMarketTide(BaseModel):
     net_put_premium: Decimal
     net_volume: int | None = None  # Net volume from UW (call - put)
     sentiment: str  # "bullish", "bearish", "neutral" (computed)
+    call_put_ratio: Decimal | None = None  # Computed: net_call_premium / net_put_premium
+    provider: str = "unusual_whales"
+
+
+class NormalizedSectorTide(BaseModel):
+    """Sector sentiment snapshot from UW sector/tide endpoint.
+
+    Per-sector GICS tide data with call/put premium breakdown.
+    """
+
+    timestamp: datetime
+    sector: str  # GICS sector name (e.g., "Technology", "Energy")
+    net_call_premium: Decimal
+    net_put_premium: Decimal
+    net_volume: int | None = None
+    sentiment: str  # "bullish", "bearish", "neutral"
+    call_put_ratio: Decimal | None = None  # Computed: net_call_premium / net_put_premium
     provider: str = "unusual_whales"
 
 
@@ -388,6 +405,67 @@ class NormalizedCorporateAction(BaseModel):
     amount: Decimal | None = None
     ratio: str | None = None  # For splits: "4:1", "2:1"
     provider: str
+
+
+# ─────────────────────────────────────────────────────────────────
+# Alternative Data: Insider, Institution, Politician Trades
+# ─────────────────────────────────────────────────────────────────
+
+
+class NormalizedInsiderTrade(BaseModel):
+    """Insider trade from SEC Form 4 filings (UW insiders endpoint)."""
+
+    symbol: str
+    transaction_date: datetime
+    filing_date: str  # YYYY-MM-DD
+    insider_name: str
+    insider_title: str | None = None  # CEO, CFO, Director, etc.
+    transaction_type: str  # "buy", "sell", "grant", "exercise"
+    shares: int
+    price: Decimal | None = None  # Price per share
+    value: Decimal | None = None  # Total transaction value
+    shares_owned: int | None = None  # Shares owned after transaction
+    is_10b5_1: bool = False  # 10b5-1 plan transaction
+    transaction_id: str | None = None  # Unique ID for dedup
+    provider: str = "unusual_whales"
+
+
+class NormalizedInstitutionHolding(BaseModel):
+    """Institutional holding from 13F filings (UW institutions endpoint)."""
+
+    symbol: str
+    institution_id: str
+    institution_name: str
+    filing_date: str  # YYYY-MM-DD
+    report_date: str | None = None  # Quarter end date
+    shares: int
+    market_value: Decimal | None = None
+    percent_portfolio: Decimal | None = None  # % of institution portfolio
+    percent_outstanding: Decimal | None = None  # % of shares outstanding
+    change_shares: int | None = None  # Change from previous filing
+    change_type: str | None = None  # "new", "increased", "decreased", "sold_all"
+    provider: str = "unusual_whales"
+
+
+class NormalizedPoliticianTrade(BaseModel):
+    """Congressional trade disclosure (UW politicians endpoint)."""
+
+    symbol: str
+    transaction_date: datetime
+    filing_date: str  # YYYY-MM-DD
+    politician_id: str
+    politician_name: str
+    chamber: str | None = None  # "senate", "house"
+    party: str | None = None  # "D", "R", "I"
+    state: str | None = None  # State abbreviation
+    transaction_type: str  # "buy", "sell"
+    amount_range: str | None = None  # "$1,001 - $15,000", etc.
+    asset_type: str | None = None  # "stock", "option", "bond"
+    description: str | None = None  # Asset description
+    owner: str | None = None  # "self", "spouse", "child", "joint"
+    cap_gains_over_200: bool | None = None  # Capital gains indicator
+    transaction_id: str | None = None  # Unique ID for dedup
+    provider: str = "unusual_whales"
 
 
 # ─────────────────────────────────────────────────────────────────
