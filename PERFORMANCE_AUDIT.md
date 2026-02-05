@@ -218,12 +218,14 @@ Legend:
 | `gateway/core/uw_poller.py` | 1 | COMPLETE | Polling and dedupe/publish loops audited |
 | `gateway/core/envelope.py` | 1 | COMPLETE | Envelope serialization path audited |
 | `gateway/api/websocket.py` | 1 | COMPLETE | Message loop + subscription path audited |
-| Providers (`alpaca`, `finnhub`, `alphavantage`, `sec`, `news`, `yfinance`) | 7 | PARTIAL | High-traffic methods audited; not every endpoint method line-by-line |
+| Providers (`alpaca`, `finnhub`, `alphavantage`, `sec`, `news`) | 5 | PARTIAL | High-traffic methods audited; not every endpoint method line-by-line |
 | Provider `gateway/providers/uw.py` | 1 (4672 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
+| Provider `gateway/providers/yfinance.py` | 1 (386 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` |
 | API routers `gateway/api/alpaca/*`, `gateway/api/finnhub/*`, `gateway/api/catalog.py`, `gateway/api/health.py`, `gateway/api/admin.py` | 17 sampled | PARTIAL | Common patterns audited; full route-by-route perf pass still pending |
 | API routers `gateway/api/uw/*` | 26 (125 endpoints) | COMPLETE | Full route-level UW audit complete; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
 | API routers `gateway/api/alphavantage/*` | 9 (30 endpoints) | COMPLETE | Full route-level Alpha Vantage audit complete; see `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` |
-| API routers `gateway/api/sec.py`, `gateway/api/yf.py`, others | remaining | PENDING | Needs dedicated endpoint-level perf pass |
+| API router `gateway/api/yf.py` | 1 (16 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` |
+| API routers `gateway/api/sec.py`, others | remaining | PENDING | Needs dedicated endpoint-level perf pass |
 | `gateway/core/security.py`, `gateway/core/quality.py`, `gateway/core/calendar.py`, `gateway/core/symbology.py`, `gateway/core/validator.py` | 5 sampled via patterns | PARTIAL | Not deeply profiled for computational hotspots |
 | Tests (`tests/`) | sampled | PARTIAL | Perf-oriented tests exist; no full perf harness yet |
 | `scripts/` | 2 | PENDING | Runtime scripts not performance-profiled |
@@ -232,9 +234,10 @@ Legend:
 
 1. Implement UW Wave 1 optimizations from `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` (shared route helper, serializer/accessor dedupe, pagination guardrails).
 2. Implement Alpha Vantage Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` (cache-before-provider, helper consolidation, serialization normalization).
-3. Full router audit for `gateway/api/yf.py`.
-4. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream fanout.
-5. Validate memory growth scenarios for bulk/replay with synthetic large datasets.
+3. Implement yfinance Wave 1 optimizations from `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` (cache-before-provider, route helper consolidation, health-check offload).
+4. Full router audit for `gateway/api/sec.py`.
+5. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream fanout.
+6. Validate memory growth scenarios for bulk/replay with synthetic large datasets.
 
 ## Notes
 
