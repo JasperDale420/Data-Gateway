@@ -402,3 +402,29 @@ Recommendation: Add an authoritative endpoint contract section (or reference gen
 - `f65d5b0`: stabilized auth/integration test fixtures to avoid key-drift regressions.
 - `32b10e3`: fixed WebSocket post-disconnect receive spin loop and added websocket integration coverage.
 - `6077c9f`: mixed-scope bundled commit across API/core/providers/config/test removals; detailed map is documented in `COMMIT_6077c9f_BREAKDOWN.md`.
+
+## Release Readiness (2026-02-05)
+
+### Static Debt Status
+
+- Static technical-debt pass is complete for the current remediation wave (`TD-001` through `TD-034` marked fixed in this audit).
+- Provider contract drift enforcement is active in CI (`python scripts/generate_provider_contract.py --check`).
+- Pre-commit pipeline is currently green end-to-end across lint/type/security/format hooks.
+
+### Runtime Validation Status
+
+- Focused regression suite: `41` tests passed
+  - `tests/test_auth.py`
+  - `tests/test_api_integration.py`
+  - `tests/smoke/test_smoke.py`
+  - `tests/test_websocket.py`
+- Live provider smoke run executed via `scripts/live_provider_smoke.py` and captured in `LIVE_PROVIDER_SMOKE_REPORT.md`.
+  - Alpaca: health `ok`, sample `ok`
+  - Finnhub: health `ok`, sample `ok`
+  - Alpha Vantage: health `ok`, sample `empty` (investigate payload availability/rate behavior)
+  - Unusual Whales: health `ok`, sample `ok`
+  - SEC: health `ok`, sample `ok`
+
+### Release Gate Recommendation
+
+- Safe to proceed to release candidate after reviewing Alpha Vantage `empty` sample behavior and confirming whether this is expected for current account tier/quotas.
