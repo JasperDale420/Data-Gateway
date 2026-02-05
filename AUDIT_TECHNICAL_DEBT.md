@@ -394,3 +394,11 @@ Recommendation: Add an authoritative endpoint contract section (or reference gen
   - `/metrics` authenticated
   - `/health/*` public
 - Resolved (2026-02-05): Legacy `gateway/providers/alpaca_stream*.py` stack is retired and removed.
+
+## Commit Traceability (2026-02-05)
+
+- `a4313c5`: standardized API error contract and introduced generated provider endpoint contract workflow.
+- `2243f1c`: added CI guard to enforce provider endpoint contract freshness.
+- `f65d5b0`: stabilized auth/integration test fixtures to avoid key-drift regressions.
+- `32b10e3`: fixed WebSocket post-disconnect receive spin loop and added websocket integration coverage.
+- `6077c9f`: mixed-scope bundled commit across API/core/providers/config/test removals; detailed map is documented in `COMMIT_6077c9f_BREAKDOWN.md`.
