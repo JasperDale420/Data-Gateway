@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.5] - 2026-02-04
+
+### Fixed
+
+- **Mypy error in AlpacaProvider**: Fixed `exercise_options_position` return type handling - SDK method returns `None`, code now correctly ignores void return instead of calling `_model_to_dict` on it
+- **Import sorting in uw_poller.py**: Fixed ruff I001 import block formatting
+- **Type parameter style in yf.py**: Migrated from `TypeVar("T")` to PEP 695 type parameter syntax (`async def _dedupe[T](...)`)
+
+---
+
 ## [0.5.4] - 2026-01-29
 
 ### Fixed

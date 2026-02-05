@@ -16,6 +16,8 @@ from zoneinfo import ZoneInfo
 
 import structlog
 
+from gateway.config import get_settings
+from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
 
@@ -72,6 +74,7 @@ class UWPoller:
         market_tide_enabled: bool = True,
         sector_tide_enabled: bool = True,
     ):
+        settings = get_settings()
         self.poll_interval = poll_interval_seconds
         self.flow_enabled = flow_enabled
         self.darkpool_enabled = darkpool_enabled
@@ -86,6 +89,12 @@ class UWPoller:
         # Keep IDs for last 2 hours to handle polling overlap
         self._seen_ids: dict[str, datetime] = {}
         self._cache_ttl_seconds = 7200  # 2 hours
+        self._redis_dedupe: RedisCache | None = None
+        if settings.cache_redis_enabled and settings.cache_redis_url:
+            self._redis_dedupe = RedisCache(
+                redis_url=settings.cache_redis_url,
+                default_ttl=self._cache_ttl_seconds,
+            )
 
         # Flow tracks its own interval (every 5 minutes)
         self._last_flow_poll: datetime | None = None
@@ -288,12 +297,24 @@ class UWPoller:
                 )
 
                 event_id = envelope.get("event_id", "")
-                if self._is_duplicate(event_id):
-                    duplicates += 1
-                    continue
+                if not event_id:
+                    logger.warning("uw_flow_missing_event_id")
+                else:
+                    if self._is_duplicate(event_id):
+                        duplicates += 1
+                        continue
+                    if self._redis_dedupe is not None:
+                        cache_key = f"uw:flow:{event_id}"
+                        cached = await self._redis_dedupe.get(cache_key)
+                        if cached is not None:
+                            duplicates += 1
+                            continue
 
                 await sink_registry.publish_all(HEBER_STREAM, envelope)
-                self._mark_seen(event_id)
+                if event_id:
+                    self._mark_seen(event_id)
+                    if self._redis_dedupe is not None:
+                        await self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
                 published += 1
 
             logger.info(
@@ -322,12 +343,24 @@ class UWPoller:
                 )
 
                 event_id = envelope.get("event_id", "")
-                if self._is_duplicate(event_id):
-                    duplicates += 1
-                    continue
+                if not event_id:
+                    logger.warning("uw_darkpool_missing_event_id")
+                else:
+                    if self._is_duplicate(event_id):
+                        duplicates += 1
+                        continue
+                    if self._redis_dedupe is not None:
+                        cache_key = f"uw:darkpool:{event_id}"
+                        cached = await self._redis_dedupe.get(cache_key)
+                        if cached is not None:
+                            duplicates += 1
+                            continue
 
                 await sink_registry.publish_all(HEBER_STREAM, envelope)
-                self._mark_seen(event_id)
+                if event_id:
+                    self._mark_seen(event_id)
+                    if self._redis_dedupe is not None:
+                        await self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
                 published += 1
 
             logger.info(
@@ -365,12 +398,24 @@ class UWPoller:
                 )
 
                 event_id = envelope.get("event_id", "")
-                if self._is_duplicate(event_id):
-                    duplicates += 1
-                    continue
+                if not event_id:
+                    logger.warning("uw_market_tide_missing_event_id")
+                else:
+                    if self._is_duplicate(event_id):
+                        duplicates += 1
+                        continue
+                    if self._redis_dedupe is not None:
+                        cache_key = f"uw:market_tide:{event_id}"
+                        cached = await self._redis_dedupe.get(cache_key)
+                        if cached is not None:
+                            duplicates += 1
+                            continue
 
                 await sink_registry.publish_all(HEBER_STREAM, envelope)
-                self._mark_seen(event_id)
+                if event_id:
+                    self._mark_seen(event_id)
+                    if self._redis_dedupe is not None:
+                        await self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
                 published += 1
 
             if published or duplicates:
@@ -410,12 +455,26 @@ class UWPoller:
                     )
 
                     event_id = envelope.get("event_id", "")
-                    if self._is_duplicate(event_id):
-                        total_duplicates += 1
-                        continue
+                    if not event_id:
+                        logger.warning("uw_sector_tide_missing_event_id")
+                    else:
+                        if self._is_duplicate(event_id):
+                            total_duplicates += 1
+                            continue
+                        if self._redis_dedupe is not None:
+                            cache_key = f"uw:sector_tide:{event_id}"
+                            cached = await self._redis_dedupe.get(cache_key)
+                            if cached is not None:
+                                total_duplicates += 1
+                                continue
 
                     await sink_registry.publish_all(HEBER_STREAM, envelope)
-                    self._mark_seen(event_id)
+                    if event_id:
+                        self._mark_seen(event_id)
+                        if self._redis_dedupe is not None:
+                            await self._redis_dedupe.set(
+                                cache_key, True, ttl=self._cache_ttl_seconds
+                            )
                     total_published += 1
 
                 sectors_polled += 1

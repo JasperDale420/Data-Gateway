@@ -1762,11 +1762,10 @@ class AlpacaProvider(DataProvider):
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
         try:
-            # The Alpaca SDK uses exercise_options_position method
-            result = self._trading_client.exercise_options_position(symbol_or_contract_id)
-            data = self._model_to_dict(result) if result else {"status": "exercised"}
+            # The Alpaca SDK exercise_options_position returns None (void)
+            self._trading_client.exercise_options_position(symbol_or_contract_id)
             logger.info("alpaca_option_exercised", symbol=symbol_or_contract_id)
-            return data
+            return {"status": "exercised", "symbol": symbol_or_contract_id}
         except APIError as e:
             logger.error(
                 "alpaca_option_exercise_error",

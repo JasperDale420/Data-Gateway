@@ -1,7 +1,6 @@
 """yfinance API endpoints for fundamentals and financials."""
 
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,8 +19,6 @@ router = APIRouter(prefix="/api/v1/yf", tags=["yfinance"])
 PROVIDER_NOT_AVAILABLE = "yfinance provider not available"
 CACHE_TTL = 300  # 5 minutes per PRD
 
-T = TypeVar("T")
-
 
 def _cache_key(prefix: str, symbol: str, *args) -> str:
     """Generate cache key for yfinance data."""
@@ -29,7 +26,7 @@ def _cache_key(prefix: str, symbol: str, *args) -> str:
     return ":".join(parts)
 
 
-async def _dedupe(cache_key: str, fetcher: Callable[[], Awaitable[T]]) -> T:
+async def _dedupe[T](cache_key: str, fetcher: Callable[[], Awaitable[T]]) -> T:
     """Deduplicate in-flight provider calls by cache key."""
     return await get_deduplicator().dedupe(cache_key, fetcher)
 
