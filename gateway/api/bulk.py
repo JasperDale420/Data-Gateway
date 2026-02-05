@@ -166,7 +166,7 @@ async def create_bulk_bars_job(
     manager = get_bulk_manager()
     settings = get_settings()
 
-    provider = registry.get("alpaca")
+    provider: Any = registry.get("alpaca")
     if provider:
 
         async def _fetch_bars(
@@ -400,7 +400,7 @@ async def create_bulk_options_job(
     manager = get_bulk_manager()
     settings = get_settings()
 
-    provider = registry.get("alpaca")
+    provider: Any = registry.get("alpaca")
     if not provider:
         if settings.allow_stub_data:
             # Allow stub behavior if explicitly enabled

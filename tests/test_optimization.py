@@ -1,16 +1,15 @@
-import pytest
 import time
-import json
-from datetime import datetime, UTC
-from fastapi import FastAPI, Request
+
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from starlette.middleware.base import BaseHTTPMiddleware
-from gateway.core.envelope import EventEnvelope, wrap_event
+
 from gateway.api.middleware import CacheMiddleware
+from gateway.core.envelope import wrap_event
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 1: EventEnvelope Serialization Optimization
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_wrap_event_serialization_optimization():
     """Verify that wrap_event correctly handles large payloads efficiently."""
@@ -44,9 +43,11 @@ def test_wrap_event_serialization_optimization():
     print(f"Serialization took: {duration:.4f}s")
     assert duration < 0.2  # Generous upper bound
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 2: CacheMiddleware Header Preservation
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_cache_middleware_header_preservation():
     """Verify that CacheMiddleware preserves headers on cache hits."""
@@ -60,9 +61,13 @@ def test_cache_middleware_header_preservation():
     @app.get("/test-headers")
     def test_headers():
         from fastapi.responses import JSONResponse
+
         return JSONResponse(
             content={"data": "test"},
-            headers={"X-Custom-Header": "Preserved", "Strict-Transport-Security": "max-age=31536000"}
+            headers={
+                "X-Custom-Header": "Preserved",
+                "Strict-Transport-Security": "max-age=31536000",
+            },
         )
 
     client = TestClient(app)

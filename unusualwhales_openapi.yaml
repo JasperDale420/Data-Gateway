@@ -901,7 +901,7 @@ components:
       default: true
       description: Boolean flag whether a transaction is from the floor.
       example: true
-      title: DynLimitAbhlrzfwhsdhpyyujtywmseqmlsoynmnmchepgneafwrpbbauve
+      title: DynLimitAbhlrzfwhsdhpyyujtywmseqmlsoynmnmchepgneafwrpbbauve # pragma: allowlist secret
       type: boolean
     DynLimitAbnfisajqvcvstddiyvxcelbssqnvudgwglxanzttojoabkhngs:
       description: >-
@@ -909,7 +909,7 @@ components:
         Min: 0.
       example: 125
       minimum: 0
-      title: DynLimitAbnfisajqvcvstddiyvxcelbssqnvudgwglxanzttojoabkhngs
+      title: DynLimitAbnfisajqvcvstddiyvxcelbssqnvudgwglxanzttojoabkhngs # pragma: allowlist secret
       type: integer
     DynLimitAkenglpdtxhfpyutbngmtupkgutaskomoqffcrrhcoojngukdao:
       description: >-
@@ -931,7 +931,7 @@ components:
       default: true
       description: Boolean flag whether a transaction is bid side.
       example: true
-      title: DynLimitAkothsodcdwmjuwebgmikylayircpnkmrtfbbfvnhpbkgrfvguh
+      title: DynLimitAkothsodcdwmjuwebgmikylayircpnkmrtfbbfvnhpbkgrfvguh # pragma: allowlist secret
       type: boolean
     DynLimitAkqsnauqnratoeidhfrvatprluzdcizncwsbfctdxwxdskndizv:
       description: >-
@@ -939,7 +939,7 @@ components:
         alert. Min: 0.
       example: 125
       minimum: 0
-      title: DynLimitAkqsnauqnratoeidhfrvatprluzdcizncwsbfctdxwxdskndizv
+      title: DynLimitAkqsnauqnratoeidhfrvatprluzdcizncwsbfctdxwxdskndizv # pragma: allowlist secret
       type: integer
     DynLimitAqeloyaisuqkxqogbselexxfiawdzpaualjyvvjmsbnmhwnfcbu:
       description: >-
@@ -947,13 +947,13 @@ components:
         Min: 0.
       example: 125
       minimum: 0
-      title: DynLimitAqeloyaisuqkxqogbselexxfiawdzpaualjyvvjmsbnmhwnfcbu
+      title: DynLimitAqeloyaisuqkxqogbselexxfiawdzpaualjyvvjmsbnmhwnfcbu # pragma: allowlist secret
       type: integer
     DynLimitAqgjleakgmnecsnozqxbbhykdjqsjeieowpzcronsgokhsajrjd:
       default: true
       description: Boolean flag whether a transaction is ask side.
       example: true
-      title: DynLimitAqgjleakgmnecsnozqxbbhykdjqsjeieowpzcronsgokhsajrjd
+      title: DynLimitAqgjleakgmnecsnozqxbbhykdjqsjeieowpzcronsgokhsajrjd # pragma: allowlist secret
       type: boolean
     DynLimitAskfqmilufrrfkqjonuppaquwqawphhqlutyraikkjgyophiuqe:
       description: 'The minimum premium on that alert. Min: 0.'
@@ -965,7 +965,7 @@ components:
       description: 'The maximum premium on that alert. Min: 0.'
       example: 12500.5
       minimum: 0
-      title: DynLimitAtpdauobevqhudhundjzxhbtrizwxxxfunqmygsduxfjrylduof
+      title: DynLimitAtpdauobevqhudhundjzxhbtrizwxxxfunqmygsduxfjrylduof # pragma: allowlist secret
       type: integer
     DynLimitAuyqgttddmtojbsozsmbyffxertotsslcjkwubwkqfilirpsmoy:
       description: >-
@@ -979,7 +979,7 @@ components:
       default: true
       description: Boolean flag whether a transaction is a intermarket sweep.
       example: true
-      title: DynLimitAuzznaywotgzjqlyuhepbywgpafvyqgesaydrmmfcfpsvesvrmw
+      title: DynLimitAuzznaywotgzjqlyuhepbywgpafvyqgesaydrmmfcfpsvesvrmw # pragma: allowlist secret
       type: boolean
     DynLimitAvhoggcefivtenogonxnqjiclyzpwevpwogcmrdrvfoxpwvzzed:
       default: true

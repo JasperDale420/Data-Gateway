@@ -165,7 +165,6 @@ async def get_session_status(
 ) -> ReplaySessionStatusResponse:
     """Get status of a replay session."""
     manager = get_replay_manager()
-    settings = get_settings()
     session = manager.get_session(session_id)
 
     if not session or session.client_id != client.id:

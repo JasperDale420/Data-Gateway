@@ -613,16 +613,21 @@ class BulkJobManager:
                         )
                         return None
 
-            tasks = {asyncio.create_task(_fetch_underlying(u)): u for u in request.underlyings}
+            async def _fetch_underlying_with_key(underlying: str) -> tuple[str, list[Any] | None]:
+                return underlying, await _fetch_underlying(underlying)
+
+            tasks = [
+                asyncio.create_task(_fetch_underlying_with_key(underlying))
+                for underlying in request.underlyings
+            ]
             for task in asyncio.as_completed(tasks):
-                underlying = tasks[task]
                 try:
-                    contracts = await task
+                    underlying, contracts = await task
                 except Exception as e:
                     logger.warning(
                         "bulk_options_task_failed",
                         job_id=job.job_id,
-                        underlying=underlying,
+                        underlying="unknown",
                         error=str(e),
                     )
                     contracts = None
@@ -776,16 +781,22 @@ class BulkJobManager:
                         )
                         return None
 
-            tasks = {asyncio.create_task(_fetch_symbol(s)): s for s in request.symbols}
+            async def _fetch_symbol_with_key(
+                symbol: str,
+            ) -> tuple[str, list[dict[str, Any]] | None]:
+                return symbol, await _fetch_symbol(symbol)
+
+            tasks = [
+                asyncio.create_task(_fetch_symbol_with_key(symbol)) for symbol in request.symbols
+            ]
             for task in asyncio.as_completed(tasks):
-                symbol = tasks[task]
                 try:
-                    factors = await task
+                    symbol, factors = await task
                 except Exception as e:
                     logger.warning(
                         "bulk_adjustments_task_failed",
                         job_id=job.job_id,
-                        symbol=symbol,
+                        symbol="unknown",
                         error=str(e),
                     )
                     factors = None

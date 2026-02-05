@@ -102,7 +102,7 @@ async def get_market_hours(
         )
 
     calendar = get_trading_calendar()
-    provider = registry.get("alpaca")
+    provider: Any = registry.get("alpaca")
 
     if provider:
         try:
@@ -193,7 +193,7 @@ async def get_trading_days(
         raise HTTPException(status_code=400, detail="Date range cannot exceed 1 year")
 
     calendar = get_trading_calendar()
-    provider = registry.get("alpaca")
+    provider: Any = registry.get("alpaca")
 
     if provider:
         try:
@@ -292,7 +292,7 @@ async def get_earnings(
         raise HTTPException(status_code=400, detail="Maximum 100 symbols allowed")
 
     earnings_calendar = get_earnings_calendar()
-    provider = registry.get("finnhub")
+    provider: Any = registry.get("finnhub")
     if provider:
 
         async def _fetch_earnings(

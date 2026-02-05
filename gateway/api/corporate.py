@@ -6,6 +6,7 @@ as specified in PRD (lines 1126-1204).
 
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -58,7 +59,7 @@ def _parse_date(value: str | None) -> date | None:
 def _parse_ratio(value: str | int | float | Decimal | None) -> float | None:
     if value is None:
         return None
-    if isinstance(value, (int, float, Decimal)):
+    if isinstance(value, int | float | Decimal):
         try:
             return float(value)
         except (TypeError, ValueError):
@@ -84,7 +85,7 @@ def _configure_corporate_fetcher(
     registry: ProviderRegistry,
 ) -> None:
     service = get_corporate_actions_service()
-    provider = registry.get("alpaca")
+    provider: Any = registry.get("alpaca")
     if provider:
         type_map = {
             ActionType.DIVIDEND: "dividends",
