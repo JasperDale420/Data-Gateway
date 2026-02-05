@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
   - `main.py` now passes `cache_max_body_bytes` into `EventEnvelopeMiddleware` so both cache and envelope logic use the same body-size guard.
 - **Middleware regression coverage**:
   - Added tests validating bypass behavior for streaming/large payloads and preserving envelope wrapping for small JSON payloads.
+- **Calendar trading-day loop syntax**: Fixed indentation in `TradingCalendar.get_trading_days()` that prevented module import and blocked test execution.
 
 ## [0.5.5] - 2026-02-04
 
