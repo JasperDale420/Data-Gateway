@@ -16,6 +16,10 @@ All notable changes to this project will be documented in this file.
 - **Prometheus metrics for data pipeline**:
   - `gateway_envelopes_created_total{provider, feed}` - tracks EventEnvelope creation rate by provider and feed
   - `gateway_sink_publish_total{sink, topic, status}` - tracks data sink publish operations with success/error status
+- **Publish deduplication gate**: Added Redis-based deduplication in `DataSinkRegistry.publish_all()` to prevent duplicate events in Heber Bronze layer
+  - Checks `dedup:publish:{event_id}` before publishing; skips if already sent
+  - 24h TTL on dedup keys; fail-open on cache errors
+  - ~1-2ms latency per event for data integrity
 
 ---
 

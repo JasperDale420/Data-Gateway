@@ -53,12 +53,29 @@ class DataSinkRegistry:
     """Registry for managing multiple data sinks.
 
     Publishes to all registered sinks in parallel (fire-and-forget).
+    Includes optional Redis-based deduplication to prevent duplicate events.
     """
 
-    def __init__(self) -> None:
+    # Dedup cache TTL: 24 hours (events older than this are assumed unique)
+    DEDUP_TTL_SECONDS = 86400
+
+    def __init__(self, dedup_cache: Any | None = None) -> None:
+        """Initialize registry.
+
+        Args:
+            dedup_cache: Optional Redis cache for deduplication.
+                         If provided, duplicate events (same event_id) will be skipped.
+        """
         self._sinks: list[DataSink] = []
         self._enabled = True
         self._background_tasks: set[asyncio.Task] = set()  # Prevent GC
+        self._dedup_cache = dedup_cache
+        self._dedup_stats = {"checked": 0, "deduplicated": 0}
+
+    def set_dedup_cache(self, cache: Any) -> None:
+        """Set dedup cache after initialization (for lazy setup)."""
+        self._dedup_cache = cache
+        logger.info("data_sink_dedup_enabled")
 
     def register(self, sink: DataSink) -> None:
         """Register a data sink."""
@@ -78,13 +95,44 @@ class DataSinkRegistry:
         """Return number of registered sinks."""
         return len(self._sinks)
 
+    def get_dedup_stats(self) -> dict[str, int]:
+        """Return deduplication statistics."""
+        return self._dedup_stats.copy()
+
     async def publish_all(self, topic: str, data: dict[str, Any]) -> None:
         """Publish to all registered sinks (non-blocking).
 
         Uses fire-and-forget pattern to avoid blocking the caller.
+        If dedup cache is configured, checks event_id before publishing.
         """
         if not self._enabled or not self._sinks:
             return
+
+        # Dedup check: skip if event_id already published
+        event_id = data.get("event_id")
+        if event_id and self._dedup_cache:
+            self._dedup_stats["checked"] += 1
+            cache_key = f"dedup:publish:{event_id}"
+            try:
+                cached = await self._dedup_cache.get(cache_key)
+                if cached is not None:
+                    self._dedup_stats["deduplicated"] += 1
+                    logger.debug(
+                        "publish_deduplicated",
+                        event_id=event_id,
+                        topic=topic,
+                    )
+                    return  # Skip duplicate
+
+                # Mark as published
+                await self._dedup_cache.set(cache_key, "1", ttl=self.DEDUP_TTL_SECONDS)
+            except Exception as e:
+                # On cache error, proceed with publish (fail open)
+                logger.warning(
+                    "dedup_cache_error",
+                    event_id=event_id,
+                    error=str(e),
+                )
 
         for sink in self._sinks:
             task = asyncio.create_task(self._safe_publish(sink, topic, data))

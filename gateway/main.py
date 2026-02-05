@@ -157,6 +157,7 @@ async def lifespan(app: FastAPI):
     sink_registry = None
     if settings.data_sink_enabled and settings.data_sink_redis_url:
         from gateway.api.deps import set_sink_registry
+        from gateway.core.cache import RedisCache
         from gateway.core.data_sink import DataSinkRegistry
         from gateway.core.redis_sink import RedisStreamsSink
 
@@ -166,8 +167,16 @@ async def lifespan(app: FastAPI):
             max_len=settings.data_sink_max_stream_len,
         )
         sink_registry.register(redis_sink)
+
+        # Enable dedup cache to prevent duplicate events in Heber
+        dedup_cache = RedisCache(
+            redis_url=settings.data_sink_redis_url,
+            default_ttl=86400,  # 24h TTL for dedup keys
+        )
+        sink_registry.set_dedup_cache(dedup_cache)
+
         set_sink_registry(sink_registry)
-        logger.info("data_sink_initialized", sink="redis_streams")
+        logger.info("data_sink_initialized", sink="redis_streams", dedup_enabled=True)
     elif settings.data_sink_enabled:
         logger.warning("data_sink_skipped", reason="Missing GATEWAY_DATA_SINK_REDIS_URL")
 
