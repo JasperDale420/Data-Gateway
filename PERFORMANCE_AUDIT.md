@@ -222,7 +222,8 @@ Legend:
 | Provider `gateway/providers/uw.py` | 1 (4672 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
 | API routers `gateway/api/alpaca/*`, `gateway/api/finnhub/*`, `gateway/api/catalog.py`, `gateway/api/health.py`, `gateway/api/admin.py` | 17 sampled | PARTIAL | Common patterns audited; full route-by-route perf pass still pending |
 | API routers `gateway/api/uw/*` | 26 (125 endpoints) | COMPLETE | Full route-level UW audit complete; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
-| API routers `gateway/api/alphavantage/*`, `gateway/api/sec.py`, `gateway/api/yf.py`, others | remaining | PENDING | Needs dedicated endpoint-level perf pass |
+| API routers `gateway/api/alphavantage/*` | 9 (30 endpoints) | COMPLETE | Full route-level Alpha Vantage audit complete; see `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` |
+| API routers `gateway/api/sec.py`, `gateway/api/yf.py`, others | remaining | PENDING | Needs dedicated endpoint-level perf pass |
 | `gateway/core/security.py`, `gateway/core/quality.py`, `gateway/core/calendar.py`, `gateway/core/symbology.py`, `gateway/core/validator.py` | 5 sampled via patterns | PARTIAL | Not deeply profiled for computational hotspots |
 | Tests (`tests/`) | sampled | PARTIAL | Perf-oriented tests exist; no full perf harness yet |
 | `scripts/` | 2 | PENDING | Runtime scripts not performance-profiled |
@@ -230,9 +231,10 @@ Legend:
 ## Next-Run Audit Plan (Targeted)
 
 1. Implement UW Wave 1 optimizations from `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` (shared route helper, serializer/accessor dedupe, pagination guardrails).
-2. Full router audit for `gateway/api/alphavantage/*` and `gateway/api/yf.py`.
-3. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream fanout.
-4. Validate memory growth scenarios for bulk/replay with synthetic large datasets.
+2. Implement Alpha Vantage Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` (cache-before-provider, helper consolidation, serialization normalization).
+3. Full router audit for `gateway/api/yf.py`.
+4. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream fanout.
+5. Validate memory growth scenarios for bulk/replay with synthetic large datasets.
 
 ## Notes
 
