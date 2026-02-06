@@ -4,15 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
     CACHE_TTL_FUNDAMENTALS,
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
+    execute_av_cached,
     get_cache,
     get_registry,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.schemas import SuccessResponse
 
@@ -28,29 +27,20 @@ async def get_earnings_calendar(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get upcoming earnings calendar."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     symbol_key = symbol.upper() if symbol else "all"
     key = cache_key("av:earnings-calendar", symbol_key, horizon)
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        data = await provider.get_earnings_calendar(symbol=symbol, horizon=horizon)
-        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(data), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=CACHE_TTL_FUNDAMENTALS,
+            fetcher=lambda provider: provider.get_earnings_calendar(symbol=symbol, horizon=horizon),
+            cache_transform=lambda data: data,
+            miss_meta_builder=lambda data, _cached: {"count": len(data)},
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -62,28 +52,19 @@ async def get_ipo_calendar(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get upcoming IPO calendar."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:ipo-calendar")
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        data = await provider.get_ipo_calendar()
-        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(data), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=CACHE_TTL_FUNDAMENTALS,
+            fetcher=lambda provider: provider.get_ipo_calendar(),
+            cache_transform=lambda data: data,
+            miss_meta_builder=lambda data, _cached: {"count": len(data)},
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -97,27 +78,18 @@ async def get_listing_status(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get listing status (active stocks or delisted)."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:listing-status", state, date or "current")
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        data = await provider.get_listing_status(state=state, date=date)
-        await cache.set(key, data, ttl=86400)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(data), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=86400,
+            fetcher=lambda provider: provider.get_listing_status(state=state, date=date),
+            cache_transform=lambda data: data,
+            miss_meta_builder=lambda data, _cached: {"count": len(data)},
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")

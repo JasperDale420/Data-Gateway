@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.43] - 2026-02-06
+
+### Changed
+
+- **Alpha Vantage AV-1 helper rollout completion**: Refactored `gateway/api/alphavantage/{indicators,calendars,crypto,forex,economic}.py` to use shared `execute_av_cached` cache-first flow, removing remaining per-route provider lookup/rate-limit/cache boilerplate.
+- **Alpha Vantage cache-first consistency**: All Alpha Vantage route modules now short-circuit cache hits before provider lookup, preserving response contracts while reducing miss-path drift.
+- **Alpha Vantage audit tracking updates**: Updated `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark AV-1 helper migration complete and shift next work to AV-2 cache policy/cardinality instrumentation.
+
 ## [0.5.42] - 2026-02-06
 
 ### Added

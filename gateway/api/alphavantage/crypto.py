@@ -3,15 +3,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
+    execute_av_cached,
     get_cache,
     get_registry,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.schemas import SuccessResponse
 
@@ -26,28 +25,18 @@ async def get_crypto_rating(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get crypto health rating (FCAS)."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:crypto-rating", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        data = await provider.get_crypto_rating(symbol)
-        await cache.set(key, data, ttl=3600)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=3600,
+            fetcher=lambda provider: provider.get_crypto_rating(symbol),
+            cache_transform=lambda data: data,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -61,27 +50,18 @@ async def get_crypto_daily(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get daily crypto time series."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:crypto-daily", symbol.upper(), market.upper())
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        data = await provider.get_crypto_daily(symbol, market)
-        await cache.set(key, data, ttl=3600)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(data), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=3600,
+            fetcher=lambda provider: provider.get_crypto_daily(symbol, market),
+            cache_transform=lambda data: data,
+            miss_meta_builder=lambda data, _cached: {"count": len(data)},
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")

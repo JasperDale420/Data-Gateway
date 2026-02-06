@@ -169,7 +169,7 @@ Low-risk fix path:
 3. Standardize `timeseries.py` serialization to `mode="json"` for all model dumps.
 
 Wave status (2026-02-06):
-- `AV-1` in progress (shared helper added in `common.py`; `timeseries.py` and `fundamentals.py` migrated to cache-first helper flow; remaining Alpha Vantage route files pending migration)
+- `AV-1` complete (shared helper added in `common.py` and applied across all Alpha Vantage route files)
 - `AV-2` pending
 - `AV-3` pending
 
@@ -193,18 +193,17 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 |---|---:|---|---|
 | `gateway/api/alphavantage/timeseries.py` | 6 | COMPLETE | AV-1 helper migration complete; AV-2 full-output cache policy and search key guardrails pending |
 | `gateway/api/alphavantage/fundamentals.py` | 5 | COMPLETE | AV-1 helper migration complete; monitor endpoint-level cache hit-rate |
-| `gateway/api/alphavantage/indicators.py` | 11 | COMPLETE | Helper migration and high-cardinality key monitoring |
-| `gateway/api/alphavantage/calendars.py` | 3 | COMPLETE | Helper migration and large-result cache policy checks |
-| `gateway/api/alphavantage/crypto.py` | 2 | COMPLETE | Helper migration |
-| `gateway/api/alphavantage/forex.py` | 2 | COMPLETE | Helper migration |
-| `gateway/api/alphavantage/economic.py` | 1 | COMPLETE | Helper migration |
-| `gateway/api/alphavantage/common.py` | 0 | COMPLETE | AV shared helper is in place; continue rolling migration to remaining route files |
+| `gateway/api/alphavantage/indicators.py` | 11 | COMPLETE | AV-1 helper migration complete; monitor high-cardinality indicator-key hit-rate |
+| `gateway/api/alphavantage/calendars.py` | 3 | COMPLETE | AV-1 helper migration complete; validate large-result cache TTL/size policy |
+| `gateway/api/alphavantage/crypto.py` | 2 | COMPLETE | AV-1 helper migration complete; validate TTL hit-rate assumptions |
+| `gateway/api/alphavantage/forex.py` | 2 | COMPLETE | AV-1 helper migration complete; validate short TTL hit-rate assumptions |
+| `gateway/api/alphavantage/economic.py` | 1 | COMPLETE | AV-1 helper migration complete; monitor cache cardinality |
+| `gateway/api/alphavantage/common.py` | 0 | COMPLETE | AV shared helper rollout complete across route files |
 | `gateway/api/alphavantage/__init__.py` | 0 | COMPLETE | No performance hotspots; router composition only |
 | `gateway/providers/alphavantage.py` | 34 async methods | PARTIAL | CSV parsing modernization, bounded multi-quote concurrency, benchmark validation |
 
 ## Future Runs (Outside Alpha Vantage)
 
-1. Complete AV-1 route-helper migration in `gateway/api/alphavantage/{indicators,calendars,crypto,forex,economic}.py`.
-2. Implement AV-2 (`outputsize=full` cache policy, search-key cardinality guardrails, and cache/payload metrics).
-3. Implement AV-3 provider optimizations in `gateway/providers/alphavantage.py` (`csv.DictReader`, bounded quote fan-out, benchmark validation).
-4. Continue non-Alpha-Vantage implementation priorities from `PERFORMANCE_AUDIT.md`.
+1. Implement AV-2 (`outputsize=full` cache policy, search-key cardinality guardrails, and cache/payload metrics).
+2. Implement AV-3 provider optimizations in `gateway/providers/alphavantage.py` (`csv.DictReader`, bounded quote fan-out, benchmark validation).
+3. Continue non-Alpha-Vantage implementation priorities from `PERFORMANCE_AUDIT.md`.
