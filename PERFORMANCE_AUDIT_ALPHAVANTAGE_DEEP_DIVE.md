@@ -170,7 +170,7 @@ Low-risk fix path:
 
 Wave status (2026-02-06):
 - `AV-1` complete (shared helper added in `common.py` and applied across all Alpha Vantage route files)
-- `AV-2` pending
+- `AV-2` complete (full-output cache bypass, search-key guardrails, endpoint-level cache/payload instrumentation implemented)
 - `AV-3` pending
 
 ### Wave AV-2
@@ -191,19 +191,18 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 | File | Endpoints | Audit Status | Future Run Focus |
 |---|---:|---|---|
-| `gateway/api/alphavantage/timeseries.py` | 6 | COMPLETE | AV-1 helper migration complete; AV-2 full-output cache policy and search key guardrails pending |
+| `gateway/api/alphavantage/timeseries.py` | 6 | COMPLETE | AV-1/AV-2 route changes complete; monitor `full` output miss-path payload and cache impact |
 | `gateway/api/alphavantage/fundamentals.py` | 5 | COMPLETE | AV-1 helper migration complete; monitor endpoint-level cache hit-rate |
 | `gateway/api/alphavantage/indicators.py` | 11 | COMPLETE | AV-1 helper migration complete; monitor high-cardinality indicator-key hit-rate |
 | `gateway/api/alphavantage/calendars.py` | 3 | COMPLETE | AV-1 helper migration complete; validate large-result cache TTL/size policy |
 | `gateway/api/alphavantage/crypto.py` | 2 | COMPLETE | AV-1 helper migration complete; validate TTL hit-rate assumptions |
 | `gateway/api/alphavantage/forex.py` | 2 | COMPLETE | AV-1 helper migration complete; validate short TTL hit-rate assumptions |
 | `gateway/api/alphavantage/economic.py` | 1 | COMPLETE | AV-1 helper migration complete; monitor cache cardinality |
-| `gateway/api/alphavantage/common.py` | 0 | COMPLETE | AV shared helper rollout complete across route files |
+| `gateway/api/alphavantage/common.py` | 0 | COMPLETE | AV shared helper + search-key guardrail + cache/payload instrumentation is in place |
 | `gateway/api/alphavantage/__init__.py` | 0 | COMPLETE | No performance hotspots; router composition only |
 | `gateway/providers/alphavantage.py` | 34 async methods | PARTIAL | CSV parsing modernization, bounded multi-quote concurrency, benchmark validation |
 
 ## Future Runs (Outside Alpha Vantage)
 
-1. Implement AV-2 (`outputsize=full` cache policy, search-key cardinality guardrails, and cache/payload metrics).
-2. Implement AV-3 provider optimizations in `gateway/providers/alphavantage.py` (`csv.DictReader`, bounded quote fan-out, benchmark validation).
-3. Continue non-Alpha-Vantage implementation priorities from `PERFORMANCE_AUDIT.md`.
+1. Implement AV-3 provider optimizations in `gateway/providers/alphavantage.py` (`csv.DictReader`, bounded quote fan-out, benchmark validation).
+2. Continue non-Alpha-Vantage implementation priorities from `PERFORMANCE_AUDIT.md`.

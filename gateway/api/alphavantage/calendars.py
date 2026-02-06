@@ -38,6 +38,8 @@ async def get_earnings_calendar(
             fetcher=lambda provider: provider.get_earnings_calendar(symbol=symbol, horizon=horizon),
             cache_transform=lambda data: data,
             miss_meta_builder=lambda data, _cached: {"count": len(data)},
+            endpoint="earnings_calendar",
+            cache_mode="default",
         )
     except HTTPException:
         raise
@@ -62,6 +64,8 @@ async def get_ipo_calendar(
             fetcher=lambda provider: provider.get_ipo_calendar(),
             cache_transform=lambda data: data,
             miss_meta_builder=lambda data, _cached: {"count": len(data)},
+            endpoint="ipo_calendar",
+            cache_mode="default",
         )
     except HTTPException:
         raise
@@ -88,6 +92,8 @@ async def get_listing_status(
             fetcher=lambda provider: provider.get_listing_status(state=state, date=date),
             cache_transform=lambda data: data,
             miss_meta_builder=lambda data, _cached: {"count": len(data)},
+            endpoint="listing_status",
+            cache_mode="default",
         )
     except HTTPException:
         raise

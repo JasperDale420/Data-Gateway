@@ -41,6 +41,8 @@ async def get_economic_indicator(
             ttl=CACHE_TTL_FUNDAMENTALS,
             fetcher=lambda provider: provider.get_economic_indicator(indicator, interval),
             cache_transform=lambda data: data,
+            endpoint="economic_indicator",
+            cache_mode="default",
         )
     except HTTPException:
         raise

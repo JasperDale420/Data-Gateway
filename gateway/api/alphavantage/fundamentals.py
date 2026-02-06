@@ -42,6 +42,8 @@ async def get_company_overview(
             ttl=CACHE_TTL_FUNDAMENTALS,
             fetcher=_fetch_overview,
             cache_transform=lambda data: data,
+            endpoint="overview",
+            cache_mode="default",
         )
     except HTTPException:
         raise
@@ -66,6 +68,8 @@ async def get_earnings(
             ttl=CACHE_TTL_FUNDAMENTALS,
             fetcher=lambda provider: provider.get_earnings(symbol),
             cache_transform=lambda data: data,
+            endpoint="earnings",
+            cache_mode="default",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -88,6 +92,8 @@ async def get_income_statement(
             ttl=CACHE_TTL_FUNDAMENTALS,
             fetcher=lambda provider: provider.get_income_statement(symbol),
             cache_transform=lambda data: data,
+            endpoint="income_statement",
+            cache_mode="default",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -110,6 +116,8 @@ async def get_balance_sheet(
             ttl=CACHE_TTL_FUNDAMENTALS,
             fetcher=lambda provider: provider.get_balance_sheet(symbol),
             cache_transform=lambda data: data,
+            endpoint="balance_sheet",
+            cache_mode="default",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -132,6 +140,8 @@ async def get_cash_flow(
             ttl=CACHE_TTL_FUNDAMENTALS,
             fetcher=lambda provider: provider.get_cash_flow(symbol),
             cache_transform=lambda data: data,
+            endpoint="cash_flow",
+            cache_mode="default",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")

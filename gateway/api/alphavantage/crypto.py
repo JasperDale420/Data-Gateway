@@ -34,6 +34,8 @@ async def get_crypto_rating(
             ttl=3600,
             fetcher=lambda provider: provider.get_crypto_rating(symbol),
             cache_transform=lambda data: data,
+            endpoint="crypto_rating",
+            cache_mode="default",
         )
     except HTTPException:
         raise
@@ -60,6 +62,8 @@ async def get_crypto_daily(
             fetcher=lambda provider: provider.get_crypto_daily(symbol, market),
             cache_transform=lambda data: data,
             miss_meta_builder=lambda data, _cached: {"count": len(data)},
+            endpoint="crypto_daily",
+            cache_mode="default",
         )
     except HTTPException:
         raise

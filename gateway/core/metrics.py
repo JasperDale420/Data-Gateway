@@ -172,6 +172,20 @@ MESSAGE_DROPPED = Counter(
     ["reason"],  # client_disconnected, buffer_full, timeout
 )
 
+# Alpha Vantage route/cache metrics
+ALPHAVANTAGE_ROUTE_CACHE = Counter(
+    "gateway_alphavantage_route_cache_total",
+    "Alpha Vantage route cache events",
+    ["endpoint", "status", "cache_mode"],  # status: hit, miss
+)
+
+ALPHAVANTAGE_PAYLOAD_BYTES = Histogram(
+    "gateway_alphavantage_payload_bytes",
+    "Alpha Vantage cached payload size in bytes",
+    ["endpoint", "cache_mode"],
+    buckets=(256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216),
+)
+
 # Memory pressure metric (for 11.2.4 alerting)
 MEMORY_PRESSURE = Gauge(
     "gateway_memory_pressure",
@@ -272,6 +286,18 @@ def inc_provider_sync_call_inflight(provider: str) -> None:
 def dec_provider_sync_call_inflight(provider: str) -> None:
     """Decrement in-flight sync-call gauge."""
     PROVIDER_SYNC_CALL_INFLIGHT.labels(provider=provider).dec()
+
+
+def record_alphavantage_route_cache(endpoint: str, status: str, cache_mode: str) -> None:
+    """Record Alpha Vantage route cache hit/miss event."""
+    ALPHAVANTAGE_ROUTE_CACHE.labels(endpoint=endpoint, status=status, cache_mode=cache_mode).inc()
+
+
+def record_alphavantage_payload_bytes(endpoint: str, cache_mode: str, payload_bytes: int) -> None:
+    """Record Alpha Vantage payload size in bytes."""
+    ALPHAVANTAGE_PAYLOAD_BYTES.labels(endpoint=endpoint, cache_mode=cache_mode).observe(
+        max(payload_bytes, 0)
+    )
 
 
 def record_rate_limit_exceeded(client_id: str) -> None:

@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.44] - 2026-02-06
+
+### Added
+
+- **Alpha Vantage AV-2 cache/payload metrics**: Added `gateway_alphavantage_route_cache_total` and `gateway_alphavantage_payload_bytes` metrics in `gateway/core/metrics.py` for endpoint-level cache hit/miss and miss-path payload-size visibility.
+- **Alpha Vantage AV-2 helper coverage tests**: Expanded `tests/test_alphavantage_common.py` with search-query normalization, cache-disabled behavior, and cache/payload metric emission assertions.
+
+### Changed
+
+- **Alpha Vantage full-output cache policy**: Updated `gateway/api/alphavantage/timeseries.py` so `outputsize=full` on intraday/daily bypasses route caching while preserving response contracts.
+- **Alpha Vantage search-key cardinality guardrail**: Added normalized/truncated search cache key handling via `normalize_search_query(...)` in `gateway/api/alphavantage/common.py`, applied in `gateway/api/alphavantage/timeseries.py`.
+- **Alpha Vantage helper instrumentation rollout**: Updated `gateway/api/alphavantage/common.py` and all AV route modules to emit endpoint/cache-mode cache events and payload-size observations through shared helper flow.
+- **Alpha Vantage audit tracking updates**: Updated `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark AV-2 implemented and narrow remaining Alpha Vantage scope to AV-3 provider internals.
+
 ## [0.5.43] - 2026-02-06
 
 ### Changed

@@ -12,6 +12,7 @@ from gateway.api.alphavantage.common import (
     execute_av_cached,
     get_cache,
     get_registry,
+    normalize_search_query,
     require_api_key,
 )
 from gateway.schemas import SuccessResponse
@@ -43,6 +44,8 @@ async def get_quote(
             ttl=CACHE_TTL_QUOTE,
             fetcher=_fetch_quote,
             cache_transform=lambda quote: quote.model_dump(mode="json"),
+            endpoint="quote",
+            cache_mode="default",
         )
     except HTTPException:
         raise
@@ -60,6 +63,7 @@ async def get_intraday(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get intraday time series data."""
+    normalized_outputsize = outputsize.lower()
     key = cache_key("av:intraday", symbol.upper(), interval, outputsize)
     try:
         return await execute_av_cached(
@@ -67,6 +71,7 @@ async def get_intraday(
             cache_key_value=key,
             registry=registry,
             ttl=CACHE_TTL_BARS,
+            cache_enabled=normalized_outputsize != "full",
             fetcher=lambda provider: provider.get_intraday(
                 symbol,
                 interval=interval,
@@ -78,6 +83,8 @@ async def get_intraday(
                 "bars": [bar.model_dump(mode="json") for bar in bars],
             },
             miss_meta_builder=lambda _bars, data: {"count": len(data["bars"])},
+            endpoint="intraday",
+            cache_mode=normalized_outputsize,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -93,6 +100,7 @@ async def get_daily(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get daily time series data."""
+    normalized_outputsize = outputsize.lower()
     key = cache_key("av:daily", symbol.upper(), outputsize, str(adjusted))
     try:
         return await execute_av_cached(
@@ -100,6 +108,7 @@ async def get_daily(
             cache_key_value=key,
             registry=registry,
             ttl=CACHE_TTL_BARS,
+            cache_enabled=normalized_outputsize != "full",
             fetcher=lambda provider: provider.get_daily(
                 symbol,
                 outputsize=outputsize,
@@ -111,6 +120,8 @@ async def get_daily(
                 "bars": [bar.model_dump(mode="json") for bar in bars],
             },
             miss_meta_builder=lambda _bars, data: {"count": len(data["bars"])},
+            endpoint="daily",
+            cache_mode=normalized_outputsize,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -139,6 +150,8 @@ async def get_weekly(
                 "bars": [bar.model_dump(mode="json") for bar in bars],
             },
             miss_meta_builder=lambda _bars, data: {"count": len(data["bars"])},
+            endpoint="weekly",
+            cache_mode="default",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -163,6 +176,8 @@ async def get_monthly(
             fetcher=lambda provider: provider.get_monthly(symbol, adjusted=adjusted),
             cache_transform=lambda bars: [bar.model_dump(mode="json") for bar in bars],
             miss_meta_builder=lambda _bars, data: {"count": len(data)},
+            endpoint="monthly",
+            cache_mode="default",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
@@ -176,7 +191,8 @@ async def search_symbols(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Search for symbols by keywords."""
-    key = cache_key("av:search", q.lower())
+    normalized_query = normalize_search_query(q)
+    key = cache_key("av:search", normalized_query)
     try:
         return await execute_av_cached(
             cache=cache,
@@ -186,6 +202,8 @@ async def search_symbols(
             fetcher=lambda provider: provider.search_symbols(q),
             cache_transform=lambda results: results,
             miss_meta_builder=lambda results, _data: {"count": len(results)},
+            endpoint="search",
+            cache_mode="query",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")

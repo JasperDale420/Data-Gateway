@@ -101,3 +101,100 @@ def test_get_alphavantage_provider_raises_when_missing() -> None:
     with pytest.raises(HTTPException) as exc:
         common.get_alphavantage_provider(registry)  # type: ignore[arg-type]
     assert exc.value.status_code == 503
+
+
+def test_normalize_search_query_collapses_whitespace_and_truncates() -> None:
+    query = "   Alpha    Vantage      Search      Query   " * 4
+    normalized = common.normalize_search_query(query, max_chars=24)
+    assert normalized == "alpha vantage search que"
+
+
+@pytest.mark.asyncio
+async def test_execute_av_cached_cache_disabled_skips_get_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _FakeCache()
+    provider = object()
+    registry = _FakeRegistry(provider=provider)
+    calls = {"rate_limit": 0, "fetch": 0}
+
+    async def _fake_rate_limit(provider_name: str) -> None:
+        assert provider_name == "alphavantage"
+        calls["rate_limit"] += 1
+
+    async def _fetcher(p: Any) -> dict[str, str]:
+        assert p is provider
+        calls["fetch"] += 1
+        return {"k": "v"}
+
+    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+
+    response = await common.execute_av_cached(
+        cache=cache,  # type: ignore[arg-type]
+        cache_key_value="av:no-cache",
+        registry=registry,  # type: ignore[arg-type]
+        ttl=120,
+        fetcher=_fetcher,
+        cache_transform=lambda value: value,
+        cache_enabled=False,
+        endpoint="intraday",
+        cache_mode="full",
+    )
+
+    assert calls == {"rate_limit": 1, "fetch": 1}
+    assert "av:no-cache" not in cache._store
+    assert response["meta"]["cached"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_av_cached_emits_cache_and_payload_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _FakeCache()
+    provider = object()
+    registry = _FakeRegistry(provider=provider)
+    cache_events: list[tuple[str, str, str]] = []
+    payload_events: list[tuple[str, str, int]] = []
+
+    async def _fake_rate_limit(provider_name: str) -> None:
+        assert provider_name == "alphavantage"
+
+    async def _fetcher(_provider: Any) -> list[int]:
+        return [1, 2, 3]
+
+    def _record_cache(endpoint: str, status: str, cache_mode: str) -> None:
+        cache_events.append((endpoint, status, cache_mode))
+
+    def _record_payload(endpoint: str, cache_mode: str, payload_bytes: int) -> None:
+        payload_events.append((endpoint, cache_mode, payload_bytes))
+
+    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(common, "record_alphavantage_route_cache", _record_cache)
+    monkeypatch.setattr(common, "record_alphavantage_payload_bytes", _record_payload)
+
+    await common.execute_av_cached(
+        cache=cache,  # type: ignore[arg-type]
+        cache_key_value="av:metrics",
+        registry=registry,  # type: ignore[arg-type]
+        ttl=120,
+        fetcher=_fetcher,
+        cache_transform=lambda values: {"values": values},
+        endpoint="search",
+        cache_mode="query",
+    )
+    await common.execute_av_cached(
+        cache=cache,  # type: ignore[arg-type]
+        cache_key_value="av:metrics",
+        registry=registry,  # type: ignore[arg-type]
+        ttl=120,
+        fetcher=_fetcher,
+        cache_transform=lambda values: {"values": values},
+        endpoint="search",
+        cache_mode="query",
+    )
+
+    assert cache_events == [("search", "miss", "query"), ("search", "hit", "query")]
+    assert len(payload_events) == 1
+    assert payload_events[0][0] == "search"
+    assert payload_events[0][1] == "query"
+    assert payload_events[0][2] > 0

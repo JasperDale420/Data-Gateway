@@ -54,6 +54,8 @@ async def get_technical_indicator(
                 series_type,
             ),
             cache_transform=lambda data: data,
+            endpoint="indicator",
+            cache_mode="default",
         )
     except HTTPException:
         raise

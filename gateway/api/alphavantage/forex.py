@@ -35,6 +35,8 @@ async def get_forex_rate(
             ttl=60,
             fetcher=lambda provider: provider.get_forex_rate(from_currency, to_currency),
             cache_transform=lambda data: data,
+            endpoint="forex_rate",
+            cache_mode="default",
         )
     except HTTPException:
         raise
@@ -61,6 +63,8 @@ async def get_forex_daily(
             fetcher=lambda provider: provider.get_forex_daily(from_symbol, to_symbol),
             cache_transform=lambda data: data,
             miss_meta_builder=lambda data, _cached: {"count": len(data)},
+            endpoint="forex_daily",
+            cache_mode="default",
         )
     except HTTPException:
         raise
