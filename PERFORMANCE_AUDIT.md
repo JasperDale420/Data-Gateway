@@ -218,7 +218,7 @@ Legend:
 | `gateway/core/uw_poller.py` | 1 | COMPLETE | Polling and dedupe/publish loops audited |
 | `gateway/core/envelope.py` | 1 | COMPLETE | Envelope serialization path audited |
 | `gateway/api/websocket.py` | 1 | COMPLETE | Message loop + subscription path audited |
-| Providers (`news`) | 1 | PARTIAL | Full provider deep pass still pending |
+| Provider `gateway/providers/news.py` | 1 (333 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_NEWS_PROVIDER_DEEP_DIVE.md` |
 | Provider `gateway/providers/alphavantage.py` | 1 (1082 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` |
 | Provider `gateway/providers/alpaca.py` | 1 (2153 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_ALPACA_PROVIDER_DEEP_DIVE.md` |
 | Provider `gateway/providers/uw.py` | 1 (4672 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
@@ -247,7 +247,7 @@ Legend:
 7. Implement non-provider router Wave 1 optimizations from `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` (bulk streaming downloads, fetcher binding guards, cache-hit-first parsing in news).
 8. Implement Alpaca provider Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_PROVIDER_DEEP_DIVE.md` (shared client use for DNE path, conversion-path optimization, limit/logging tuning).
 9. Implement Alpha Vantage provider Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` (CSV parser migration, shared fetch helper, sort/limit tuning).
-10. Full provider deep pass for remaining partial provider (`gateway/providers/news.py`).
+10. Implement News provider Wave 1 optimizations from `PERFORMANCE_AUDIT_NEWS_PROVIDER_DEEP_DIVE.md` (keyword hoisting, shared fetch/readiness helpers, pagination normalization with effective page size).
 11. Deeper computational hotspot pass for sampled core modules (`security`, `quality`, `calendar`, `symbology`, `validator`).
 12. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream/replay fanout and validate bulk/replay memory growth scenarios.
 
