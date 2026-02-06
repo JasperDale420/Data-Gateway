@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.36] - 2026-02-06
+
+### Changed
+
+- **UW helper rollout to high-volume route modules**: Refactored `gateway/api/uw/contracts.py`, `gateway/api/uw/calendar.py`, and `gateway/api/uw/extended.py` to use shared `execute_uw_cached` + `make_response` flow, removing repeated cache/rate-limit/provider-call boilerplate while preserving endpoint contracts.
+- **UW wave tracking updates**: Updated `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to reflect shared-helper rollout across ten UW route modules.
+
 ## [0.5.35] - 2026-02-06
 
 ### Changed

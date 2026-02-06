@@ -7,11 +7,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -26,22 +26,14 @@ async def get_congress_late_reports(
 ):
     """Get late congressional trading reports."""
     cache_key = f"uw:congress:late-reports:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_congress_late_reports(limit=limit)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_congress_late_reports(limit=limit),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
 
 
 @router.get("/congress/reports", response_model=SuccessResponse)
@@ -53,22 +45,14 @@ async def get_congress_reports(
 ):
     """Get congressional trading reports."""
     cache_key = f"uw:congress:reports:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_congress_reports(limit=limit)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_congress_reports(limit=limit),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
 
 
 @router.get("/seasonality/monthly-top-performers/{month}", response_model=SuccessResponse)
@@ -80,22 +64,18 @@ async def get_monthly_top_performers(
 ):
     """Get top performing stocks by month (1-12)."""
     cache_key = f"uw:seasonality:monthly-top-performers:{month}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_monthly_top_performers(month=month)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"month": month, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_monthly_top_performers(month=month),
+        build_response=lambda data: make_response(
+            data,
+            count=len(data),
+            extra_meta={"month": month},
+        ),
+    )
 
 
 @router.get("/seasonality/{symbol}/price-changes-by-month", response_model=SuccessResponse)
@@ -108,22 +88,14 @@ async def get_price_changes_by_month_year(
     """Get price changes by month and year for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:seasonality:price-changes:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_price_changes_by_month_year(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_price_changes_by_month_year(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/shorts/{symbol}/data", response_model=SuccessResponse)
@@ -136,22 +108,14 @@ async def get_shorts_data(
     """Get short data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:shorts:data:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_shorts_data(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_shorts_data(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/shorts/{symbol}/interest-float", response_model=SuccessResponse)
@@ -164,22 +128,14 @@ async def get_short_interest_float(
     """Get short interest as percentage of float."""
     symbol = symbol.upper()
     cache_key = f"uw:shorts:interest-float:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_short_interest_float(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_short_interest_float(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol),
+    )
 
 
 @router.get("/shorts/{symbol}/volumes-by-exchange", response_model=SuccessResponse)
@@ -192,22 +148,14 @@ async def get_short_volumes_by_exchange(
     """Get short volumes by exchange."""
     symbol = symbol.upper()
     cache_key = f"uw:shorts:volumes-by-exchange:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_short_volumes_by_exchange(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_short_volumes_by_exchange(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/market/spike", response_model=SuccessResponse)
@@ -218,19 +166,11 @@ async def get_market_spike(
 ):
     """Get market spike data."""
     cache_key = "uw:market:spike"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_market_spike()
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_market_spike(),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
