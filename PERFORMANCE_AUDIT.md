@@ -229,7 +229,7 @@ Legend:
 | API routers `gateway/api/alphavantage/*` | 9 (30 endpoints) | COMPLETE | Full route-level Alpha Vantage audit complete; see `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` |
 | API router `gateway/api/yf.py` | 1 (16 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` |
 | API router `gateway/api/sec.py` | 1 (10 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` |
-| API routers `gateway/api/{bulk,calendar,corporate,news,quality,replay,symbology,metrics}.py` | 8 files (34 endpoints incl. replay WS) | PENDING | Remaining non-provider router group needs dedicated endpoint-level perf pass |
+| API routers `gateway/api/{bulk,calendar,corporate,news,quality,replay,symbology,metrics}.py` | 8 files (34 endpoints incl. replay WS) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` |
 | `gateway/core/security.py`, `gateway/core/quality.py`, `gateway/core/calendar.py`, `gateway/core/symbology.py`, `gateway/core/validator.py` | 5 sampled via patterns | PARTIAL | Not deeply profiled for computational hotspots |
 | Tests (`tests/`) | sampled | PARTIAL | Perf-oriented tests exist; no full perf harness yet |
 | `scripts/` | 2 | PENDING | Runtime scripts not performance-profiled |
@@ -242,10 +242,10 @@ Legend:
 4. Implement SEC Wave 1 optimizations from `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` (cache-before-provider, helper consolidation, filing key normalization).
 5. Implement Finnhub/control-plane Wave 1 optimizations from `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` (cache-before-provider, dedupe, date/key helper consolidation, admin health-check parallelization).
 6. Implement Alpaca Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` (route helper consolidation, cache/dedupe for safe GETs, over-fetch reductions).
-7. Full route-level deep pass for remaining non-provider routers (`bulk`, `calendar`, `corporate`, `news`, `quality`, `replay`, `symbology`, `metrics`).
+7. Implement non-provider router Wave 1 optimizations from `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` (bulk streaming downloads, fetcher binding guards, cache-hit-first parsing in news).
 8. Full provider deep passes for remaining partial providers (`gateway/providers/alpaca.py`, `gateway/providers/alphavantage.py`, `gateway/providers/news.py`).
-9. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream fanout.
-10. Validate memory growth scenarios for bulk/replay with synthetic large datasets.
+9. Deeper computational hotspot pass for sampled core modules (`security`, `quality`, `calendar`, `symbology`, `validator`).
+10. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream/replay fanout and validate bulk/replay memory growth scenarios.
 
 ## Notes
 
