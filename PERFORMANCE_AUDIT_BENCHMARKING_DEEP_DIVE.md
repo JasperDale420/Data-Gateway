@@ -20,6 +20,7 @@ Complete a deep audit of repository performance-measurement readiness so future 
 | Runtime microbench sample | 1 ad-hoc run | COMPLETE | Fresh local microbench figures captured |
 | Dedicated benchmark harness (pytest marker + baseline suite) | 2 files (`pyproject.toml`, `tests/perf/test_perf_baseline.py`) | COMPLETE | `perf` marker added and baseline perf suite introduced |
 | Wave 2 stream/sink perf coverage | 1 file (`tests/perf/test_perf_stream_sink.py`) | COMPLETE | Added fanout semaphore-bound test and sink backpressure growth profile |
+| Wave 2 replay/bulk memory perf coverage | 1 file (`tests/perf/test_perf_replay_bulk_memory.py`) | COMPLETE | Added replay loop memory profile and bulk stream-vs-JSONL peak-allocation comparison |
 | CI budget enforcement | N/A | FUTURE | Perf thresholds/artifacts not yet wired into CI |
 
 ## Evidence Snapshot
@@ -71,15 +72,18 @@ Interpretation:
 ### Wave 2 Perf Harness Validation (2026-02-06)
 
 Command run:
-- `pytest -q tests/perf -m perf --durations=10`
+- `pytest -q tests/perf -m perf --durations=15`
 
 Result:
-- `4 passed in 0.38s`
+- `6 passed in 0.95s`
 
 Added coverage:
 - `tests/perf/test_perf_stream_sink.py`:
   - validates stream fanout max in-flight concurrency respects semaphore limits
   - profiles sink publish backlog growth under blocked sink I/O (task-growth visibility)
+- `tests/perf/test_perf_replay_bulk_memory.py`:
+  - profiles replay loop peak allocations on large in-memory message batches
+  - compares bulk result streaming allocation profile against JSONL materialization overhead
 
 ## Priority Findings (Low-Risk Changes Only)
 
@@ -195,8 +199,8 @@ Status (2026-02-06):
     - `tests/perf/test_perf_baseline.py:15-43`
   - Added stream fanout semaphore-bound perf test:
     - `tests/perf/test_perf_stream_sink.py:35-85`
-- Remaining:
-  - Add replay/session scheduling perf coverage and bulk/replay memory-bound assertions.
+  - Added replay/session scheduling + bulk/replay memory-bound perf coverage:
+    - `tests/perf/test_perf_replay_bulk_memory.py:25-119`
 
 ## Implementation Plan to Begin Addressing Issues
 
@@ -222,8 +226,8 @@ Wave status (2026-02-06):
 3. Store benchmark outputs as JSON artifacts for trend comparisons.
 
 Wave status (2026-02-06):
-- `1` partially complete (stream fanout + sink backpressure perf tests added)
-- `2` pending
+- `1` complete (middleware + stream/sink + replay/session coverage in place)
+- `2` complete (bulk/replay memory assertions added)
 - `3` pending
 
 ### Wave BENCH-3 (CI Guardrails)
@@ -243,6 +247,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `pyproject.toml` | COMPLETE | add pytest `perf` marker and benchmark config |
 | `tests/perf/test_perf_baseline.py` | COMPLETE | expand middleware/replay/bulk perf assertions |
 | `tests/perf/test_perf_stream_sink.py` | COMPLETE | add sink in-flight boundedness assertions after runtime queueing is implemented |
+| `tests/perf/test_perf_replay_bulk_memory.py` | COMPLETE | tune thresholds and add additional replay/bulk scenarios as needed |
 | `tests/test_middleware_streaming.py` | COMPLETE | align cache-header expectations for green perf baseline |
 | `tests/test_optimization.py` | COMPLETE | isolate perf assertions into dedicated `perf` suite |
 | `tests/test_replay.py` | COMPLETE | update calls for `client_id` signature |
@@ -257,6 +262,6 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 ## Remaining Audit Scope (Future Runs)
 
-1. Complete BENCH-2 by adding replay/session and bulk/replay memory-bound perf coverage.
-2. Implement runtime sink in-flight bounding (queue/semaphore) and convert sink backpressure profile into explicit boundedness assertions.
-3. Implement BENCH-3 CI guardrails and tune thresholds after 3-5 baseline runs.
+1. Implement runtime sink in-flight bounding (queue/semaphore) and convert sink backpressure profile into explicit boundedness assertions.
+2. Implement BENCH-3 CI guardrails (dedicated perf workflow, thresholds, and benchmark artifacts).
+3. Tune/ratchet perf thresholds after 3-5 baseline runs and capture trend reporting.

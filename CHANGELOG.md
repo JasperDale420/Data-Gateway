@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.24] - 2026-02-06
+
+### Added
+
+- **Wave 2 replay/bulk memory perf coverage**: Added `tests/perf/test_perf_replay_bulk_memory.py` with dedicated `pytest -m perf` tests for:
+  - replay large-batch loop memory profile and throughput envelope
+  - bulk result streaming vs JSONL materialization peak-allocation comparison
+
+### Changed
+
+- **Benchmark deep-dive progress tracking**: Updated `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` to mark replay/bulk Wave 2 perf coverage as COMPLETE, record updated perf suite validation (`6 passed`), and narrow remaining benchmark scope to sink in-flight hardening plus BENCH Wave 3 CI guardrails.
+- **Top-level next-run benchmark scope refinement**: Updated `PERFORMANCE_AUDIT.md` item 14 to reflect that Wave 2 perf coverage is now in place and remaining BENCH work is runtime sink bounded-dispatch hardening + CI perf thresholds/artifacts/trend tracking.
+
 ## [0.5.23] - 2026-02-06
 
 ### Added
