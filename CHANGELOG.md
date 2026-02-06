@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.31] - 2026-02-06
+
+### Added
+
+- **UW route helper and cursor guardrails**: Added shared UW router utilities in `gateway/api/uw/common.py`:
+  - `execute_uw_cached` for unified cache/get-rate-limit/provider-call/cache-set flow
+  - `cursor_fetch_limit` and bounded `decode_cursor(..., max_offset=...)` with clamped offset guardrail
+  - centralized serializer helpers used by list/pagination response builders.
+- **UW common helper tests**: Added `tests/test_uw_common.py` covering cursor clamping, pagination serialization, and cache/rate-limit helper behavior.
+
+### Changed
+
+- **UW flow route dedupe**: Refactored `gateway/api/uw/flow.py` to use shared cached route helper and centralized pagination serialization without changing endpoint contracts.
+- **UW market route dedupe**: Refactored `gateway/api/uw/market.py` to use shared cached route helper and list/pagination response builders, reducing repeated boilerplate.
+- **Audit progress tracking**: Updated `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark UW Wave 1 router remediation as in progress and narrow remaining UW scope.
+
 ## [0.5.30] - 2026-02-06
 
 ### Added

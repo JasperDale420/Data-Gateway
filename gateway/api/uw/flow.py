@@ -8,13 +8,12 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
-    decode_cursor,
+    cursor_fetch_limit,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -30,20 +29,15 @@ async def get_flow_all(
 ):
     """Get all recent options flow alerts."""
     cache_key = f"uw:flow:all:{limit}:{cursor or 'start'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    offset = decode_cursor(cursor)
-    fetch_limit = limit + offset + 1
-    alerts = await provider.get_flow_alerts(limit=fetch_limit)
-    data = [a.model_dump(mode="json") for a in alerts]
-
-    response = paginate_response(data, limit, cursor)
-    await cache.set(cache_key, response, ttl=30)
-    return response
+    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=30,
+        fetcher=lambda provider: provider.get_flow_alerts(limit=fetch_limit),
+        build_response=lambda alerts: paginate_response(alerts, limit, cursor),
+    )
 
 
 @router.get("/flow/{symbol}", response_model=SuccessResponse)
@@ -59,20 +53,19 @@ async def get_flow_symbol(
     """Get options flow for a specific ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:flow:{symbol}:{limit}:{date or 'latest'}:{cursor or 'start'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    offset = decode_cursor(cursor)
-    fetch_limit = limit + offset + 1
-    alerts = await provider.get_ticker_flow(symbol=symbol, date_str=date, limit=fetch_limit)
-    data = [a.model_dump(mode="json") for a in alerts]
-
-    response = paginate_response(data, limit, cursor)
-    await cache.set(cache_key, response, ttl=30)
-    return response
+    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=30,
+        fetcher=lambda provider: provider.get_ticker_flow(
+            symbol=symbol,
+            date_str=date,
+            limit=fetch_limit,
+        ),
+        build_response=lambda alerts: paginate_response(alerts, limit, cursor),
+    )
 
 
 @router.get("/darkpool/all", response_model=SuccessResponse)
@@ -85,20 +78,15 @@ async def get_darkpool_all(
 ):
     """Get all recent darkpool trades."""
     cache_key = f"uw:darkpool:all:{limit}:{cursor or 'start'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    offset = decode_cursor(cursor)
-    fetch_limit = limit + offset + 1
-    trades = await provider.get_darkpool_recent(limit=fetch_limit)
-    data = [t.model_dump(mode="json") for t in trades]
-
-    response = paginate_response(data, limit, cursor)
-    await cache.set(cache_key, response, ttl=30)
-    return response
+    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=30,
+        fetcher=lambda provider: provider.get_darkpool_recent(limit=fetch_limit),
+        build_response=lambda trades: paginate_response(trades, limit, cursor),
+    )
 
 
 @router.get("/darkpool/{symbol}", response_model=SuccessResponse)
@@ -114,21 +102,16 @@ async def get_darkpool_symbol(
     """Get darkpool trades for a specific ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:darkpool:{symbol}:{limit}:{date or 'latest'}:{cursor or 'start'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    offset = decode_cursor(cursor)
-    fetch_limit = limit + offset + 1
-    trades = await provider.get_darkpool_ticker(
-        symbol=symbol,
-        date_str=date,
-        limit=fetch_limit,
+    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=30,
+        fetcher=lambda provider: provider.get_darkpool_ticker(
+            symbol=symbol,
+            date_str=date,
+            limit=fetch_limit,
+        ),
+        build_response=lambda trades: paginate_response(trades, limit, cursor),
     )
-    data = [t.model_dump(mode="json") for t in trades]
-
-    response = paginate_response(data, limit, cursor)
-    await cache.set(cache_key, response, ttl=30)
-    return response

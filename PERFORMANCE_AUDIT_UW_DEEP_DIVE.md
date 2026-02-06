@@ -176,6 +176,11 @@ Low-risk fix path:
 3. Introduce shared field accessor helper:
 - Replace dynamic lambda getter pattern in top 10 high-use normalization methods.
 
+Wave status (2026-02-06):
+- `1` in progress (cursor-depth guardrail + shared UW cached route helper implemented)
+- `2` in progress (applied to `flow.py` and `market.py`; remaining UW routes pending rollout)
+- `3` pending
+
 ### Wave UW-2
 
 1. Replace over-fetch pagination where SDK supports direct paging.
