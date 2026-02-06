@@ -8,11 +8,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -28,25 +28,20 @@ async def get_etf_tide(
     """Get ETF-level tide data (premium flow sentiment)."""
     symbol = symbol.upper()
     cache_key = f"uw:etf-tide:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
 
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_etf_tide(symbol=symbol)
+    def _build_response(data):
+        if not data:
+            raise HTTPException(status_code=404, detail=f"ETF tide not found for {symbol}")
+        return make_response(data, symbol=symbol)
 
-    if not data:
-        raise HTTPException(status_code=404, detail=f"ETF tide not found for {symbol}")
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_etf_tide(symbol=symbol),
+        build_response=_build_response,
+    )
 
 
 @router.get("/{symbol}/volume-levels", response_model=SuccessResponse)
@@ -59,22 +54,14 @@ async def get_option_volume_levels(
     """Get option volume levels per price."""
     symbol = symbol.upper()
     cache_key = f"uw:volume-levels:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_option_volume_levels(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_option_volume_levels(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/trades/full-tape/{date}", response_model=SuccessResponse)
@@ -86,22 +73,18 @@ async def get_full_tape(
 ):
     """Get full options trade tape for a date."""
     cache_key = f"uw:full-tape:{date}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_full_tape(date_str=date)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"date": date, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_full_tape(date_str=date),
+        build_response=lambda data: make_response(
+            data,
+            count=len(data),
+            extra_meta={"date": date},
+        ),
+    )
 
 
 @router.get("/contract/{contract_id}/volume-profile", response_model=SuccessResponse)
@@ -113,22 +96,18 @@ async def get_volume_profile(
 ):
     """Get volume profile of an option contract by fill price."""
     cache_key = f"uw:volume-profile:{contract_id}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_volume_profile(contract_id=contract_id)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"contract": contract_id, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_volume_profile(contract_id=contract_id),
+        build_response=lambda data: make_response(
+            data,
+            count=len(data),
+            extra_meta={"contract": contract_id},
+        ),
+    )
 
 
 @router.get("/{symbol}/greek-flow-expiry", response_model=SuccessResponse)
@@ -141,22 +120,14 @@ async def get_greek_flow_expiry(
     """Get greek flow data aggregated by expiration."""
     symbol = symbol.upper()
     cache_key = f"uw:greek-flow-expiry:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_greek_flow_expiry(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_greek_flow_expiry(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/news/headlines", response_model=SuccessResponse)
@@ -171,27 +142,22 @@ async def get_news_headlines(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get latest financial news headlines."""
-    cache_key = f"uw:news:headlines:{sources or 'all'}:{search_term or 'none'}:{major_only}:{limit}:{page or 1}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    sources_list = sources.split(",") if sources else None
-    data = await provider.get_news_headlines(
-        sources=sources_list,
-        search_term=search_term,
-        major_only=major_only,
-        limit=limit,
-        page=page,
+    cache_key = (
+        f"uw:news:headlines:{sources or 'all'}:{search_term or 'none'}:"
+        f"{major_only}:{limit}:{page or 1}"
     )
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    sources_list = sources.split(",") if sources else None
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_news_headlines(
+            sources=sources_list,
+            search_term=search_term,
+            major_only=major_only,
+            limit=limit,
+            page=page,
+        ),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )

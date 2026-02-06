@@ -178,7 +178,7 @@ Low-risk fix path:
 
 Wave status (2026-02-06):
 - `1` in progress (cursor-depth guardrail + shared UW cached route helper implemented)
-- `2` in progress (applied to `flow.py`, `market.py`, and `stock.py`; remaining UW routes pending rollout)
+- `2` in progress (applied to `flow.py`, `market.py`, `stock.py`, `options.py`, `misc.py`, `alerts.py`, and `insiders.py`; remaining UW routes pending rollout)
 - `3` pending
 
 ### Wave UW-2
@@ -206,16 +206,16 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/api/uw/extended.py` | 8 | COMPLETE | Shared helper migration and serialization dedupe |
 | `gateway/api/uw/flow_analytics.py` | 6 | COMPLETE | Shared helper migration |
 | `gateway/api/uw/institutions.py` | 6 | COMPLETE | Shared helper migration and source-limit checks |
-| `gateway/api/uw/misc.py` | 6 | COMPLETE | Shared helper migration |
+| `gateway/api/uw/misc.py` | 6 | COMPLETE | Shared helper migration complete; review endpoint-specific TTL policy |
 | `gateway/api/uw/market_data.py` | 5 | COMPLETE | Shared helper migration |
 | `gateway/api/uw/etf_extended.py` | 4 | COMPLETE | Shared helper migration |
 | `gateway/api/uw/flow.py` | 4 | COMPLETE | Replace over-fetch pagination first |
 | `gateway/api/uw/intelligence.py` | 4 | COMPLETE | Shared helper migration |
-| `gateway/api/uw/market.py` | 4 | COMPLETE | Replace over-fetch pagination first |
-| `gateway/api/uw/options.py` | 4 | COMPLETE | Serialization dedupe |
+| `gateway/api/uw/market.py` | 4 | COMPLETE | Shared helper migration complete; replace over-fetch with native paging when available |
+| `gateway/api/uw/options.py` | 4 | COMPLETE | Shared helper migration complete; keep serialization dedupe in shared response path |
 | `gateway/api/uw/politicians.py` | 4 | COMPLETE | Shared helper migration |
 | `gateway/api/uw/volatility.py` | 4 | COMPLETE | Serialization dedupe |
-| `gateway/api/uw/alerts.py` | 3 | COMPLETE | Shared helper migration |
+| `gateway/api/uw/alerts.py` | 3 | COMPLETE | Shared helper migration complete; keep pagination path centralized |
 | `gateway/api/uw/earnings.py` | 3 | COMPLETE | Serialization dedupe |
 | `gateway/api/uw/etf.py` | 3 | COMPLETE | Serialization dedupe |
 | `gateway/api/uw/greeks.py` | 3 | COMPLETE | Serialization dedupe |
@@ -223,7 +223,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/api/uw/shorts.py` | 3 | COMPLETE | Serialization dedupe |
 | `gateway/api/uw/screener.py` | 2 | COMPLETE | Serialization dedupe |
 | `gateway/api/uw/seasonality.py` | 2 | COMPLETE | Serialization dedupe |
-| `gateway/api/uw/insiders.py` | 4 | COMPLETE | Shared helper migration |
+| `gateway/api/uw/insiders.py` | 4 | COMPLETE | Shared helper migration complete; validate TTLs by endpoint hit-rate |
 | `gateway/api/uw/common.py` | 0 | COMPLETE | Add shared UW handler wrapper + serializer helper |
 | `gateway/api/uw/__init__.py` | 0 | COMPLETE | No perf hotspots; keep as router composition only |
 

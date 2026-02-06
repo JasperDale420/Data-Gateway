@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.35] - 2026-02-06
+
+### Changed
+
+- **UW router helper rollout expansion**: Refactored `gateway/api/uw/options.py`, `gateway/api/uw/misc.py`, `gateway/api/uw/alerts.py`, and `gateway/api/uw/insiders.py` to use `execute_uw_cached` + shared response builders, removing duplicated cache/rate-limit/provider-call boilerplate while preserving endpoint contracts.
+- **UW wave tracking updates**: Updated `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to reflect shared-helper rollout progress across seven UW route modules.
+
 ## [0.5.34] - 2026-02-06
 
 ### Changed
