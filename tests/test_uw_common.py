@@ -56,6 +56,27 @@ def test_paginate_response_serializes_model_like_items() -> None:
     assert response["data"] == [{"value": 1}, {"value": 2}]
 
 
+def test_cursor_page_limit_uses_limit_plus_one() -> None:
+    cursor = _encode_cursor(7)
+    offset, page_limit = common.cursor_page_limit(limit=25, cursor=cursor)
+    assert offset == 7
+    assert page_limit == 26
+
+
+def test_paginate_offset_response_uses_prefetched_window() -> None:
+    data = [_ModelLike(1), _ModelLike(2), _ModelLike(3)]
+    response = common.paginate_offset_response(data, limit=2, offset=4)
+    assert response == {
+        "success": True,
+        "data": [{"value": 1}, {"value": 2}],
+        "pagination": {
+            "next_cursor": _encode_cursor(6),
+            "has_more": True,
+            "total_count": 7,
+        },
+    }
+
+
 def test_make_response_includes_extra_meta_and_serializes_data() -> None:
     response = common.make_response(
         data=[_ModelLike(5)],

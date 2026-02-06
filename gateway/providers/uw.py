@@ -207,9 +207,60 @@ class UnusualWhalesProvider(DataProvider):
                 record_provider_sync_call_exec(self.name, perf_counter() - exec_start)
                 dec_provider_sync_call_inflight(self.name)
 
+    async def _call_sync_with_optional_offset(
+        self,
+        func: Any,
+        *,
+        call_args: tuple[Any, ...] = (),
+        kwargs: dict[str, Any],
+        limit: int | None,
+        offset: int,
+    ) -> tuple[Any, bool]:
+        """Call SDK method with optional native offset support and fallback slicing signal."""
+        base_kwargs = dict(kwargs)
+        if limit is not None:
+            base_kwargs["limit"] = limit
+
+        if offset <= 0:
+            try:
+                return await self._call_sync(func, *call_args, **base_kwargs), False
+            except TypeError:
+                if "limit" in base_kwargs:
+                    base_kwargs.pop("limit", None)
+                    return await self._call_sync(func, *call_args, **base_kwargs), False
+                raise
+
+        for offset_key in ("offset", "page"):
+            try:
+                return (
+                    await self._call_sync(
+                        func,
+                        *call_args,
+                        **{
+                            **base_kwargs,
+                            offset_key: offset,
+                        },
+                    ),
+                    False,
+                )
+            except TypeError:
+                continue
+
+        fallback_kwargs = dict(kwargs)
+        if limit is not None:
+            fallback_kwargs["limit"] = limit + offset
+        try:
+            return await self._call_sync(func, *call_args, **fallback_kwargs), True
+        except TypeError:
+            if "limit" in fallback_kwargs:
+                fallback_kwargs.pop("limit", None)
+                return await self._call_sync(func, *call_args, **fallback_kwargs), True
+            raise
+
     async def get_flow_alerts(
         self,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[NormalizedFlowAlert]:
         """Get latest options flow alerts."""
         if not self._client:
@@ -219,8 +270,11 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import flow
 
-            response = await self._call_sync(
-                flow.get_ticker_order_flow.sync, client=self._client, limit=limit
+            response, used_local_offset = await self._call_sync_with_optional_offset(
+                flow.get_ticker_order_flow.sync,
+                kwargs={"client": self._client},
+                limit=limit,
+                offset=offset,
             )
 
             alerts = []
@@ -233,6 +287,8 @@ class UnusualWhalesProvider(DataProvider):
                 and response.additional_properties
             ):
                 data_items = response.additional_properties.get("data", [])
+            if used_local_offset and offset > 0:
+                data_items = data_items[offset:]
 
             for item in data_items:
                 alert = self._normalize_flow_alert(item)
@@ -251,6 +307,7 @@ class UnusualWhalesProvider(DataProvider):
         symbol: str,
         date_str: str | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[NormalizedFlowAlert]:
         """Get flow data for a specific ticker."""
         if not self._client:
@@ -267,14 +324,22 @@ class UnusualWhalesProvider(DataProvider):
             }
             if date_str:
                 kwargs["date"] = date_str
-            if limit is not None:
-                kwargs["limit"] = limit
 
             try:
-                response = await self._call_sync(flow.get_ticker_order_flow.sync, **kwargs)
+                response, used_local_offset = await self._call_sync_with_optional_offset(
+                    flow.get_ticker_order_flow.sync,
+                    kwargs=kwargs,
+                    limit=limit,
+                    offset=offset,
+                )
             except TypeError:
-                kwargs.pop("limit", None)
-                response = await self._call_sync(flow.get_ticker_order_flow.sync, **kwargs)
+                kwargs.pop("date", None)
+                response, used_local_offset = await self._call_sync_with_optional_offset(
+                    flow.get_ticker_order_flow.sync,
+                    kwargs=kwargs,
+                    limit=limit,
+                    offset=offset,
+                )
 
             alerts = []
             # Data is in additional_properties['data'], not response.data
@@ -285,6 +350,8 @@ class UnusualWhalesProvider(DataProvider):
                 and response.additional_properties
             ):
                 data_items = response.additional_properties.get("data", [])
+            if used_local_offset and offset > 0:
+                data_items = data_items[offset:]
 
             for item in data_items:
                 alert = self._normalize_flow_alert(item)
@@ -301,6 +368,7 @@ class UnusualWhalesProvider(DataProvider):
     async def get_darkpool_recent(
         self,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[NormalizedDarkpoolTrade]:
         """Get recent darkpool trades."""
         if not self._client:
@@ -310,8 +378,11 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import darkpool
 
-            response = await self._call_sync(
-                darkpool.get_trades_by_date.sync, client=self._client, limit=limit
+            response, used_local_offset = await self._call_sync_with_optional_offset(
+                darkpool.get_trades_by_date.sync,
+                kwargs={"client": self._client},
+                limit=limit,
+                offset=offset,
             )
 
             trades = []
@@ -322,6 +393,8 @@ class UnusualWhalesProvider(DataProvider):
                 and response.additional_properties
             ):
                 data_items = response.additional_properties.get("data", [])
+            if used_local_offset and offset > 0:
+                data_items = data_items[offset:]
 
             for item in data_items:
                 trade = self._normalize_darkpool_trade(item)
@@ -340,6 +413,7 @@ class UnusualWhalesProvider(DataProvider):
         symbol: str,
         date_str: str | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[NormalizedDarkpoolTrade]:
         """Get darkpool trades for a specific ticker."""
         if not self._client:
@@ -352,14 +426,22 @@ class UnusualWhalesProvider(DataProvider):
             kwargs: dict[str, Any] = {"client": self._client, "ticker": symbol.upper()}
             if date_str:
                 kwargs["date"] = date_str
-            if limit is not None:
-                kwargs["limit"] = limit
 
             try:
-                response = await self._call_sync(darkpool.get_trades_by_ticker.sync, **kwargs)
+                response, used_local_offset = await self._call_sync_with_optional_offset(
+                    darkpool.get_trades_by_ticker.sync,
+                    kwargs=kwargs,
+                    limit=limit,
+                    offset=offset,
+                )
             except TypeError:
-                kwargs.pop("limit", None)
-                response = await self._call_sync(darkpool.get_trades_by_ticker.sync, **kwargs)
+                kwargs.pop("date", None)
+                response, used_local_offset = await self._call_sync_with_optional_offset(
+                    darkpool.get_trades_by_ticker.sync,
+                    kwargs=kwargs,
+                    limit=limit,
+                    offset=offset,
+                )
 
             trades = []
             data_items = []
@@ -369,6 +451,8 @@ class UnusualWhalesProvider(DataProvider):
                 and response.additional_properties
             ):
                 data_items = response.additional_properties.get("data", [])
+            if used_local_offset and offset > 0:
+                data_items = data_items[offset:]
 
             for item in data_items:
                 trade = self._normalize_darkpool_trade(item)
@@ -416,7 +500,12 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_market_tide_failed", error=str(e))
             return []
 
-    async def get_institutions(self, symbol: str, limit: int | None = None) -> list[dict]:
+    async def get_institutions(
+        self,
+        symbol: str,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict]:
         """Get 13F institutional holdings for a ticker."""
         if not self._client:
             logger.warning("uw_client_not_initialized")
@@ -425,12 +514,14 @@ class UnusualWhalesProvider(DataProvider):
         try:
             from unusualwhales.api import institution
 
-            kwargs: dict[str, Any] = {"client": self._client, "limit": limit}
+            kwargs: dict[str, Any] = {"client": self._client}
             try:
-                response = await self._call_sync(
+                response, used_local_offset = await self._call_sync_with_optional_offset(
                     institution.get_ownership.sync,
-                    symbol.upper(),
-                    **{k: v for k, v in kwargs.items() if v is not None},
+                    call_args=(symbol.upper(),),
+                    kwargs=kwargs,
+                    limit=limit,
+                    offset=offset,
                 )
             except TypeError:
                 response = await self._call_sync(
@@ -438,9 +529,14 @@ class UnusualWhalesProvider(DataProvider):
                     symbol.upper(),
                     client=self._client,
                 )
+                used_local_offset = True
 
             holdings = []
-            for item in self._extract_data(response):
+            data_items = self._extract_data(response)
+            if used_local_offset and offset > 0:
+                data_items = data_items[offset:]
+
+            for item in data_items:
                 get = (
                     item.get
                     if isinstance(item, dict)

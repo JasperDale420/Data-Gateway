@@ -60,6 +60,16 @@ def cursor_fetch_limit(
     return offset, limit + offset + 1
 
 
+def cursor_page_limit(
+    limit: int,
+    cursor: str | None,
+    max_offset: int = MAX_UW_CURSOR_OFFSET,
+) -> tuple[int, int]:
+    """Return decoded offset and page fetch size for native-offset requests."""
+    offset = decode_cursor(cursor, max_offset=max_offset)
+    return offset, limit + 1
+
+
 def paginate_response(
     data: list[Any],
     limit: int,
@@ -89,6 +99,30 @@ def paginate_response(
             "next_cursor": next_cursor,
             "has_more": has_more,
             "total_count": total_count,
+        },
+    }
+
+
+def paginate_offset_response(
+    data: list[Any],
+    limit: int,
+    offset: int,
+) -> dict:
+    """Build paginated response for data fetched with native offset pagination."""
+    safe_offset = max(offset, 0)
+    paginated_data = serialize_list(data[:limit])
+    has_more = len(data) > limit
+    next_cursor = None
+    if has_more:
+        next_cursor = base64.b64encode(str(safe_offset + limit).encode()).decode()
+
+    return {
+        "success": True,
+        "data": paginated_data,
+        "pagination": {
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "total_count": safe_offset + len(data),
         },
     }
 
@@ -188,6 +222,7 @@ __all__ = [
     "DESC_LIMIT",
     "MAX_UW_CURSOR_OFFSET",
     "cursor_fetch_limit",
+    "cursor_page_limit",
     "execute_uw_cached",
     "get_cache",
     "get_registry",
@@ -198,6 +233,7 @@ __all__ = [
     "make_list_response",
     "make_response",
     "decode_cursor",
+    "paginate_offset_response",
     "paginate_response",
     "serialize_list",
     "PROVIDER_NOT_AVAILABLE",

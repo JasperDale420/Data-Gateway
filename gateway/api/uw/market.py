@@ -9,10 +9,12 @@ from gateway.api.uw.common import (
     ProviderRegistry,
     SuccessResponse,
     cursor_fetch_limit,
+    cursor_page_limit,
     execute_uw_cached,
     get_cache,
     get_registry,
     make_list_response,
+    paginate_offset_response,
     paginate_response,
     require_api_key,
 )
@@ -32,14 +34,18 @@ async def get_institutions(
     """Get 13F institutional holdings for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:institutions:{symbol}:{limit}:{cursor or 'start'}"
-    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    offset, page_limit = cursor_page_limit(limit=limit, cursor=cursor)
     return await execute_uw_cached(
         cache=cache,
         cache_key=cache_key,
         registry=registry,
         ttl=300,
-        fetcher=lambda provider: provider.get_institutions(symbol=symbol, limit=fetch_limit),
-        build_response=lambda holdings: paginate_response(holdings, limit, cursor),
+        fetcher=lambda provider: provider.get_institutions(
+            symbol=symbol,
+            limit=page_limit,
+            offset=offset,
+        ),
+        build_response=lambda holdings: paginate_offset_response(holdings, limit, offset),
     )
 
 

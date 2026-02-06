@@ -8,11 +8,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
-    cursor_fetch_limit,
+    cursor_page_limit,
     execute_uw_cached,
     get_cache,
     get_registry,
-    paginate_response,
+    paginate_offset_response,
     require_api_key,
 )
 
@@ -29,14 +29,14 @@ async def get_flow_all(
 ):
     """Get all recent options flow alerts."""
     cache_key = f"uw:flow:all:{limit}:{cursor or 'start'}"
-    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    offset, page_limit = cursor_page_limit(limit=limit, cursor=cursor)
     return await execute_uw_cached(
         cache=cache,
         cache_key=cache_key,
         registry=registry,
         ttl=30,
-        fetcher=lambda provider: provider.get_flow_alerts(limit=fetch_limit),
-        build_response=lambda alerts: paginate_response(alerts, limit, cursor),
+        fetcher=lambda provider: provider.get_flow_alerts(limit=page_limit, offset=offset),
+        build_response=lambda alerts: paginate_offset_response(alerts, limit, offset),
     )
 
 
@@ -53,7 +53,7 @@ async def get_flow_symbol(
     """Get options flow for a specific ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:flow:{symbol}:{limit}:{date or 'latest'}:{cursor or 'start'}"
-    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    offset, page_limit = cursor_page_limit(limit=limit, cursor=cursor)
     return await execute_uw_cached(
         cache=cache,
         cache_key=cache_key,
@@ -62,9 +62,10 @@ async def get_flow_symbol(
         fetcher=lambda provider: provider.get_ticker_flow(
             symbol=symbol,
             date_str=date,
-            limit=fetch_limit,
+            limit=page_limit,
+            offset=offset,
         ),
-        build_response=lambda alerts: paginate_response(alerts, limit, cursor),
+        build_response=lambda alerts: paginate_offset_response(alerts, limit, offset),
     )
 
 
@@ -78,14 +79,14 @@ async def get_darkpool_all(
 ):
     """Get all recent darkpool trades."""
     cache_key = f"uw:darkpool:all:{limit}:{cursor or 'start'}"
-    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    offset, page_limit = cursor_page_limit(limit=limit, cursor=cursor)
     return await execute_uw_cached(
         cache=cache,
         cache_key=cache_key,
         registry=registry,
         ttl=30,
-        fetcher=lambda provider: provider.get_darkpool_recent(limit=fetch_limit),
-        build_response=lambda trades: paginate_response(trades, limit, cursor),
+        fetcher=lambda provider: provider.get_darkpool_recent(limit=page_limit, offset=offset),
+        build_response=lambda trades: paginate_offset_response(trades, limit, offset),
     )
 
 
@@ -102,7 +103,7 @@ async def get_darkpool_symbol(
     """Get darkpool trades for a specific ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:darkpool:{symbol}:{limit}:{date or 'latest'}:{cursor or 'start'}"
-    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    offset, page_limit = cursor_page_limit(limit=limit, cursor=cursor)
     return await execute_uw_cached(
         cache=cache,
         cache_key=cache_key,
@@ -111,7 +112,8 @@ async def get_darkpool_symbol(
         fetcher=lambda provider: provider.get_darkpool_ticker(
             symbol=symbol,
             date_str=date,
-            limit=fetch_limit,
+            limit=page_limit,
+            offset=offset,
         ),
-        build_response=lambda trades: paginate_response(trades, limit, cursor),
+        build_response=lambda trades: paginate_offset_response(trades, limit, offset),
     )

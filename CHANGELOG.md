@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.41] - 2026-02-06
+
+### Added
+
+- **UW native-offset pagination coverage tests**: Expanded `tests/test_uw_common.py` and `tests/test_uw_provider.py` with cursor page-limit/prefetched-window pagination assertions and provider offset fallback behavior checks.
+
+### Changed
+
+- **UW flow/market native pagination rollout**: Updated `gateway/api/uw/flow.py` and `gateway/api/uw/market.py` (institutions route) to use cursor offset + `limit+1` page fetches with `paginate_offset_response`, reducing offset-depth over-fetch where provider pagination is available.
+- **UW shared pagination helpers**: Added `cursor_page_limit` and `paginate_offset_response` in `gateway/api/uw/common.py` for native-offset route pagination response construction.
+- **UW provider optional offset/page support with safe fallback**: Updated `gateway/providers/uw.py` flow/darkpool/institutions methods to accept `offset`, attempt native `offset/page` SDK params, and fall back to compatible over-fetch+local-slice behavior when unsupported.
+- **UW audit tracking updates**: Updated `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to reflect native pagination rollout in UW flow/darkpool/institutions paths and narrow remaining UW pagination scope.
+
 ## [0.5.40] - 2026-02-06
 
 ### Added
