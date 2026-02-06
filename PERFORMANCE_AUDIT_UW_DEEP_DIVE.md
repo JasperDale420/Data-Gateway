@@ -178,14 +178,14 @@ Low-risk fix path:
 
 Wave status (2026-02-06):
 - `1` in progress (cursor-depth guardrail + shared UW cached route helper implemented)
-- `2` in progress (applied to `flow.py`, `market.py`, `stock.py`, `options.py`, `misc.py`, `alerts.py`, `insiders.py`, `contracts.py`, `calendar.py`, `extended.py`, `institutions.py`, `flow_analytics.py`, `market_data.py`, `intelligence.py`, `politicians.py`, `volatility.py`, `etf_extended.py`, `shorts.py`, `options_data.py`, and `greeks.py`; remaining UW routes: `etf.py`, `earnings.py`, `seasonality.py`, `screener.py`)
+- `2` complete (shared route helper applied across all UW route modules, including `etf.py`, `earnings.py`, `seasonality.py`, and `screener.py`)
 - `3` pending
 
 ### Wave UW-2
 
 1. Replace over-fetch pagination where SDK supports direct paging.
-2. Apply shared route helper to remaining UW route files.
-3. Reduce redundant model serialization paths.
+2. Reduce redundant model serialization paths.
+3. Validate route-level cache-key cardinality and TTL hit-rate assumptions with metrics.
 
 ### Wave UW-3
 
@@ -216,13 +216,13 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/api/uw/politicians.py` | 4 | COMPLETE | Shared helper migration complete; validate pagination parity |
 | `gateway/api/uw/volatility.py` | 4 | COMPLETE | Shared helper migration complete; keep volatility 404 behavior stable |
 | `gateway/api/uw/alerts.py` | 3 | COMPLETE | Shared helper migration complete; keep pagination path centralized |
-| `gateway/api/uw/earnings.py` | 3 | COMPLETE | Shared helper migration pending |
-| `gateway/api/uw/etf.py` | 3 | COMPLETE | Shared helper migration pending |
+| `gateway/api/uw/earnings.py` | 3 | COMPLETE | Shared helper migration complete; validate date-key cache cardinality |
+| `gateway/api/uw/etf.py` | 3 | COMPLETE | Shared helper migration complete; keep serialized pagination contract |
 | `gateway/api/uw/greeks.py` | 3 | COMPLETE | Shared helper migration complete; keep count metadata parity |
 | `gateway/api/uw/options_data.py` | 3 | COMPLETE | Shared helper migration complete; validate pagination metadata parity |
 | `gateway/api/uw/shorts.py` | 3 | COMPLETE | Shared helper migration complete; keep serialized pagination contract |
-| `gateway/api/uw/screener.py` | 2 | COMPLETE | Shared helper migration pending |
-| `gateway/api/uw/seasonality.py` | 2 | COMPLETE | Shared helper migration pending |
+| `gateway/api/uw/screener.py` | 2 | COMPLETE | Shared helper migration complete; validate short-TTL cache hit-rate |
+| `gateway/api/uw/seasonality.py` | 2 | COMPLETE | Shared helper migration complete; keep count metadata parity |
 | `gateway/api/uw/insiders.py` | 4 | COMPLETE | Shared helper migration complete; validate TTLs by endpoint hit-rate |
 | `gateway/api/uw/common.py` | 0 | COMPLETE | Add shared UW handler wrapper + serializer helper |
 | `gateway/api/uw/__init__.py` | 0 | COMPLETE | No perf hotspots; keep as router composition only |
@@ -231,7 +231,6 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 These areas remain open for implementation/profiling in later runs:
 
-1. Finish Wave UW-1 route helper rollout for `gateway/api/uw/{etf,earnings,seasonality,screener}.py`.
-2. Add bounded SDK concurrency gate and queue-wait metrics around `gateway/providers/uw.py::_call_sync`.
-3. Replace over-fetch cursor pagination with native provider pagination where supported (`gateway/api/uw/{flow,market}.py` + provider support points).
-4. Run targeted throughput/memory profiling for UW-heavy endpoints and stream/middleware interaction paths.
+1. Add bounded SDK concurrency gate and queue-wait metrics around `gateway/providers/uw.py::_call_sync`.
+2. Replace over-fetch cursor pagination with native provider pagination where supported (`gateway/api/uw/{flow,market}.py` + provider support points).
+3. Run targeted throughput/memory profiling for UW-heavy endpoints and stream/middleware interaction paths.

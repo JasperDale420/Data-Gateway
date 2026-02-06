@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.38] - 2026-02-06
+
+### Changed
+
+- **UW Wave 1 route-helper rollout completed**: Refactored `gateway/api/uw/{etf,earnings,seasonality,screener}.py` to use shared `execute_uw_cached` + `make_response`/`paginate_response` flow, removing remaining direct cache/rate-limit/provider-call boilerplate in UW route files.
+- **UW audit status tracking updates**: Updated `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark shared-helper rollout complete across all UW route modules and shift remaining UW scope to provider-side concurrency/native-pagination profiling work.
+
 ## [0.5.37] - 2026-02-06
 
 ### Changed
