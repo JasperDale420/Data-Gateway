@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.30] - 2026-02-06
+
+### Added
+
+- **Perf release-readiness command**: Added `scripts/perf_release_readiness.py` to compare active perf configs against tracked config files, print unified diffs, optionally apply promotion, and emit a markdown report.
+- **Release-readiness command tests**: Added `tests/test_perf_release_readiness.py` covering dry-run diff/report behavior and apply-mode promotion.
+- **Perf promotion runbook**: Added `PERF_RELEASE_READINESS.md` with a concise operator checklist for dry-run, apply, and validation steps.
+
+### Changed
+
+- **README perf operations docs**: Updated `README.md` with local perf gate command usage and link to the perf release-readiness runbook.
+- **Benchmark audit tracking updates**: Updated `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to include the new release-readiness helper and runbook in BENCH operations.
+
 ## [0.5.29] - 2026-02-06
 
 ### Added

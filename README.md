@@ -81,6 +81,21 @@ pytest tests/ -v
 uvicorn gateway.main:app --reload --port 8080
 ```
 
+### Perf Guardrails
+
+```bash
+# Run perf gate locally
+python scripts/perf_gate.py \
+  --budgets-file config/perf_budgets.json \
+  --baseline-file config/perf_baseline.json \
+  --junit-xml perf-junit.xml \
+  --log-file perf-output.txt \
+  --summary-file perf-summary.json
+```
+
+Perf promotion/release runbook:
+- `PERF_RELEASE_READINESS.md`
+
 ### Docker
 
 ```bash

@@ -253,7 +253,7 @@ Legend:
 11. Implement core modules Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` (validator hot-path optimization, quality timestamp/sort reductions, symbology allocation trimming, middleware import hoist).
 12. Implement core infrastructure Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` (adjustment lookup optimization, breaker caching, rate-limiter wait tuning, and bounded sink dispatch tuning).
 13. Implement tests Wave 1 optimizations from `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` (fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing tests).
-14. Operate BENCH guardrails from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (monitor auto-ratcheted budgets/baselines, tune multipliers/windows, and periodically promote stable active configs via `scripts/perf_promote_active_configs.py`).
+14. Operate BENCH guardrails from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (monitor auto-ratcheted budgets/baselines, tune multipliers/windows, and periodically promote stable active configs via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`).
 
 ## Notes
 

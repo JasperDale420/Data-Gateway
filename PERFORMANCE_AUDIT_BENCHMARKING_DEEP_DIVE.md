@@ -23,7 +23,7 @@ Complete a deep audit of repository performance-measurement readiness so future 
 | Wave 2 replay/bulk memory perf coverage | 1 file (`tests/perf/test_perf_replay_bulk_memory.py`) | COMPLETE | Added replay loop memory profile and bulk stream-vs-JSONL peak-allocation comparison |
 | Runtime sink in-flight hardening | 1 file (`gateway/core/data_sink.py`) | COMPLETE | Per-sink in-flight cap with backpressure drops and publish stats added |
 | CI budget enforcement | 1 workflow + 1 script | COMPLETE | Thresholded perf gate + artifact publishing implemented |
-| Baseline history automation | 1 workflow + 2 scripts + 2 unit tests | COMPLETE | Added rolling history, baseline refresh, automatic budget ratcheting, and active-config promotion utility |
+| Baseline history automation | 1 workflow + 3 scripts + 3 unit tests | COMPLETE | Added rolling history, baseline refresh, automatic budget ratcheting, active-config promotion utility, and release-readiness diff/apply helper |
 
 ## Evidence Snapshot
 
@@ -282,14 +282,17 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `scripts/perf_gate.py` | COMPLETE | evolve trend policy and baseline-update automation |
 | `scripts/perf_baseline_manager.py` | COMPLETE | tune ratchet multipliers/windows and promotion policy for active configs |
 | `scripts/perf_promote_active_configs.py` | COMPLETE | use on cadence to promote stable active configs into versioned config files |
+| `scripts/perf_release_readiness.py` | COMPLETE | run dry-run+apply promotion with explicit diffs and markdown report |
 | `config/perf_budgets.json` | COMPLETE | ratchet suite/per-test budgets from CI baseline history |
 | `config/perf_baseline.json` | COMPLETE | refresh baseline timing anchors from CI trend windows |
 | `pyproject.toml` | COMPLETE | maintain pytest `perf` marker split |
+| `PERF_RELEASE_READINESS.md` | COMPLETE | standardize operator checklist for perf config promotion |
 | `tests/perf/test_perf_baseline.py` | COMPLETE | expand middleware/replay/bulk perf assertions |
 | `tests/perf/test_perf_stream_sink.py` | COMPLETE | tune boundedness thresholds for multi-sink/slow-backend scenarios |
 | `tests/perf/test_perf_replay_bulk_memory.py` | COMPLETE | tune thresholds and add additional replay/bulk scenarios as needed |
 | `tests/test_perf_baseline_manager.py` | COMPLETE | preserve ratchet/rotation invariants as manager evolves |
 | `tests/test_perf_promote_active_configs.py` | COMPLETE | preserve promotion safety (write + dry-run) behavior |
+| `tests/test_perf_release_readiness.py` | COMPLETE | preserve dry-run reporting and apply-mode promotion behavior |
 | `tests/test_middleware_streaming.py` | COMPLETE | align cache-header expectations for green perf baseline |
 | `tests/test_optimization.py` | COMPLETE | isolate perf assertions into dedicated `perf` suite |
 | `tests/test_replay.py` | COMPLETE | update calls for `client_id` signature |
@@ -305,5 +308,5 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 ## Remaining Audit Scope (Future Runs)
 
 1. Monitor CI artifact trends and adjust ratchet multipliers/windows if false positives or slack appear.
-2. Use `scripts/perf_promote_active_configs.py` to promote `.perf/perf_*.active.json` snapshots into versioned config files on a cadence (for example weekly) when stable.
+2. Use `scripts/perf_release_readiness.py` (or `scripts/perf_promote_active_configs.py`) to promote `.perf/perf_*.active.json` snapshots into versioned config files on a cadence (for example weekly) when stable.
 3. Add provider-specific perf micro-slices only if BENCH artifacts show unexplained trend regressions.
