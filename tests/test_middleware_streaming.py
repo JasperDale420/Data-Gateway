@@ -17,14 +17,14 @@ def test_cache_middleware_bypasses_streaming_json() -> None:
     app = FastAPI()
     app.add_middleware(CacheMiddleware, default_ttl=60, max_body_bytes=1024)
 
-    @app.get("/stream")
+    @app.get("/health/stream")
     async def stream_endpoint():
         return StreamingResponse(_json_stream(b'{"success":true,"data":{"value":1}}'))
 
     client = TestClient(app)
 
-    response1 = client.get("/stream")
-    response2 = client.get("/stream")
+    response1 = client.get("/health/stream")
+    response2 = client.get("/health/stream")
 
     assert response1.status_code == 200
     assert response2.status_code == 200

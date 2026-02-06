@@ -79,7 +79,7 @@ class TestReplaySession:
             start=datetime(2024, 1, 15, 9, 0, tzinfo=UTC),
             end=datetime(2024, 1, 15, 10, 0, tzinfo=UTC),
         )
-        session = ReplaySession(session_id="test-123", config=config)
+        session = ReplaySession(session_id="test-123", config=config, client_id="test-client")
 
         # Initial progress should be 0
         assert session.progress == 0.0
@@ -98,7 +98,7 @@ class TestReplaySession:
             end=datetime(2024, 1, 15, 10, 0, tzinfo=UTC),
             speed=10.0,
         )
-        session = ReplaySession(session_id="test-123", config=config)
+        session = ReplaySession(session_id="test-123", config=config, client_id="test-client")
 
         # 1 hour / 10x speed = 360 seconds
         assert session.estimated_duration_seconds == 360.0
@@ -112,7 +112,7 @@ class TestReplaySession:
             start=datetime.now(UTC),
             end=datetime.now(UTC) + timedelta(hours=1),
         )
-        session = ReplaySession(session_id="test-123", config=config)
+        session = ReplaySession(session_id="test-123", config=config, client_id="test-client")
 
         session.pause()
         assert session.state == ReplayState.PAUSED
@@ -130,7 +130,7 @@ class TestReplaySession:
             start=datetime.now(UTC),
             end=datetime.now(UTC) + timedelta(hours=1),
         )
-        session = ReplaySession(session_id="test-123", config=config)
+        session = ReplaySession(session_id="test-123", config=config, client_id="test-client")
 
         session.stop()
         assert session.state == ReplayState.STOPPED
@@ -183,7 +183,7 @@ class TestReplaySessionManager:
             end=datetime.now(UTC) + timedelta(hours=1),
         )
 
-        session = await manager.create_session(config)
+        session = await manager.create_session(config, client_id="test-client")
 
         assert session.session_id.startswith("replay-")
         assert session.state == ReplayState.PENDING
@@ -199,7 +199,7 @@ class TestReplaySessionManager:
             end=datetime.now(UTC) + timedelta(hours=1),
         )
 
-        created = await manager.create_session(config)
+        created = await manager.create_session(config, client_id="test-client")
         retrieved = manager.get_session(created.session_id)
 
         assert retrieved is not None
@@ -216,8 +216,8 @@ class TestReplaySessionManager:
             end=datetime.now(UTC) + timedelta(hours=1),
         )
 
-        await manager.create_session(config)
-        await manager.create_session(config)
+        await manager.create_session(config, client_id="test-client")
+        await manager.create_session(config, client_id="test-client")
 
         sessions = await manager.list_sessions()
         assert len(sessions) == 2
@@ -233,7 +233,7 @@ class TestReplaySessionManager:
             end=datetime.now(UTC) + timedelta(hours=1),
         )
 
-        session = await manager.create_session(config)
+        session = await manager.create_session(config, client_id="test-client")
         deleted = await manager.delete_session(session.session_id)
 
         assert deleted is True

@@ -18,7 +18,8 @@ Complete a deep audit of repository performance-measurement readiness so future 
 | Perf-sensitive test paths | 3 (`tests/test_middleware_streaming.py`, `tests/test_optimization.py`, `tests/test_replay.py`) | COMPLETE | Measured for baseline readiness; failures block clean perf baselines |
 | Hot-path source anchor validation | 8 core/runtime files | COMPLETE | Anchored middleware/stream/sink/dedup/metrics/rate-limit hot paths |
 | Runtime microbench sample | 1 ad-hoc run | COMPLETE | Fresh local microbench figures captured |
-| Dedicated benchmark harness + CI budget enforcement | N/A | FUTURE | Implementation phase pending |
+| Dedicated benchmark harness (pytest marker + baseline suite) | 2 files (`pyproject.toml`, `tests/perf/test_perf_baseline.py`) | COMPLETE | `perf` marker added and baseline perf suite introduced |
+| CI budget enforcement | N/A | FUTURE | Perf thresholds/artifacts not yet wired into CI |
 
 ## Evidence Snapshot
 
@@ -83,6 +84,13 @@ Low-risk fix path:
 2. Keep benchmarks side-effect free and deterministic (local fixtures, no network).
 3. Keep regular CI behavior intact; run perf gate in separate opt-in job.
 
+Status (2026-02-06):
+- Completed:
+  - Added pytest marker + default exclusion from non-perf suites:
+    - `pyproject.toml:125-130`
+  - Added dedicated perf baseline tests:
+    - `tests/perf/test_perf_baseline.py:1-43`
+
 ### P0-2: Benchmark baseline quality is blocked by known failing tests
 
 Evidence:
@@ -98,6 +106,18 @@ Low-risk fix path:
 1. Repair header expectation drift for cache middleware tests.
 2. Update replay tests to current `client_id` signatures.
 3. Freeze green baseline before introducing perf budgets.
+
+Status (2026-02-06):
+- Completed:
+  - Updated middleware/cache tests to use public health routes:
+    - `tests/test_middleware_streaming.py:20-27`
+    - `tests/test_optimization.py:24-47`
+  - Updated replay tests to current signatures with `client_id`:
+    - `tests/test_replay.py:82`
+    - `tests/test_replay.py:186`
+  - Validation run:
+    - `pytest -q tests/test_middleware_streaming.py tests/test_optimization.py tests/test_replay.py --durations=10`
+    - Result: `19 passed in 0.18s`
 
 ### P1-3: CI workflows have no latency/throughput budget enforcement
 
@@ -156,6 +176,11 @@ Low-risk fix path:
 2. Add pytest `perf` marker and split perf tests from functional suites.
 3. Establish a deterministic local perf dataset/fixture layer.
 
+Wave status (2026-02-06):
+- `1` complete
+- `2` complete
+- `3` complete (initial deterministic perf baselines in `tests/perf/test_perf_baseline.py`)
+
 ### Wave BENCH-2 (Harness and Coverage)
 
 1. Add benchmark tests for:
@@ -195,6 +220,6 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 ## Remaining Audit Scope (Future Runs)
 
-1. Implement BENCH-1 baseline stabilization and lock clean green baseline.
-2. Implement BENCH-2 benchmark harness and capture first artifacted baseline.
-3. Implement BENCH-3 CI guardrails and tune thresholds after 3-5 baseline runs.
+1. Implement BENCH-2 benchmark harness expansion and capture first artifacted baseline.
+2. Implement BENCH-3 CI guardrails and tune thresholds after 3-5 baseline runs.
+3. Add perf baselines for sink backpressure and stream fanout memory/in-flight bounds.
