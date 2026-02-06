@@ -236,6 +236,7 @@ Legend:
 | Core infrastructure modules `gateway/core/{adjustments,auth,balancer,circuit_breaker,connections,corporate_actions,data_sink,dedup,metrics,multiplexer,normalizer,rate_limiter,redis_sink,provider}.py` | 15 (3380 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` |
 | Tests (`tests/`) | 28 files (303 tests, 4491 LOC) | COMPLETE | Dedicated execution-path pass completed; see `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` |
 | Scripts `scripts/{live_provider_smoke.py,generate_provider_contract.py}` | 2 (351 LOC) | COMPLETE | Dedicated static/code-path pass completed; see `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` |
+| Benchmark/profiling readiness (`.github/workflows/{ci,release-readiness}.yml`, `pyproject.toml`, targeted perf-sensitive tests/core hot paths) | 14 files/areas | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` |
 
 ## Next-Run Audit Plan (Targeted)
 
@@ -252,7 +253,7 @@ Legend:
 11. Implement core modules Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` (validator hot-path optimization, quality timestamp/sort reductions, symbology allocation trimming, middleware import hoist).
 12. Implement core infrastructure Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` (adjustment lookup optimization, bounded sink publish queue, breaker caching, rate-limiter wait tuning).
 13. Implement tests Wave 1 optimizations from `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` (fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing tests).
-14. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream/replay fanout and validate bulk/replay memory growth scenarios.
+14. Implement BENCH Wave 1 from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (stabilize failing perf-sensitive tests, add `pytest -m perf` baseline harness, and start artifacted benchmark outputs).
 
 ## Notes
 
