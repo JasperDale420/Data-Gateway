@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.32] - 2026-02-06
+
+### Added
+
+- **Provider registry concurrency tests**: Added `tests/test_registry.py` to validate concurrent provider health checks and exception capture behavior.
+
+### Changed
+
+- **Parallel provider health checks**: Updated `gateway/core/registry.py` so `health_check_all()` runs provider checks concurrently via `asyncio.gather`, reducing admin/control-plane status latency under multiple providers.
+- **Audit progress tracking**: Updated `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark admin health-check parallelization complete and narrow remaining Finnhub/control-plane scope.
+
 ## [0.5.31] - 2026-02-06
 
 ### Added

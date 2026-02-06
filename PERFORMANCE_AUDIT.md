@@ -244,7 +244,7 @@ Legend:
 2. Implement Alpha Vantage Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` (cache-before-provider, helper consolidation, serialization normalization).
 3. Implement yfinance Wave 1 optimizations from `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` (cache-before-provider, route helper consolidation, health-check offload).
 4. Implement SEC Wave 1 optimizations from `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` (cache-before-provider, helper consolidation, filing key normalization).
-5. Implement Finnhub/control-plane Wave 1 optimizations from `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` (cache-before-provider, dedupe, date/key helper consolidation, admin health-check parallelization).
+5. Continue Finnhub/control-plane Wave 1 optimizations from `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` (cache-before-provider, dedupe, and date/key helper consolidation; admin health-check parallelization completed).
 6. Implement Alpaca Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` (route helper consolidation, cache/dedupe for safe GETs, over-fetch reductions).
 7. Implement non-provider router Wave 1 optimizations from `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` (bulk streaming downloads, fetcher binding guards, cache-hit-first parsing in news).
 8. Implement Alpaca provider Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_PROVIDER_DEEP_DIVE.md` (shared client use for DNE path, conversion-path optimization, limit/logging tuning).

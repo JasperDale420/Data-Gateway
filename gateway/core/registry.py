@@ -1,5 +1,6 @@
 """Provider registry with dynamic loading."""
 
+import asyncio
 import importlib
 from pathlib import Path
 from typing import Any
@@ -125,12 +126,19 @@ class ProviderRegistry:
 
     async def health_check_all(self) -> dict[str, HealthStatus]:
         """Health check all providers."""
-        results = {}
-        for name, provider in self._providers.items():
+
+        async def _check_provider(name: str, provider: DataProvider) -> tuple[str, HealthStatus]:
             try:
-                results[name] = await provider.health_check()
+                return name, await provider.health_check()
             except Exception as e:
-                results[name] = HealthStatus(healthy=False, error=str(e))
+                return name, HealthStatus(healthy=False, error=str(e))
+
+        results: dict[str, HealthStatus] = {}
+        checks = await asyncio.gather(
+            *(_check_provider(name, provider) for name, provider in self._providers.items())
+        )
+        for name, status in checks:
+            results[name] = status
         return results
 
     def get_stats(self) -> dict[str, Any]:

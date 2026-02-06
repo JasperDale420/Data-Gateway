@@ -182,6 +182,11 @@ Low-risk fix path:
 2. Apply selective caching policy for high-cardinality date-window keys.
 3. Parallelize `registry.health_check_all` for admin endpoints.
 
+Wave status (2026-02-06):
+- `1` pending
+- `2` pending
+- `3` complete (`gateway/core/registry.py::health_check_all` now runs provider checks concurrently)
+
 ### Wave FH-CP-3
 
 1. Add lightweight response caching/etag strategy for large catalog endpoints.
@@ -210,7 +215,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/api/catalog.py` | 6 | COMPLETE | Large static response caching/etag |
 | `gateway/api/health.py` | 3 | COMPLETE | Ready-check instrumentation only |
 | `gateway/providers/finnhub.py` | 49 async methods | COMPLETE | Bounded multi-quote concurrency + bar-loop cleanup |
-| `gateway/core/registry.py` | health-check paths | COMPLETE | Concurrency in `health_check_all` |
+| `gateway/core/registry.py` | health-check paths | COMPLETE | `health_check_all` concurrency implemented; monitor admin/status latency trends |
 
 ## Remaining Audit Scope (Future Runs)
 
