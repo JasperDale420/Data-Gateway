@@ -179,7 +179,7 @@ Low-risk fix path:
 Wave status (2026-02-06):
 - `1` in progress (cursor-depth guardrail + shared UW cached route helper implemented)
 - `2` complete (shared route helper applied across all UW route modules, including `etf.py`, `earnings.py`, `seasonality.py`, and `screener.py`)
-- `3` pending
+- `3` in progress (bounded `_call_sync` concurrency + queue-wait/exec/inflight metrics implemented; remaining provider-wide normalization cleanup and tuning pending)
 
 ### Wave UW-2
 
@@ -189,7 +189,7 @@ Wave status (2026-02-06):
 
 ### Wave UW-3
 
-1. Add bounded SDK concurrency gate around `_call_sync`.
+1. Tune bounded `_call_sync` concurrency default/limits from production latency and queue-wait telemetry.
 2. Tune per-endpoint TTL policy based on real hit-rate.
 3. Expand to provider-wide normalization cleanup.
 
@@ -199,7 +199,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 | File | Endpoints | Audit Status | Future Run Focus |
 |---|---:|---|---|
-| `gateway/providers/uw.py` | 136 async methods | COMPLETE | Apply shared accessor helper, add bounded `_call_sync` concurrency, profile normalization hotspots |
+| `gateway/providers/uw.py` | 136 async methods | COMPLETE | Bounded `_call_sync` concurrency and queue-wait/exec/inflight metrics now in place; next focus is shared accessor helper and normalization hotspot profiling |
 | `gateway/api/uw/stock.py` | 23 | COMPLETE | Shared route helper migration complete; validate TTL policy per endpoint with hit-rate metrics |
 | `gateway/api/uw/contracts.py` | 9 | COMPLETE | Shared helper migration complete; monitor cache key cardinality on contract endpoints |
 | `gateway/api/uw/calendar.py` | 8 | COMPLETE | Shared helper migration complete; validate long TTL behavior with hit-rate metrics |
@@ -231,6 +231,6 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 These areas remain open for implementation/profiling in later runs:
 
-1. Add bounded SDK concurrency gate and queue-wait metrics around `gateway/providers/uw.py::_call_sync`.
-2. Replace over-fetch cursor pagination with native provider pagination where supported (`gateway/api/uw/{flow,market}.py` + provider support points).
+1. Replace over-fetch cursor pagination with native provider pagination where supported (`gateway/api/uw/{flow,market}.py` + provider support points).
+2. Tune `max_inflight_calls` in `gateway/providers/uw.py` using observed wait/exec metrics.
 3. Run targeted throughput/memory profiling for UW-heavy endpoints and stream/middleware interaction paths.

@@ -66,6 +66,7 @@ providers:
     priority: 1
     config:
       api_key_env: UNUSUAL_WHALES_API_KEY  # pragma: allowlist secret
+      max_inflight_calls: 32
     capabilities:
       streaming: false
       historical: true

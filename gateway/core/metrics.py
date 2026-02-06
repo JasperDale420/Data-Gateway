@@ -79,6 +79,26 @@ PROVIDER_HEALTH = Gauge(
     ["provider"],
 )
 
+PROVIDER_SYNC_CALL_WAIT = Histogram(
+    "gateway_provider_sync_call_wait_seconds",
+    "Wait time before provider sync call execution",
+    ["provider"],
+    buckets=(0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0),
+)
+
+PROVIDER_SYNC_CALL_EXEC = Histogram(
+    "gateway_provider_sync_call_exec_seconds",
+    "Execution time for provider sync calls",
+    ["provider"],
+    buckets=(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
+PROVIDER_SYNC_CALL_INFLIGHT = Gauge(
+    "gateway_provider_sync_call_inflight",
+    "Current in-flight provider sync calls",
+    ["provider"],
+)
+
 # Rate limiting metrics
 RATE_LIMIT_EXCEEDED = Counter(
     "gateway_rate_limit_exceeded_total",
@@ -232,6 +252,26 @@ def record_provider_request(provider: str, success: bool, duration: float) -> No
 def set_provider_health(provider: str, healthy: bool) -> None:
     """Set provider health status."""
     PROVIDER_HEALTH.labels(provider=provider).set(1 if healthy else 0)
+
+
+def record_provider_sync_call_wait(provider: str, duration: float) -> None:
+    """Record sync-call queue wait duration."""
+    PROVIDER_SYNC_CALL_WAIT.labels(provider=provider).observe(duration)
+
+
+def record_provider_sync_call_exec(provider: str, duration: float) -> None:
+    """Record sync-call execution duration."""
+    PROVIDER_SYNC_CALL_EXEC.labels(provider=provider).observe(duration)
+
+
+def inc_provider_sync_call_inflight(provider: str) -> None:
+    """Increment in-flight sync-call gauge."""
+    PROVIDER_SYNC_CALL_INFLIGHT.labels(provider=provider).inc()
+
+
+def dec_provider_sync_call_inflight(provider: str) -> None:
+    """Decrement in-flight sync-call gauge."""
+    PROVIDER_SYNC_CALL_INFLIGHT.labels(provider=provider).dec()
 
 
 def record_rate_limit_exceeded(client_id: str) -> None:

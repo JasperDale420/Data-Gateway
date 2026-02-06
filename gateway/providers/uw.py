@@ -4,11 +4,18 @@ import asyncio
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
+from time import perf_counter
 from typing import Any
 
 import structlog
 from unusualwhales.types import UNSET, Unset
 
+from gateway.core.metrics import (
+    dec_provider_sync_call_inflight,
+    inc_provider_sync_call_inflight,
+    record_provider_sync_call_exec,
+    record_provider_sync_call_wait,
+)
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import (
     NormalizedDarkpoolTrade,
@@ -22,6 +29,7 @@ logger = structlog.get_logger()
 
 # Error message constants
 ERR_NOT_INITIALIZED = "Provider not initialized"
+DEFAULT_UW_MAX_INFLIGHT_CALLS = 32
 
 # Timezone constants
 TZ_UTC_SUFFIX = "+00:00"
@@ -39,6 +47,10 @@ class UnusualWhalesProvider(DataProvider):
         self._client = None
         self._api_key: str = ""
         self._initialized: bool = False
+        self._max_inflight_calls: int = DEFAULT_UW_MAX_INFLIGHT_CALLS
+        self._call_sync_semaphore: asyncio.Semaphore = asyncio.Semaphore(
+            DEFAULT_UW_MAX_INFLIGHT_CALLS
+        )
 
     @property
     def name(self) -> str:
@@ -62,6 +74,17 @@ class UnusualWhalesProvider(DataProvider):
         """Initialize the Unusual Whales client."""
         api_key_env = config.get("api_key_env", "UNUSUAL_WHALES_API_KEY")
         self._api_key = os.environ.get(api_key_env, "")
+        raw_max_inflight = config.get("max_inflight_calls", DEFAULT_UW_MAX_INFLIGHT_CALLS)
+        try:
+            self._max_inflight_calls = max(1, int(raw_max_inflight))
+        except (TypeError, ValueError):
+            logger.warning(
+                "uw_invalid_max_inflight_calls",
+                value=raw_max_inflight,
+                default=DEFAULT_UW_MAX_INFLIGHT_CALLS,
+            )
+            self._max_inflight_calls = DEFAULT_UW_MAX_INFLIGHT_CALLS
+        self._call_sync_semaphore = asyncio.Semaphore(self._max_inflight_calls)
 
         if not self._api_key:
             logger.warning(
@@ -171,7 +194,18 @@ class UnusualWhalesProvider(DataProvider):
 
     async def _call_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         """Run blocking SDK calls off the event loop."""
-        return await asyncio.to_thread(func, *args, **kwargs)
+        wait_start = perf_counter()
+        async with self._call_sync_semaphore:
+            wait_seconds = perf_counter() - wait_start
+            record_provider_sync_call_wait(self.name, wait_seconds)
+
+            inc_provider_sync_call_inflight(self.name)
+            exec_start = perf_counter()
+            try:
+                return await asyncio.to_thread(func, *args, **kwargs)
+            finally:
+                record_provider_sync_call_exec(self.name, perf_counter() - exec_start)
+                dec_provider_sync_call_inflight(self.name)
 
     async def get_flow_alerts(
         self,

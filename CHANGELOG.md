@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.40] - 2026-02-06
+
+### Added
+
+- **UW provider concurrency guardrail tests**: Added `tests/test_uw_provider.py` to validate `max_inflight_calls` config parsing, bounded `_call_sync` semaphore behavior, and sync-call wait/exec metric hook emission.
+
+### Changed
+
+- **UW provider bounded sync-call concurrency**: Updated `gateway/providers/uw.py` to enforce a semaphore around `_call_sync`, configurable via `unusual_whales.config.max_inflight_calls` (default `32`), reducing thread-offload contention risk under high request concurrency.
+- **UW provider sync-call observability**: Added provider sync-call wait/exec/inflight metrics and helper functions in `gateway/core/metrics.py`, and instrumented UW `_call_sync` to emit queue wait and execution durations.
+- **UW provider config tuning knob**: Updated `config/providers.yaml` to include explicit `unusual_whales.config.max_inflight_calls`.
+- **UW audit tracking updates**: Updated `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark bounded `_call_sync` concurrency/metrics remediation complete and narrow remaining UW scope.
+
 ## [0.5.39] - 2026-02-06
 
 ### Changed
