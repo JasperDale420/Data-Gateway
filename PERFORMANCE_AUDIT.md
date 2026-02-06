@@ -241,7 +241,7 @@ Legend:
 ## Next-Run Audit Plan (Targeted)
 
 1. Continue UW implementation from `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` (Wave 1 route-helper rollout and `_call_sync` concurrency gating/metrics are complete; native pagination support is now implemented for flow/darkpool/institutions with fallback behavior, and next UW focus is telemetry-driven inflight tuning plus expanding native pagination where post-filter semantics allow).
-2. Implement Alpha Vantage Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` (cache-before-provider, helper consolidation, serialization normalization).
+2. Continue Alpha Vantage Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` (shared cache-first helper now in place and applied to `timeseries.py` + `fundamentals.py`; remaining AV route files pending helper rollout).
 3. Continue yfinance Wave 1 optimizations from `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` (cache-before-provider, route helper consolidation, and health-check offload; provider `iterrows` hot paths remediated).
 4. Implement SEC Wave 1 optimizations from `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` (cache-before-provider, helper consolidation, filing key normalization).
 5. Continue Finnhub/control-plane Wave 1 optimizations from `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` (cache-before-provider, dedupe, and date/key helper consolidation; admin health-check parallelization completed).

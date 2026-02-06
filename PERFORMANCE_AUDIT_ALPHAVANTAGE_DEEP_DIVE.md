@@ -168,6 +168,11 @@ Low-risk fix path:
 2. Add a common route helper in `gateway/api/alphavantage/common.py` for standardized cached/uncached response wrapping.
 3. Standardize `timeseries.py` serialization to `mode="json"` for all model dumps.
 
+Wave status (2026-02-06):
+- `AV-1` in progress (shared helper added in `common.py`; `timeseries.py` and `fundamentals.py` migrated to cache-first helper flow; remaining Alpha Vantage route files pending migration)
+- `AV-2` pending
+- `AV-3` pending
+
 ### Wave AV-2
 
 1. Skip caching for `outputsize=full` time-series endpoints.
@@ -186,20 +191,20 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 | File | Endpoints | Audit Status | Future Run Focus |
 |---|---:|---|---|
-| `gateway/api/alphavantage/timeseries.py` | 6 | COMPLETE | Cache-before-provider reorder, full-output cache policy, serialization normalization |
-| `gateway/api/alphavantage/fundamentals.py` | 5 | COMPLETE | Shared cache/response helper migration |
+| `gateway/api/alphavantage/timeseries.py` | 6 | COMPLETE | AV-1 helper migration complete; AV-2 full-output cache policy and search key guardrails pending |
+| `gateway/api/alphavantage/fundamentals.py` | 5 | COMPLETE | AV-1 helper migration complete; monitor endpoint-level cache hit-rate |
 | `gateway/api/alphavantage/indicators.py` | 11 | COMPLETE | Helper migration and high-cardinality key monitoring |
 | `gateway/api/alphavantage/calendars.py` | 3 | COMPLETE | Helper migration and large-result cache policy checks |
 | `gateway/api/alphavantage/crypto.py` | 2 | COMPLETE | Helper migration |
 | `gateway/api/alphavantage/forex.py` | 2 | COMPLETE | Helper migration |
 | `gateway/api/alphavantage/economic.py` | 1 | COMPLETE | Helper migration |
-| `gateway/api/alphavantage/common.py` | 0 | COMPLETE | Add shared route response/cache helpers |
+| `gateway/api/alphavantage/common.py` | 0 | COMPLETE | AV shared helper is in place; continue rolling migration to remaining route files |
 | `gateway/api/alphavantage/__init__.py` | 0 | COMPLETE | No performance hotspots; router composition only |
 | `gateway/providers/alphavantage.py` | 34 async methods | PARTIAL | CSV parsing modernization, bounded multi-quote concurrency, benchmark validation |
 
 ## Future Runs (Outside Alpha Vantage)
 
-1. Deep route audit for `gateway/api/yf.py`.
-2. Implementation of UW Wave 1 in `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md`.
-3. Throughput benchmark harness for middleware + stream fanout paths.
-4. Memory-profile validation for bulk/replay large datasets.
+1. Complete AV-1 route-helper migration in `gateway/api/alphavantage/{indicators,calendars,crypto,forex,economic}.py`.
+2. Implement AV-2 (`outputsize=full` cache policy, search-key cardinality guardrails, and cache/payload metrics).
+3. Implement AV-3 provider optimizations in `gateway/providers/alphavantage.py` (`csv.DictReader`, bounded quote fan-out, benchmark validation).
+4. Continue non-Alpha-Vantage implementation priorities from `PERFORMANCE_AUDIT.md`.

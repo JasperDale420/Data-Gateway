@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.42] - 2026-02-06
+
+### Added
+
+- **Alpha Vantage shared helper tests**: Added `tests/test_alphavantage_common.py` covering cache-hit short-circuit behavior, cache-miss fetch/store flow, and provider-unavailable guardrails for the new shared Alpha Vantage route helper.
+
+### Changed
+
+- **Alpha Vantage shared cached-route helper**: Added `execute_av_cached`, `get_alphavantage_provider`, and `make_response` in `gateway/api/alphavantage/common.py` to centralize cache-first + provider/rate-limit response flow.
+- **Alpha Vantage AV-1 route migration (phase 1)**: Refactored `gateway/api/alphavantage/timeseries.py` and `gateway/api/alphavantage/fundamentals.py` to use shared helper flow so cache hits return before provider lookup, reducing repeated boilerplate and miss-path drift.
+- **Alpha Vantage serialization normalization**: Standardized monthly time-series serialization in `gateway/api/alphavantage/timeseries.py` to `model_dump(mode="json")` for consistency with other time-series endpoints.
+- **Alpha Vantage audit tracking updates**: Updated `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark AV-1 helper rollout in progress with `timeseries.py` and `fundamentals.py` migrated.
+
 ## [0.5.41] - 2026-02-06
 
 ### Added
