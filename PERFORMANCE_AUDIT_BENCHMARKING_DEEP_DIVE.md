@@ -13,8 +13,8 @@ Complete a deep audit of repository performance-measurement readiness so future 
 
 | Area | Files | Status | Notes |
 |---|---:|---|---|
-| CI performance-gate coverage | 2 workflows | COMPLETE | No benchmark/perf regression gate currently present |
-| Benchmark tooling and pytest config | 1 (`pyproject.toml`) | COMPLETE | `perf` marker split configured; CI perf plugin/threshold config still pending |
+| CI performance-gate coverage | 3 workflows | COMPLETE | Dedicated perf gate workflow added with threshold/artifact output |
+| Benchmark tooling and pytest config | 1 (`pyproject.toml`) | COMPLETE | `perf` marker split configured for explicit perf runs |
 | Perf-sensitive test paths | 3 (`tests/test_middleware_streaming.py`, `tests/test_optimization.py`, `tests/test_replay.py`) | COMPLETE | Measured for baseline readiness; failures block clean perf baselines |
 | Hot-path source anchor validation | 8 core/runtime files | COMPLETE | Anchored middleware/stream/sink/dedup/metrics/rate-limit hot paths |
 | Runtime microbench sample | 1 ad-hoc run | COMPLETE | Fresh local microbench figures captured |
@@ -22,7 +22,7 @@ Complete a deep audit of repository performance-measurement readiness so future 
 | Wave 2 stream/sink perf coverage | 1 file (`tests/perf/test_perf_stream_sink.py`) | COMPLETE | Added fanout semaphore-bound test and sink backpressure growth profile |
 | Wave 2 replay/bulk memory perf coverage | 1 file (`tests/perf/test_perf_replay_bulk_memory.py`) | COMPLETE | Added replay loop memory profile and bulk stream-vs-JSONL peak-allocation comparison |
 | Runtime sink in-flight hardening | 1 file (`gateway/core/data_sink.py`) | COMPLETE | Per-sink in-flight cap with backpressure drops and publish stats added |
-| CI budget enforcement | N/A | FUTURE | Perf thresholds/artifacts not yet wired into CI |
+| CI budget enforcement | 1 workflow + 1 script | COMPLETE | Thresholded perf gate + artifact publishing implemented |
 
 ## Evidence Snapshot
 
@@ -32,8 +32,11 @@ Complete a deep audit of repository performance-measurement readiness so future 
   - `.github/workflows/ci.yml:44-47`
 - Release-readiness workflow has targeted tests but no perf budget checks:
   - `.github/workflows/release-readiness.yml:33-40`
-- `pyproject.toml` now defines a dedicated perf marker split, but no CI perf-threshold/artifact policy yet:
+- `pyproject.toml` defines dedicated perf marker split:
   - `pyproject.toml:125-130`
+- Dedicated CI perf guardrail workflow now enforces runtime threshold and uploads artifacts:
+  - `.github/workflows/perf-guardrail.yml`
+  - `scripts/perf_gate.py`
 
 ### Baseline Readiness Blockers from Targeted Test Runs
 
@@ -152,6 +155,17 @@ Low-risk fix path:
 2. Export benchmark JSON artifact and compare against fixed thresholds.
 3. Start with coarse guardrails (p95 latency and throughput floors), then tighten.
 
+Status (2026-02-06):
+- Completed:
+  - Added dedicated perf gate workflow:
+    - `.github/workflows/perf-guardrail.yml`
+  - Added reusable perf gate runner with threshold/artifact output:
+    - `scripts/perf_gate.py`
+  - Gate validates `pytest -m perf`, enforces runtime threshold, and publishes:
+    - `perf-junit.xml`
+    - `perf-output.txt`
+    - `perf-summary.json`
+
 ### P1-4: Sink publish path can build large fire-and-forget task sets
 
 Evidence:
@@ -242,6 +256,11 @@ Wave status (2026-02-06):
 2. Fail only on material regression thresholds initially.
 3. Publish benchmark and durations artifact for visibility.
 
+Wave status (2026-02-06):
+- `1` complete
+- `2` complete (initial coarse runtime threshold)
+- `3` complete (Junit, raw output, and JSON summary artifacts published)
+
 ## File-Level Audit Tracker (This Run)
 
 Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow-up still needed.
@@ -250,6 +269,8 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 |---|---|---|
 | `.github/workflows/ci.yml` | COMPLETE | add perf job + benchmark artifacts |
 | `.github/workflows/release-readiness.yml` | COMPLETE | decide if perf gate belongs here or separate workflow |
+| `.github/workflows/perf-guardrail.yml` | COMPLETE | tune branch policy, thresholds, and artifact retention |
+| `scripts/perf_gate.py` | COMPLETE | evolve threshold model to per-test budgets/trend deltas |
 | `pyproject.toml` | COMPLETE | add pytest `perf` marker and benchmark config |
 | `tests/perf/test_perf_baseline.py` | COMPLETE | expand middleware/replay/bulk perf assertions |
 | `tests/perf/test_perf_stream_sink.py` | COMPLETE | tune boundedness thresholds for multi-sink/slow-backend scenarios |
@@ -268,6 +289,6 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 ## Remaining Audit Scope (Future Runs)
 
-1. Implement BENCH-3 CI guardrails (dedicated perf workflow, thresholds, and benchmark artifacts).
-2. Tune/ratchet perf thresholds after 3-5 baseline runs and capture trend reporting.
-3. Expand bounded sink perf cases to multi-sink and slower backend profiles.
+1. Tune/ratchet BENCH thresholds after 3-5 baseline runs and capture trend reporting.
+2. Expand bounded sink perf cases to multi-sink and slower backend profiles.
+3. Consider per-test perf budgets and regression deltas in `scripts/perf_gate.py`.

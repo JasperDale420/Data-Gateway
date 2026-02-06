@@ -253,7 +253,7 @@ Legend:
 11. Implement core modules Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` (validator hot-path optimization, quality timestamp/sort reductions, symbology allocation trimming, middleware import hoist).
 12. Implement core infrastructure Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` (adjustment lookup optimization, breaker caching, rate-limiter wait tuning, and bounded sink dispatch tuning).
 13. Implement tests Wave 1 optimizations from `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` (fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing tests).
-14. Complete BENCH Wave 3 from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (add CI perf thresholds/artifacts with trend tracking and expand multi-sink bounded-backpressure perf coverage).
+14. Tune BENCH guardrails from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (ratchet thresholds from baseline history, expand multi-sink bounded-backpressure coverage, and evolve per-test budget checks).
 
 ## Notes
 

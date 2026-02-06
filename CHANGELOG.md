@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.26] - 2026-02-06
+
+### Added
+
+- **Dedicated perf CI guardrail workflow**: Added `.github/workflows/perf-guardrail.yml` to run `pytest -m perf` on push/PR (`main`/`master`), enforce a coarse runtime threshold, and always upload perf artifacts.
+- **Reusable perf gate runner**: Added `scripts/perf_gate.py` to execute perf tests, enforce a configurable max runtime budget, and emit:
+  - `perf-junit.xml`
+  - `perf-output.txt`
+  - `perf-summary.json`
+
+### Changed
+
+- **Benchmark audit Wave 3 tracking**: Updated `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` to mark CI guardrails as COMPLETE and shift remaining scope to threshold tuning, multi-sink perf expansion, and per-test budget evolution.
+- **Top-level benchmark next-run refinement**: Updated `PERFORMANCE_AUDIT.md` item 14 from Wave 3 implementation to BENCH guardrail tuning/evolution work.
+
 ## [0.5.25] - 2026-02-06
 
 ### Added
