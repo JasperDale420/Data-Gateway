@@ -14,11 +14,12 @@ Complete a deep audit of repository performance-measurement readiness so future 
 | Area | Files | Status | Notes |
 |---|---:|---|---|
 | CI performance-gate coverage | 2 workflows | COMPLETE | No benchmark/perf regression gate currently present |
-| Benchmark tooling and pytest config | 1 (`pyproject.toml`) | COMPLETE | No `perf` marker or benchmark plugin configuration |
+| Benchmark tooling and pytest config | 1 (`pyproject.toml`) | COMPLETE | `perf` marker split configured; CI perf plugin/threshold config still pending |
 | Perf-sensitive test paths | 3 (`tests/test_middleware_streaming.py`, `tests/test_optimization.py`, `tests/test_replay.py`) | COMPLETE | Measured for baseline readiness; failures block clean perf baselines |
 | Hot-path source anchor validation | 8 core/runtime files | COMPLETE | Anchored middleware/stream/sink/dedup/metrics/rate-limit hot paths |
 | Runtime microbench sample | 1 ad-hoc run | COMPLETE | Fresh local microbench figures captured |
 | Dedicated benchmark harness (pytest marker + baseline suite) | 2 files (`pyproject.toml`, `tests/perf/test_perf_baseline.py`) | COMPLETE | `perf` marker added and baseline perf suite introduced |
+| Wave 2 stream/sink perf coverage | 1 file (`tests/perf/test_perf_stream_sink.py`) | COMPLETE | Added fanout semaphore-bound test and sink backpressure growth profile |
 | CI budget enforcement | N/A | FUTURE | Perf thresholds/artifacts not yet wired into CI |
 
 ## Evidence Snapshot
@@ -29,8 +30,8 @@ Complete a deep audit of repository performance-measurement readiness so future 
   - `.github/workflows/ci.yml:44-47`
 - Release-readiness workflow has targeted tests but no perf budget checks:
   - `.github/workflows/release-readiness.yml:33-40`
-- `pyproject.toml` pytest config does not define a perf marker suite or benchmark config:
-  - `pyproject.toml:121-126`
+- `pyproject.toml` now defines a dedicated perf marker split, but no CI perf-threshold/artifact policy yet:
+  - `pyproject.toml:125-130`
 
 ### Baseline Readiness Blockers from Targeted Test Runs
 
@@ -66,6 +67,19 @@ Measured outputs:
 Interpretation:
 - Raw function throughput is generally healthy in this synthetic baseline.
 - `peak_bg_tasks=2000` confirms task-growth risk in sink publish path under burst traffic.
+
+### Wave 2 Perf Harness Validation (2026-02-06)
+
+Command run:
+- `pytest -q tests/perf -m perf --durations=10`
+
+Result:
+- `4 passed in 0.38s`
+
+Added coverage:
+- `tests/perf/test_perf_stream_sink.py`:
+  - validates stream fanout max in-flight concurrency respects semaphore limits
+  - profiles sink publish backlog growth under blocked sink I/O (task-growth visibility)
 
 ## Priority Findings (Low-Risk Changes Only)
 
@@ -150,6 +164,13 @@ Low-risk fix path:
 2. Preserve existing non-blocking caller contract.
 3. Add perf test asserting in-flight bound under burst.
 
+Status (2026-02-06):
+- Completed:
+  - Added sink backpressure profile test:
+    - `tests/perf/test_perf_stream_sink.py:89-113`
+- Remaining:
+  - Introduce actual runtime in-flight bound in `DataSinkRegistry` (currently still unbounded task creation).
+
 ### P1-5: Middleware and fanout hotspots still lack benchmark guardrails
 
 Evidence:
@@ -167,6 +188,15 @@ Impact:
 Low-risk fix path:
 1. Add perf cases for cached GET + envelope path and fanout throughput at fixed client counts.
 2. Track both latency and peak memory for these tests.
+
+Status (2026-02-06):
+- Completed:
+  - Existing middleware baseline tests:
+    - `tests/perf/test_perf_baseline.py:15-43`
+  - Added stream fanout semaphore-bound perf test:
+    - `tests/perf/test_perf_stream_sink.py:35-85`
+- Remaining:
+  - Add replay/session scheduling perf coverage and bulk/replay memory-bound assertions.
 
 ## Implementation Plan to Begin Addressing Issues
 
@@ -191,6 +221,11 @@ Wave status (2026-02-06):
 2. Add lightweight memory assertions (peak RSS bounds) for bulk/replay scenarios.
 3. Store benchmark outputs as JSON artifacts for trend comparisons.
 
+Wave status (2026-02-06):
+- `1` partially complete (stream fanout + sink backpressure perf tests added)
+- `2` pending
+- `3` pending
+
 ### Wave BENCH-3 (CI Guardrails)
 
 1. Add a dedicated CI perf job (`pytest -m perf`) with explicit thresholds.
@@ -206,6 +241,8 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `.github/workflows/ci.yml` | COMPLETE | add perf job + benchmark artifacts |
 | `.github/workflows/release-readiness.yml` | COMPLETE | decide if perf gate belongs here or separate workflow |
 | `pyproject.toml` | COMPLETE | add pytest `perf` marker and benchmark config |
+| `tests/perf/test_perf_baseline.py` | COMPLETE | expand middleware/replay/bulk perf assertions |
+| `tests/perf/test_perf_stream_sink.py` | COMPLETE | add sink in-flight boundedness assertions after runtime queueing is implemented |
 | `tests/test_middleware_streaming.py` | COMPLETE | align cache-header expectations for green perf baseline |
 | `tests/test_optimization.py` | COMPLETE | isolate perf assertions into dedicated `perf` suite |
 | `tests/test_replay.py` | COMPLETE | update calls for `client_id` signature |
@@ -220,6 +257,6 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 ## Remaining Audit Scope (Future Runs)
 
-1. Implement BENCH-2 benchmark harness expansion and capture first artifacted baseline.
-2. Implement BENCH-3 CI guardrails and tune thresholds after 3-5 baseline runs.
-3. Add perf baselines for sink backpressure and stream fanout memory/in-flight bounds.
+1. Complete BENCH-2 by adding replay/session and bulk/replay memory-bound perf coverage.
+2. Implement runtime sink in-flight bounding (queue/semaphore) and convert sink backpressure profile into explicit boundedness assertions.
+3. Implement BENCH-3 CI guardrails and tune thresholds after 3-5 baseline runs.

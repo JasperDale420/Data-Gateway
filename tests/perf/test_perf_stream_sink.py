@@ -1,0 +1,116 @@
+"""Perf coverage for stream fanout and sink backpressure paths.
+
+Run explicitly with:
+    pytest -m perf tests/perf -q
+"""
+
+import asyncio
+import time
+from typing import Any
+
+import pytest
+
+from gateway.core.data_sink import DataSink, DataSinkRegistry
+from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
+
+pytestmark = pytest.mark.perf
+
+
+class _BlockingSink(DataSink):
+    """Sink that blocks publish until released by the test."""
+
+    def __init__(self, release_event: asyncio.Event) -> None:
+        self._release_event = release_event
+
+    @property
+    def name(self) -> str:
+        return "blocking"
+
+    async def publish(self, topic: str, data: dict[str, Any]) -> bool:
+        await self._release_event.wait()
+        return True
+
+    async def health_check(self) -> bool:
+        return True
+
+
+@pytest.mark.asyncio
+async def test_stream_fanout_respects_inflight_semaphore_bound() -> None:
+    """Ensure websocket fanout concurrency never exceeds the configured semaphore."""
+    fanout_limit = 8
+    total_clients = 160
+    lock = asyncio.Lock()
+    in_flight = 0
+    peak_in_flight = 0
+    delivered = 0
+
+    async def on_data(client_id: str, data_type: str, envelope: dict[str, Any]) -> None:
+        nonlocal in_flight, peak_in_flight, delivered
+        assert client_id
+        assert data_type == "news"
+        assert "event_id" in envelope
+
+        async with lock:
+            in_flight += 1
+            peak_in_flight = max(peak_in_flight, in_flight)
+        await asyncio.sleep(0.002)
+        async with lock:
+            in_flight -= 1
+            delivered += 1
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=on_data,
+        lazy_connect=True,
+    )
+    multiplexer._fanout_semaphore = asyncio.Semaphore(fanout_limit)
+
+    conn = multiplexer._get_connection(AlpacaStreamType.NEWS)
+    assert conn is not None
+    for i in range(total_clients):
+        conn.subscriptions.subscribe(client_id=f"client-{i}", news=["*"])
+
+    message = {
+        "T": "n",
+        "S": "AAPL",
+        "symbols": ["AAPL"],
+        "t": "2026-02-06T00:00:00Z",
+        "headline": "perf-news",
+    }
+
+    start = time.perf_counter()
+    await multiplexer._handle_message(AlpacaStreamType.NEWS, message)
+    duration = time.perf_counter() - start
+
+    assert delivered == total_clients
+    assert peak_in_flight <= fanout_limit
+    assert duration < 1.0
+
+
+@pytest.mark.asyncio
+async def test_sink_publish_backpressure_task_growth_profile() -> None:
+    """Capture sink fire-and-forget backlog growth under blocked sink I/O."""
+    release_event = asyncio.Event()
+    registry = DataSinkRegistry()
+    registry.register(_BlockingSink(release_event))
+
+    total_events = 300
+    peak_background_tasks = 0
+
+    start = time.perf_counter()
+    for i in range(total_events):
+        await registry.publish_all("heber:events", {"event_id": f"e{i}", "seq": i})
+        peak_background_tasks = max(peak_background_tasks, len(registry._background_tasks))
+    enqueue_duration = time.perf_counter() - start
+
+    # Current registry behavior should show large task backlog under blocked sink I/O.
+    assert peak_background_tasks >= 250
+    assert peak_background_tasks <= total_events
+    assert enqueue_duration < 0.5
+
+    release_event.set()
+    if registry._background_tasks:
+        await asyncio.gather(*list(registry._background_tasks))
+
+    assert len(registry._background_tasks) == 0
