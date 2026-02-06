@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.25] - 2026-02-06
+
+### Added
+
+- **Runtime sink bounded-dispatch hardening**: Updated `gateway/core/data_sink.py` to enforce per-sink in-flight publish caps with backpressure drop handling and publish stats (`scheduled`, `dropped_backpressure`) to prevent unbounded task growth during sink slowdowns.
+
+### Changed
+
+- **Wave 2 sink perf assertions upgraded**: Updated `tests/perf/test_perf_stream_sink.py` from backlog observation to explicit boundedness assertions, validating in-flight task caps under blocked sink I/O.
+- **Benchmark/core-infra audit progress tracking**: Updated `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md`, `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md`, and `PERFORMANCE_AUDIT.md` to mark sink in-flight hardening complete and narrow remaining scope to BENCH Wave 3 CI guardrails + threshold tuning.
+
 ## [0.5.24] - 2026-02-06
 
 ### Added

@@ -85,6 +85,16 @@ Low-risk fix path:
 2. Apply semaphore or max in-flight cap per sink.
 3. Keep existing fire-and-forget behavior contract for callers.
 
+Status (2026-02-06):
+- Completed:
+  - Implemented per-sink bounded in-flight dispatch with drop-on-backpressure:
+    - `gateway/core/data_sink.py:70-205`
+  - Added publish scheduling/backpressure stats:
+    - `gateway/core/data_sink.py:89`
+    - `gateway/core/data_sink.py:123-125`
+  - Added perf assertions for bounded sink backlog:
+    - `tests/perf/test_perf_stream_sink.py:89-113`
+
 ### P1-3: Data sink path does repeated breaker resolution and sequential health checks
 
 Evidence:
@@ -173,9 +183,12 @@ Low-risk fix path:
 ### Wave CORE-INFRA-1 (Immediate, lowest risk)
 
 1. Optimize adjustment factor lookup (single sort + binary search strategy).
-2. Add bounded in-flight sink publishing with per-sink worker limits.
+2. Add bounded in-flight sink publishing with per-sink limits.
 3. Cache sink circuit breakers and parallelize sink health checks.
 4. Use precise `retry_after` waits in rate limiter blocking mode.
+
+Wave status (2026-02-06):
+- `2` complete
 
 ### Wave CORE-INFRA-2
 
@@ -199,7 +212,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 |---|---|---|
 | `gateway/core/adjustments.py` | COMPLETE | single-sort factor lookup + bisect optimization |
 | `gateway/core/corporate_actions.py` | COMPLETE | avoid redundant sort/filter work in fallback paths |
-| `gateway/core/data_sink.py` | COMPLETE | bounded async publish queue + breaker caching |
+| `gateway/core/data_sink.py` | COMPLETE | tune bounded dispatch policy and breaker caching/health parallelism |
 | `gateway/core/dedup.py` | COMPLETE | reduce global lock contention and hashing overhead |
 | `gateway/core/rate_limiter.py` | COMPLETE | retry_after-aligned blocking waits |
 | `gateway/core/auth.py` | COMPLETE | auth success log-volume reduction |

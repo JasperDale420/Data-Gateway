@@ -67,18 +67,28 @@ class DataSinkRegistry:
     # Dedup cache TTL: 24 hours (events older than this are assumed unique)
     DEDUP_TTL_SECONDS = 86400
 
-    def __init__(self, dedup_cache: Any | None = None) -> None:
+    def __init__(
+        self,
+        dedup_cache: Any | None = None,
+        max_in_flight_per_sink: int = 256,
+    ) -> None:
         """Initialize registry.
 
         Args:
             dedup_cache: Optional Redis cache for deduplication.
                          If provided, duplicate events (same event_id) will be skipped.
+            max_in_flight_per_sink: Max concurrent in-flight publish tasks per sink.
+                                    Additional events are dropped with backpressure stats.
         """
         self._sinks: list[DataSink] = []
         self._enabled = True
         self._background_tasks: set[asyncio.Task] = set()  # Prevent GC
         self._dedup_cache = dedup_cache
+        self._max_in_flight_per_sink = max(1, max_in_flight_per_sink)
         self._dedup_stats = {"checked": 0, "deduplicated": 0}
+        self._publish_stats = {"scheduled": 0, "dropped_backpressure": 0}
+        self._sink_semaphores: dict[str, asyncio.Semaphore] = {}
+        self._slot_lock = asyncio.Lock()
 
     def set_dedup_cache(self, cache: Any) -> None:
         """Set dedup cache after initialization (for lazy setup)."""
@@ -88,6 +98,7 @@ class DataSinkRegistry:
     def register(self, sink: DataSink) -> None:
         """Register a data sink."""
         self._sinks.append(sink)
+        self._sink_semaphores.setdefault(sink.name, asyncio.Semaphore(self._max_in_flight_per_sink))
         logger.info("data_sink_registered", sink=sink.name)
 
     def disable(self) -> None:
@@ -106,6 +117,10 @@ class DataSinkRegistry:
     def get_dedup_stats(self) -> dict[str, int]:
         """Return deduplication statistics."""
         return self._dedup_stats.copy()
+
+    def get_publish_stats(self) -> dict[str, int]:
+        """Return publish scheduling/backpressure statistics."""
+        return self._publish_stats.copy()
 
     async def publish_all(self, topic: str, data: dict[str, Any]) -> None:
         """Publish to all registered sinks (non-blocking).
@@ -143,9 +158,49 @@ class DataSinkRegistry:
                 )
 
         for sink in self._sinks:
-            task = asyncio.create_task(self._safe_publish(sink, topic, data))
+            acquired = await self._try_acquire_sink_slot(sink.name)
+            if not acquired:
+                self._publish_stats["dropped_backpressure"] += 1
+                logger.warning(
+                    "data_sink_backpressure_drop",
+                    sink=sink.name,
+                    topic=topic,
+                    max_in_flight=self._max_in_flight_per_sink,
+                )
+                if not sink.record_publish_metrics:
+                    record_sink_publish(sink=sink.name, topic=topic, success=False)
+                continue
+
+            self._publish_stats["scheduled"] += 1
+            task = asyncio.create_task(self._safe_publish_with_release(sink, topic, data))
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
+
+    async def _try_acquire_sink_slot(self, sink_name: str) -> bool:
+        """Try to reserve an in-flight publish slot without blocking."""
+        async with self._slot_lock:
+            sem = self._sink_semaphores.get(sink_name)
+            if sem is None:
+                sem = asyncio.Semaphore(self._max_in_flight_per_sink)
+                self._sink_semaphores[sink_name] = sem
+            if sem.locked():
+                return False
+            await sem.acquire()
+            return True
+
+    async def _safe_publish_with_release(
+        self,
+        sink: DataSink,
+        topic: str,
+        data: dict[str, Any],
+    ) -> None:
+        """Publish and always release the per-sink in-flight slot."""
+        try:
+            await self._safe_publish(sink, topic, data)
+        finally:
+            sem = self._sink_semaphores.get(sink.name)
+            if sem is not None:
+                sem.release()
 
     async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any]) -> None:
         """Publish with error handling."""

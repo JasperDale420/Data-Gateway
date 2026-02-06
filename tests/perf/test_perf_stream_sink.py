@@ -90,9 +90,10 @@ async def test_stream_fanout_respects_inflight_semaphore_bound() -> None:
 
 @pytest.mark.asyncio
 async def test_sink_publish_backpressure_task_growth_profile() -> None:
-    """Capture sink fire-and-forget backlog growth under blocked sink I/O."""
+    """Validate sink fire-and-forget backlog stays bounded under blocked sink I/O."""
     release_event = asyncio.Event()
-    registry = DataSinkRegistry()
+    max_in_flight = 32
+    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
     registry.register(_BlockingSink(release_event))
 
     total_events = 300
@@ -104,9 +105,10 @@ async def test_sink_publish_backpressure_task_growth_profile() -> None:
         peak_background_tasks = max(peak_background_tasks, len(registry._background_tasks))
     enqueue_duration = time.perf_counter() - start
 
-    # Current registry behavior should show large task backlog under blocked sink I/O.
-    assert peak_background_tasks >= 250
-    assert peak_background_tasks <= total_events
+    stats = registry.get_publish_stats()
+    assert peak_background_tasks <= max_in_flight
+    assert stats["scheduled"] <= max_in_flight
+    assert stats["dropped_backpressure"] >= total_events - max_in_flight
     assert enqueue_duration < 0.5
 
     release_event.set()
