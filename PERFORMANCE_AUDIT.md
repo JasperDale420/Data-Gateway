@@ -233,7 +233,7 @@ Legend:
 | API router `gateway/api/sec.py` | 1 (10 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` |
 | API routers `gateway/api/{bulk,calendar,corporate,news,quality,replay,symbology,metrics}.py` | 8 files (34 endpoints incl. replay WS) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` |
 | Core modules `gateway/core/{security,quality,calendar,symbology,validator}.py` | 5 (2395 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` |
-| Tests (`tests/`) | sampled | PARTIAL | Perf-oriented tests exist; no full perf harness yet |
+| Tests (`tests/`) | 28 files (303 tests, 4491 LOC) | COMPLETE | Dedicated execution-path pass completed; see `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` |
 | Scripts `scripts/{live_provider_smoke.py,generate_provider_contract.py}` | 2 (351 LOC) | COMPLETE | Dedicated static/code-path pass completed; see `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` |
 
 ## Next-Run Audit Plan (Targeted)
@@ -249,7 +249,7 @@ Legend:
 9. Implement Alpha Vantage provider Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` (CSV parser migration, shared fetch helper, sort/limit tuning).
 10. Implement News provider Wave 1 optimizations from `PERFORMANCE_AUDIT_NEWS_PROVIDER_DEEP_DIVE.md` (keyword hoisting, shared fetch/readiness helpers, pagination normalization with effective page size).
 11. Implement core modules Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` (validator hot-path optimization, quality timestamp/sort reductions, symbology allocation trimming, middleware import hoist).
-12. Full performance audit of `tests/` execution paths (fixture/setup cost, integration-test hotspots, perf gate design).
+12. Implement tests Wave 1 optimizations from `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` (fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing tests).
 13. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream/replay fanout and validate bulk/replay memory growth scenarios.
 
 ## Notes
