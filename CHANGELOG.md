@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.29] - 2026-02-06
+
+### Added
+
+- **Perf active-config promotion utility**: Added `scripts/perf_promote_active_configs.py` to safely promote `.perf/perf_budgets.active.json` and `.perf/perf_baseline.active.json` into versioned `config/` files.
+- **Promotion utility tests**: Added `tests/test_perf_promote_active_configs.py` covering write-mode promotion and dry-run no-write behavior.
+
+### Changed
+
+- **Benchmark audit tracking updates**: Updated `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to include the promotion utility in BENCH operations.
+
 ## [0.5.28] - 2026-02-06
 
 ### Added
