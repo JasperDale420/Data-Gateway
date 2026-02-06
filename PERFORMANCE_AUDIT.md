@@ -218,18 +218,18 @@ Legend:
 | `gateway/core/uw_poller.py` | 1 | COMPLETE | Polling and dedupe/publish loops audited |
 | `gateway/core/envelope.py` | 1 | COMPLETE | Envelope serialization path audited |
 | `gateway/api/websocket.py` | 1 | COMPLETE | Message loop + subscription path audited |
-| Providers (`alpaca`, `alphavantage`, `news`) | 3 | PARTIAL | High-traffic methods audited; not every endpoint method line-by-line |
+| Providers (`alpaca`, `alphavantage`, `news`) | 3 | PARTIAL | Route-adjacent paths audited; full provider deep passes still pending |
 | Provider `gateway/providers/uw.py` | 1 (4672 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
 | Provider `gateway/providers/yfinance.py` | 1 (386 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` |
 | Provider `gateway/providers/sec.py` | 1 (434 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` |
 | Provider `gateway/providers/finnhub.py` | 1 (1280 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` |
-| API routers `gateway/api/alpaca/*` | 14 files (60 endpoints) | PARTIAL | Common patterns audited; full route-by-route perf pass still pending |
+| API routers `gateway/api/alpaca/*` | 14 files (60 endpoints) | COMPLETE | Full route-level Alpaca audit complete; see `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` |
 | API routers `gateway/api/finnhub/*` + `gateway/api/admin.py` + `gateway/api/catalog.py` + `gateway/api/health.py` | 15 files (61 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` |
 | API routers `gateway/api/uw/*` | 26 (125 endpoints) | COMPLETE | Full route-level UW audit complete; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
 | API routers `gateway/api/alphavantage/*` | 9 (30 endpoints) | COMPLETE | Full route-level Alpha Vantage audit complete; see `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` |
 | API router `gateway/api/yf.py` | 1 (16 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` |
 | API router `gateway/api/sec.py` | 1 (10 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` |
-| API routers others | remaining | PENDING | Needs dedicated endpoint-level perf pass |
+| API routers `gateway/api/{bulk,calendar,corporate,news,quality,replay,symbology,metrics}.py` | 8 files (34 endpoints incl. replay WS) | PENDING | Remaining non-provider router group needs dedicated endpoint-level perf pass |
 | `gateway/core/security.py`, `gateway/core/quality.py`, `gateway/core/calendar.py`, `gateway/core/symbology.py`, `gateway/core/validator.py` | 5 sampled via patterns | PARTIAL | Not deeply profiled for computational hotspots |
 | Tests (`tests/`) | sampled | PARTIAL | Perf-oriented tests exist; no full perf harness yet |
 | `scripts/` | 2 | PENDING | Runtime scripts not performance-profiled |
@@ -241,9 +241,11 @@ Legend:
 3. Implement yfinance Wave 1 optimizations from `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` (cache-before-provider, route helper consolidation, health-check offload).
 4. Implement SEC Wave 1 optimizations from `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` (cache-before-provider, helper consolidation, filing key normalization).
 5. Implement Finnhub/control-plane Wave 1 optimizations from `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` (cache-before-provider, dedupe, date/key helper consolidation, admin health-check parallelization).
-6. Full route-by-route deep pass for `gateway/api/alpaca/*`.
-7. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream fanout.
-8. Validate memory growth scenarios for bulk/replay with synthetic large datasets.
+6. Implement Alpaca Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` (route helper consolidation, cache/dedupe for safe GETs, over-fetch reductions).
+7. Full route-level deep pass for remaining non-provider routers (`bulk`, `calendar`, `corporate`, `news`, `quality`, `replay`, `symbology`, `metrics`).
+8. Full provider deep passes for remaining partial providers (`gateway/providers/alpaca.py`, `gateway/providers/alphavantage.py`, `gateway/providers/news.py`).
+9. Build a lightweight benchmark harness (`pytest -k perf` style) for middleware + stream fanout.
+10. Validate memory growth scenarios for bulk/replay with synthetic large datasets.
 
 ## Notes
 
