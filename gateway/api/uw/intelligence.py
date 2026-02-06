@@ -8,12 +8,12 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -29,22 +29,14 @@ async def get_off_lit_levels(
     """Get dark pool volume per price level."""
     symbol = symbol.upper()
     cache_key = f"uw:off-lit-levels:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_off_lit_levels(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_off_lit_levels(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/congress/recent", response_model=SuccessResponse)
@@ -56,19 +48,17 @@ async def get_recent_congress_trades(
 ):
     """Get recent congressional trades across all tickers."""
     cache_key = f"uw:congress-recent:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_recent_congress_trades(limit=limit)
-
-    response = paginate_response(data, limit)
-    response["meta"] = {"count": len(data), "provider": "unusual_whales"}
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_recent_congress_trades(limit=limit),
+        build_response=lambda data: {
+            **paginate_response(data, limit),
+            "meta": {"count": len(data), "provider": "unusual_whales"},
+        },
+    )
 
 
 @router.get("/{symbol}/nope", response_model=SuccessResponse)
@@ -81,25 +71,20 @@ async def get_nope(
     """Get NOPE (Net Options Pricing Effect) for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:nope:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
 
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_nope(symbol=symbol)
+    def _build_response(data):
+        if not data:
+            raise HTTPException(status_code=404, detail=f"NOPE data not found for {symbol}")
+        return make_response(data, symbol=symbol)
 
-    if not data:
-        raise HTTPException(status_code=404, detail=f"NOPE data not found for {symbol}")
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_nope(symbol=symbol),
+        build_response=_build_response,
+    )
 
 
 @router.get("/{symbol}/pc-ratio", response_model=SuccessResponse)
@@ -112,19 +97,11 @@ async def get_put_call_ratio(
     """Get historical put/call ratio for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:pc-ratio:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_put_call_ratio(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_put_call_ratio(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )

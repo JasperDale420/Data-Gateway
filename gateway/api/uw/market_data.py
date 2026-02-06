@@ -8,12 +8,12 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -29,22 +29,17 @@ async def get_economic_calendar(
 ):
     """Get economic calendar events."""
     cache_key = f"uw:calendar:{start_date or 'start'}:{end_date or 'end'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_economic_calendar(start_date=start_date, end_date=end_date)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_economic_calendar(
+            start_date=start_date,
+            end_date=end_date,
+        ),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
 
 
 @router.get("/market/sector/{sector}/tide", response_model=SuccessResponse)
@@ -56,25 +51,20 @@ async def get_sector_tide(
 ):
     """Get market tide for a specific sector."""
     cache_key = f"uw:sector-tide:{sector}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
 
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_sector_tide(sector=sector)
+    def _build_response(data):
+        if not data:
+            raise HTTPException(status_code=404, detail=f"Sector {sector} not found")
+        return make_response(data, extra_meta={"sector": sector})
 
-    if not data:
-        raise HTTPException(status_code=404, detail=f"Sector {sector} not found")
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"sector": sector, "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_sector_tide(sector=sector),
+        build_response=_build_response,
+    )
 
 
 @router.get("/market/top-impact", response_model=SuccessResponse)
@@ -86,26 +76,20 @@ async def get_top_net_impact(
 ):
     """Get top tickers by net premium (bullish and bearish)."""
     cache_key = f"uw:top-impact:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_top_net_impact(limit=limit)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {
-            "bullish_count": len(data.get("bullish", [])),
-            "bearish_count": len(data.get("bearish", [])),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_top_net_impact(limit=limit),
+        build_response=lambda data: make_response(
+            data,
+            extra_meta={
+                "bullish_count": len(data.get("bullish", [])),
+                "bearish_count": len(data.get("bearish", [])),
+            },
+        ),
+    )
 
 
 @router.get("/alerts", response_model=SuccessResponse)
@@ -119,21 +103,21 @@ async def get_custom_alerts(
 ):
     """Get custom filtered flow alerts."""
     cache_key = f"uw:alerts:{min_premium}:{min_volume}:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_custom_alerts(
-        min_premium=min_premium, min_volume=min_volume, limit=limit
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_custom_alerts(
+            min_premium=min_premium,
+            min_volume=min_volume,
+            limit=limit,
+        ),
+        build_response=lambda data: {
+            **paginate_response(data, limit),
+            "meta": {"count": len(data), "provider": "unusual_whales"},
+        },
     )
-
-    response = paginate_response(data, limit)
-    response["meta"] = {"count": len(data), "provider": "unusual_whales"}
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
 
 
 @router.get("/market/correlations", response_model=SuccessResponse)
@@ -146,19 +130,14 @@ async def get_market_correlations(
 ):
     """Get cross-asset correlations."""
     cache_key = f"uw:correlations:{start_date or 'start'}:{end_date or 'end'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_market_correlations(start_date=start_date, end_date=end_date)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_market_correlations(
+            start_date=start_date,
+            end_date=end_date,
+        ),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )

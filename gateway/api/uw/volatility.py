@@ -8,11 +8,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -28,22 +28,14 @@ async def get_iv_term_structure(
     """Get IV term structure for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:iv-term-structure:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_iv_term_structure(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_iv_term_structure(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/{symbol}/realized-vol", response_model=SuccessResponse)
@@ -56,25 +48,20 @@ async def get_realized_vol(
     """Get realized volatility for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:realized-vol:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
 
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_realized_volatility(symbol=symbol)
+    def _build_response(data):
+        if not data:
+            raise HTTPException(status_code=404, detail=f"Volatility data not found for {symbol}")
+        return make_response(data, symbol=symbol)
 
-    if not data:
-        raise HTTPException(status_code=404, detail=f"Volatility data not found for {symbol}")
-
-    response = {
-        "success": True,
-        "data": data.model_dump(mode="json"),
-        "meta": {"symbol": symbol, "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_realized_volatility(symbol=symbol),
+        build_response=_build_response,
+    )
 
 
 @router.get("/{symbol}/vol-stats", response_model=SuccessResponse)
@@ -87,25 +74,20 @@ async def get_vol_stats(
     """Get volatility stats for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:vol-stats:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
 
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_volatility_stats(symbol=symbol)
+    def _build_response(data):
+        if not data:
+            raise HTTPException(status_code=404, detail=f"Volatility stats not found for {symbol}")
+        return make_response(data, symbol=symbol)
 
-    if not data:
-        raise HTTPException(status_code=404, detail=f"Volatility stats not found for {symbol}")
-
-    response = {
-        "success": True,
-        "data": data.model_dump(mode="json"),
-        "meta": {"symbol": symbol, "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_volatility_stats(symbol=symbol),
+        build_response=_build_response,
+    )
 
 
 @router.get("/{symbol}/iv-surface", response_model=SuccessResponse)
@@ -118,19 +100,11 @@ async def get_iv_surface(
     """Get implied volatility surface for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:iv-surface:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_iv_surface(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_iv_surface(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )

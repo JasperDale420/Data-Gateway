@@ -8,12 +8,12 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -30,22 +30,19 @@ async def get_historic_option_volume(
     """Get historic option volume and open interest by expiry."""
     symbol = symbol.upper()
     cache_key = f"uw:option-volume:{symbol}:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_historic_option_volume(symbol=symbol, date_str=date)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "date": date, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_historic_option_volume(symbol=symbol, date_str=date),
+        build_response=lambda data: make_response(
+            data,
+            symbol=symbol,
+            count=len(data),
+            extra_meta={"date": date},
+        ),
+    )
 
 
 @router.get("/contract/{contract_id}/intraday", response_model=SuccessResponse)
@@ -58,27 +55,21 @@ async def get_intraday_option_data(
 ):
     """Get intraday 1-min OHLC data for an option contract."""
     cache_key = f"uw:intraday:{contract_id}:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_intraday_option_data(contract_id=contract_id, date_str=date)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {
-            "contract": contract_id,
-            "date": date,
-            "count": len(data),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_intraday_option_data(
+            contract_id=contract_id,
+            date_str=date,
+        ),
+        build_response=lambda data: make_response(
+            data,
+            count=len(data),
+            extra_meta={"contract": contract_id, "date": date},
+        ),
+    )
 
 
 @router.get("/screener/contracts", response_model=SuccessResponse)
@@ -92,18 +83,18 @@ async def get_options_screener(
 ):
     """Get option contracts screener with filters."""
     cache_key = f"uw:contracts-screener:{min_volume}:{min_premium}:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_options_screener(
-        min_volume=min_volume, min_premium=min_premium, limit=limit
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_options_screener(
+            min_volume=min_volume,
+            min_premium=min_premium,
+            limit=limit,
+        ),
+        build_response=lambda data: {
+            **paginate_response(data, limit),
+            "meta": {"count": len(data), "provider": "unusual_whales"},
+        },
     )
-
-    response = paginate_response(data, limit)
-    response["meta"] = {"count": len(data), "provider": "unusual_whales"}
-
-    await cache.set(cache_key, response, ttl=60)
-    return response

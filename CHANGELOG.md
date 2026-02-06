@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.37] - 2026-02-06
+
+### Changed
+
+- **UW helper rollout expansion across analytics/intelligence modules**: Refactored `gateway/api/uw/{institutions,flow_analytics,market_data,intelligence,politicians,volatility,etf_extended,shorts,options_data,greeks}.py` to use shared `execute_uw_cached` + `make_response`/`paginate_response` flow, removing repeated cache/rate-limit/provider-call boilerplate while preserving endpoint contracts and 404 semantics.
+- **UW rollout status tracking updates**: Updated `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark twenty UW router modules on shared helper flow and isolate final remaining router files for future migration (`etf.py`, `earnings.py`, `seasonality.py`, `screener.py`).
+
 ## [0.5.36] - 2026-02-06
 
 ### Changed

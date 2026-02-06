@@ -8,11 +8,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -29,26 +29,14 @@ async def get_gex(
     """Get Greek exposure (GEX) data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:gex:{symbol}:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_greek_exposure(symbol=symbol, date_str=date)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {
-            "symbol": symbol,
-            "count": len(data),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_greek_exposure(symbol=symbol, date_str=date),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/gex/{symbol}/strike", response_model=SuccessResponse)
@@ -62,26 +50,16 @@ async def get_gex_by_strike(
     """Get Greek exposure by strike price for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:gex:strike:{symbol}:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_greek_exposure_by_strike(symbol=symbol, date_str=date)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {
-            "symbol": symbol,
-            "count": len(data),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_greek_exposure_by_strike(
+            symbol=symbol, date_str=date
+        ),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/gex/{symbol}/expiry", response_model=SuccessResponse)
@@ -95,23 +73,13 @@ async def get_gex_by_expiry(
     """Get Greek exposure by expiration date for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:gex:expiry:{symbol}:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_greek_exposure_by_expiry(symbol=symbol, date_str=date)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {
-            "symbol": symbol,
-            "count": len(data),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_greek_exposure_by_expiry(
+            symbol=symbol, date_str=date
+        ),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
