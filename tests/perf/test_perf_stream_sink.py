@@ -19,12 +19,13 @@ pytestmark = pytest.mark.perf
 class _BlockingSink(DataSink):
     """Sink that blocks publish until released by the test."""
 
-    def __init__(self, release_event: asyncio.Event) -> None:
+    def __init__(self, release_event: asyncio.Event, sink_name: str = "blocking") -> None:
         self._release_event = release_event
+        self._name = sink_name
 
     @property
     def name(self) -> str:
-        return "blocking"
+        return self._name
 
     async def publish(self, topic: str, data: dict[str, Any]) -> bool:
         await self._release_event.wait()
@@ -94,7 +95,7 @@ async def test_sink_publish_backpressure_task_growth_profile() -> None:
     release_event = asyncio.Event()
     max_in_flight = 32
     registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
-    registry.register(_BlockingSink(release_event))
+    registry.register(_BlockingSink(release_event, sink_name="blocking-single"))
 
     total_events = 300
     peak_background_tasks = 0
@@ -110,6 +111,40 @@ async def test_sink_publish_backpressure_task_growth_profile() -> None:
     assert stats["scheduled"] <= max_in_flight
     assert stats["dropped_backpressure"] >= total_events - max_in_flight
     assert enqueue_duration < 0.5
+
+    release_event.set()
+    if registry._background_tasks:
+        await asyncio.gather(*list(registry._background_tasks))
+
+    assert len(registry._background_tasks) == 0
+
+
+@pytest.mark.asyncio
+async def test_sink_publish_backpressure_multi_sink_bounds() -> None:
+    """Validate aggregate in-flight bounds with multiple blocked sinks."""
+    release_event = asyncio.Event()
+    max_in_flight = 16
+    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
+    registry.register(_BlockingSink(release_event, sink_name="blocking-a"))
+    registry.register(_BlockingSink(release_event, sink_name="blocking-b"))
+
+    total_events = 120
+    peak_background_tasks = 0
+
+    start = time.perf_counter()
+    for i in range(total_events):
+        await registry.publish_all("heber:events", {"event_id": f"m{i}", "seq": i})
+        peak_background_tasks = max(peak_background_tasks, len(registry._background_tasks))
+    enqueue_duration = time.perf_counter() - start
+
+    stats = registry.get_publish_stats()
+    total_attempts = total_events * 2  # two sinks per event
+    max_scheduled = max_in_flight * 2  # cap per sink
+
+    assert peak_background_tasks <= max_scheduled
+    assert stats["scheduled"] <= max_scheduled
+    assert stats["dropped_backpressure"] >= total_attempts - max_scheduled
+    assert enqueue_duration < 0.8
 
     release_event.set()
     if registry._background_tasks:

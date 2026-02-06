@@ -34,7 +34,7 @@ jobs:
       - name: Run perf gate
         run: |
           python scripts/perf_gate.py \
-            --max-seconds 20 \
+            --budgets-file config/perf_budgets.json \
             --junit-xml perf-junit.xml \
             --log-file perf-output.txt \
             --summary-file perf-summary.json
