@@ -35,6 +35,27 @@ class _BlockingSink(DataSink):
         return True
 
 
+class _DelayedSink(DataSink):
+    """Sink that simulates slower backend publish latency."""
+
+    def __init__(self, sink_name: str, delay_seconds: float) -> None:
+        self._name = sink_name
+        self._delay_seconds = delay_seconds
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def publish(self, topic: str, data: dict[str, Any]) -> bool:
+        assert topic
+        assert data
+        await asyncio.sleep(self._delay_seconds)
+        return True
+
+    async def health_check(self) -> bool:
+        return True
+
+
 @pytest.mark.asyncio
 async def test_stream_fanout_respects_inflight_semaphore_bound() -> None:
     """Ensure websocket fanout concurrency never exceeds the configured semaphore."""
@@ -151,3 +172,38 @@ async def test_sink_publish_backpressure_multi_sink_bounds() -> None:
         await asyncio.gather(*list(registry._background_tasks))
 
     assert len(registry._background_tasks) == 0
+
+
+@pytest.mark.asyncio
+async def test_sink_publish_backpressure_with_slow_backend_profile() -> None:
+    """Validate bounded scheduling under slower sink publish latency."""
+    max_in_flight = 8
+    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
+    registry.register(_DelayedSink("slow-a", delay_seconds=0.02))
+    registry.register(_DelayedSink("slow-b", delay_seconds=0.02))
+
+    total_events = 200
+    peak_background_tasks = 0
+
+    enqueue_start = time.perf_counter()
+    for i in range(total_events):
+        await registry.publish_all("heber:events", {"event_id": f"s{i}", "seq": i})
+        peak_background_tasks = max(peak_background_tasks, len(registry._background_tasks))
+    enqueue_duration = time.perf_counter() - enqueue_start
+
+    stats = registry.get_publish_stats()
+    total_attempts = total_events * 2
+    max_scheduled = max_in_flight * 2
+
+    assert peak_background_tasks <= max_scheduled
+    assert stats["scheduled"] <= max_scheduled
+    assert stats["dropped_backpressure"] >= total_attempts - max_scheduled
+    assert enqueue_duration < 1.0
+
+    drain_start = time.perf_counter()
+    if registry._background_tasks:
+        await asyncio.gather(*list(registry._background_tasks))
+    drain_duration = time.perf_counter() - drain_start
+
+    assert len(registry._background_tasks) == 0
+    assert drain_duration < 0.5
