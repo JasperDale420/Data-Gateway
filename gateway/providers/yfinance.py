@@ -185,23 +185,40 @@ class YFinanceProvider(DataProvider):
             return df
 
         df = await asyncio.to_thread(_fetch)
+        return self._bars_from_history_df(df=df, symbol=symbol, interval=interval)
 
-        results = []
-        for timestamp, row in df.iterrows():
-            results.append(
+    @staticmethod
+    def _bars_from_history_df(df: Any, symbol: str, interval: str) -> list[NormalizedBar]:
+        """Convert historical DataFrame rows into normalized bars.
+
+        Uses `itertuples` for lower row-iteration overhead than `iterrows`.
+        """
+        if df is None or getattr(df, "empty", False):
+            return []
+
+        symbol_upper = symbol.upper()
+        results: list[NormalizedBar] = []
+        append = results.append
+        for row in df.itertuples(index=True):
+            timestamp_value = row.Index
+            timestamp = (
+                timestamp_value.to_pydatetime()
+                if hasattr(timestamp_value, "to_pydatetime")
+                else timestamp_value
+            )
+            append(
                 NormalizedBar(
-                    symbol=symbol.upper(),
-                    timestamp=timestamp.to_pydatetime(),
-                    open=Decimal(str(row["Open"])),
-                    high=Decimal(str(row["High"])),
-                    low=Decimal(str(row["Low"])),
-                    close=Decimal(str(row["Close"])),
-                    volume=int(row["Volume"]),
+                    symbol=symbol_upper,
+                    timestamp=timestamp,
+                    open=Decimal(str(row.Open)),
+                    high=Decimal(str(row.High)),
+                    low=Decimal(str(row.Low)),
+                    close=Decimal(str(row.Close)),
+                    volume=int(row.Volume),
                     provider="yfinance",
                     timeframe=interval,
                 )
             )
-
         return results
 
     # ─────────────────────────────────────────────────────────────────
@@ -375,12 +392,25 @@ class YFinanceProvider(DataProvider):
         def _fetch():
             ticker = yf.Ticker(symbol.upper())
             mh = ticker.major_holders
-            if mh is None or mh.empty:
-                return {}
-            # Convert to readable format
-            result = {}
-            for idx, row in mh.iterrows():
-                result[row.iloc[1]] = row.iloc[0]
-            return result
+            return self._major_holders_from_df(mh)
 
         return await asyncio.to_thread(_fetch)
+
+    @staticmethod
+    def _major_holders_from_df(df: Any) -> dict[str, Any]:
+        """Convert major holders DataFrame into key/value mapping.
+
+        Uses `itertuples` to avoid `iterrows` row-Series allocation overhead.
+        """
+        if df is None or getattr(df, "empty", False):
+            return {}
+
+        result: dict[str, Any] = {}
+        for row in df.itertuples(index=False):
+            values = tuple(row)
+            if len(values) < 2:
+                continue
+            label = values[1]
+            value = values[0]
+            result[str(label)] = value
+        return result

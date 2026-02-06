@@ -154,6 +154,11 @@ Low-risk fix path:
 2. Introduce endpoint-specific TTL policy (or selective no-cache) for low-reuse custom history windows.
 3. Add cache key-cardinality and hit-rate metrics per yfinance endpoint.
 
+Wave status (2026-02-06):
+- `1` complete (`get_history` and `get_major_holders` migrated to `itertuples`)
+- `2` pending
+- `3` pending
+
 ### Wave YF-3
 
 1. Consolidate ticker construction and conversion helpers in provider.
@@ -167,7 +172,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | File | Endpoints/Methods | Audit Status | Future Run Focus |
 |---|---:|---|---|
 | `gateway/api/yf.py` | 16 endpoints | COMPLETE | Route helper migration, cache-before-provider reorder, history cache policy tuning |
-| `gateway/providers/yfinance.py` | 19 async methods | COMPLETE | `itertuples` migration, health-check offload, conversion helper consolidation |
+| `gateway/providers/yfinance.py` | 19 async methods | COMPLETE | `itertuples` migration complete; health-check offload and conversion helper consolidation pending |
 
 ## Future Runs (Outside yfinance)
 
