@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.39] - 2026-02-06
+
+### Changed
+
+- **Cache auth fail-closed hardening**: Updated `gateway/api/middleware.py` so non-public `GET` requests now return `401` when `X-Gateway-Key` is missing/invalid before any cache lookup, eliminating unauthenticated cache-leak exposure from accidentally unprotected endpoints.
+
+### Added
+
+- **Auth boundary regression tests**:
+  - Added `test_cache_middleware_requires_auth_for_non_public_get` in `tests/test_optimization.py` to verify missing/invalid key rejection and authenticated cache behavior.
+  - Added `test_missing_auth_returns_401_for_account` in `tests/smoke/test_smoke.py` to assert unauthenticated access to `/api/v1/alpaca/account` is blocked.
+
 ## [0.5.38] - 2026-02-06
 
 ### Changed

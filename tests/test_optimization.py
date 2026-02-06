@@ -58,3 +58,41 @@ def test_cache_middleware_header_preservation():
     # When returning Response(content=...), Starlette calculates Content-Length.
     # So we don't need to assert Content-Length preservation logic specifically,
     # but we should ensure we didn't cache it incorrectly (though Filter prevented it).
+
+
+def test_cache_middleware_requires_auth_for_non_public_get(test_api_key: str):
+    """Non-public GET paths must reject missing/invalid keys before cache lookup."""
+
+    app = FastAPI()
+    app.add_middleware(CacheMiddleware, default_ttl=60)
+
+    @app.get("/api/v1/secure-probe")
+    def secure_probe():
+        return {"ok": True, "source": "secure-probe"}
+
+    client = TestClient(app)
+
+    no_key = client.get("/api/v1/secure-probe")
+    assert no_key.status_code == 401
+    assert no_key.json()["detail"]["code"] == "GW-E2001"
+
+    invalid_key = client.get(
+        "/api/v1/secure-probe",
+        headers={"X-Gateway-Key": "invalid_key"},
+    )
+    assert invalid_key.status_code == 401
+    assert invalid_key.json()["detail"]["code"] == "GW-E2002"
+
+    valid_1 = client.get(
+        "/api/v1/secure-probe",
+        headers={"X-Gateway-Key": test_api_key},
+    )
+    assert valid_1.status_code == 200
+    assert valid_1.headers["X-Gateway-Cache"] == "MISS"
+
+    valid_2 = client.get(
+        "/api/v1/secure-probe",
+        headers={"X-Gateway-Key": test_api_key},
+    )
+    assert valid_2.status_code == 200
+    assert valid_2.headers["X-Gateway-Cache"] == "HIT"

@@ -309,8 +309,6 @@ class CacheMiddleware(BaseHTTPMiddleware):
 
         if not is_public:
             api_key = request.headers.get("X-Gateway-Key")
-            if not api_key:
-                return await call_next(request)
             auth_error = await self._ensure_authenticated(request, api_key)
             if auth_error is not None:
                 return auth_error
@@ -457,9 +455,15 @@ class CacheMiddleware(BaseHTTPMiddleware):
             return True
         return False
 
-    async def _ensure_authenticated(self, request: Request, api_key: str) -> Response | None:
+    async def _ensure_authenticated(self, request: Request, api_key: str | None) -> Response | None:
         """Authenticate request to avoid serving cached data without auth checks."""
         from gateway.api.deps import get_authenticator
+
+        if not api_key:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": {"code": "GW-E2001", "message": "Missing X-Gateway-Key header"}},
+            )
 
         authenticator = get_authenticator()
         client = authenticator.authenticate(api_key)

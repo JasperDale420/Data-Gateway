@@ -54,6 +54,11 @@ class TestAuthWorks:
         # Endpoint exists - may return various errors in test mode
         assert response.status_code in (200, 401, 500, 502, 503)
 
+    def test_missing_auth_returns_401_for_account(self, client):
+        """Account endpoint should reject unauthenticated requests."""
+        response = client.get("/api/v1/alpaca/account")
+        assert response.status_code == 401
+
 
 class TestRestWorks:
     """Test: rest_works - Verify REST endpoints respond."""
