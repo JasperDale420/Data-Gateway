@@ -14,7 +14,7 @@ Complete a deep audit of repository performance-measurement readiness so future 
 | Area | Files | Status | Notes |
 |---|---:|---|---|
 | CI performance-gate coverage | 3 workflows | COMPLETE | Dedicated perf gate workflow added with threshold/artifact output |
-| Benchmark tooling and pytest config | 2 (`pyproject.toml`, `config/perf_budgets.json`) | COMPLETE | `perf` marker split plus versioned suite/per-test budgets |
+| Benchmark tooling and pytest config | 3 (`pyproject.toml`, `config/perf_budgets.json`, `config/perf_baseline.json`) | COMPLETE | `perf` marker split plus versioned budgets and baseline timings |
 | Perf-sensitive test paths | 3 (`tests/test_middleware_streaming.py`, `tests/test_optimization.py`, `tests/test_replay.py`) | COMPLETE | Measured for baseline readiness; failures block clean perf baselines |
 | Hot-path source anchor validation | 8 core/runtime files | COMPLETE | Anchored middleware/stream/sink/dedup/metrics/rate-limit hot paths |
 | Runtime microbench sample | 1 ad-hoc run | COMPLETE | Fresh local microbench figures captured |
@@ -38,6 +38,7 @@ Complete a deep audit of repository performance-measurement readiness so future 
   - `.github/workflows/perf-guardrail.yml`
   - `scripts/perf_gate.py`
   - `config/perf_budgets.json`
+  - `config/perf_baseline.json`
 
 ### Baseline Readiness Blockers from Targeted Test Runs
 
@@ -164,6 +165,9 @@ Status (2026-02-06):
     - `scripts/perf_gate.py`
   - Added versioned perf budgets:
     - `config/perf_budgets.json`
+  - Added baseline timings for trend-delta checks:
+    - `config/perf_baseline.json`
+  - Added trend-delta regression guardrails for suite and per-test timings.
   - Gate validates `pytest -m perf`, enforces runtime threshold, and publishes:
     - `perf-junit.xml`
     - `perf-output.txt`
@@ -273,8 +277,9 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `.github/workflows/ci.yml` | COMPLETE | add perf job + benchmark artifacts |
 | `.github/workflows/release-readiness.yml` | COMPLETE | decide if perf gate belongs here or separate workflow |
 | `.github/workflows/perf-guardrail.yml` | COMPLETE | tune branch policy, thresholds, and artifact retention |
-| `scripts/perf_gate.py` | COMPLETE | evolve threshold model toward trend-delta based regression checks |
+| `scripts/perf_gate.py` | COMPLETE | evolve trend policy and baseline-update automation |
 | `config/perf_budgets.json` | COMPLETE | ratchet suite/per-test budgets from CI baseline history |
+| `config/perf_baseline.json` | COMPLETE | refresh baseline timing anchors from CI trend windows |
 | `pyproject.toml` | COMPLETE | maintain pytest `perf` marker split |
 | `tests/perf/test_perf_baseline.py` | COMPLETE | expand middleware/replay/bulk perf assertions |
 | `tests/perf/test_perf_stream_sink.py` | COMPLETE | tune boundedness thresholds for multi-sink/slow-backend scenarios |
@@ -295,4 +300,4 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 1. Tune/ratchet BENCH thresholds after 3-5 baseline runs and capture trend reporting.
 2. Expand bounded sink perf cases to multi-sink and slower backend profiles.
-3. Add trend-delta regression detection in `scripts/perf_gate.py` using artifact history.
+3. Add automated baseline refresh/rotation using artifact history windows.

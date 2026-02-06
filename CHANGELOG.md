@@ -7,13 +7,14 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **Versioned perf budgets**: Added `config/perf_budgets.json` with suite-level and per-test runtime budgets for the `tests/perf` gate.
+- **Versioned perf baseline timings**: Added `config/perf_baseline.json` for suite/test timing anchors used by trend-delta regression checks.
 - **Expanded multi-sink perf coverage**: Added `test_sink_publish_backpressure_multi_sink_bounds` in `tests/perf/test_perf_stream_sink.py` to validate bounded in-flight behavior with two blocked sinks.
 
 ### Changed
 
-- **Perf gate budget enforcement upgrade**: Updated `scripts/perf_gate.py` to read `config/perf_budgets.json`, enforce per-test budgets from JUnit timings, and include `test_times_seconds` in `perf-summary.json`.
+- **Perf gate budget+trend enforcement upgrade**: Updated `scripts/perf_gate.py` to read `config/perf_budgets.json` and `config/perf_baseline.json`, enforce per-test budgets and trend-delta regressions from JUnit timings, and include `test_times_seconds` in `perf-summary.json`.
 - **CI perf workflow budget wiring**: Updated `.github/workflows/perf-guardrail.yml` to run the gate with `--budgets-file config/perf_budgets.json` instead of a hardcoded runtime threshold.
-- **Benchmark tracking updates**: Updated `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to reflect per-test budget guardrails and expanded sink coverage, with remaining scope focused on threshold ratcheting and trend-delta checks.
+- **Benchmark tracking updates**: Updated `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to reflect per-test budget + trend guardrails and expanded sink coverage, with remaining scope focused on threshold ratcheting and baseline refresh automation.
 
 ## [0.5.26] - 2026-02-06
 

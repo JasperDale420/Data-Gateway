@@ -35,6 +35,7 @@ jobs:
         run: |
           python scripts/perf_gate.py \
             --budgets-file config/perf_budgets.json \
+            --baseline-file config/perf_baseline.json \
             --junit-xml perf-junit.xml \
             --log-file perf-output.txt \
             --summary-file perf-summary.json
