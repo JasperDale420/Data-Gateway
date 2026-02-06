@@ -56,6 +56,25 @@ def test_paginate_response_serializes_model_like_items() -> None:
     assert response["data"] == [{"value": 1}, {"value": 2}]
 
 
+def test_make_response_includes_extra_meta_and_serializes_data() -> None:
+    response = common.make_response(
+        data=[_ModelLike(5)],
+        symbol="AAPL",
+        count=1,
+        extra_meta={"timeframe": "1d", "nullable": None},
+    )
+    assert response == {
+        "success": True,
+        "data": [{"value": 5}],
+        "meta": {
+            "provider": "unusual_whales",
+            "symbol": "AAPL",
+            "count": 1,
+            "timeframe": "1d",
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_execute_uw_cached_uses_cache_and_rate_limit_once(
     monkeypatch: pytest.MonkeyPatch,

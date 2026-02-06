@@ -178,7 +178,7 @@ Low-risk fix path:
 
 Wave status (2026-02-06):
 - `1` in progress (cursor-depth guardrail + shared UW cached route helper implemented)
-- `2` in progress (applied to `flow.py` and `market.py`; remaining UW routes pending rollout)
+- `2` in progress (applied to `flow.py`, `market.py`, and `stock.py`; remaining UW routes pending rollout)
 - `3` pending
 
 ### Wave UW-2
@@ -200,7 +200,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | File | Endpoints | Audit Status | Future Run Focus |
 |---|---:|---|---|
 | `gateway/providers/uw.py` | 136 async methods | COMPLETE | Apply shared accessor helper, add bounded `_call_sync` concurrency, profile normalization hotspots |
-| `gateway/api/uw/stock.py` | 23 | COMPLETE | Migrate to shared route helper; verify cache TTL policy by endpoint |
+| `gateway/api/uw/stock.py` | 23 | COMPLETE | Shared route helper migration complete; validate TTL policy per endpoint with hit-rate metrics |
 | `gateway/api/uw/contracts.py` | 9 | COMPLETE | Shared helper migration |
 | `gateway/api/uw/calendar.py` | 8 | COMPLETE | Shared helper migration |
 | `gateway/api/uw/extended.py` | 8 | COMPLETE | Shared helper migration and serialization dedupe |

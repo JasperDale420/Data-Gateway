@@ -119,9 +119,18 @@ def get_uw_provider(registry: ProviderRegistry):
     return provider
 
 
-def make_response(data, symbol: str | None = None, count: int | None = None) -> dict:
+def make_response(
+    data: Any,
+    symbol: str | None = None,
+    count: int | None = None,
+    extra_meta: dict[str, Any] | None = None,
+) -> dict:
     """Build standard success response with metadata."""
-    meta: dict[str, str | int] = {"provider": "unusual_whales"}
+    meta: dict[str, Any] = {"provider": "unusual_whales"}
+    if extra_meta:
+        for key, value in extra_meta.items():
+            if value is not None:
+                meta[key] = value
     if symbol:
         meta["symbol"] = symbol
     if count is not None:

@@ -240,7 +240,7 @@ Legend:
 
 ## Next-Run Audit Plan (Targeted)
 
-1. Continue UW Wave 1 rollout from `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` (apply shared route helper/serialization dedupe to remaining UW routers and finish provider accessor dedupe).
+1. Continue UW Wave 1 rollout from `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` (shared helper now in `flow.py`, `market.py`, and `stock.py`; apply to remaining UW routers and finish provider accessor dedupe).
 2. Implement Alpha Vantage Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` (cache-before-provider, helper consolidation, serialization normalization).
 3. Continue yfinance Wave 1 optimizations from `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` (cache-before-provider, route helper consolidation, and health-check offload; provider `iterrows` hot paths remediated).
 4. Implement SEC Wave 1 optimizations from `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` (cache-before-provider, helper consolidation, filing key normalization).

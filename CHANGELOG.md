@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.34] - 2026-02-06
+
+### Changed
+
+- **UW stock router dedupe rollout**: Refactored `gateway/api/uw/stock.py` to use shared `execute_uw_cached` flow for cache/rate-limit/provider-call/cache-set behavior across all stock endpoints while preserving endpoint contracts and metadata.
+- **UW shared response metadata support**: Updated `gateway/api/uw/common.py::make_response` to accept optional `extra_meta`, enabling consistent metadata assembly in shared-response routes without response-shape changes.
+- **UW audit progress tracking**: Updated `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to reflect shared-helper rollout through `flow.py`, `market.py`, and `stock.py`.
+
+### Added
+
+- **UW common response test coverage**: Expanded `tests/test_uw_common.py` with `make_response` extra-metadata serialization assertions.
+
 ## [0.5.33] - 2026-02-06
 
 ### Added
