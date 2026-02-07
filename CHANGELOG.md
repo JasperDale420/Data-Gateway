@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.50] - 2026-02-07
+
+### Added
+
+- **Stream fanout/sink tuning coverage tests**: Added and expanded tests in `tests/test_main_stream_sink.py` and `tests/test_multiplexer.py` for stream sink dispatch limit clamping and `StreamMultiplexer` fanout batch/inflight config behavior.
+
+### Changed
+
+- **Configurable stream fanout tuning**: Updated `gateway/core/stream.py` `StreamMultiplexer` to accept `fanout_max_inflight` and `fanout_batch_size` with safe clamping and default constants.
+- **Configurable stream sink dispatch tuning**: Updated `gateway/main.py` stream sink scheduling to use runtime-configured limits (`_configure_stream_sink_dispatch_limits`) instead of fixed constants.
+- **Settings surface for stream tuning**: Added `stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, and `data_sink_stream_publish_max_pending` to `gateway/config.py`.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to reflect stream tuning knobs rollout and narrow remaining stream work to telemetry-driven parameter calibration.
+
 ## [0.5.49] - 2026-02-07
 
 ### Added

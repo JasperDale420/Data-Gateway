@@ -32,6 +32,16 @@ class _FakeSinkRegistry:
 def _reset_stream_sink_dispatch_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gateway_main, "_stream_sink_publish_semaphore", None)
     monkeypatch.setattr(gateway_main, "_stream_sink_publish_tasks", set())
+    monkeypatch.setattr(
+        gateway_main,
+        "_stream_sink_max_inflight_publish",
+        gateway_main.DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH,
+    )
+    monkeypatch.setattr(
+        gateway_main,
+        "_stream_sink_max_pending_tasks",
+        gateway_main.DEFAULT_STREAM_SINK_MAX_PENDING_TASKS,
+    )
 
 
 @pytest.mark.asyncio
@@ -61,7 +71,7 @@ async def test_stream_sink_publish_backpressure_drops_when_pending_limit_reached
 ) -> None:
     wait_event = asyncio.Event()
     registry = _FakeSinkRegistry(wait_event=wait_event)
-    monkeypatch.setattr(gateway_main, "STREAM_SINK_MAX_PENDING_TASKS", 1)
+    monkeypatch.setattr(gateway_main, "_stream_sink_max_pending_tasks", 1)
 
     gateway_main._schedule_stream_sink_publish(registry, {"event_id": "e1"})
     gateway_main._schedule_stream_sink_publish(registry, {"event_id": "e2"})
@@ -74,3 +84,11 @@ async def test_stream_sink_publish_backpressure_drops_when_pending_limit_reached
 
     assert len(registry.calls) == 1
     assert registry.calls[0][1]["event_id"] == "e1"
+
+
+def test_configure_stream_sink_dispatch_limits_clamps_and_resets_semaphore() -> None:
+    gateway_main._configure_stream_sink_dispatch_limits(max_inflight_publish=0, max_pending_tasks=0)
+
+    assert gateway_main._stream_sink_max_inflight_publish == 1
+    assert gateway_main._stream_sink_max_pending_tasks == 1
+    assert gateway_main._stream_sink_publish_semaphore is not None

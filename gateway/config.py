@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     stream_reconnect_max_retries: int = Field(default=10, ge=1)
     stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     stream_reconnect_max_delay: float = Field(default=16.0, ge=1.0)
+    stream_fanout_max_inflight: int = Field(default=100, ge=1)
+    stream_fanout_batch_size: int = Field(default=32, ge=1)
 
     # Rate Limiting
     rate_limit_enabled: bool = True
@@ -90,6 +92,8 @@ class Settings(BaseSettings):
     data_sink_enabled: bool = False
     data_sink_redis_url: str = Field(default="", alias="GATEWAY_DATA_SINK_REDIS_URL")
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
+    data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
+    data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
 
 
 @lru_cache

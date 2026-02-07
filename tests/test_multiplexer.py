@@ -2,6 +2,8 @@
 
 import pytest
 
+from gateway.core.stream import StreamMultiplexer
+
 
 @pytest.fixture
 def subscription_manager():
@@ -95,3 +97,42 @@ def test_get_stats(subscription_manager):
     assert "total_subscriptions" in stats
     assert "active_subscriptions" in stats
     assert "by_feed" in stats
+
+
+@pytest.mark.asyncio
+async def test_stream_multiplexer_applies_fanout_limits() -> None:
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+        fanout_max_inflight=7,
+        fanout_batch_size=5,
+    )
+
+    assert multiplexer._fanout_max_inflight == 7
+    assert multiplexer._fanout_client_batch_size == 5
+    batches = multiplexer._iter_client_batches({"a", "b", "c", "d", "e", "f"})
+    assert len(batches) == 2
+    assert len(batches[0]) == 5
+
+
+@pytest.mark.asyncio
+async def test_stream_multiplexer_clamps_invalid_fanout_limits() -> None:
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+        fanout_max_inflight=0,
+        fanout_batch_size=0,
+    )
+
+    assert multiplexer._fanout_max_inflight == 1
+    assert multiplexer._fanout_client_batch_size == 1

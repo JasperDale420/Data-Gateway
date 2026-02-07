@@ -82,17 +82,35 @@ logger = structlog.get_logger()
 attach_error_buffer_handler()
 
 STREAM_SINK_TOPIC = "heber:events"
-STREAM_SINK_MAX_INFLIGHT_PUBLISH = 32
-STREAM_SINK_MAX_PENDING_TASKS = 512
+DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH = 32
+DEFAULT_STREAM_SINK_MAX_PENDING_TASKS = 512
+
+_stream_sink_max_inflight_publish = DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH
+_stream_sink_max_pending_tasks = DEFAULT_STREAM_SINK_MAX_PENDING_TASKS
 
 _stream_sink_publish_semaphore: asyncio.Semaphore | None = None
 _stream_sink_publish_tasks: set[asyncio.Task[None]] = set()
 
 
+def _configure_stream_sink_dispatch_limits(
+    *,
+    max_inflight_publish: int,
+    max_pending_tasks: int,
+) -> None:
+    """Configure stream-to-sink dispatch limits for this process."""
+    global _stream_sink_max_inflight_publish
+    global _stream_sink_max_pending_tasks
+    global _stream_sink_publish_semaphore
+
+    _stream_sink_max_inflight_publish = max(1, int(max_inflight_publish))
+    _stream_sink_max_pending_tasks = max(1, int(max_pending_tasks))
+    _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
+
+
 def _get_stream_sink_publish_semaphore() -> asyncio.Semaphore:
     global _stream_sink_publish_semaphore
     if _stream_sink_publish_semaphore is None:
-        _stream_sink_publish_semaphore = asyncio.Semaphore(STREAM_SINK_MAX_INFLIGHT_PUBLISH)
+        _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
     return _stream_sink_publish_semaphore
 
 
@@ -112,11 +130,11 @@ async def _publish_stream_event(sink_registry, envelope: dict) -> None:
 
 
 def _schedule_stream_sink_publish(sink_registry, envelope: dict) -> None:
-    if len(_stream_sink_publish_tasks) >= STREAM_SINK_MAX_PENDING_TASKS:
+    if len(_stream_sink_publish_tasks) >= _stream_sink_max_pending_tasks:
         logger.warning(
             "stream_sink_publish_backpressure_drop",
             pending_tasks=len(_stream_sink_publish_tasks),
-            max_pending_tasks=STREAM_SINK_MAX_PENDING_TASKS,
+            max_pending_tasks=_stream_sink_max_pending_tasks,
             event_id=envelope.get("event_id", "unknown"),
         )
         return
@@ -193,6 +211,10 @@ async def lifespan(app: FastAPI):
     import signal
 
     settings = get_settings()
+    _configure_stream_sink_dispatch_limits(
+        max_inflight_publish=settings.data_sink_stream_publish_max_inflight,
+        max_pending_tasks=settings.data_sink_stream_publish_max_pending,
+    )
 
     # Startup
     logger.info(
@@ -229,6 +251,8 @@ async def lifespan(app: FastAPI):
             on_data=_on_stream_data,
             use_iex=settings.stream_use_iex,
             lazy_connect=settings.stream_lazy_connect,
+            fanout_max_inflight=settings.stream_fanout_max_inflight,
+            fanout_batch_size=settings.stream_fanout_batch_size,
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()

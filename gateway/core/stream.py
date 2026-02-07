@@ -640,6 +640,8 @@ class StreamMultiplexer:
         on_data: Callable[[str, str, dict[str, Any]], Awaitable[None]],
         use_iex: bool = False,
         lazy_connect: bool = True,
+        fanout_max_inflight: int = DEFAULT_FANOUT_MAX_INFLIGHT,
+        fanout_batch_size: int = DEFAULT_FANOUT_BATCH_SIZE,
     ) -> None:
         """Initialize multiplexer.
 
@@ -649,11 +651,15 @@ class StreamMultiplexer:
             on_data: Callback for data messages (client_id, data_type, message)
             use_iex: Use IEX feed instead of SIP for stocks
             lazy_connect: If True, only connect to streams when first client subscribes
+            fanout_max_inflight: Max concurrent callback deliveries per fanout batch.
+            fanout_batch_size: Number of clients to dispatch per gather batch.
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.on_data = on_data
         self._lazy_connect = lazy_connect
+        self._fanout_max_inflight = max(1, fanout_max_inflight)
+        self._fanout_client_batch_size = max(1, fanout_batch_size)
 
         stock_type = AlpacaStreamType.STOCKS_IEX if use_iex else AlpacaStreamType.STOCKS_SIP
 
@@ -686,8 +692,7 @@ class StreamMultiplexer:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
-        self._fanout_semaphore = asyncio.Semaphore(DEFAULT_FANOUT_MAX_INFLIGHT)
-        self._fanout_client_batch_size = DEFAULT_FANOUT_BATCH_SIZE
+        self._fanout_semaphore = asyncio.Semaphore(self._fanout_max_inflight)
 
     async def start(self) -> None:
         """Start the multiplexer.
@@ -997,6 +1002,6 @@ class StreamMultiplexer:
 
     def _iter_client_batches(self, clients: set[str]) -> list[list[str]]:
         """Build bounded client batches to avoid per-message task bursts."""
-        batch_size = max(1, self._fanout_client_batch_size)
+        batch_size = self._fanout_client_batch_size
         client_list = list(clients)
         return [client_list[i : i + batch_size] for i in range(0, len(client_list), batch_size)]

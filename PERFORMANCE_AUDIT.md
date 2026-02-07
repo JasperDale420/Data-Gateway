@@ -49,18 +49,18 @@ The fastest, lowest-risk wins are:
 2. Stream path backpressure coupling: sink publish blocked client message path (remediated 2026-02-07).
 - Evidence:
   - Sink publish now schedules off callback path via `_schedule_stream_sink_publish(...)`: `gateway/main.py`.
-  - Bounded scheduling guardrails and shutdown draining are in place: `gateway/main.py` (`STREAM_SINK_MAX_PENDING_TASKS`, `_drain_stream_sink_publish_tasks`).
+  - Bounded scheduling guardrails, runtime limit configuration, and shutdown draining are in place: `gateway/main.py` (`_configure_stream_sink_dispatch_limits`, `_drain_stream_sink_publish_tasks`).
 - Impact: Stream callback no longer waits on sink publish/dedup I/O, reducing callback latency coupling under sink backpressure.
 - Remaining low-risk follow-up:
-  - Tune pending/inflight limits with telemetry under production-like fanout load.
+  - Calibrate `data_sink_stream_publish_max_inflight` and `data_sink_stream_publish_max_pending` with telemetry under production-like fanout load.
 
 3. Stream fanout per-message task burst (remediated 2026-02-07).
 - Evidence:
   - Fanout now runs in bounded client batches via `_iter_client_batches(...)` before each `gather(...)`: `gateway/core/stream.py`.
-  - Existing in-flight semaphore bound remains in place (`_fanout_semaphore`).
+  - In-flight semaphore and batch limits are now runtime-configurable through `stream_fanout_max_inflight` and `stream_fanout_batch_size`.
 - Impact: Reduces single-message task allocation burst and smooths event-loop pressure at high fanout while preserving delivery semantics.
 - Remaining low-risk follow-up:
-  - Tune batch size and in-flight semaphore values with telemetry under production-like loads.
+  - Calibrate `stream_fanout_max_inflight` and `stream_fanout_batch_size` with telemetry under production-like loads.
 
 ### P1 (High Value, Low/Medium Risk)
 
@@ -255,7 +255,7 @@ Legend:
 12. Implement core infrastructure Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` (adjustment lookup optimization, breaker caching, rate-limiter wait tuning, and bounded sink dispatch tuning).
 13. Implement tests Wave 1 optimizations from `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` (fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing tests).
 14. Operate BENCH guardrails from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (monitor auto-ratcheted budgets/baselines, tune multipliers/windows, and periodically promote stable active configs via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`).
-15. Continue stream-path optimization from this audit: telemetry-tune fanout batch/inflight limits in `gateway/core/stream.py` and sink dispatch limits in `gateway/main.py`.
+15. Continue stream-path optimization from this audit: telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`).
 
 ## Notes
 
