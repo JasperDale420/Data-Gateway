@@ -207,16 +207,24 @@ class FinnhubProvider(DataProvider):
             }
             timeframe = timeframe_map.get(resolution, "1Day")
 
-            for i in range(len(timestamps)):
+            for ts, open_px, high_px, low_px, close_px, volume in zip(
+                timestamps,
+                opens,
+                highs,
+                lows,
+                closes,
+                volumes,
+                strict=False,
+            ):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
-                        timestamp=datetime.fromtimestamp(timestamps[i], tz=UTC),
-                        open=Decimal(str(opens[i])),
-                        high=Decimal(str(highs[i])),
-                        low=Decimal(str(lows[i])),
-                        close=Decimal(str(closes[i])),
-                        volume=int(volumes[i]),
+                        timestamp=datetime.fromtimestamp(ts, tz=UTC),
+                        open=Decimal(str(open_px)),
+                        high=Decimal(str(high_px)),
+                        low=Decimal(str(low_px)),
+                        close=Decimal(str(close_px)),
+                        volume=int(volume),
                         provider="finnhub",
                         timeframe=timeframe,
                     )

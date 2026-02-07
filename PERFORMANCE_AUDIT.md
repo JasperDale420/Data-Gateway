@@ -153,12 +153,12 @@ The fastest, lowest-risk wins are:
 - Follow-up:
   - Optional: add sampled validation mode toggle for debugging environments.
 
-15. Finnhub bar normalization uses index-based loop.
+15. Finnhub bar normalization index-loop overhead (remediated 2026-02-07).
 - Evidence:
-  - `gateway/providers/finnhub.py:210-223`.
-- Impact: Minor overhead and reduced readability.
-- Low-risk fix:
-  - Use `zip(timestamps, opens, highs, lows, closes, volumes, strict=False)`.
+  - `gateway/providers/finnhub.py` now iterates bar arrays via `zip(..., strict=False)` in `get_bars(...)`.
+- Impact: Slightly lower loop overhead, clearer mapping logic, and safer handling of provider payload array-length mismatches.
+- Follow-up:
+  - Optional: emit a warning metric when payload arrays are truncated by shortest-list zip behavior.
 
 16. Main stream callback repeated per-event dependency import/lookup (partially remediated 2026-02-07).
 - Evidence:

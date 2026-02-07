@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.56] - 2026-02-07
+
+### Added
+
+- **Finnhub provider bar-mapping tests**: Added `tests/test_finnhub_provider.py` with coverage for zipped bar-row mapping and mismatched source-array handling in `get_bars(...)`.
+
+### Changed
+
+- **Finnhub bar normalization loop cleanup**: Updated `gateway/providers/finnhub.py` `get_bars(...)` to use `zip(timestamps, opens, highs, lows, closes, volumes, strict=False)` instead of index-based list access.
+- **Finnhub mismatch resilience**: Bar normalization now naturally truncates to the shortest complete row set, avoiding index errors when upstream arrays differ in length.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark Finnhub bar loop remediation complete.
+
 ## [0.5.55] - 2026-02-07
 
 ### Added
