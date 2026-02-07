@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from gateway.api.alpaca import forex
+from gateway.core.cache import InMemoryCache
 from gateway.core.registry import ProviderRegistry
 
 
@@ -67,18 +68,20 @@ async def test_get_forex_rates_historical_threads_query_params(
 ) -> None:
     provider = _FakeProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
+    cache = InMemoryCache(max_size=32, default_ttl=60)
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = datetime(2026, 1, 2, tzinfo=UTC)
+    observed: dict[str, Any] = {}
 
-    async def _execute_alpaca_call(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
+    async def _execute_alpaca_cached_call(
+        **kwargs: Any,
     ):
-        assert registry is cast(ProviderRegistry, route_registry)
-        assert block is False
-        provider_obj = registry.get("alpaca")
-        return await provider_call(provider_obj)
+        observed["key"] = kwargs["cache_key"]
+        observed["route_label"] = kwargs["route_label"]
+        provider_obj = kwargs["registry"].get("alpaca")
+        return await kwargs["provider_call"](provider_obj)
 
-    monkeypatch.setattr(forex, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(forex, "execute_alpaca_cached_call", _execute_alpaca_cached_call)
 
     response = await forex.get_forex_rates_historical(
         pairs="eur/usd, gbp/usd",
@@ -87,9 +90,15 @@ async def test_get_forex_rates_historical_threads_query_params(
         end=end,
         limit=250,
         client=cast(Any, SimpleNamespace(id="test-client")),
+        cache=cache,
         registry=cast(ProviderRegistry, route_registry),
     )
 
+    assert (
+        observed["key"]
+        == "alpaca:forex:historical:EUR/USD,GBP/USD:1Day:2026-01-01T00:00:00+00:00:2026-01-02T00:00:00+00:00:250"
+    )
+    assert observed["route_label"] == "alpaca_forex_rates_historical"
     assert len(provider.historical_calls) == 1
     assert provider.historical_calls[0]["pairs"] == ["EUR/USD", "GBP/USD"]
     assert provider.historical_calls[0]["timeframe"] == "1Day"

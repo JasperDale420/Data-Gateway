@@ -6,15 +6,19 @@ from fastapi import APIRouter, Depends, Query
 
 from gateway.api.alpaca.common import (
     Client,
+    execute_alpaca_cached_call,
     execute_alpaca_provider_call,
+    get_cache,
     get_registry,
     parse_comma_values,
     require_api_key,
 )
+from gateway.core.cache import HybridCache, InMemoryCache
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
+FOREX_HISTORICAL_CACHE_TTL_SECONDS = 300
 
 
 @router.get("/forex/rates", response_model=SuccessResponse)
@@ -45,12 +49,20 @@ async def get_forex_rates_historical(
     end: datetime | None = Query(default=None),
     limit: int = Query(default=1000, le=10000),
     client: Client = Depends(require_api_key),
+    cache: InMemoryCache | HybridCache = Depends(get_cache),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical forex rates."""
     pairs_list = parse_comma_values(pairs, uppercase=True)
-    data = await execute_alpaca_provider_call(
+    pairs_key = ",".join(pairs_list)
+    start_key = start.isoformat() if start else "none"
+    end_key = end.isoformat() if end else "none"
+    data = await execute_alpaca_cached_call(
         registry=registry,
+        cache=cache,
+        cache_key=f"alpaca:forex:historical:{pairs_key}:{timeframe}:{start_key}:{end_key}:{limit}",
+        ttl=FOREX_HISTORICAL_CACHE_TTL_SECONDS,
+        route_label="alpaca_forex_rates_historical",
         provider_call=lambda provider: provider.get_forex_rates_historical(
             pairs=pairs_list,
             timeframe=timeframe,
