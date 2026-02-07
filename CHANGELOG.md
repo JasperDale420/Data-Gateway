@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.86] - 2026-02-07
+
+### Changed
+
+- **Perf baseline promotion**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/config/perf_baseline.json` from active perf history, including refreshed suite baseline timing and per-test baseline entries.
+- **Perf budget ratchet promotion**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/config/perf_budgets.json` from active ratcheted budgets, tightening suite and sink/fanout per-test thresholds.
+- **Benchmark calibration verification**: Ran `python scripts/perf_gate.py --budgets-file config/perf_budgets.json --baseline-file config/perf_baseline.json` after promotion; gate passed (`9 perf tests`, suite runtime `1.07s` under `3.60s` budget).
+- **Audit tracking updates**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` and `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` with 2026-02-07 benchmark calibration status and promoted config details.
+
 ## [0.5.85] - 2026-02-07
 
 ### Added

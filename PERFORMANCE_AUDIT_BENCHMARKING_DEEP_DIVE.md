@@ -25,6 +25,23 @@ Complete a deep audit of repository performance-measurement readiness so future 
 | CI budget enforcement | 1 workflow + 1 script | COMPLETE | Thresholded perf gate + artifact publishing implemented |
 | Baseline history automation | 1 workflow + 3 scripts + 3 unit tests | COMPLETE | Added rolling history, baseline refresh, automatic budget ratcheting, active-config promotion utility, and release-readiness diff/apply helper |
 
+## Latest Calibration Snapshot (2026-02-07)
+
+- Ran perf gate with tracked config:
+  - `python scripts/perf_gate.py --budgets-file config/perf_budgets.json --baseline-file config/perf_baseline.json`
+  - Result: `9 passed`, suite runtime `1.07s`
+- Refreshed active perf history/baselines from current summary:
+  - `python scripts/perf_baseline_manager.py ... --summary-file perf-summary.json ...`
+  - Result: `ratchet_applied=True` with `history=3`, `pass_samples=3`
+- Promoted active perf config to tracked config:
+  - `python scripts/perf_release_readiness.py --apply`
+  - Updated `config/perf_budgets.json`:
+    - `suite_max_seconds`: `6.0 -> 3.6`
+    - tightened sink/fanout test budgets (`0.2/0.08/0.45/0.2` -> `0.066/0.066/0.144/0.189`)
+  - Updated `config/perf_baseline.json`:
+    - `suite_baseline_seconds`: `0.934 -> 1.19`
+    - refreshed per-test timings and added `test_stream_fanout_batching_bounds_task_burst_with_high_semaphore`
+
 ## Evidence Snapshot
 
 ### CI and Tooling Gaps

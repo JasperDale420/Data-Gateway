@@ -255,7 +255,7 @@ Legend:
 11. Continue core modules follow-ups from `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` (Wave CORE-1 validator hot-path optimization, symbology allocation trimming, quality timestamp/sort reductions, middleware import hoist, and security symbol-array dedupe are complete; Wave CORE-2 calendar span guardrails, quality analyze single-pass consolidation, `live_provider_smoke.py` concurrency, and `generate_provider_contract.py` handler pre-indexing are complete; remaining focus is benchmark calibration).
 12. Implement core infrastructure Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` (adjustment lookup optimization, breaker caching, rate-limiter wait tuning, and bounded sink dispatch tuning).
 13. Implement tests Wave 1 optimizations from `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` (fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing tests).
-14. Operate BENCH guardrails from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (monitor auto-ratcheted budgets/baselines, tune multipliers/windows, and periodically promote stable active configs via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`).
+14. Operate BENCH guardrails from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (latest calibration completed 2026-02-07: promoted active perf baseline/budgets and verified gate pass at `1.07s` vs `3.60s` suite budget; continue periodic monitoring/tuning via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`).
 15. Continue stream-path optimization from this audit: telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`).
 
 ## Notes
