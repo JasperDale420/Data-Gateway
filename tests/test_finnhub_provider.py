@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -71,3 +72,48 @@ async def test_get_bars_handles_mismatched_source_arrays_without_index_error() -
 
     assert len(bars) == 2
     assert all(bar.timeframe == "1Day" for bar in bars)
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_uses_bounded_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = FinnhubProvider()
+    provider._quotes_max_concurrency = 2
+
+    inflight = 0
+    max_inflight = 0
+
+    async def _fake_get_quote(symbol: str):
+        nonlocal inflight
+        nonlocal max_inflight
+        inflight += 1
+        max_inflight = max(max_inflight, inflight)
+        await asyncio.sleep(0.01)
+        inflight -= 1
+        return {"symbol": symbol}
+
+    monkeypatch.setattr(provider, "get_quote", _fake_get_quote)
+
+    quotes = await provider.get_quotes(["AAPL", "MSFT", "NVDA", "TSLA"])
+
+    assert len(quotes) == 4
+    assert max_inflight <= 2
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_skips_errors_without_failing_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = FinnhubProvider()
+    provider._quotes_max_concurrency = 3
+
+    async def _fake_get_quote(symbol: str):
+        if symbol == "FAIL":
+            raise RuntimeError("boom")
+        await asyncio.sleep(0)
+        return {"symbol": symbol}
+
+    monkeypatch.setattr(provider, "get_quote", _fake_get_quote)
+
+    quotes = await provider.get_quotes(["AAPL", "FAIL", "MSFT"])
+
+    assert quotes == [{"symbol": "AAPL"}, {"symbol": "MSFT"}]

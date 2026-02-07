@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.58] - 2026-02-07
+
+### Added
+
+- **Finnhub quote fan-out tests**: Expanded `tests/test_finnhub_provider.py` with bounded-concurrency and fail-soft batch behavior coverage for `get_quotes(...)`.
+
+### Changed
+
+- **Finnhub bounded quote fan-out**: Updated `gateway/providers/finnhub.py` `get_quotes(...)` to fetch symbols with semaphore-bounded concurrency (`_quotes_max_concurrency`) instead of strict sequential awaits.
+- **Finnhub quote concurrency config support**: Added optional `quotes_max_concurrency` provider config parsing in `initialize(...)` with safe integer fallback handling.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark provider multi-quote fan-out serialization remediation complete.
+
 ## [0.5.57] - 2026-02-07
 
 ### Added

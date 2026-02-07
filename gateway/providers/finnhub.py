@@ -1,5 +1,6 @@
 """Finnhub data provider for quotes, company profiles, and financials."""
 
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -22,6 +23,7 @@ class FinnhubProvider(DataProvider):
         self._api_key: str = ""
         self._client: httpx.AsyncClient | None = None
         self._base_url: str = "https://finnhub.io/api/v1"
+        self._quotes_max_concurrency: int = 3
 
     @property
     def name(self) -> str:
@@ -51,6 +53,17 @@ class FinnhubProvider(DataProvider):
         if not self._api_key:
             logger.warning("finnhub_api_key_not_set", env_var=api_key_env)
             return
+
+        quotes_max_concurrency = config.get("quotes_max_concurrency")
+        if quotes_max_concurrency is not None:
+            try:
+                self._quotes_max_concurrency = max(1, int(quotes_max_concurrency))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "finnhub_invalid_quotes_max_concurrency",
+                    value=quotes_max_concurrency,
+                    fallback=self._quotes_max_concurrency,
+                )
 
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
@@ -136,15 +149,21 @@ class FinnhubProvider(DataProvider):
 
     async def get_quotes(self, symbols: list[str]) -> list[NormalizedQuote]:
         """Get quotes for multiple symbols."""
-        quotes = []
-        for symbol in symbols:
+        if not symbols:
+            return []
+
+        sem = asyncio.Semaphore(max(1, self._quotes_max_concurrency))
+
+        async def _fetch(symbol: str) -> NormalizedQuote | None:
             try:
-                quote = await self.get_quote(symbol)
-                if quote:
-                    quotes.append(quote)
+                async with sem:
+                    return await self.get_quote(symbol)
             except Exception as e:
                 logger.warning("finnhub_quote_skipped", symbol=symbol, error=str(e))
-        return quotes
+                return None
+
+        quotes = await asyncio.gather(*(_fetch(symbol) for symbol in symbols))
+        return [quote for quote in quotes if quote is not None]
 
     # ─────────────────────────────────────────────────────────────────
     # Historical Bars

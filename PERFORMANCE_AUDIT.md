@@ -72,13 +72,13 @@ The fastest, lowest-risk wins are:
 - Low-risk fix:
   - Use `asyncio.gather(..., return_exceptions=True)` in `health_check_all`.
 
-5. Sequential quote fan-out in providers.
+5. Provider multi-quote fan-out serialization (remediated 2026-02-07).
 - Evidence:
-  - `gateway/providers/finnhub.py:137-147` loops serially over symbols.
-  - `gateway/providers/alphavantage.py:165-175` loops serially over symbols.
-- Impact: For multi-symbol requests, latency scales linearly.
-- Low-risk fix:
-  - Use bounded concurrency (`Semaphore`) + `asyncio.gather` to fetch symbols in parallel within provider limits.
+  - `gateway/providers/alphavantage.py` uses bounded semaphore concurrency for `get_quotes(...)`.
+  - `gateway/providers/finnhub.py` now uses bounded semaphore concurrency for `get_quotes(...)` with fail-soft per-symbol behavior.
+- Impact: Multi-symbol quote fetch latency is no longer strictly linear in symbol count for these providers while retaining provider-limit safety controls.
+- Follow-up:
+  - Optional: add provider-specific latency histograms by requested symbol count to tune default concurrency.
 
 6. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 - Evidence:
@@ -175,7 +175,7 @@ The fastest, lowest-risk wins are:
 2. Hoist WebSocket `max_bytes` lookup out of per-message branches (completed 2026-02-07).
 3. Replace `iterrows` in yfinance history conversion.
 4. Switch Alpha Vantage CSV parsing to `csv.DictReader`.
-5. Replace serial multi-quote provider loops with bounded concurrency.
+5. Replace serial multi-quote provider loops with bounded concurrency (completed 2026-02-07).
 
 ### Wave 2
 
