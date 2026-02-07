@@ -111,18 +111,18 @@ Low-risk fix path:
 2. Use `asyncio.gather(..., return_exceptions=True)` for `health_check_all`.
 3. Keep error handling and boolean status contract unchanged.
 
-### P1-4: Request deduplicator serializes all keys through one lock
+### P1-4: Request deduplicator lock contention on shared map (remediated 2026-02-07)
 
 Evidence:
-- Shared global lock around pending-map operations: `gateway/core/dedup.py:54`, `78`
+- `gateway/core/dedup.py` now uses key-based lock striping (`_key_locks`, `_lock_for_key`) for pending-map operations.
 
 Impact:
 - Unrelated requests with different keys contend on the same lock.
 - Reduces throughput under mixed-key concurrent load.
 
-Low-risk fix path:
-1. Use per-key lock striping or lock-free fast path for existing futures.
-2. Keep result/exception sharing semantics unchanged.
+Remediation:
+1. Added lock striping for request keys to reduce unrelated-key contention.
+2. Preserved in-flight request coalescing semantics for identical keys.
 
 ### P1-5: Rate limiter blocking mode uses generic backoff sleeps instead of window reset hints
 
@@ -192,7 +192,7 @@ Wave status (2026-02-06):
 
 ### Wave CORE-INFRA-2
 
-1. Add lock striping/per-key optimization to request deduplicator.
+1. Add lock striping/per-key optimization to request deduplicator (completed 2026-02-07).
 2. Add LRU memoization for metrics path normalization (completed 2026-02-07).
 3. Reduce auth success log volume (`info` -> `debug`/sampled) (completed 2026-02-07).
 

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.63] - 2026-02-07
+
+### Added
+
+- **Request deduplication tests**: Added `tests/test_request_dedup.py` covering same-key request coalescing, independent different-key fetch execution, and stable lock-striping behavior.
+
+### Changed
+
+- **Request deduplicator lock striping**: Updated `gateway/core/dedup.py` `RequestDeduplicator` to use key-based lock striping instead of a single global lock, reducing unrelated-key contention under concurrent load.
+- **Request dedup pending cleanup safety**: Pending request cleanup now removes only the matching in-flight future for a key (`is future`) to avoid edge-case key reuse races.
+- **Core-infra audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` to mark request deduplicator lock-striping remediation complete.
+
 ## [0.5.62] - 2026-02-07
 
 ### Added
