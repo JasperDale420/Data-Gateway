@@ -14,7 +14,7 @@ Produce a route-level Alpha Vantage performance audit focused on low-risk improv
 | Area | Files | Status | Notes |
 |---|---:|---|---|
 | Alpha Vantage API routers | 9 files (`gateway/api/alphavantage/*.py`) | COMPLETE | Full route-level pass across all endpoints |
-| Alpha Vantage provider | 1 file (`gateway/providers/alphavantage.py`) | PARTIAL | Reviewed route-adjacent latency/parse hotspots; no runtime profiling yet |
+| Alpha Vantage provider | 1 file (`gateway/providers/alphavantage.py`) | PARTIAL | AV-3 CSV parser migration + bounded quote fan-out implemented; benchmark/helper-consolidation follow-up pending |
 | Runtime benchmark/profiler execution | N/A | PENDING | Static/code-path audit only in this run |
 
 ## Inventory and Measured Hotspots
@@ -37,11 +37,17 @@ Produce a route-level Alpha Vantage performance audit focused on low-risk improv
   - `3600s`: 12
   - `86400s`: 2
 - Provider context signals:
-  - Provider LOC: `1082`.
+  - Provider LOC: `1096`.
   - `response = await self._client.get(...)` call sites: `21`.
   - `"Note"` rate-limit checks: `16`.
-  - Manual CSV parse blocks (`split("\n")` + `split(",")`): `3`.
-  - Multi-symbol quote fetch loop is sequential: `gateway/providers/alphavantage.py:168`.
+  - CSV parsing helper now uses `csv.DictReader`: `gateway/providers/alphavantage.py:1006`.
+  - Multi-symbol quote fetch now uses semaphore-bounded fan-out: `gateway/providers/alphavantage.py:180`.
+
+## Remediation Progress (2026-02-07)
+
+- `AV-3.1` complete: provider CSV endpoints now parse through shared `csv.DictReader` helper (`gateway/providers/alphavantage.py:1006`).
+- `AV-3.2` complete: `get_quotes(...)` now executes with bounded concurrency via `asyncio.Semaphore` (`gateway/providers/alphavantage.py:180`).
+- `AV-3.3` pending: benchmark/profiler validation and additional provider helper/sort-limit consolidation.
 
 ## Priority Findings (Low-Risk Changes Only)
 
@@ -168,10 +174,10 @@ Low-risk fix path:
 2. Add a common route helper in `gateway/api/alphavantage/common.py` for standardized cached/uncached response wrapping.
 3. Standardize `timeseries.py` serialization to `mode="json"` for all model dumps.
 
-Wave status (2026-02-06):
+Wave status (2026-02-07):
 - `AV-1` complete (shared helper added in `common.py` and applied across all Alpha Vantage route files)
 - `AV-2` complete (full-output cache bypass, search-key guardrails, endpoint-level cache/payload instrumentation implemented)
-- `AV-3` pending
+- `AV-3` in progress (CSV parser migration + bounded quote fan-out complete; benchmark/helper-consolidation follow-up pending)
 
 ### Wave AV-2
 
@@ -200,9 +206,9 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/api/alphavantage/economic.py` | 1 | COMPLETE | AV-1 helper migration complete; monitor cache cardinality |
 | `gateway/api/alphavantage/common.py` | 0 | COMPLETE | AV shared helper + search-key guardrail + cache/payload instrumentation is in place |
 | `gateway/api/alphavantage/__init__.py` | 0 | COMPLETE | No performance hotspots; router composition only |
-| `gateway/providers/alphavantage.py` | 34 async methods | PARTIAL | CSV parsing modernization, bounded multi-quote concurrency, benchmark validation |
+| `gateway/providers/alphavantage.py` | 34 async methods | PARTIAL | CSV parsing modernization + bounded multi-quote concurrency complete; benchmark validation and shared-fetch/sort-limit tuning pending |
 
 ## Future Runs (Outside Alpha Vantage)
 
-1. Implement AV-3 provider optimizations in `gateway/providers/alphavantage.py` (`csv.DictReader`, bounded quote fan-out, benchmark validation).
+1. Complete remaining AV-3 provider follow-ups in `gateway/providers/alphavantage.py` (benchmark validation and shared-fetch/sort-limit tuning).
 2. Continue non-Alpha-Vantage implementation priorities from `PERFORMANCE_AUDIT.md`.

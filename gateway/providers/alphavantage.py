@@ -1,5 +1,8 @@
 """Alpha Vantage data provider for quotes, time series, and fundamentals."""
 
+import asyncio
+import csv
+import io
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -16,6 +19,7 @@ logger = structlog.get_logger()
 
 PROVIDER_NOT_INIT = "Provider not initialized"
 API_KEY_NOT_SET = "Alpha Vantage API key not configured"
+DEFAULT_QUOTES_MAX_CONCURRENCY = 2
 
 
 class AlphaVantageProvider(DataProvider):
@@ -25,6 +29,7 @@ class AlphaVantageProvider(DataProvider):
         self._api_key: str = ""
         self._client: httpx.AsyncClient | None = None
         self._base_url: str = "https://www.alphavantage.co/query"
+        self._quotes_max_concurrency: int = DEFAULT_QUOTES_MAX_CONCURRENCY
 
     @property
     def name(self) -> str:
@@ -49,6 +54,18 @@ class AlphaVantageProvider(DataProvider):
         """Initialize Alpha Vantage client."""
         api_key_env = config.get("api_key_env", "ALPHAVANTAGE_API_KEY")
         self._api_key = os.environ.get(api_key_env, "")
+        raw_quotes_concurrency = config.get(
+            "quotes_max_concurrency", DEFAULT_QUOTES_MAX_CONCURRENCY
+        )
+        try:
+            self._quotes_max_concurrency = min(5, max(1, int(raw_quotes_concurrency)))
+        except (TypeError, ValueError):
+            logger.warning(
+                "alphavantage_invalid_quotes_max_concurrency",
+                value=raw_quotes_concurrency,
+                default=DEFAULT_QUOTES_MAX_CONCURRENCY,
+            )
+            self._quotes_max_concurrency = DEFAULT_QUOTES_MAX_CONCURRENCY
 
         if not self._api_key:
             logger.warning("alphavantage_api_key_not_set", env_var=api_key_env)
@@ -164,15 +181,18 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_quotes(self, symbols: list[str]) -> list[NormalizedQuote]:
         """Get quotes for multiple symbols."""
-        quotes = []
-        for symbol in symbols:
-            try:
-                quote = await self.get_quote(symbol)
-                if quote:
-                    quotes.append(quote)
-            except Exception as e:
-                logger.warning("alphavantage_quote_skipped", symbol=symbol, error=str(e))
-        return quotes
+        semaphore = asyncio.Semaphore(self._quotes_max_concurrency)
+
+        async def _fetch_quote(symbol: str) -> NormalizedQuote | None:
+            async with semaphore:
+                try:
+                    return await self.get_quote(symbol)
+                except Exception as e:
+                    logger.warning("alphavantage_quote_skipped", symbol=symbol, error=str(e))
+                    return None
+
+        results = await asyncio.gather(*(_fetch_quote(symbol) for symbol in symbols))
+        return [quote for quote in results if quote]
 
     # ─────────────────────────────────────────────────────────────────
     # Time Series / Historical Bars
@@ -985,6 +1005,17 @@ class AlphaVantageProvider(DataProvider):
     # Calendars & Listings
     # ─────────────────────────────────────────────────────────────────
 
+    def _parse_csv_response(self, payload: str) -> list[dict[str, Any]]:
+        """Parse Alpha Vantage CSV payload to list-of-dicts."""
+        text = payload.strip()
+        if not text:
+            return []
+
+        rows = list(csv.DictReader(io.StringIO(text)))
+        if not rows:
+            return []
+        return [dict(row) for row in rows]
+
     async def get_earnings_calendar(
         self, symbol: str | None = None, horizon: str = "3month"
     ) -> list[dict[str, Any]]:
@@ -1010,12 +1041,7 @@ class AlphaVantageProvider(DataProvider):
         try:
             response = await self._client.get(self._base_url, params=params)
             response.raise_for_status()
-            # Returns CSV, need to parse
-            lines = response.text.strip().split("\n")
-            if len(lines) < 2:
-                return []
-            headers = lines[0].split(",")
-            return [dict(zip(headers, line.split(","), strict=False)) for line in lines[1:]]
+            return self._parse_csv_response(response.text)
 
         except Exception as e:
             logger.error("alphavantage_earnings_calendar_failed", error=str(e))
@@ -1034,12 +1060,7 @@ class AlphaVantageProvider(DataProvider):
                 params={"function": "IPO_CALENDAR", "apikey": self._api_key},
             )
             response.raise_for_status()
-            # Returns CSV
-            lines = response.text.strip().split("\n")
-            if len(lines) < 2:
-                return []
-            headers = lines[0].split(",")
-            return [dict(zip(headers, line.split(","), strict=False)) for line in lines[1:]]
+            return self._parse_csv_response(response.text)
 
         except Exception as e:
             logger.error("alphavantage_ipo_calendar_failed", error=str(e))
@@ -1070,12 +1091,7 @@ class AlphaVantageProvider(DataProvider):
         try:
             response = await self._client.get(self._base_url, params=params)
             response.raise_for_status()
-            # Returns CSV
-            lines = response.text.strip().split("\n")
-            if len(lines) < 2:
-                return []
-            headers = lines[0].split(",")
-            return [dict(zip(headers, line.split(","), strict=False)) for line in lines[1:]]
+            return self._parse_csv_response(response.text)
 
         except Exception as e:
             logger.error("alphavantage_listing_status_failed", state=state, error=str(e))

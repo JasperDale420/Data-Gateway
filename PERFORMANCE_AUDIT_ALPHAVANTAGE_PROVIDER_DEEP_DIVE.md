@@ -1,6 +1,6 @@
 # Alpha Vantage Provider Performance Audit Deep Dive
 
-Date: 2026-02-06
+Date: 2026-02-07
 Auditor: Codex (GPT-5)
 Primary scope: `gateway/providers/alphavantage.py`
 Secondary scope: usage context in `gateway/api/alphavantage/*`
@@ -13,13 +13,13 @@ Complete a full deep performance pass of the Alpha Vantage provider implementati
 
 | Area | Files | Status | Notes |
 |---|---:|---|---|
-| Alpha Vantage provider | 1 (`gateway/providers/alphavantage.py`) | COMPLETE | Full provider pass across quote/time-series/fundamentals/indicator/CSV paths |
+| Alpha Vantage provider | 1 (`gateway/providers/alphavantage.py`) | COMPLETE | Full provider pass completed; AV-PROV-1 partially remediated (`csv.DictReader` + bounded quote fan-out) |
 | Alpha Vantage routes (context) | 9 (`gateway/api/alphavantage/*`) | COMPLETE | Already audited; referenced for integration context only |
 | Runtime profiling/benchmarks | N/A | PENDING | Static/code-path audit in this run |
 
 ## Inventory and Measured Hotspots
 
-- Provider size: `1082` LOC.
+- Provider size: `1096` LOC.
 - Method mix:
   - `34` async methods
   - `4` sync methods (constructor/properties)
@@ -31,31 +31,36 @@ Complete a full deep performance pass of the Alpha Vantage provider implementati
   - `if not self._api_key` guards: `22`
   - explicit `"Rate limit exceeded"` checks/raises: `17`
   - broad `except Exception as e` blocks: `22`
-- CSV endpoints parsed via ad-hoc split logic: `3`
-  - `gateway/providers/alphavantage.py:1014`
-  - `gateway/providers/alphavantage.py:1038`
-  - `gateway/providers/alphavantage.py:1074`
+- CSV endpoints parsed via shared helper with `csv.DictReader`: `3`
+  - `gateway/providers/alphavantage.py:1006`
 - Sorting hotspots:
   - full-list sort in bar loaders: `gateway/providers/alphavantage.py:244`, `gateway/providers/alphavantage.py:304`, `gateway/providers/alphavantage.py:355`
-  - sorted-and-slice patterns: `gateway/providers/alphavantage.py:707`, `gateway/providers/alphavantage.py:865`, `gateway/providers/alphavantage.py:937`
+  - sorted-and-slice patterns: `gateway/providers/alphavantage.py:714`, `gateway/providers/alphavantage.py:883`, `gateway/providers/alphavantage.py:955`
+
+## Remediation Progress (2026-02-07)
+
+- Complete: CSV calendar/listing parsing migrated to shared `csv.DictReader` helper in `gateway/providers/alphavantage.py:1006`.
+- Complete: `get_quotes(...)` now uses bounded semaphore concurrency with configurable `quotes_max_concurrency` in `gateway/providers/alphavantage.py:180` and `config/providers.yaml`.
+- Pending: shared JSON fetch helper consolidation, indicator/forex/crypto sort/limit tuning, and provider micro-benchmark validation.
 
 ## Priority Findings (Low-Risk Changes Only)
 
-### P0-1: CSV endpoints use manual split parsing (`split(",")`) instead of CSV parser
+### P0-1: CSV endpoint parsing modernization (remediated 2026-02-07)
 
 Evidence:
-- Manual parsing in earnings/IPO/listing calendars:
-  - `gateway/providers/alphavantage.py:1014-1018`
-  - `gateway/providers/alphavantage.py:1038-1042`
-  - `gateway/providers/alphavantage.py:1074-1078`
+- Shared parser helper now used by earnings/IPO/listing endpoints:
+  - `gateway/providers/alphavantage.py:1006-1014`
+  - `gateway/providers/alphavantage.py:1039`
+  - `gateway/providers/alphavantage.py:1056`
+  - `gateway/providers/alphavantage.py:1088`
 
 Impact:
 - Extra string allocations.
 - Fragile on quoted commas and edge cases.
 
-Low-risk fix path:
-1. Replace with `csv.DictReader(io.StringIO(response.text))`.
-2. Keep output field names and list structure unchanged.
+Status:
+1. Implemented with `csv.DictReader(io.StringIO(payload))`.
+2. Added coverage in `tests/test_alphavantage_provider.py` for quoted-comma payloads.
 
 ### P0-2: Request boilerplate and rate-limit-note handling are duplicated across most methods
 
@@ -79,18 +84,19 @@ Low-risk fix path:
    - standardized provider error mapping/log fields.
 3. Keep method return schemas unchanged.
 
-### P1-3: Multi-symbol quote path is strictly sequential
+### P1-3: Multi-symbol quote fan-out (remediated with bounded concurrency on 2026-02-07)
 
 Evidence:
-- `gateway/providers/alphavantage.py:168` loops symbols sequentially.
-- Each iteration awaits `gateway/providers/alphavantage.py:170` (`get_quote`).
+- `gateway/providers/alphavantage.py:182` creates `asyncio.Semaphore(self._quotes_max_concurrency)`.
+- `gateway/providers/alphavantage.py:192` executes bounded fan-out with `asyncio.gather(...)`.
+- `gateway/providers/alphavantage.py:57-66` parses/clamps `quotes_max_concurrency` config.
 
 Impact:
 - Latency scales linearly with symbol count.
 
-Low-risk fix path:
-1. Add bounded concurrency mode (small semaphore, configurable for paid tiers).
-2. Keep current sequential mode as default for strict free-tier safety.
+Status:
+1. Bounded concurrency mode implemented with conservative default (`2`) and clamp (`1..5`).
+2. Fail-soft semantics preserved (per-symbol warning + continue).
 
 ### P1-4: Full-series parse + full sort for time-series methods
 
@@ -141,9 +147,9 @@ Low-risk fix path:
 
 ### Wave AV-PROV-1 (Immediate, lowest risk)
 
-1. Replace manual CSV split parsing with `csv.DictReader` on all CSV endpoints.
-2. Add shared `_fetch_json` helper with centralized `"Note"` handling.
-3. Keep response shapes and route contracts identical.
+1. Complete: replaced manual CSV parsing with `csv.DictReader` on all CSV endpoints.
+2. Pending: add shared `_fetch_json` helper with centralized `"Note"` handling.
+3. Complete: added bounded `get_quotes` concurrency with config guardrails.
 
 ### Wave AV-PROV-2
 
@@ -168,12 +174,5 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 ## Remaining Audit Scope (Future Runs)
 
-1. Remaining provider deep pass:
-   - `gateway/providers/news.py`
-2. Deeper computational hotspot audits for sampled core modules:
-   - `gateway/core/security.py`
-   - `gateway/core/quality.py`
-   - `gateway/core/calendar.py`
-   - `gateway/core/symbology.py`
-   - `gateway/core/validator.py`
-3. Runtime benchmark/profiling suite execution for middleware, stream/replay fanout, and bulk memory behavior.
+1. Runtime benchmark/profiling suite execution for middleware, stream/replay fanout, and bulk memory behavior.
+2. Alpha Vantage provider follow-up remediation: shared fetch helper + sort/limit tuning for indicator/forex/crypto paths.

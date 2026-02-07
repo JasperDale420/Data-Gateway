@@ -53,6 +53,7 @@ providers:
     priority: 3
     config:
       api_key_env: ALPHAVANTAGE_API_KEY  # pragma: allowlist secret
+      quotes_max_concurrency: 2
     capabilities:
       streaming: false
       historical: true

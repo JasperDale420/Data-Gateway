@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.45] - 2026-02-07
+
+### Added
+
+- **Alpha Vantage provider AV-3 coverage tests**: Added `tests/test_alphavantage_provider.py` for CSV quoted-comma parsing behavior, `quotes_max_concurrency` config parsing/fallback, and bounded `get_quotes(...)` fan-out assertions.
+
+### Changed
+
+- **Alpha Vantage provider bounded quote fan-out**: Updated `gateway/providers/alphavantage.py` `get_quotes(...)` to use semaphore-bounded concurrency (configurable via `alphavantage.config.quotes_max_concurrency`) while preserving fail-soft per-symbol behavior.
+- **Alpha Vantage provider CSV parsing hardening**: Replaced split-based CSV parsing in earnings/IPO/listing endpoints with shared `csv.DictReader` parsing helper in `gateway/providers/alphavantage.py` to reduce allocation overhead and handle quoted-comma payloads safely.
+- **Alpha Vantage provider config tuning knob**: Updated `config/providers.yaml` to include `alphavantage.config.quotes_max_concurrency: 2` for explicit default bounded parallelism.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md`, `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md`, and `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` to mark AV-3 provider rollout progress and remaining benchmark/helper-consolidation follow-ups.
+
 ## [0.5.44] - 2026-02-06
 
 ### Added
