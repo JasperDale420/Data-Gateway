@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.96] - 2026-02-07
+
+### Added
+
+- **Alpaca account router regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_account_router.py` to verify account configuration and account activity endpoints route through the shared Alpaca execution helper and preserve parameter threading.
+
+### Changed
+
+- **Account route-helper consolidation rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/account.py` to use `execute_alpaca_provider_call(...)` for shared provider lookup, rate-limit handling, and error wrapping while preserving endpoint responses.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark account helper rollout complete and narrow the remaining Alpaca router helper-consolidation scope.
+
 ## [0.5.95] - 2026-02-07
 
 ### Added
