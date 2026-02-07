@@ -47,18 +47,16 @@ async def get_articles(
     provider = get_news_provider()
     await _ensure_initialized(provider)
 
-    # Parse symbols
-    symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
-
-    # Parse dates
-    start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")) if start else None
-    end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")) if end else None
-
     # Build cache key
     cache_key = f"news:articles:{symbols}:{keywords}:{start}:{end}:{limit}:{cursor}:{sort}"
     cached = await cache.get(cache_key)
     if cached:
         return {"success": True, "data": cached, "cached": True}
+
+    # Parse symbols/dates only on cache miss.
+    symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
+    start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")) if start else None
+    end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")) if end else None
 
     try:
         deduper = get_deduplicator()

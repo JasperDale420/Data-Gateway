@@ -120,22 +120,20 @@ Low-risk fix path:
 2. Log fallback reason once per interval.
 3. Keep static calendar fallback output unchanged.
 
-### P1-5: News route parses datetime parameters before cache-hit short-circuit
+### P1-5: News route parses datetime parameters before cache-hit short-circuit (remediated 2026-02-07)
 
 Evidence:
-- Datetime parsing happens before cache check:
-  - `gateway/api/news.py:54`
-  - `gateway/api/news.py:55`
-- Cache lookup occurs afterward:
+- Cache lookup now runs before date parsing:
+  - `gateway/api/news.py:51`
+  - `gateway/api/news.py:52`
+- Datetime parsing now runs only on cache miss:
+  - `gateway/api/news.py:58`
   - `gateway/api/news.py:59`
+- Regression coverage validates cache-hit behavior with invalid datetime inputs:
+  - `tests/test_news_router.py:49`
 
 Impact:
-- Cache hits still pay parse overhead and date parsing errors are evaluated on hot path even when payload is cached.
-
-Low-risk fix path:
-1. Build normalized key and check cache first.
-2. Parse datetime only on miss.
-3. Keep API behavior and error contract unchanged.
+- Cache-hit requests now skip avoidable datetime parsing work in the hot path, reducing per-hit CPU overhead and avoiding unnecessary parse evaluation.
 
 ### P2-6: Metrics endpoint recomputes dynamic memory gauges on every scrape
 

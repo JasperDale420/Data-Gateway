@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.69] - 2026-02-07
+
+### Added
+
+- **News router cache-first tests**: Added `tests/test_news_router.py` to validate cache-hit short-circuit behavior (including invalid date inputs) and cache-miss provider fetch/date parsing flow.
+
+### Changed
+
+- **News route cache-first parse ordering**: Updated `gateway/api/news.py` `get_articles(...)` to run cache lookup before symbol/date parsing so cache hits skip unnecessary parsing work.
+- **Non-provider audit tracking updates**: Updated `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` to mark news cache-hit-first parsing remediation complete.
+- **Top-level audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` next-run plan notes to reflect news cache-hit-first parsing completion.
+
 ## [0.5.68] - 2026-02-07
 
 ### Added
