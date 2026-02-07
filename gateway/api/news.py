@@ -1,4 +1,4 @@
-"""News API endpoints (EventRegistry)."""
+"""News API endpoints (NewsAPI.org)."""
 
 from datetime import datetime
 

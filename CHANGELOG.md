@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.92] - 2026-02-07
+
+### Removed
+
+- **Stale audit artifacts**: Deleted 14 performance deep-dive files, `COMMIT_6077c9f_BREAKDOWN.md`, `PROVIDER_ALIGNMENT_AUDIT.md`, `LIVE_PROVIDER_SMOKE_REPORT.md`, and `codebase.md` (18 files total). Findings from deep-dives are summarized inline in `PERFORMANCE_AUDIT.md`.
+
+### Fixed
+
+- **CONTRIBUTING.md**: Corrected project structure (`schemas/` not `schemas.py`) and test file path (`tests/test_{name}_provider.py`).
+- **production.md**: Fixed test path reference and updated cache examples to async `await cache.get()` / `await cache.set()`.
+- **CLAUDE.MD**: Added missing `NewsAPI.org` to the list of supported providers.
+- **gateway/api/news.py**: Corrected docstring from `EventRegistry` to `NewsAPI.org`.
+- **Audit_Checklist.md**: Updated "Last Audited" date to 2026-02-07.
+- **PERFORMANCE_AUDIT.md**: Removed 30+ references to deleted deep-dive files; consolidated findings and next-run plan inline.
+
 ## [0.5.91] - 2026-02-07
 
 ### Added

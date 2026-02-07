@@ -37,6 +37,7 @@ The fastest, lowest-risk wins are:
 ### P0 (Do First)
 
 1. Middleware cache/envelope duplicate body buffering (substantially remediated on 2026-02-07).
+
 - Evidence:
   - Cache middleware now stores buffered bytes on request state for HIT/MISS paths: `gateway/api/middleware.py:335`, `gateway/api/middleware.py:368`.
   - Envelope middleware now short-circuits responses already marked wrapped (`X-Gateway-Envelope: true`) before body parse/dump work: `gateway/api/middleware.py:616`.
@@ -46,7 +47,8 @@ The fastest, lowest-risk wins are:
 - Remaining low-risk follow-up:
   - Optional: evaluate faster JSON codec (`orjson`/equivalent) behind compatibility guardrails for additional parse/dump CPU reduction.
 
-2. Stream path backpressure coupling: sink publish blocked client message path (remediated 2026-02-07).
+1. Stream path backpressure coupling: sink publish blocked client message path (remediated 2026-02-07).
+
 - Evidence:
   - Sink publish now schedules off callback path via `_schedule_stream_sink_publish(...)`: `gateway/main.py`.
   - Bounded scheduling guardrails, runtime limit configuration, and shutdown draining are in place: `gateway/main.py` (`_configure_stream_sink_dispatch_limits`, `_drain_stream_sink_publish_tasks`).
@@ -54,7 +56,8 @@ The fastest, lowest-risk wins are:
 - Remaining low-risk follow-up:
   - Calibrate `data_sink_stream_publish_max_inflight` and `data_sink_stream_publish_max_pending` with telemetry under production-like fanout load.
 
-3. Stream fanout per-message task burst (remediated 2026-02-07).
+1. Stream fanout per-message task burst (remediated 2026-02-07).
+
 - Evidence:
   - Fanout now runs in bounded client batches via `_iter_client_batches(...)` before each `gather(...)`: `gateway/core/stream.py`.
   - In-flight semaphore and batch limits are now runtime-configurable through `stream_fanout_max_inflight` and `stream_fanout_batch_size`.
@@ -64,7 +67,8 @@ The fastest, lowest-risk wins are:
 
 ### P1 (High Value, Low/Medium Risk)
 
-4. Sequential provider health checks on admin/status endpoints.
+1. Sequential provider health checks on admin/status endpoints.
+
 - Evidence:
   - `gateway/core/registry.py:126-134` checks providers sequentially.
   - `gateway/api/admin.py:97`, `gateway/api/admin.py:214` call this for admin endpoints.
@@ -72,7 +76,8 @@ The fastest, lowest-risk wins are:
 - Low-risk fix:
   - Use `asyncio.gather(..., return_exceptions=True)` in `health_check_all`.
 
-5. Provider multi-quote fan-out serialization (remediated 2026-02-07).
+1. Provider multi-quote fan-out serialization (remediated 2026-02-07).
+
 - Evidence:
   - `gateway/providers/alphavantage.py` uses bounded semaphore concurrency for `get_quotes(...)`.
   - `gateway/providers/finnhub.py` now uses bounded semaphore concurrency for `get_quotes(...)` with fail-soft per-symbol behavior.
@@ -80,7 +85,8 @@ The fastest, lowest-risk wins are:
 - Follow-up:
   - Optional: add provider-specific latency histograms by requested symbol count to tune default concurrency.
 
-6. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
+1. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
+
 - Evidence:
   - `gateway/core/bulk.py` now spills large result sets to temp JSONL storage when in-memory results exceed configured threshold (`bulk_results_max_in_memory`).
   - JSONL downloads were previously materialized as one large string (`lines = [json.dumps(...)]` then join).
@@ -92,7 +98,8 @@ The fastest, lowest-risk wins are:
 - Remaining low-risk follow-up:
   - Add optional paged backend storage for multi-process/distributed workers.
 
-7. Replay preload/sort overhead (substantially remediated 2026-02-07).
+1. Replay preload/sort overhead (substantially remediated 2026-02-07).
+
 - Evidence:
   - `gateway/core/replay.py` now accepts async/sync iterable loader outputs and streams replay messages without requiring full list materialization.
   - List-backed loaders now sort only when timestamps are out of order.
@@ -101,20 +108,23 @@ The fastest, lowest-risk wins are:
 - Remaining low-risk follow-up:
   - Add optional paged/distributed replay backend for very large windows across multi-worker deployments.
 
-8. UW poller per-event sequential dedupe/publish path (remediated 2026-02-07).
+1. UW poller per-event sequential dedupe/publish path (remediated 2026-02-07).
+
 - Evidence:
   - `gateway/core/uw_poller.py` now performs batched Redis dedupe reads, bounded-concurrency publish fanout, and batched dedupe-write updates via shared `_publish_envelopes(...)`.
   - Publish concurrency is now runtime-configurable via `GATEWAY_UW_POLLER_PUBLISH_MAX_INFLIGHT`.
 - Impact: Reduces per-event round-trip serialization in flow/darkpool/market-tide/sector-tide poll loops and improves poll-cycle throughput under bursty snapshots.
 
-9. yfinance historical conversion uses `iterrows()`.
+1. yfinance historical conversion uses `iterrows()`.
+
 - Evidence:
   - `gateway/providers/yfinance.py:190`.
 - Impact: `iterrows` is slow for large DataFrames.
 - Low-risk fix:
   - Replace with `itertuples(index=True)` and direct attribute access.
 
-10. Alpha Vantage provider AV-3 helper/sort rollout is complete; remaining work is optional heavy-series limit tuning.
+1. Alpha Vantage provider AV-3 helper/sort rollout is complete; remaining work is optional heavy-series limit tuning.
+
 - Evidence:
   - Shared request/rate-limit helper: `gateway/providers/alphavantage.py:143` (`_fetch_json`) with `17` call sites.
   - Shared sort-head helper: `gateway/providers/alphavantage.py:164` (`_top_time_series_items`) used in indicator/forex/crypto data paths.
@@ -125,42 +135,48 @@ The fastest, lowest-risk wins are:
 
 ### P2 (Medium Priority)
 
-11. Cache custom TTL expiry pruning cadence (remediated 2026-02-07).
+1. Cache custom TTL expiry pruning cadence (remediated 2026-02-07).
+
 - Evidence:
   - `gateway/core/cache.py` now uses `CUSTOM_PRUNE_SET_INTERVAL` + `_custom_sets_since_prune` to prune custom-TTL expiries periodically instead of scanning on every custom set.
 - Impact: Reduces repeated O(n) expiry scan overhead on custom-TTL-heavy write paths while preserving on-read expiry validation behavior.
 - Follow-up:
   - Optional: tune prune interval with production write profiles.
 
-12. In-memory cache max-size enforcement loop behavior (remediated 2026-02-07).
+1. In-memory cache max-size enforcement loop behavior (remediated 2026-02-07).
+
 - Evidence:
   - `gateway/core/cache.py` now computes overflow once and evicts exact counts from custom/default tiers using bounded loops.
 - Impact: Avoids repeated size recomputation/branch churn under burst insert overflow while preserving eviction order semantics (custom LRU-first, then default cache).
 - Follow-up:
   - Optional: add dedicated microbenchmark for burst over-capacity insertion.
 
-13. WebSocket message-loop settings lookup overhead (remediated 2026-02-07).
+1. WebSocket message-loop settings lookup overhead (remediated 2026-02-07).
+
 - Evidence:
   - `gateway/api/websocket.py` now resolves `max_message_size` once before the receive loop and accepts endpoint-injected value from `websocket_endpoint(...)`.
 - Impact: Removes repeated settings cache lookup and attribute access from each incoming frame branch while preserving message-size enforcement behavior.
 - Follow-up:
   - Optional: add websocket microbenchmark for mixed text/binary frame validation overhead.
 
-14. Envelope serialization hot-path overhead (remediated 2026-02-07).
+1. Envelope serialization hot-path overhead (remediated 2026-02-07).
+
 - Evidence:
   - `gateway/core/envelope.py` now builds JSON-ready envelope dicts directly in `wrap_event(...)` rather than constructing/dumping a Pydantic model per event.
 - Impact: Removes per-message model construction/serialization cost on stream hot paths while preserving envelope schema, metrics, and fallback behavior.
 - Follow-up:
   - Optional: add sampled validation mode toggle for debugging environments.
 
-15. Finnhub bar normalization index-loop overhead (remediated 2026-02-07).
+1. Finnhub bar normalization index-loop overhead (remediated 2026-02-07).
+
 - Evidence:
   - `gateway/providers/finnhub.py` now iterates bar arrays via `zip(..., strict=False)` in `get_bars(...)`.
 - Impact: Slightly lower loop overhead, clearer mapping logic, and safer handling of provider payload array-length mismatches.
 - Follow-up:
   - Optional: emit a warning metric when payload arrays are truncated by shortest-list zip behavior.
 
-16. Main stream callback sink-registry lookup overhead (remediated 2026-02-07).
+1. Main stream callback sink-registry lookup overhead (remediated 2026-02-07).
+
 - Evidence:
   - `gateway/main.py` now stores a stable sink-registry reference via `_set_stream_sink_registry(...)` during lifespan setup and uses it directly in `_on_stream_data(...)`.
 - Impact: Removes per-event dependency/getter lookup from the stream callback hot path while preserving sink enable/disable behavior.
@@ -204,6 +220,7 @@ The fastest, lowest-risk wins are:
 ## Audit Coverage Tracker
 
 Legend:
+
 - COMPLETE = reviewed directly in this run
 - PARTIAL = sampled/high-risk sections reviewed
 - PENDING = not yet deeply reviewed in this run
@@ -220,46 +237,40 @@ Legend:
 | `gateway/core/uw_poller.py` | 1 | COMPLETE | Polling and dedupe/publish loops audited |
 | `gateway/core/envelope.py` | 1 | COMPLETE | Envelope serialization path audited |
 | `gateway/api/websocket.py` | 1 | COMPLETE | Message loop + subscription path audited |
-| Provider `gateway/providers/news.py` | 1 (333 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_NEWS_PROVIDER_DEEP_DIVE.md` |
-| Provider `gateway/providers/alphavantage.py` | 1 (946 LOC) | COMPLETE | Dedicated deep pass completed; AV-3 helper/sort rollout complete (`csv.DictReader`, bounded quote fan-out, shared fetch helper, sort-head optimization); see `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` |
-| Provider `gateway/providers/alpaca.py` | 1 (2153 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_ALPACA_PROVIDER_DEEP_DIVE.md` |
-| Provider `gateway/providers/uw.py` | 1 (4672 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
-| Provider `gateway/providers/yfinance.py` | 1 (386 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` |
-| Provider `gateway/providers/sec.py` | 1 (434 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` |
-| Provider `gateway/providers/finnhub.py` | 1 (1280 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` |
-| API routers `gateway/api/alpaca/*` | 14 files (60 endpoints) | COMPLETE | Full route-level Alpaca audit complete; see `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` |
-| API routers `gateway/api/finnhub/*` + `gateway/api/admin.py` + `gateway/api/catalog.py` + `gateway/api/health.py` | 15 files (61 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` |
-| API routers `gateway/api/uw/*` | 26 (125 endpoints) | COMPLETE | Full route-level UW audit complete; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
-| API routers `gateway/api/alphavantage/*` | 9 (30 endpoints) | COMPLETE | Full route-level Alpha Vantage audit complete; see `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` |
-| API router `gateway/api/yf.py` | 1 (16 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` |
-| API router `gateway/api/sec.py` | 1 (10 endpoints) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` |
-| API routers `gateway/api/{bulk,calendar,corporate,news,quality,replay,symbology,metrics}.py` | 8 files (34 endpoints incl. replay WS) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` |
-| Core modules `gateway/core/{security,quality,calendar,symbology,validator}.py` | 5 (2395 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` |
-| Core infrastructure modules `gateway/core/{adjustments,auth,balancer,circuit_breaker,connections,corporate_actions,data_sink,dedup,metrics,multiplexer,normalizer,rate_limiter,redis_sink,provider}.py` | 15 (3380 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` |
-| Tests (`tests/`) | 28 files (303 tests, 4491 LOC) | COMPLETE | Dedicated execution-path pass completed; see `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` |
-| Scripts `scripts/{live_provider_smoke.py,generate_provider_contract.py}` | 2 (351 LOC) | COMPLETE | Dedicated static/code-path pass completed; see `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` |
-| Benchmark/profiling readiness (`.github/workflows/{ci,release-readiness}.yml`, `pyproject.toml`, targeted perf-sensitive tests/core hot paths) | 14 files/areas | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` |
+| Provider `gateway/providers/news.py` | 1 (333 LOC) | COMPLETE | Keyword hoisting, shared fetch/readiness helpers, pagination normalization |
+| Provider `gateway/providers/alphavantage.py` | 1 (946 LOC) | COMPLETE | csv.DictReader, bounded quote fan-out, shared fetch helper, sort-head optimization |
+| Provider `gateway/providers/alpaca.py` | 1 (2153 LOC) | COMPLETE | Option-chain limit threading, shared client DNE path, conversion-path optimization |
+| Provider `gateway/providers/uw.py` | 1 (4672 LOC) | COMPLETE | Route-helper rollout, route-cache telemetry, `_call_sync` concurrency gating, native pagination |
+| Provider `gateway/providers/yfinance.py` | 1 (386 LOC) | COMPLETE | Cache-before-provider, route helper consolidation, health-check offload, `iterrows` remediation |
+| Provider `gateway/providers/sec.py` | 1 (434 LOC) | COMPLETE | Cache-before-provider, helper consolidation, filing key normalization |
+| Provider `gateway/providers/finnhub.py` | 1 (1280 LOC) | COMPLETE | Cache-before-provider, dedupe, date/key helper consolidation, admin health-check parallelization |
+| API routers `gateway/api/alpaca/*` | 14 files (60 endpoints) | COMPLETE | Option-chain snapshot + stock-trades over-fetch reductions, stock snapshot concurrency, shared list-parser rollout |
+| API routers `gateway/api/finnhub/*` + control-plane routers | 15 files (61 endpoints) | COMPLETE | Cache-before-provider, dedupe, date/key helper consolidation |
+| API routers `gateway/api/uw/*` | 26 (125 endpoints) | COMPLETE | Route-helper rollout, route-cache telemetry, native pagination |
+| API routers `gateway/api/alphavantage/*` | 9 (30 endpoints) | COMPLETE | AV-1/AV-2/AV-3 rollouts |
+| API router `gateway/api/yf.py` | 1 (16 endpoints) | COMPLETE | Cache-before-provider, route helper consolidation |
+| API router `gateway/api/sec.py` | 1 (10 endpoints) | COMPLETE | Cache-before-provider, helper consolidation |
+| API routers `gateway/api/{bulk,calendar,corporate,news,quality,replay,symbology,metrics}.py` | 8 files (34 endpoints incl. replay WS) | COMPLETE | Fetcher binding guards, cache-hit-first parsing, bulk streaming downloads, replay control-loop remediation, metrics refresh throttling |
+| Core modules `gateway/core/{security,quality,calendar,symbology,validator}.py` | 5 (2395 LOC) | COMPLETE | Validator hot-path optimization, symbology allocation trimming, quality timestamp/sort reductions, middleware import hoist |
+| Core infrastructure modules `gateway/core/{adjustments,auth,balancer,circuit_breaker,connections,...}` | 15 (3380 LOC) | COMPLETE | Adjustment lookup optimization, breaker caching, rate-limiter wait tuning, bounded sink dispatch |
+| Tests (`tests/`) | 28 files (303 tests, 4491 LOC) | COMPLETE | Fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing |
+| Scripts `scripts/{live_provider_smoke.py,generate_provider_contract.py}` | 2 (351 LOC) | COMPLETE | Concurrency, handler pre-indexing |
+| Benchmark/profiling readiness | 14 files/areas | COMPLETE | Latest calibration 2026-02-07: gate pass at `1.07s` vs `3.60s` suite budget |
 
 ## Next-Run Audit Plan (Targeted)
 
-1. Continue UW implementation from `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` (Wave 1 route-helper rollout, route-cache telemetry, and `_call_sync` concurrency gating/metrics are complete; native pagination support is now implemented for flow/darkpool/institutions with fallback behavior, and next UW focus is telemetry-driven inflight tuning plus expanding native pagination where post-filter semantics allow).
-2. Continue Alpha Vantage implementation from `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` (AV-1/AV-2/AV-3 rollouts complete; next optional focus is full-history limit tuning and broader runtime profiling validation).
-3. Continue yfinance Wave 1 optimizations from `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` (cache-before-provider, route helper consolidation, and health-check offload; provider `iterrows` hot paths remediated).
-4. Implement SEC Wave 1 optimizations from `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` (cache-before-provider, helper consolidation, filing key normalization).
-5. Continue Finnhub/control-plane Wave 1 optimizations from `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` (cache-before-provider, dedupe, and date/key helper consolidation; admin health-check parallelization completed).
-6. Implement Alpaca Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` (option-chain snapshot + stock-trades over-fetch reductions, stock snapshot concurrency, and shared list-parser rollout for high-traffic routes are complete; remaining focus is route helper consolidation and cache/dedupe for safe GETs).
-7. Continue non-provider router follow-ups from `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` (fetcher binding guards, cache-hit-first parsing in news, bulk streaming downloads, replay control-loop remediation, metrics refresh throttling, list pagination, calendar fallback throttling, and symbology batch guardrails/telemetry are complete; route-level cache telemetry is now added for news endpoints and shared UW helper paths, with optional broader rollout to remaining helper surfaces).
-8. Implement Alpaca provider Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_PROVIDER_DEEP_DIVE.md` (option-chain limit threading is complete; remaining focus is shared client use for DNE path, conversion-path optimization, and logging tuning).
-9. Continue Alpha Vantage provider follow-up from `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` (optional full-history `max_points` tuning + broader runtime profiling).
-10. Implement News provider Wave 1 optimizations from `PERFORMANCE_AUDIT_NEWS_PROVIDER_DEEP_DIVE.md` (keyword hoisting, shared fetch/readiness helpers, pagination normalization with effective page size).
-11. Continue core modules follow-ups from `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` (Wave CORE-1 validator hot-path optimization, symbology allocation trimming, quality timestamp/sort reductions, middleware import hoist, and security symbol-array dedupe are complete; Wave CORE-2 calendar span guardrails, quality analyze single-pass consolidation, `live_provider_smoke.py` concurrency, and `generate_provider_contract.py` handler pre-indexing are complete; remaining focus is benchmark calibration).
-12. Implement core infrastructure Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` (adjustment lookup optimization, breaker caching, rate-limiter wait tuning, and bounded sink dispatch tuning).
-13. Implement tests Wave 1 optimizations from `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` (fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing tests).
-14. Operate BENCH guardrails from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (latest calibration completed 2026-02-07: promoted active perf baseline/budgets and verified gate pass at `1.07s` vs `3.60s` suite budget; continue periodic monitoring/tuning via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`).
-15. Continue stream-path optimization from this audit: telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`).
+1. **UW provider**: Telemetry-driven inflight tuning; expand native pagination where post-filter semantics allow.
+2. **Alpha Vantage provider**: Optional full-history `max_points` tuning + broader runtime profiling validation.
+3. **Alpaca routers**: Route helper consolidation and cache/dedupe for safe GETs.
+4. **Alpaca provider**: Shared client use for DNE path, conversion-path optimization, and logging tuning.
+5. **Non-provider routers**: Optional broader route-level cache telemetry rollout to remaining helper surfaces.
+6. **Core modules**: Benchmark calibration.
+7. **Stream path**: Telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`).
+8. **Perf guardrails**: Continue periodic monitoring/tuning via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`.
 
 ## Notes
 
 - This audit intentionally avoids recommending significant logic/behavior rewrites.
 - Proposed changes are intended to preserve API contracts and endpoint semantics.
 - Prioritization is based on expected latency/throughput gain per engineering effort.
+- Deep-dive artifacts were removed during doc audit on 2026-02-07; all findings are summarized inline above.
