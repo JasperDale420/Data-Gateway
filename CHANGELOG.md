@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.84] - 2026-02-07
+
+### Added
+
+- **Quality analyze regression tests**: Added `tests/test_quality_router.py` and expanded `tests/test_quality.py` to cover issue collection during analysis and validate `/quality/analyze` behavior without a second `detect_issues(...)` pass.
+
+### Changed
+
+- **Quality analyze issue-collection mode**: Updated `gateway/core/quality.py` `analyze_bars(...)` and `analyze_quotes(...)` to support optional `issues_out` collection for endpoint-level pass consolidation.
+- **Quality endpoint duplicate-pass removal**: Updated `gateway/api/quality.py` `analyze_data(...)` to collect issues during per-type analysis instead of calling `detect_issues(...)` afterward.
+- **Core-modules audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark quality single-pass consolidation complete and narrow remaining core-module follow-ups.
+
 ## [0.5.83] - 2026-02-07
 
 ### Added

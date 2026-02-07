@@ -207,6 +207,7 @@ class QualityAnalyzer:
         bars: list[dict],
         expected_count: int | None = None,
         timeframe: str = "1Min",
+        issues_out: list[QualityIssue] | None = None,
     ) -> BarQuality:
         """Analyze bar data quality.
 
@@ -226,6 +227,8 @@ class QualityAnalyzer:
 
         # Detect gaps
         gaps = self._detect_bar_gaps(bars, timeframe)
+        if issues_out is not None:
+            issues_out.extend(self._detect_bar_issues(bars))
 
         return BarQuality(
             expected=expected_count,
@@ -234,7 +237,11 @@ class QualityAnalyzer:
             gaps=gaps,
         )
 
-    def analyze_quotes(self, quotes: list[dict]) -> QuoteQuality:
+    def analyze_quotes(
+        self,
+        quotes: list[dict],
+        issues_out: list[QualityIssue] | None = None,
+    ) -> QuoteQuality:
         """Analyze quote data quality."""
         total = len(quotes)
         crossed = 0
@@ -252,6 +259,14 @@ class QualityAnalyzer:
             # Check for crossed quote
             if bid > ask:
                 crossed += 1
+                if issues_out is not None:
+                    issues_out.append(
+                        QualityIssue(
+                            code=QualityCode.CROSSED_QUOTE,
+                            message=f"Crossed quote: bid {bid} > ask {ask}",
+                            timestamp=quote.get("timestamp", quote.get("t")),
+                        )
+                    )
 
             # Calculate spread
             if ask > 0 and bid > 0:

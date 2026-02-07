@@ -76,24 +76,27 @@ Impact:
 - Removes avoidable hot-path allocations and reduces conversion overhead during high-frequency stream validation.
 - Preserves validation error codes/contracts while broadening accepted input shapes for internal stream paths.
 
-### P0-2: `/quality/analyze` endpoint traverses payloads multiple times
+### P0-2: `/quality/analyze` endpoint traverses payloads multiple times (remediated 2026-02-07)
 
 Evidence:
-- Endpoint computes per-type analysis first:
-  - `gateway/api/quality.py:183-189`
-- Then performs issue detection pass again:
+- `/quality/analyze` now uses shared `issues_out` collectors during per-type analysis and no longer calls `detect_issues(...)` as a second endpoint pass:
+  - `gateway/api/quality.py:181`
+  - `gateway/api/quality.py:184`
+  - `gateway/api/quality.py:187`
   - `gateway/api/quality.py:192`
-- Analyzer issue helpers loop the same collections:
-  - `gateway/core/quality.py:367-409`
-  - `gateway/core/quality.py:415-429`
+- Core analyzer now supports optional issue collection in analysis methods:
+  - `gateway/core/quality.py:210`
+  - `gateway/core/quality.py:229`
+  - `gateway/core/quality.py:238`
+  - `gateway/core/quality.py:258`
+- Regression coverage validates collected issues and route behavior without `detect_issues(...)` dependency:
+  - `tests/test_quality.py:157`
+  - `tests/test_quality.py:167`
+  - `tests/test_quality_router.py:8`
 
 Impact:
-- Duplicate CPU work for large ad-hoc analysis payloads.
-
-Low-risk fix path:
-1. Add optional "collect issues" mode inside analyze methods.
-2. Reuse computed issue data in endpoint response instead of a second full pass.
-3. Preserve response schema.
+- Removes endpoint-level duplicate analysis traversal and preserves response schema/issue codes.
+- For quote paths, crossed-quote issue detection now happens inline during analysis rather than in a separate pass.
 
 ### P1-3: Quality timestamp parsing and sorting work can be reduced (remediated 2026-02-07)
 
@@ -213,7 +216,7 @@ Low-risk fix path:
 
 ### Wave CORE-2
 
-1. Consolidate quality analyze + issue-detection into a single-pass option.
+1. Consolidate quality analyze + issue-detection into a single-pass option (completed 2026-02-07).
 2. Add calendar span guardrails and optional pre-allocation hints for trading-day range generation (span guardrails completed 2026-02-07).
 3. Add bounded concurrency for `scripts/live_provider_smoke.py` provider checks (completed 2026-02-07).
 
@@ -231,7 +234,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | File | Audit Status | Future Run Focus |
 |---|---|---|
 | `gateway/core/security.py` | COMPLETE | Middleware integration overhead and symbol-validation batching |
-| `gateway/core/quality.py` | COMPLETE | Single-pass analyze+issue detection consolidation and benchmark validation |
+| `gateway/core/quality.py` | COMPLETE | Benchmark validation for large payloads and optional deeper bar-path pass fusion |
 | `gateway/core/calendar.py` | COMPLETE | Optional pre-allocation hints and benchmark validation |
 | `gateway/core/symbology.py` | COMPLETE | Microbenchmark cache-hit effectiveness and tune cache-cap strategy if needed |
 | `gateway/core/validator.py` | COMPLETE | Stream-validation microbenchmarking and optional additional alias-path coverage |
@@ -242,4 +245,4 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 1. Runtime benchmark/profiling suite execution for middleware, stream/replay fanout, bulk memory behavior, and provider/core microbenchmarks.
 2. Full performance audit of `tests/` execution paths (fixture setup cost, heavy integration tests, and benchmark gate strategy).
-3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (quality pass consolidation, security symbol-batch follow-up, and calendar/script benchmark validation).
+3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (security symbol-batch follow-up and calendar/script/core benchmark validation).
