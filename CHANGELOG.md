@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.95] - 2026-02-07
+
+### Added
+
+- **Alpaca forex router regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_forex_router.py` to verify pair parsing/normalization and query-parameter threading through the shared Alpaca execution helper.
+
+### Changed
+
+- **Forex route-helper consolidation rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/forex.py` to use `execute_alpaca_provider_call(...)` for provider lookup, rate-limit handling, and provider error wrapping, removing duplicated route boilerplate while preserving response schemas.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark forex helper rollout complete and narrow remaining Alpaca router modules for future helper consolidation.
+
 ## [0.5.94] - 2026-02-07
 
 ### Added
