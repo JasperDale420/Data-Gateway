@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.85] - 2026-02-07
+
+### Added
+
+- **Security symbol-array dedupe test**: Expanded `tests/test_security.py` with coverage that duplicate symbols are deduped before per-symbol validation.
+
+### Changed
+
+- **Security symbol-array dedupe**: Updated `gateway/core/security.py` `validate_symbols_array(...)` to skip case-insensitive duplicate symbols during validation, reducing repeated regex validation work on duplicate-heavy payloads.
+- **Core-modules audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark the security symbol-array follow-up complete and narrow remaining core-module scope to benchmarking/calibration work.
+
 ## [0.5.84] - 2026-02-07
 
 ### Added

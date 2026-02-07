@@ -158,22 +158,25 @@ Impact:
 - Repeated symbol resolution requests now avoid re-running regex/parse/provider-format assembly work for hot symbols.
 - Option human-format rendering no longer allocates an intermediate `ResolvedSymbol`, reducing transient object churn while preserving output contracts.
 
-### P2-6: Security validation path has avoidable per-request overhead (partially remediated 2026-02-07)
+### P2-6: Security validation path has avoidable per-request overhead (remediated 2026-02-07)
 
 Evidence:
 - Input validation middleware now hoists validator import to module scope (no per-request dynamic import on `content-length` paths):
   - `gateway/api/middleware.py:22`
   - `gateway/api/middleware.py:54`
-- Symbol-array validation is serial per symbol:
-  - `gateway/core/security.py:198-201`
+- Symbol-array validation now dedupes case-insensitive duplicates before per-symbol validation:
+  - `gateway/core/security.py:198`
+  - `gateway/core/security.py:201`
+- Regression coverage validates duplicate-symbol dedupe behavior:
+  - `tests/test_security.py:102`
 
 Impact:
 - Removes avoidable per-request import overhead from HTTP validation path while preserving validation behavior.
-- Remaining symbol-array validation path is still serial and may contribute overhead on large websocket symbol batches.
+- Reduces repeated symbol-regex validation work for duplicate-heavy symbol arrays while preserving error contracts and array-limit checks.
 
 Low-risk fix path:
 1. Hoist `get_input_validator` import to module scope in middleware (completed 2026-02-07).
-2. Optionally dedupe symbols before validation where endpoint semantics allow.
+2. Optionally dedupe symbols before validation where endpoint semantics allow (completed 2026-02-07).
 3. Keep error contracts unchanged.
 
 ### P2-7: Runtime scripts are sequential where bounded concurrency is safe (remediated 2026-02-07)
@@ -213,6 +216,7 @@ Low-risk fix path:
 2. Remove duplicate timestamp parsing in quality analyzer and hoist timeframe map constant (completed 2026-02-07, including sorted-input fast path for gap detection).
 3. Remove temporary `ResolvedSymbol` allocation in symbology human-format path (completed 2026-02-07, along with bounded resolve memoization).
 4. Hoist middleware input-validator import (completed 2026-02-07).
+5. Dedupe symbol arrays before per-symbol validation in security validator (completed 2026-02-07).
 
 ### Wave CORE-2
 
@@ -233,7 +237,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 | File | Audit Status | Future Run Focus |
 |---|---|---|
-| `gateway/core/security.py` | COMPLETE | Middleware integration overhead and symbol-validation batching |
+| `gateway/core/security.py` | COMPLETE | Benchmark duplicate-heavy symbol-array validation cost |
 | `gateway/core/quality.py` | COMPLETE | Benchmark validation for large payloads and optional deeper bar-path pass fusion |
 | `gateway/core/calendar.py` | COMPLETE | Optional pre-allocation hints and benchmark validation |
 | `gateway/core/symbology.py` | COMPLETE | Microbenchmark cache-hit effectiveness and tune cache-cap strategy if needed |
@@ -245,4 +249,4 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 1. Runtime benchmark/profiling suite execution for middleware, stream/replay fanout, bulk memory behavior, and provider/core microbenchmarks.
 2. Full performance audit of `tests/` execution paths (fixture setup cost, heavy integration tests, and benchmark gate strategy).
-3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (security symbol-batch follow-up and calendar/script/core benchmark validation).
+3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (calendar/script/core benchmark validation).

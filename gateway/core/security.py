@@ -195,7 +195,12 @@ class InputValidator:
                 value=len(symbols),
             )
 
+        seen_symbols: set[str] = set()
         for symbol in symbols:
+            normalized = symbol.upper()
+            if normalized in seen_symbols:
+                continue
+            seen_symbols.add(normalized)
             error = self.validate_symbol(symbol)
             if error:
                 return error
