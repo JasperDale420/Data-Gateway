@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.106] - 2026-02-07
+
+### Added
+
+- **Corporate cache-key regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_corporate_router.py` to validate cached-helper key/route wiring for corporate-actions queries.
+
+### Changed
+
+- **Corporate-actions short-TTL cache rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/corporate.py` to use `execute_alpaca_cached_call(...)` with normalized query cache keys and bounded TTL.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to include corporate-actions cache coverage in selective safe-GET rollout status.
+
 ## [0.5.105] - 2026-02-07
 
 ### Added
