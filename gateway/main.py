@@ -44,7 +44,12 @@ from gateway.api import (
     yf_router,
 )
 from gateway.api.admin import attach_error_buffer_handler
-from gateway.api.deps import get_connection_manager, set_multiplexer, set_registry
+from gateway.api.deps import (
+    get_connection_manager,
+    get_sink_registry,
+    set_multiplexer,
+    set_registry,
+)
 from gateway.api.errors import gateway_http_exception_handler
 from gateway.api.metrics import router as metrics_router
 from gateway.api.middleware import (
@@ -197,8 +202,6 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
             )
 
     # Publish to data sink for Heber storage (non-blocking)
-    from gateway.api.deps import get_sink_registry
-
     sink_registry = get_sink_registry()
     if sink_registry:
         # Schedule sink publish off the stream callback path.

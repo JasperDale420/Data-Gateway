@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.52] - 2026-02-07
+
+### Added
+
+- **WebSocket hot-path settings regression test**: Added `tests/test_websocket.py` coverage to ensure `_message_loop(...)` uses injected `max_message_size` without fallback `get_settings()` lookups when the size is provided.
+
+### Changed
+
+- **WebSocket max-size lookup hoist**: Updated `gateway/api/websocket.py` so `websocket_endpoint(...)` passes `settings.ws_max_message_size` into `_message_loop(...)`, and `_message_loop(...)` resolves max-bytes once before the receive loop instead of re-reading settings per frame branch.
+- **Stream callback dependency lookup trim**: Updated `gateway/main.py` to import/use `get_sink_registry` at module scope, removing per-event local import overhead in `_on_stream_data(...)`.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark websocket max-size lookup remediation complete and stream callback dependency lookup import overhead partially remediated.
+
 ## [0.5.51] - 2026-02-07
 
 ### Added

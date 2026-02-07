@@ -140,12 +140,12 @@ The fastest, lowest-risk wins are:
 - Low-risk fix:
   - Compute overflow count and pop in bounded for-loop with counter.
 
-13. WebSocket message loop repeatedly calls `get_settings()` per incoming frame.
+13. WebSocket message-loop settings lookup overhead (remediated 2026-02-07).
 - Evidence:
-  - `gateway/api/websocket.py:213`, `226`.
-- Impact: Small but constant overhead on hot message path.
-- Low-risk fix:
-  - Resolve `max_bytes` once at loop entry.
+  - `gateway/api/websocket.py` now resolves `max_message_size` once before the receive loop and accepts endpoint-injected value from `websocket_endpoint(...)`.
+- Impact: Removes repeated settings cache lookup and attribute access from each incoming frame branch while preserving message-size enforcement behavior.
+- Follow-up:
+  - Optional: add websocket microbenchmark for mixed text/binary frame validation overhead.
 
 14. Envelope construction still pays Pydantic serialization overhead on every message.
 - Evidence:
@@ -161,19 +161,19 @@ The fastest, lowest-risk wins are:
 - Low-risk fix:
   - Use `zip(timestamps, opens, highs, lows, closes, volumes, strict=False)`.
 
-16. Main stream callback performs repeated dependency lookup import on each event.
+16. Main stream callback repeated per-event dependency import/lookup (partially remediated 2026-02-07).
 - Evidence:
-  - `gateway/main.py:117-120` imports and resolves sink registry per message.
-- Impact: Small overhead per message under high throughput.
-- Low-risk fix:
-  - Resolve sink registry once in lifespan and capture in callback closure or lightweight getter reference.
+  - `gateway/main.py` now imports `get_sink_registry` at module load and no longer performs per-event local import in `_on_stream_data(...)`.
+- Impact: Removes per-event local import overhead in the stream callback; remaining cost is a lightweight function call lookup for registry availability.
+- Remaining low-risk follow-up:
+  - Optionally inject/capture a stable sink-registry getter reference during lifespan for further callback-path trimming.
 
 ## Recommended Implementation Waves
 
 ### Wave 1 (1-2 sessions, lowest risk)
 
 1. Parallelize provider health checks.
-2. Hoist WebSocket `max_bytes` lookup out of per-message branches.
+2. Hoist WebSocket `max_bytes` lookup out of per-message branches (completed 2026-02-07).
 3. Replace `iterrows` in yfinance history conversion.
 4. Switch Alpha Vantage CSV parsing to `csv.DictReader`.
 5. Replace serial multi-quote provider loops with bounded concurrency.

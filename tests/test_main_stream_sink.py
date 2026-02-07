@@ -50,7 +50,7 @@ async def test_on_stream_data_does_not_block_on_sink_publish(
 ) -> None:
     registry = _FakeSinkRegistry(delay_seconds=0.05)
     monkeypatch.setattr(gateway_main, "get_connection_manager", lambda: _FakeConnections())
-    monkeypatch.setattr("gateway.api.deps.get_sink_registry", lambda: registry)
+    monkeypatch.setattr(gateway_main, "get_sink_registry", lambda: registry)
 
     started = time.perf_counter()
     await gateway_main._on_stream_data(

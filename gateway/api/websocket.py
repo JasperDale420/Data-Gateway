@@ -65,7 +65,12 @@ async def websocket_endpoint(
         heartbeat_task = asyncio.create_task(_heartbeat_loop(websocket, connection_id))
 
         # Main message loop
-        await _message_loop(websocket, connection_id, connections)
+        await _message_loop(
+            websocket,
+            connection_id,
+            connections,
+            max_message_size=settings.ws_max_message_size,
+        )
 
     except WebSocketDisconnect:
         logger.info("client_disconnected", connection_id=connection_id)
@@ -203,14 +208,18 @@ async def _message_loop(
     websocket: WebSocket,
     connection_id: str,
     connections: ConnectionManager,
+    max_message_size: int | None = None,
 ) -> None:
     """Handle messages after authentication."""
+    resolved_max_size = (
+        max_message_size if max_message_size is not None else get_settings().ws_max_message_size
+    )
+    max_bytes = max(1, int(resolved_max_size))
     while True:
         try:
             raw = await websocket.receive()
             if raw.get("text") is not None:
                 raw_text = raw["text"]
-                max_bytes = get_settings().ws_max_message_size
                 if len(raw_text.encode("utf-8")) > max_bytes:
                     await websocket.send_json(
                         {
@@ -223,7 +232,6 @@ async def _message_loop(
                 message = json.loads(raw_text)
             elif raw.get("bytes") is not None:
                 raw_bytes = raw["bytes"]
-                max_bytes = get_settings().ws_max_message_size
                 if len(raw_bytes) > max_bytes:
                     await websocket.send_json(
                         {
