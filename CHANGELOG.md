@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.104] - 2026-02-07
+
+### Added
+
+- **Ticker universe service**: Created `gateway/core/ticker_universe.py` with `TickerUniverse` class combining ~30 static core tickers with dynamic tickers from UW screener, refreshed once per trading day.
+- **UW EOD snapshot polling**: Extended `gateway/core/uw_poller.py` with daily after-hours polling for 9 UW endpoints: greek_exposure, iv_rank, oi_change, historic_option_volume, short_interest, short_volume, ftds, congress_trades, insider_trades.
+- **EOD configuration**: Added `uw_eod_enabled`, `uw_eod_hour`, `uw_eod_minute`, `uw_core_tickers`, `uw_dynamic_ticker_count`, `uw_eod_concurrency` settings in `gateway/config.py`.
+- **Envelope unique fields**: Added 9 new feed types to `FEED_UNIQUE_FIELDS` in `gateway/core/envelope.py` for idempotent event ID generation.
+- **Ticker universe tests**: Added `tests/test_ticker_universe.py` with 10 tests covering core/dynamic management, deduplication, daily refresh guard, and error handling.
+
+## [0.5.103] - 2026-02-07
+
+### Added
+
+- **Screener cache-key regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_screener_router.py` to validate cached-helper key/route wiring for `most-actives` and `movers`.
+
+### Changed
+
+- **Screener short-TTL cache rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/screener.py` to apply `execute_alpaca_cached_call(...)` for safe GET screener endpoints (`most-actives`, `movers`) with normalized cache keys and short TTLs.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to include screener cache coverage in the selective safe-GET cache rollout status.
+
 ## [0.5.102] - 2026-02-07
 
 ### Added

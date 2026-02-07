@@ -102,6 +102,14 @@ class Settings(BaseSettings):
     # UW Poller
     uw_poller_publish_max_inflight: int = Field(default=16, ge=1)
 
+    # UW EOD Polling (daily snapshots for per-ticker endpoints)
+    uw_eod_enabled: bool = False
+    uw_eod_hour: int = Field(default=16, ge=0, le=23)  # 4:00 PM ET
+    uw_eod_minute: int = Field(default=30, ge=0, le=59)  # 4:30 PM ET
+    uw_core_tickers: str = ""  # comma-separated override, empty = use defaults
+    uw_dynamic_ticker_count: int = Field(default=20, ge=0)
+    uw_eod_concurrency: int = Field(default=5, ge=1, le=20)
+
     # Replay
     replay_messages_max_in_memory: int = Field(default=50_000, ge=100)
     replay_messages_spool_to_disk: bool = True

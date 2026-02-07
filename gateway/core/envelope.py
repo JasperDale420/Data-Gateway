@@ -198,6 +198,28 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
     "analytics": [("expiry", None, ""), ("metric_type", None, "")],
     "forex": [("pair", None, ""), ("bid", None, 0), ("ask", None, 0)],
     "fundamentals": [("symbol", None, ""), ("market_cap", None, 0)],
+    # EOD per-ticker UW feeds
+    "greek_exposure": [("symbol", None, ""), ("gamma_exposure", None, 0)],
+    "iv_rank": [("symbol", None, ""), ("iv_rank", None, 0)],
+    "oi_change": [("symbol", None, ""), ("date", None, ""), ("call_oi_change", None, 0)],
+    "historic_option_volume": [
+        ("symbol", None, ""),
+        ("date", None, ""),
+        ("expiry", None, ""),
+    ],
+    "short_interest": [("symbol", None, ""), ("date", None, ""), ("short_interest", None, 0)],
+    "short_volume": [("symbol", None, ""), ("date", None, ""), ("short_interest", None, 0)],
+    "ftds": [("symbol", None, ""), ("date", None, ""), ("quantity", None, 0)],
+    "congress_trades": [
+        ("ticker", None, ""),
+        ("name", None, ""),
+        ("transaction_date", None, ""),
+    ],
+    "insider_trades": [
+        ("ticker", None, ""),
+        ("owner_name", None, ""),
+        ("transaction_date", None, ""),
+    ],
 }
 
 

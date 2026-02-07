@@ -326,8 +326,16 @@ async def lifespan(app: FastAPI):
             flow_enabled=True,
             darkpool_enabled=True,
             market_tide_enabled=True,
+            eod_enabled=settings.uw_eod_enabled,
+            eod_hour=settings.uw_eod_hour,
+            eod_minute=settings.uw_eod_minute,
+            eod_concurrency=settings.uw_eod_concurrency,
         )
-        logger.info("uw_poller_initialized", interval_seconds=300)
+        logger.info(
+            "uw_poller_initialized",
+            interval_seconds=300,
+            eod_enabled=settings.uw_eod_enabled,
+        )
 
     yield
 
