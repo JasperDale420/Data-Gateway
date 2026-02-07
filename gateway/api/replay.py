@@ -3,8 +3,10 @@
 Implements replay session management and WebSocket streaming as specified in PRD.
 """
 
+import asyncio
+import contextlib
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -20,6 +22,10 @@ from gateway.core.replay import (
 from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/api/v1/replay", tags=["Historical Replay"])
+
+
+class _ReplayControlSocket(Protocol):
+    async def receive_json(self) -> dict[str, Any]: ...
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -277,6 +283,53 @@ async def list_sessions(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _apply_replay_ws_action(session: Any, data: dict[str, Any]) -> bool:
+    """Apply WebSocket replay control action. Returns True when replay should stop."""
+    action = str(data.get("action", "")).lower()
+
+    if action == "pause":
+        session.pause()
+        return False
+
+    if action == "resume":
+        session.resume(data.get("speed"))
+        return False
+
+    if action == "seek":
+        ts = data.get("timestamp")
+        if not ts:
+            return False
+        if isinstance(ts, datetime):
+            timestamp = ts
+        elif isinstance(ts, str):
+            timestamp = datetime.fromisoformat(ts)
+        else:
+            raise ValueError("Invalid replay seek timestamp")
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        session.seek(timestamp)
+        return False
+
+    if action == "stop":
+        session.stop()
+        return True
+
+    return False
+
+
+async def _receive_replay_control_messages(websocket: _ReplayControlSocket, session: Any) -> None:
+    """Receive replay control messages until replay completes, stops, or disconnects."""
+    while session.state in (ReplayState.RUNNING, ReplayState.PAUSED):
+        try:
+            data = await websocket.receive_json()
+        except WebSocketDisconnect:
+            session.stop()
+            return
+
+        if _apply_replay_ws_action(session, data):
+            return
+
+
 @router.websocket("/ws/{session_id}")
 async def replay_websocket(
     websocket: WebSocket,
@@ -327,37 +380,29 @@ async def replay_websocket(
         except Exception:
             session.stop()
 
+    control_task: asyncio.Task[None] | None = None
     try:
         # Start replay
         await manager.start_session(session_id, send_message)
+        replay_task = session._task
+        if replay_task is None:
+            raise RuntimeError("Replay session task not initialized")
 
-        # Wait for completion or control messages
-        while session.state in (ReplayState.RUNNING, ReplayState.PAUSED):
-            try:
-                data = await asyncio.wait_for(
-                    websocket.receive_json(),
-                    timeout=1.0,
-                )
+        control_task = asyncio.create_task(_receive_replay_control_messages(websocket, session))
+        done, _ = await asyncio.wait(
+            {replay_task, control_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
 
-                # Handle control messages
-                action = data.get("action", "").lower()
-                if action == "pause":
-                    session.pause()
-                elif action == "resume":
-                    session.resume(data.get("speed"))
-                elif action == "seek":
-                    ts = data.get("timestamp")
-                    if ts:
-                        session.seek(datetime.fromisoformat(ts))
-                elif action == "stop":
-                    session.stop()
-                    break
+        if control_task in done:
+            control_error = control_task.exception()
+            if control_error is not None:
+                raise control_error
 
-            except TimeoutError:
-                continue
-            except WebSocketDisconnect:
-                session.stop()
-                break
+        if replay_task in done:
+            replay_error = replay_task.exception()
+            if replay_error is not None:
+                raise replay_error
 
         # Send completion message
         await websocket.send_json(
@@ -379,8 +424,8 @@ async def replay_websocket(
             }
         )
     finally:
+        if control_task is not None and not control_task.done():
+            control_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await control_task
         await websocket.close()
-
-
-# Import asyncio at module level
-import asyncio

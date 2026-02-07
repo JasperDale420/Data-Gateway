@@ -79,22 +79,22 @@ Evidence:
 Impact:
 - Removes repeated closure allocation and singleton setter writes from request hot paths while preserving existing provider fallback behavior.
 
-### P1-3: Replay WebSocket control loop uses exception-driven polling every second
+### P1-3: Replay WebSocket control loop uses exception-driven polling every second (remediated 2026-02-07)
 
 Evidence:
-- Control loop calls `wait_for(receive_json, timeout=1.0)`:
-  - `gateway/api/replay.py:337`
-  - `gateway/api/replay.py:339`
-- Timeout path raises/catches every second when no control message:
-  - `gateway/api/replay.py:356`
+- Replay control handling now uses dedicated control helpers/task instead of `wait_for(..., timeout=1.0)`:
+  - `gateway/api/replay.py:286`
+  - `gateway/api/replay.py:319`
+- WebSocket endpoint now waits on replay/control task completion rather than timeout-driven exception flow:
+  - `gateway/api/replay.py:384`
+  - `gateway/api/replay.py:389`
+- Regression coverage validates pause/resume/seek/stop and disconnect control behavior:
+  - `tests/test_replay.py:419`
+  - `tests/test_replay.py:451`
+  - `tests/test_replay.py:461`
 
 Impact:
-- Constant exception allocation/handling overhead per active replay session.
-- Increased event-loop churn at higher concurrent replay counts.
-
-Low-risk fix path:
-1. Move control handling to a background receive task and avoid timeout exceptions as normal flow.
-2. Keep control message semantics (`pause`, `resume`, `seek`, `stop`) unchanged.
+- Removes per-session timeout exception churn from idle replay WebSocket control paths while preserving existing control semantics.
 
 ### P1-4: Calendar route fallbacks swallow provider failures and immediately retry on each request
 
@@ -190,7 +190,7 @@ Low-risk fix path:
 
 ### Wave NPR-2
 
-1. Replace replay exception-driven timeout loop with dedicated control-receive task.
+1. Replace replay exception-driven timeout loop with dedicated control-receive task (completed 2026-02-07).
 2. Add calendar fallback degradation cache/window on provider failure.
 3. Add optional pagination to bulk/replay list endpoints.
 
@@ -211,7 +211,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/api/corporate.py` | 5 | COMPLETE | Route-level dedupe/caching policy review |
 | `gateway/api/news.py` | 3 | COMPLETE | Cache-hit-first parsing path, cache key normalization |
 | `gateway/api/quality.py` | 3 | COMPLETE | Real analyzer integration path and payload size controls |
-| `gateway/api/replay.py` | 6 | COMPLETE | WebSocket control loop optimization, list pagination |
+| `gateway/api/replay.py` | 6 | COMPLETE | List pagination and replay-task completion telemetry |
 | `gateway/api/symbology.py` | 4 | COMPLETE | Batch request caps and lightweight response caching |
 | `gateway/api/metrics.py` | 1 | COMPLETE | Dynamic metric refresh throttling |
 

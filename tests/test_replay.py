@@ -4,7 +4,9 @@ import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import WebSocketDisconnect
 
+import gateway.api.replay as replay_api
 import gateway.core.replay as replay_module
 from gateway.core.replay import (
     ReplayConfig,
@@ -380,3 +382,82 @@ class TestReplaySessionManager:
         assert closes == [1, 2, 3]
         assert messages == []
         assert len(removed_paths) == 1
+
+
+class _FakeReplayWebSocket:
+    def __init__(self, messages: list[dict[str, object] | Exception]) -> None:
+        self._messages = messages
+
+    async def receive_json(self) -> dict[str, object]:
+        if self._messages:
+            payload = self._messages.pop(0)
+            if isinstance(payload, Exception):
+                raise payload
+            return payload
+        raise WebSocketDisconnect(code=1000)
+
+
+def _make_replay_session() -> ReplaySession:
+    config = ReplayConfig(
+        name="ws-control",
+        symbols=["AAPL"],
+        feeds=["bars"],
+        start=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
+        end=datetime(2026, 1, 1, 15, 30, tzinfo=UTC),
+    )
+    session = ReplaySession(session_id="replay-ws", config=config, client_id="test-client")
+    session.state = ReplayState.RUNNING
+    return session
+
+
+class TestReplayWebSocketControlLoop:
+    @pytest.mark.asyncio
+    async def test_apply_replay_ws_action_updates_session_state(self) -> None:
+        session = _make_replay_session()
+
+        should_stop = replay_api._apply_replay_ws_action(session, {"action": "pause"})
+        assert should_stop is False
+        assert session.state == ReplayState.PAUSED
+
+        should_stop = replay_api._apply_replay_ws_action(
+            session, {"action": "resume", "speed": 3.0}
+        )
+        assert should_stop is False
+        assert session.state == ReplayState.RUNNING
+        assert session.speed == 3.0
+
+        should_stop = replay_api._apply_replay_ws_action(
+            session,
+            {"action": "seek", "timestamp": "2026-01-01T14:45:00+00:00"},
+        )
+        assert should_stop is False
+        assert session.current_timestamp == datetime(2026, 1, 1, 14, 45, tzinfo=UTC)
+
+        should_stop = replay_api._apply_replay_ws_action(session, {"action": "stop"})
+        assert should_stop is True
+        assert session.state == ReplayState.STOPPED
+
+    @pytest.mark.asyncio
+    async def test_receive_replay_control_messages_processes_controls(self) -> None:
+        session = _make_replay_session()
+        ws = _FakeReplayWebSocket(
+            [
+                {"action": "pause"},
+                {"action": "resume", "speed": 5.0},
+                {"action": "stop"},
+            ]
+        )
+
+        await replay_api._receive_replay_control_messages(ws, session)
+
+        assert session.speed == 5.0
+        assert session.state == ReplayState.STOPPED
+
+    @pytest.mark.asyncio
+    async def test_receive_replay_control_messages_stops_on_disconnect(self) -> None:
+        session = _make_replay_session()
+        ws = _FakeReplayWebSocket([WebSocketDisconnect(code=1001)])
+
+        await replay_api._receive_replay_control_messages(ws, session)
+
+        assert session.state == ReplayState.STOPPED

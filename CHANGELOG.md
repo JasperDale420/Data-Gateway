@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.71] - 2026-02-07
+
+### Added
+
+- **Replay WebSocket control-loop tests**: Expanded `tests/test_replay.py` with coverage for replay WebSocket control action handling (`pause`, `resume`, `seek`, `stop`) and disconnect-driven stop behavior.
+
+### Changed
+
+- **Replay WebSocket control-task flow**: Updated `gateway/api/replay.py` to replace timeout-based `wait_for(receive_json, timeout=1.0)` polling with a dedicated control-receive task plus task-completion coordination.
+- **Replay control helper extraction**: Added `_apply_replay_ws_action(...)` and `_receive_replay_control_messages(...)` in `gateway/api/replay.py` to centralize control semantics and reduce per-iteration overhead.
+- **Non-provider audit tracking updates**: Updated `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` to mark replay control-loop optimization remediated.
+- **Top-level audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` non-provider follow-up notes to reflect replay control-loop completion.
+
 ## [0.5.70] - 2026-02-07
 
 ### Added
