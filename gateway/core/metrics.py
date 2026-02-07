@@ -186,6 +186,12 @@ ALPHAVANTAGE_ROUTE_CACHE = Counter(
     ["endpoint", "status", "cache_mode"],  # status: hit, miss
 )
 
+ROUTE_CACHE_EVENTS = Counter(
+    "gateway_route_cache_total",
+    "Route-level cache hit/miss events",
+    ["route", "status", "cache_mode"],  # status: hit, miss
+)
+
 ALPHAVANTAGE_PAYLOAD_BYTES = Histogram(
     "gateway_alphavantage_payload_bytes",
     "Alpha Vantage cached payload size in bytes",
@@ -276,6 +282,11 @@ def update_memory_metrics_if_due(
 def record_symbology_batch_size(batch_size: int) -> None:
     """Record symbol count for symbology batch requests."""
     SYMBOLOGY_BATCH_SIZE.observe(max(0, batch_size))
+
+
+def record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:
+    """Record route-level cache hit/miss events."""
+    ROUTE_CACHE_EVENTS.labels(route=route, status=status, cache_mode=cache_mode).inc()
 
 
 def record_request(method: str, path: str, status: int, duration: float) -> None:

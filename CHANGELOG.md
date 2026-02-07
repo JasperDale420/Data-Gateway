@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.76] - 2026-02-07
+
+### Added
+
+- **News route cache telemetry tests**: Expanded `tests/test_news_router.py` with assertions that cache hit/miss telemetry events are emitted on cached and uncached `get_articles(...)` paths.
+
+### Changed
+
+- **Route-level cache telemetry metric**: Added `gateway_route_cache_total` and `record_route_cache(...)` in `gateway/core/metrics.py` for generic route cache hit/miss instrumentation.
+- **News route cache telemetry rollout**: Updated `gateway/api/news.py` to record cache hit/miss events for article search, article-by-id, and sentiment routes.
+- **Non-provider audit tracking updates**: Updated `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` to mark per-endpoint cache telemetry partially complete (news routes implemented).
+- **Top-level audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` non-provider follow-up notes to reflect news route cache telemetry completion.
+
 ## [0.5.75] - 2026-02-07
 
 ### Added

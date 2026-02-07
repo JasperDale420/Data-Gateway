@@ -8,6 +8,7 @@ from gateway.api.deps import get_cache, require_api_key, require_provider_rate_l
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.dedup import get_deduplicator
+from gateway.core.metrics import record_route_cache
 from gateway.providers.news import NewsProvider
 from gateway.schemas import SuccessResponse
 
@@ -51,6 +52,7 @@ async def get_articles(
     cache_key = f"news:articles:{symbols}:{keywords}:{start}:{end}:{limit}:{cursor}:{sort}"
     cached = await cache.get(cache_key)
     if cached:
+        record_route_cache("news_articles", "hit", "query")
         return {"success": True, "data": cached, "cached": True}
 
     # Parse symbols/dates only on cache miss.
@@ -76,6 +78,7 @@ async def get_articles(
         result = await deduper.dedupe(cache_key, _fetch)
         # Cache for 60s per PRD
         await cache.set(cache_key, result, ttl=60)
+        record_route_cache("news_articles", "miss", "query")
         return {"success": True, "data": result, "cached": False}
 
     except RuntimeError as e:
@@ -103,6 +106,7 @@ async def get_article(
     cache_key = f"news:article:{article_id}"
     cached = await cache.get(cache_key)
     if cached:
+        record_route_cache("news_article", "hit", "id")
         return {"success": True, "data": cached, "cached": True}
 
     try:
@@ -121,6 +125,7 @@ async def get_article(
         result = await deduper.dedupe(cache_key, _fetch)
         # Cache for 60s
         await cache.set(cache_key, result, ttl=60)
+        record_route_cache("news_article", "miss", "id")
         return {"success": True, "data": result, "cached": False}
 
     except NotImplementedError as e:
@@ -156,6 +161,7 @@ async def get_sentiment(
     cache_key = f"news:sentiment:{symbol}"
     cached = await cache.get(cache_key)
     if cached:
+        record_route_cache("news_sentiment", "hit", "symbol")
         return {"success": True, "data": cached, "cached": True}
 
     try:
@@ -168,6 +174,7 @@ async def get_sentiment(
         result = await deduper.dedupe(cache_key, _fetch)
         # Cache for 60s
         await cache.set(cache_key, result, ttl=60)
+        record_route_cache("news_sentiment", "miss", "symbol")
         return {"success": True, "data": result, "cached": False}
 
     except RuntimeError as e:

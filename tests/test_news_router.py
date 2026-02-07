@@ -55,14 +55,19 @@ async def test_get_articles_cache_hit_skips_datetime_parse(
 ) -> None:
     cache = _FakeCache()
     provider = _FakeProvider()
+    cache_events: list[tuple[str, str, str]] = []
     cache_key = "news:articles:AAPL:earnings:not-a-date:still-not-a-date:50:None:desc"
     cache._store[cache_key] = {"items": [{"article_id": "cached"}]}
 
     async def _fail_rate_limit(_provider_name: str) -> None:
         raise AssertionError("rate limit should not run on cache hit")
 
+    def _record_cache(route: str, status: str, cache_mode: str = "default") -> None:
+        cache_events.append((route, status, cache_mode))
+
     monkeypatch.setattr(news, "get_news_provider", lambda: provider)
     monkeypatch.setattr(news, "require_provider_rate_limit", _fail_rate_limit)
+    monkeypatch.setattr(news, "record_route_cache", _record_cache)
 
     response = await news.get_articles(
         symbols="AAPL",
@@ -81,6 +86,7 @@ async def test_get_articles_cache_hit_skips_datetime_parse(
         "data": {"items": [{"article_id": "cached"}]},
         "cached": True,
     }
+    assert cache_events == [("news_articles", "hit", "query")]
     assert provider.calls == []
 
 
@@ -92,14 +98,19 @@ async def test_get_articles_cache_miss_parses_dates_and_fetches(
     provider = _FakeProvider()
     deduper = _FakeDeduper()
     calls = {"rate_limit": 0}
+    cache_events: list[tuple[str, str, str]] = []
 
     async def _fake_rate_limit(provider_name: str) -> None:
         assert provider_name == "news"
         calls["rate_limit"] += 1
 
+    def _record_cache(route: str, status: str, cache_mode: str = "default") -> None:
+        cache_events.append((route, status, cache_mode))
+
     monkeypatch.setattr(news, "get_news_provider", lambda: provider)
     monkeypatch.setattr(news, "get_deduplicator", lambda: deduper)
     monkeypatch.setattr(news, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(news, "record_route_cache", _record_cache)
 
     response = await news.get_articles(
         symbols="AAPL, msft",
@@ -125,4 +136,5 @@ async def test_get_articles_cache_miss_parses_dates_and_fetches(
     assert provider.calls[0]["sort"] == "asc"
     assert isinstance(provider.calls[0]["start"], datetime)
     assert isinstance(provider.calls[0]["end"], datetime)
+    assert cache_events == [("news_articles", "miss", "query")]
     assert response == {"success": True, "data": provider.response, "cached": False}
