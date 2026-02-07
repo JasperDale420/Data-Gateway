@@ -1,9 +1,13 @@
 """Prometheus metrics for gateway observability."""
 
+import time
+
 from prometheus_client import Counter, Gauge, Histogram, Info
 
 _PATH_NORMALIZATION_CACHE_MAX = 4096
 _PATH_NORMALIZATION_CACHE: dict[str, str] = {}
+_MEMORY_METRICS_REFRESH_INTERVAL_SECONDS = 10.0
+_LAST_MEMORY_METRICS_UPDATE_MONOTONIC = 0.0
 
 # Gateway info
 GATEWAY_INFO = Info(
@@ -239,6 +243,28 @@ def update_memory_metrics() -> None:
         PROCESS_MEMORY_PERCENT.set(process.memory_percent())
     except ImportError:
         pass  # psutil not installed
+
+
+def update_memory_metrics_if_due(
+    *,
+    force: bool = False,
+    now_monotonic: float | None = None,
+) -> bool:
+    """Update memory metrics at most once per refresh interval.
+
+    Returns True when an update was performed, otherwise False.
+    """
+    global _LAST_MEMORY_METRICS_UPDATE_MONOTONIC
+
+    now = now_monotonic if now_monotonic is not None else time.monotonic()
+    if not force:
+        last_update = _LAST_MEMORY_METRICS_UPDATE_MONOTONIC
+        if last_update > 0 and (now - last_update) < _MEMORY_METRICS_REFRESH_INTERVAL_SECONDS:
+            return False
+
+    update_memory_metrics()
+    _LAST_MEMORY_METRICS_UPDATE_MONOTONIC = now
+    return True
 
 
 def record_request(method: str, path: str, status: int, duration: float) -> None:

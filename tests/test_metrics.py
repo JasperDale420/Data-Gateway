@@ -1,6 +1,7 @@
 """Tests for metrics helpers."""
 
 import gateway.core.metrics as metrics
+from gateway.api import metrics as metrics_api
 
 
 def test_normalize_path_uses_expected_placeholders() -> None:
@@ -17,3 +18,51 @@ def test_normalize_path_cache_is_bounded() -> None:
         metrics._normalize_path(f"/api/v1/finnhub/quote/SYM{i:05d}")
 
     assert len(metrics._PATH_NORMALIZATION_CACHE) <= max_size
+
+
+def test_update_memory_metrics_if_due_is_throttled(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    def _fake_update() -> None:
+        calls["count"] += 1
+
+    monkeypatch.setattr(metrics, "update_memory_metrics", _fake_update)
+    monkeypatch.setattr(metrics, "_LAST_MEMORY_METRICS_UPDATE_MONOTONIC", 0.0)
+
+    assert metrics.update_memory_metrics_if_due(now_monotonic=100.0) is True
+    assert metrics.update_memory_metrics_if_due(now_monotonic=105.0) is False
+    assert metrics.update_memory_metrics_if_due(now_monotonic=111.0) is True
+    assert calls["count"] == 2
+
+
+def test_update_memory_metrics_if_due_force_bypasses_throttle(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    def _fake_update() -> None:
+        calls["count"] += 1
+
+    monkeypatch.setattr(metrics, "update_memory_metrics", _fake_update)
+    monkeypatch.setattr(metrics, "_LAST_MEMORY_METRICS_UPDATE_MONOTONIC", 100.0)
+
+    assert metrics.update_memory_metrics_if_due(force=True, now_monotonic=101.0) is True
+    assert calls["count"] == 1
+
+
+async def test_metrics_endpoint_calls_throttled_updater(monkeypatch) -> None:
+    called = {"update": 0}
+
+    def _fake_update(*, force: bool = False, now_monotonic: float | None = None) -> bool:
+        called["update"] += 1
+        assert force is False
+        assert now_monotonic is None
+        return True
+
+    monkeypatch.setattr(metrics_api, "update_memory_metrics_if_due", _fake_update)
+    monkeypatch.setattr(metrics_api, "generate_latest", lambda: b"# test 1\n")
+    monkeypatch.setattr(metrics_api, "CONTENT_TYPE_LATEST", "text/plain; version=0.0.4")
+
+    response = await metrics_api.get_metrics()
+
+    assert called["update"] == 1
+    assert response.body == b"# test 1\n"
+    assert response.media_type == "text/plain; version=0.0.4"

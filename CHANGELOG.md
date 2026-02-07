@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.72] - 2026-02-07
+
+### Added
+
+- **Metrics refresh throttling tests**: Expanded `tests/test_metrics.py` with coverage for interval-throttled memory metric refresh, force-refresh bypass, and metrics endpoint integration with the throttled updater.
+
+### Changed
+
+- **Throttled memory metric updater**: Added `update_memory_metrics_if_due(...)` in `gateway/core/metrics.py` with a default 10-second refresh interval to avoid recomputing process memory probes on every scrape.
+- **Metrics route refresh optimization**: Updated `gateway/api/metrics.py` to call `update_memory_metrics_if_due()` instead of unconditional `update_memory_metrics()` before `generate_latest()`.
+- **Non-provider audit tracking updates**: Updated `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` to mark metrics refresh throttling remediated.
+- **Top-level audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` non-provider follow-up notes to reflect metrics refresh throttling completion.
+
 ## [0.5.71] - 2026-02-07
 
 ### Added

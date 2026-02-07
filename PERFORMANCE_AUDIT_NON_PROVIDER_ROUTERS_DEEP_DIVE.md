@@ -130,23 +130,21 @@ Evidence:
 Impact:
 - Cache-hit requests now skip avoidable datetime parsing work in the hot path, reducing per-hit CPU overhead and avoiding unnecessary parse evaluation.
 
-### P2-6: Metrics endpoint recomputes dynamic memory gauges on every scrape
+### P2-6: Metrics endpoint recomputes dynamic memory gauges on every scrape (remediated 2026-02-07)
 
 Evidence:
-- Per-request update and metrics generation:
+- Metrics endpoint now calls throttled updater before scrape generation:
   - `gateway/api/metrics.py:23`
-  - `gateway/api/metrics.py:26`
-- Memory update logic collects process metrics with multiple probes/import paths:
-  - `gateway/core/metrics.py:172`
-  - `gateway/core/metrics.py:195`
+- Core metrics now exposes interval-based updater (`10s` default):
+  - `gateway/core/metrics.py:9`
+  - `gateway/core/metrics.py:248`
+- Regression coverage validates throttling and force-refresh behavior:
+  - `tests/test_metrics.py:23`
+  - `tests/test_metrics.py:38`
+  - `tests/test_metrics.py:51`
 
 Impact:
-- High scrape frequencies can create avoidable system-call overhead.
-
-Low-risk fix path:
-1. Throttle memory metric refresh with a short interval (for example 5-15s).
-2. Continue serving `generate_latest()` on every scrape.
-3. Keep metric names and labels unchanged.
+- Reduces repeated system-call/process-probe overhead on high-frequency metrics scrapes while preserving metric names/labels and scrape response behavior.
 
 ### P2-7: Unbounded batch symbol resolution can become CPU-heavy for oversized payloads
 
@@ -196,7 +194,7 @@ Low-risk fix path:
 
 ### Wave NPR-3
 
-1. Throttle metrics memory-refresh frequency.
+1. Throttle metrics memory-refresh frequency (completed 2026-02-07).
 2. Add symbology batch size limits and request metrics.
 3. Add per-endpoint cache-hit/miss instrumentation for applicable read-heavy routes.
 
