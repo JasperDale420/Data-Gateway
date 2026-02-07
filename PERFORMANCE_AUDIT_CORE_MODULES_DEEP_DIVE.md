@@ -42,8 +42,9 @@ Key measured patterns:
 - Calendar range scan is day-by-day loop:
   - `while current <= end`: `gateway/core/calendar.py:296`
 - Symbology repeated resolve paths:
-  - `self.resolve(...)` called by public helpers at `gateway/core/symbology.py:335`, `358`, `371`
-  - temporary object creation for human format inside provider-format generation at `gateway/core/symbology.py:405-415`
+  - `self.resolve(...)` called by public helpers at `gateway/core/symbology.py:397`
+  - bounded resolver memoization + clone-on-read now implemented in `gateway/core/symbology.py:142-220` (remediated 2026-02-07)
+  - direct human option format assembly now implemented in `gateway/core/symbology.py:420-434` (remediated 2026-02-07)
 - Security validation integration overhead on HTTP path:
   - per-request dynamic import in middleware: `gateway/api/middleware.py:54`
 
@@ -124,21 +125,23 @@ Low-risk fix path:
 2. Keep existing semantics but fail fast on unrealistic windows.
 3. Optionally pre-allocate expected list capacity via span heuristics.
 
-### P1-5: Symbology helpers re-resolve and reformat repeatedly
+### P1-5: Symbology helpers re-resolve and reformat repeatedly (remediated 2026-02-07)
 
 Evidence:
-- Public helper paths each call `resolve(...)`:
-  - `gateway/core/symbology.py:335`, `358`, `371`
-- `_get_option_provider_formats` constructs a temporary `ResolvedSymbol` only to render a human string:
-  - `gateway/core/symbology.py:405-415`
+- `SymbolResolver` now has bounded memoization with clone-on-read semantics:
+  - `gateway/core/symbology.py:142`
+  - `gateway/core/symbology.py:155`
+  - `gateway/core/symbology.py:214`
+- Option provider-format generation now builds human format directly without temporary object allocation:
+  - `gateway/core/symbology.py:421`
+  - `gateway/core/symbology.py:433`
+- Regression coverage for cache bounding + mutation isolation:
+  - `tests/test_symbology.py:134`
+  - `tests/test_symbology.py:142`
 
 Impact:
-- Extra regex and object-creation overhead for repeated symbol conversion requests.
-
-Low-risk fix path:
-1. Add lightweight resolver memoization for repeated identical inputs (bounded size).
-2. Replace temporary object path with direct human-format string assembly.
-3. Keep output fields and format contracts unchanged.
+- Repeated symbol resolution requests now avoid re-running regex/parse/provider-format assembly work for hot symbols.
+- Option human-format rendering no longer allocates an intermediate `ResolvedSymbol`, reducing transient object churn while preserving output contracts.
 
 ### P2-6: Security validation path has avoidable per-request overhead
 
@@ -178,7 +181,7 @@ Low-risk fix path:
 
 1. Add validator hot-path optimizations (single `now_utc`, numeric fast-path, raw-message entry points).
 2. Remove duplicate timestamp parsing in quality analyzer and hoist timeframe map constant.
-3. Remove temporary `ResolvedSymbol` allocation in symbology human-format path.
+3. Remove temporary `ResolvedSymbol` allocation in symbology human-format path (completed 2026-02-07, along with bounded resolve memoization).
 4. Hoist middleware input-validator import.
 
 ### Wave CORE-2
@@ -203,7 +206,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/core/security.py` | COMPLETE | Middleware integration overhead and symbol-validation batching |
 | `gateway/core/quality.py` | COMPLETE | Timestamp parse dedupe, single-pass issue detection |
 | `gateway/core/calendar.py` | COMPLETE | Large-range guardrails and iteration efficiency |
-| `gateway/core/symbology.py` | COMPLETE | Resolve memoization and allocation trimming |
+| `gateway/core/symbology.py` | COMPLETE | Microbenchmark cache-hit effectiveness and tune cache-cap strategy if needed |
 | `gateway/core/validator.py` | COMPLETE | Stream hot-path numeric/timestamp optimization |
 | `scripts/live_provider_smoke.py` | COMPLETE | Parallel provider checks |
 | `scripts/generate_provider_contract.py` | COMPLETE | Handler index precomputation |
@@ -212,4 +215,4 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 1. Runtime benchmark/profiling suite execution for middleware, stream/replay fanout, bulk memory behavior, and provider/core microbenchmarks.
 2. Full performance audit of `tests/` execution paths (fixture setup cost, heavy integration tests, and benchmark gate strategy).
-3. Implementation and measurement pass for Wave CORE-1/2 recommendations.
+3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (validator hot path, quality pass consolidation, middleware import hoist, calendar/script follow-ups).

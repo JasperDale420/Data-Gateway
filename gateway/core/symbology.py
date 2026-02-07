@@ -5,7 +5,7 @@ and provider-specific formats as specified in PRD (lines 459-523).
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 
 logger = structlog.get_logger()
+_SYMBOL_RESOLVE_CACHE_MAX = 4096
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -138,6 +139,9 @@ class SymbolResolver:
         "dec": 12,
     }
 
+    def __init__(self) -> None:
+        self._resolve_cache: dict[str, ResolvedSymbol] = {}
+
     def resolve(self, symbol: str) -> ResolvedSymbol:
         """Resolve any symbol format to normalized structure.
 
@@ -148,26 +152,32 @@ class SymbolResolver:
             ResolvedSymbol with normalized data and provider formats
         """
         symbol = symbol.strip().upper()
+        if cached := self._resolve_cache.get(symbol):
+            return self._clone_resolved(cached)
 
         # Try stock first
         if self.STOCK_PATTERN.match(symbol):
-            return ResolvedSymbol(
+            resolved = ResolvedSymbol(
                 input=symbol,
                 type="stock",
                 symbol=symbol,
                 provider_formats=self._get_stock_provider_formats(symbol),
             )
+            self._cache_resolved(symbol, resolved)
+            return self._clone_resolved(resolved)
 
         # Try OCC option
         if match := self.OCC_PATTERN.match(symbol):
-            return self._parse_occ_option(symbol, match)
+            resolved = self._parse_occ_option(symbol, match)
+            self._cache_resolved(symbol, resolved)
+            return self._clone_resolved(resolved)
 
         # Try forex first (exact 3-letter currency codes, must be known forex currency)
         if match := self.FOREX_PATTERN.match(symbol):
             base, quote = match.groups()
             # Only classify as forex if base is a known forex currency code
             if base in self.FOREX_CURRENCIES:
-                return ResolvedSymbol(
+                resolved = ResolvedSymbol(
                     input=symbol,
                     type="forex",
                     symbol=f"{base}/{quote}",
@@ -176,11 +186,13 @@ class SymbolResolver:
                         "generic": f"{base}{quote}",
                     },
                 )
+                self._cache_resolved(symbol, resolved)
+                return self._clone_resolved(resolved)
 
         # Try crypto
         if match := self.CRYPTO_PATTERN.match(symbol):
             base, quote = match.groups()
-            return ResolvedSymbol(
+            resolved = ResolvedSymbol(
                 input=symbol,
                 type="crypto",
                 symbol=f"{base}/{quote}",
@@ -189,9 +201,23 @@ class SymbolResolver:
                     "generic": f"{base}{quote}",
                 },
             )
+            self._cache_resolved(symbol, resolved)
+            return self._clone_resolved(resolved)
 
         # Try human-readable option
-        return self._parse_human_option(symbol)
+        resolved = self._parse_human_option(symbol)
+        if resolved.type != "unknown":
+            self._cache_resolved(symbol, resolved)
+            return self._clone_resolved(resolved)
+        return resolved
+
+    def _cache_resolved(self, symbol: str, resolved: ResolvedSymbol) -> None:
+        if len(self._resolve_cache) >= _SYMBOL_RESOLVE_CACHE_MAX:
+            self._resolve_cache.clear()
+        self._resolve_cache[symbol] = resolved
+
+    def _clone_resolved(self, resolved: ResolvedSymbol) -> ResolvedSymbol:
+        return replace(resolved, provider_formats=dict(resolved.provider_formats))
 
     def _parse_occ_option(self, symbol: str, match: re.Match) -> ResolvedSymbol:
         """Parse OCC format option symbol."""
@@ -392,6 +418,8 @@ class SymbolResolver:
     ) -> dict[str, str]:
         """Get provider-specific formats for an option."""
         occ = self.to_occ(underlying, expiry, strike, opt_type)
+        option_label = "Call" if opt_type == "C" else "Put"
+        human_format = f"{underlying} {expiry.isoformat()} ${strike} {option_label}"
 
         # UW format: AAPL_250117C200
         uw_date = expiry.strftime("%y%m%d")
@@ -402,17 +430,7 @@ class SymbolResolver:
             "alpaca": occ,
             "uw": uw_format,
             "occ": occ,
-            "human": self.to_human(
-                ResolvedSymbol(
-                    input=occ,
-                    type="option",
-                    symbol=occ,
-                    underlying=underlying,
-                    expiration=expiry,
-                    strike=strike,
-                    option_type="call" if opt_type == "C" else "put",
-                )
-            ),
+            "human": human_format,
         }
 
 

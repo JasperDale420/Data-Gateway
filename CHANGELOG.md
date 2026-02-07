@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.77] - 2026-02-07
+
+### Added
+
+- **Symbology resolver memoization tests**: Expanded `tests/test_symbology.py` with coverage for bounded cache size enforcement and clone-isolation behavior so cached provider format maps are not mutated across calls.
+
+### Changed
+
+- **Bounded symbology resolve cache**: Updated `gateway/core/symbology.py` `SymbolResolver` to memoize resolved symbols with a bounded in-process cache (`4096` entries, clear-on-cap) for repeated symbol resolution requests.
+- **Symbology cache result isolation**: Cached `ResolvedSymbol` responses are now cloned before return to preserve existing caller-mutation safety for `provider_formats`.
+- **Option human-format allocation trim**: Updated option provider-format generation in `gateway/core/symbology.py` to build the human format string directly instead of allocating a temporary `ResolvedSymbol`.
+- **Core-modules audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark symbology allocation/memoization work complete and narrow remaining CORE-1 follow-ups.
+
 ## [0.5.76] - 2026-02-07
 
 ### Added

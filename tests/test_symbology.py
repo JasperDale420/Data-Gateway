@@ -3,7 +3,12 @@
 from datetime import date
 from decimal import Decimal
 
-from gateway.core.symbology import SymbolResolver, get_symbol_resolver
+from gateway.core.symbology import (
+    _SYMBOL_RESOLVE_CACHE_MAX,
+    ResolvedSymbol,
+    SymbolResolver,
+    get_symbol_resolver,
+)
 
 
 class TestSymbolResolver:
@@ -100,6 +105,7 @@ class TestSymbolResolver:
         assert "alpaca" in result.provider_formats
         assert "uw" in result.provider_formats
         assert "occ" in result.provider_formats
+        assert result.provider_formats["human"] == "AAPL 2025-01-17 $200 Call"
 
     # Validation
     def test_validate_valid_stock(self):
@@ -125,3 +131,26 @@ class TestSymbolResolver:
         assert d["type"] == "option"
         assert d["underlying"] == "AAPL"
         assert d["strike"] == 200.0
+
+    def test_resolve_cache_returns_isolated_provider_formats(self):
+        result_one = self.resolver.resolve("AAPL")
+        result_one.provider_formats["custom"] = "mutated"
+
+        result_two = self.resolver.resolve("AAPL")
+
+        assert "custom" not in result_two.provider_formats
+
+    def test_resolve_cache_is_bounded(self):
+        for i in range(_SYMBOL_RESOLVE_CACHE_MAX + 5):
+            key = f"sym-{i}"
+            self.resolver._cache_resolved(
+                key,
+                ResolvedSymbol(
+                    input=key,
+                    type="stock",
+                    symbol="AAPL",
+                    provider_formats={"alpaca": "AAPL"},
+                ),
+            )
+
+        assert len(self.resolver._resolve_cache) <= _SYMBOL_RESOLVE_CACHE_MAX
