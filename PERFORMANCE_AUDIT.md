@@ -114,14 +114,14 @@ The fastest, lowest-risk wins are:
 - Low-risk fix:
   - Replace with `itertuples(index=True)` and direct attribute access.
 
-10. Alpha Vantage provider still has residual request/sort overhead opportunities after AV-3 parser rollout.
+10. Alpha Vantage provider AV-3 helper/sort rollout is complete; remaining work is optional heavy-series limit tuning.
 - Evidence:
-  - Repeated `"Note"` checks across methods: `gateway/providers/alphavantage.py:156`, `229`, `300`, `351`, `404`, `467`, `500`, `533`, `566`, `602`, `707`, `835`, `871`, `913`, `942`, `988`.
-  - Full sort-then-slice patterns remain: `gateway/providers/alphavantage.py:883`, `955`.
-- Impact: Avoidable per-request branch/sort overhead and higher maintenance drift risk.
+  - Shared request/rate-limit helper: `gateway/providers/alphavantage.py:143` (`_fetch_json`) with `17` call sites.
+  - Shared sort-head helper: `gateway/providers/alphavantage.py:164` (`_top_time_series_items`) used in indicator/forex/crypto data paths.
+  - Targeted benchmark snapshot (local): ordered head extraction `6.02us` helper vs `357.91us` full sort (`59.46x` faster); unordered fallback `1.10x` overhead.
+- Impact: Main AV-3 duplication/sort hotspots are remediated; largest remaining Alpha Vantage cost center is full-history parse/sort behavior.
 - Low-risk fix:
-  - Add shared fetch helper for request + rate-limit-note handling.
-  - Tune sorted/sliced indicator/forex/crypto paths where safe.
+  - Optionally add `max_points` limits on heavy full-history methods where route contracts allow.
 
 ### P2 (Medium Priority)
 
@@ -221,7 +221,7 @@ Legend:
 | `gateway/core/envelope.py` | 1 | COMPLETE | Envelope serialization path audited |
 | `gateway/api/websocket.py` | 1 | COMPLETE | Message loop + subscription path audited |
 | Provider `gateway/providers/news.py` | 1 (333 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_NEWS_PROVIDER_DEEP_DIVE.md` |
-| Provider `gateway/providers/alphavantage.py` | 1 (1096 LOC) | COMPLETE | Dedicated deep pass completed; AV-3 CSV parser + bounded quote fan-out implemented; see `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` |
+| Provider `gateway/providers/alphavantage.py` | 1 (946 LOC) | COMPLETE | Dedicated deep pass completed; AV-3 helper/sort rollout complete (`csv.DictReader`, bounded quote fan-out, shared fetch helper, sort-head optimization); see `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` |
 | Provider `gateway/providers/alpaca.py` | 1 (2153 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_ALPACA_PROVIDER_DEEP_DIVE.md` |
 | Provider `gateway/providers/uw.py` | 1 (4672 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` |
 | Provider `gateway/providers/yfinance.py` | 1 (386 LOC) | COMPLETE | Dedicated deep pass completed; see `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` |
@@ -243,14 +243,14 @@ Legend:
 ## Next-Run Audit Plan (Targeted)
 
 1. Continue UW implementation from `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md` (Wave 1 route-helper rollout and `_call_sync` concurrency gating/metrics are complete; native pagination support is now implemented for flow/darkpool/institutions with fallback behavior, and next UW focus is telemetry-driven inflight tuning plus expanding native pagination where post-filter semantics allow).
-2. Continue Alpha Vantage implementation from `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` (AV-1 and AV-2 route-layer work is complete; AV-3 CSV parser migration + bounded multi-quote fan-out are complete; next focus is benchmark validation and provider helper/sort tuning).
+2. Continue Alpha Vantage implementation from `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md` (AV-1/AV-2/AV-3 rollouts complete; next optional focus is full-history limit tuning and broader runtime profiling validation).
 3. Continue yfinance Wave 1 optimizations from `PERFORMANCE_AUDIT_YF_DEEP_DIVE.md` (cache-before-provider, route helper consolidation, and health-check offload; provider `iterrows` hot paths remediated).
 4. Implement SEC Wave 1 optimizations from `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` (cache-before-provider, helper consolidation, filing key normalization).
 5. Continue Finnhub/control-plane Wave 1 optimizations from `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` (cache-before-provider, dedupe, and date/key helper consolidation; admin health-check parallelization completed).
 6. Implement Alpaca Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` (route helper consolidation, cache/dedupe for safe GETs, over-fetch reductions).
 7. Implement non-provider router Wave 1 optimizations from `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` (bulk streaming downloads, fetcher binding guards, cache-hit-first parsing in news).
 8. Implement Alpaca provider Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_PROVIDER_DEEP_DIVE.md` (shared client use for DNE path, conversion-path optimization, limit/logging tuning).
-9. Continue Alpha Vantage provider Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` (shared fetch helper and sort/limit tuning; CSV parser migration + bounded quote fan-out already complete).
+9. Continue Alpha Vantage provider follow-up from `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` (optional full-history `max_points` tuning + broader runtime profiling).
 10. Implement News provider Wave 1 optimizations from `PERFORMANCE_AUDIT_NEWS_PROVIDER_DEEP_DIVE.md` (keyword hoisting, shared fetch/readiness helpers, pagination normalization with effective page size).
 11. Implement core modules Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` (validator hot-path optimization, quality timestamp/sort reductions, symbology allocation trimming, middleware import hoist).
 12. Implement core infrastructure Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` (adjustment lookup optimization, breaker caching, rate-limiter wait tuning, and bounded sink dispatch tuning).

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any, cast
 
 import pytest
 
@@ -8,6 +9,27 @@ from gateway.providers.alphavantage import (
     DEFAULT_QUOTES_MAX_CONCURRENCY,
     AlphaVantageProvider,
 )
+
+
+class _FakeHTTPResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+class _FakeHTTPClient:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+        self.calls: list[dict[str, object]] = []
+
+    async def get(self, _url: str, params: dict[str, object]) -> _FakeHTTPResponse:
+        self.calls.append(params)
+        return _FakeHTTPResponse(self._payload)
 
 
 def test_parse_csv_response_handles_quoted_commas() -> None:
@@ -71,3 +93,51 @@ async def test_get_quotes_respects_bounded_concurrency(monkeypatch: pytest.Monke
     assert results == ["AAPL", "MSFT", "GOOG", "TSLA"]
     assert state["max_inflight"] == 2
     assert state["inflight"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_injects_api_key_and_returns_payload() -> None:
+    provider = AlphaVantageProvider()
+    provider._api_key = "demo"  # pragma: allowlist secret
+    provider._client = cast(Any, _FakeHTTPClient({"Global Quote": {"05. price": "10.0"}}))
+
+    payload = await provider._fetch_json({"function": "GLOBAL_QUOTE", "symbol": "IBM"})
+
+    assert payload == {"Global Quote": {"05. price": "10.0"}}
+    assert provider._client.calls[0]["apikey"] == "demo"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_raises_on_rate_limit_note() -> None:
+    provider = AlphaVantageProvider()
+    provider._api_key = "demo"  # pragma: allowlist secret
+    provider._client = cast(Any, _FakeHTTPClient({"Note": "Thank you for using Alpha Vantage!"}))
+
+    with pytest.raises(RuntimeError, match="Rate limit exceeded"):
+        await provider._fetch_json({"function": "GLOBAL_QUOTE", "symbol": "IBM"})
+
+
+def test_top_time_series_items_fast_path_keeps_head_order() -> None:
+    provider = AlphaVantageProvider()
+    series = {
+        "2026-02-03": {"v": 3},
+        "2026-02-02": {"v": 2},
+        "2026-02-01": {"v": 1},
+    }
+
+    top_items = provider._top_time_series_items(series, limit=2)
+
+    assert [key for key, _ in top_items] == ["2026-02-03", "2026-02-02"]
+
+
+def test_top_time_series_items_falls_back_to_sorted_for_unordered_input() -> None:
+    provider = AlphaVantageProvider()
+    series = {
+        "2026-02-01": {"v": 1},
+        "2026-02-03": {"v": 3},
+        "2026-02-02": {"v": 2},
+    }
+
+    top_items = provider._top_time_series_items(series, limit=2)
+
+    assert [key for key, _ in top_items] == ["2026-02-03", "2026-02-02"]

@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.46] - 2026-02-07
+
+### Added
+
+- **Alpha Vantage provider helper/sort regression coverage**: Expanded `tests/test_alphavantage_provider.py` with shared `_fetch_json(...)` API-key injection and rate-limit-note behavior checks, plus `_top_time_series_items(...)` fast-path and fallback ordering assertions.
+
+### Changed
+
+- **Alpha Vantage provider shared fetch helper rollout**: Added `_ensure_ready(...)` and `_fetch_json(...)` in `gateway/providers/alphavantage.py` and migrated quote/time-series/fundamentals/indicator/forex/crypto/economic methods to use shared request + rate-limit-note handling.
+- **Alpha Vantage provider sort-head optimization**: Added `_top_time_series_items(...)` in `gateway/providers/alphavantage.py` and replaced full `sorted(..., reverse=True)[:100]` paths in technical-indicator/forex-daily/crypto-daily payload assembly.
+- **Alpha Vantage provider micro-benchmark evidence**: Captured targeted helper benchmark results for ordered vs unordered head extraction and recorded outcomes in Alpha Vantage audit docs to validate the fast-path behavior.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md`, `PERFORMANCE_AUDIT_ALPHAVANTAGE_DEEP_DIVE.md`, and `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` to mark AV-3 provider helper/sort remediation complete and narrow remaining Alpha Vantage scope to broader runtime profiling and optional heavy time-series limit tuning.
+
 ## [0.5.45] - 2026-02-07
 
 ### Added

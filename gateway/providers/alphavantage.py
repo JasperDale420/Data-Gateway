@@ -6,6 +6,7 @@ import io
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
+from itertools import islice
 from typing import Any
 
 import httpx
@@ -131,33 +132,62 @@ class AlphaVantageProvider(DataProvider):
                 last_check=datetime.now(UTC),
             )
 
+    def _ensure_ready(self) -> httpx.AsyncClient:
+        """Validate provider readiness and return initialized HTTP client."""
+        if not self._client:
+            raise RuntimeError(PROVIDER_NOT_INIT)
+        if not self._api_key:
+            raise RuntimeError(API_KEY_NOT_SET)
+        return self._client
+
+    async def _fetch_json(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Fetch JSON payload with shared request + provider rate-limit-note handling."""
+        client = self._ensure_ready()
+        request_params = dict(params)
+        request_params.setdefault("apikey", self._api_key)
+        response = await client.get(self._base_url, params=request_params)
+        response.raise_for_status()
+        data = response.json()
+
+        if isinstance(data, dict) and "Note" in data:
+            logger.warning(
+                "alphavantage_rate_limit",
+                function=request_params.get("function"),
+                message=data["Note"],
+            )
+            raise RuntimeError("Rate limit exceeded")
+
+        if not isinstance(data, dict):
+            return {}
+        return data
+
+    def _top_time_series_items(
+        self, series: dict[str, Any], limit: int = 100
+    ) -> list[tuple[str, Any]]:
+        """Return newest-first head items without full-sort when provider order is already descending."""
+        head_items = list(islice(series.items(), limit))
+        if len(head_items) <= 1:
+            return head_items
+        if all(
+            left[0] >= right[0] for left, right in zip(head_items, head_items[1:], strict=False)
+        ):
+            return head_items
+        return sorted(series.items(), reverse=True)[:limit]
+
     # ─────────────────────────────────────────────────────────────────
     # Quote Methods
     # ─────────────────────────────────────────────────────────────────
 
     async def get_quote(self, symbol: str) -> NormalizedQuote | None:
         """Get real-time quote using GLOBAL_QUOTE endpoint."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "GLOBAL_QUOTE",
                     "symbol": symbol.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            # Check for rate limit
-            if "Note" in data:
-                logger.warning("alphavantage_rate_limit", message=data["Note"])
-                raise RuntimeError("Rate limit exceeded")
 
             quote_data = data.get("Global Quote", {})
             if not quote_data:
@@ -209,15 +239,9 @@ class AlphaVantageProvider(DataProvider):
         Intervals: 1min, 5min, 15min, 30min, 60min
         Outputsize: compact (100 points) or full (30 days)
         """
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "TIME_SERIES_INTRADAY",
                     "symbol": symbol.upper(),
                     "interval": interval,
@@ -225,11 +249,6 @@ class AlphaVantageProvider(DataProvider):
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             time_series_key = f"Time Series ({interval})"
             time_series = data.get(time_series_key, {})
@@ -279,28 +298,17 @@ class AlphaVantageProvider(DataProvider):
 
         Outputsize: compact (100 days) or full (20+ years)
         """
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         function = "TIME_SERIES_DAILY_ADJUSTED" if adjusted else "TIME_SERIES_DAILY"
 
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": function,
                     "symbol": symbol.upper(),
                     "outputsize": outputsize,
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             time_series_key = "Time Series (Daily)"
             time_series = data.get(time_series_key, {})
@@ -331,27 +339,16 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_weekly(self, symbol: str, adjusted: bool = True) -> list[NormalizedBar]:
         """Get weekly time series data."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         function = "TIME_SERIES_WEEKLY_ADJUSTED" if adjusted else "TIME_SERIES_WEEKLY"
 
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": function,
                     "symbol": symbol.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             time_series_key = "Weekly Adjusted Time Series" if adjusted else "Weekly Time Series"
             time_series = data.get(time_series_key, {})
@@ -386,25 +383,14 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_company_overview(self, symbol: str) -> dict[str, Any]:
         """Get company overview (fundamentals, ratios, etc)."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "OVERVIEW",
                     "symbol": symbol.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             if not data or "Symbol" not in data:
                 return {}
@@ -449,25 +435,14 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_earnings(self, symbol: str) -> dict[str, Any]:
         """Get earnings data (annual and quarterly)."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "EARNINGS",
                     "symbol": symbol.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             return {
                 "symbol": data.get("symbol", symbol.upper()),
@@ -482,25 +457,14 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_income_statement(self, symbol: str) -> dict[str, Any]:
         """Get income statement data."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "INCOME_STATEMENT",
                     "symbol": symbol.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             return {
                 "symbol": data.get("symbol", symbol.upper()),
@@ -515,25 +479,14 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_balance_sheet(self, symbol: str) -> dict[str, Any]:
         """Get balance sheet data."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "BALANCE_SHEET",
                     "symbol": symbol.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             return {
                 "symbol": data.get("symbol", symbol.upper()),
@@ -548,25 +501,14 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_cash_flow(self, symbol: str) -> dict[str, Any]:
         """Get cash flow statement data."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "CASH_FLOW",
                     "symbol": symbol.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             return {
                 "symbol": data.get("symbol", symbol.upper()),
@@ -585,24 +527,13 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_monthly(self, symbol: str, adjusted: bool = True) -> list[NormalizedBar]:
         """Get monthly time series data."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         function = "TIME_SERIES_MONTHLY_ADJUSTED" if adjusted else "TIME_SERIES_MONTHLY"
         ts_key = "Monthly Adjusted Time Series" if adjusted else "Monthly Time Series"
 
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={"function": function, "symbol": symbol.upper(), "apikey": self._api_key},
+            data = await self._fetch_json(
+                {"function": function, "symbol": symbol.upper(), "apikey": self._api_key},
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             time_series = data.get(ts_key, {})
             bars = []
@@ -632,18 +563,10 @@ class AlphaVantageProvider(DataProvider):
 
     async def search_symbols(self, keywords: str) -> list[dict[str, Any]]:
         """Search for symbols by keywords."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={"function": "SYMBOL_SEARCH", "keywords": keywords, "apikey": self._api_key},
+            data = await self._fetch_json(
+                {"function": "SYMBOL_SEARCH", "keywords": keywords, "apikey": self._api_key},
             )
-            response.raise_for_status()
-            data = response.json()
 
             return [
                 {
@@ -678,11 +601,6 @@ class AlphaVantageProvider(DataProvider):
         Supports: SMA, EMA, WMA, DEMA, TEMA, TRIMA, KAMA, RSI, MACD, STOCH,
                   BBANDS, ADX, CCI, MFI, ATR, AD, OBV, and more.
         """
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         params: dict[str, Any] = {
             "function": indicator.upper(),
             "symbol": symbol.upper(),
@@ -702,12 +620,7 @@ class AlphaVantageProvider(DataProvider):
         params.update(kwargs)
 
         try:
-            response = await self._client.get(self._base_url, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
+            data = await self._fetch_json(params)
 
             # Find the technical analysis key
             ta_key = None
@@ -724,7 +637,7 @@ class AlphaVantageProvider(DataProvider):
                 "interval": interval,
                 "data": [
                     {"date": date, **vals}
-                    for date, vals in sorted(values.items(), reverse=True)[:100]  # Last 100 points
+                    for date, vals in self._top_time_series_items(values, limit=100)
                 ],
                 "meta": data.get("Meta Data", {}),
             }
@@ -816,26 +729,15 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_forex_rate(self, from_currency: str, to_currency: str) -> dict[str, Any]:
         """Get real-time exchange rate."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "CURRENCY_EXCHANGE_RATE",
                     "from_currency": from_currency.upper(),
                     "to_currency": to_currency.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             rate_data = data.get("Realtime Currency Exchange Rate", {})
             return {
@@ -852,26 +754,15 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_forex_daily(self, from_symbol: str, to_symbol: str) -> list[dict[str, Any]]:
         """Get daily forex time series."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "FX_DAILY",
                     "from_symbol": from_symbol.upper(),
                     "to_symbol": to_symbol.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             ts = data.get("Time Series FX (Daily)", {})
             return [
@@ -882,7 +773,7 @@ class AlphaVantageProvider(DataProvider):
                     "low": v.get("3. low"),
                     "close": v.get("4. close"),
                 }
-                for date, v in sorted(ts.items(), reverse=True)[:100]
+                for date, v in self._top_time_series_items(ts, limit=100)
             ]
 
         except Exception as e:
@@ -895,25 +786,14 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_crypto_rating(self, symbol: str) -> dict[str, Any]:
         """Get crypto rating/health index."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "CRYPTO_RATING",
                     "symbol": symbol.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             return data.get("Crypto Rating (FCAS)", {})
 
@@ -923,26 +803,15 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_crypto_daily(self, symbol: str, market: str = "USD") -> list[dict[str, Any]]:
         """Get daily crypto time series."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         try:
-            response = await self._client.get(
-                self._base_url,
-                params={
+            data = await self._fetch_json(
+                {
                     "function": "DIGITAL_CURRENCY_DAILY",
                     "symbol": symbol.upper(),
                     "market": market.upper(),
                     "apikey": self._api_key,
                 },
             )
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
 
             ts = data.get("Time Series (Digital Currency Daily)", {})
             return [
@@ -954,7 +823,7 @@ class AlphaVantageProvider(DataProvider):
                     "close": v.get(f"4a. close ({market.upper()})"),
                     "volume": v.get("5. volume"),
                 }
-                for date, v in sorted(ts.items(), reverse=True)[:100]
+                for date, v in self._top_time_series_items(ts, limit=100)
             ]
 
         except Exception as e:
@@ -973,22 +842,12 @@ class AlphaVantageProvider(DataProvider):
         Supports: REAL_GDP, REAL_GDP_PER_CAPITA, TREASURY_YIELD, FEDERAL_FUNDS_RATE,
                   CPI, INFLATION, RETAIL_SALES, DURABLES, UNEMPLOYMENT, NONFARM_PAYROLL
         """
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
-
         params: dict[str, str] = {"function": indicator.upper(), "apikey": self._api_key}
         if indicator.upper() in ["REAL_GDP", "TREASURY_YIELD", "FEDERAL_FUNDS_RATE", "CPI"]:
             params["interval"] = interval
 
         try:
-            response = await self._client.get(self._base_url, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-            if "Note" in data:
-                raise RuntimeError("Rate limit exceeded")
+            data = await self._fetch_json(params)
 
             return {
                 "name": data.get("name"),
@@ -1025,10 +884,7 @@ class AlphaVantageProvider(DataProvider):
             symbol: Optional symbol to filter
             horizon: 3month, 6month, or 12month
         """
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
+        client = self._ensure_ready()
 
         params: dict[str, str] = {
             "function": "EARNINGS_CALENDAR",
@@ -1039,7 +895,7 @@ class AlphaVantageProvider(DataProvider):
             params["symbol"] = symbol.upper()
 
         try:
-            response = await self._client.get(self._base_url, params=params)
+            response = await client.get(self._base_url, params=params)
             response.raise_for_status()
             return self._parse_csv_response(response.text)
 
@@ -1049,13 +905,10 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_ipo_calendar(self) -> list[dict[str, Any]]:
         """Get upcoming IPO calendar."""
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
+        client = self._ensure_ready()
 
         try:
-            response = await self._client.get(
+            response = await client.get(
                 self._base_url,
                 params={"function": "IPO_CALENDAR", "apikey": self._api_key},
             )
@@ -1075,10 +928,7 @@ class AlphaVantageProvider(DataProvider):
             state: 'active' or 'delisted'
             date: Optional date for historical delisted lookup (YYYY-MM-DD)
         """
-        if not self._client:
-            raise RuntimeError(PROVIDER_NOT_INIT)
-        if not self._api_key:
-            raise RuntimeError(API_KEY_NOT_SET)
+        client = self._ensure_ready()
 
         params: dict[str, str] = {
             "function": "LISTING_STATUS",
@@ -1089,7 +939,7 @@ class AlphaVantageProvider(DataProvider):
             params["date"] = date
 
         try:
-            response = await self._client.get(self._base_url, params=params)
+            response = await client.get(self._base_url, params=params)
             response.raise_for_status()
             return self._parse_csv_response(response.text)
 
