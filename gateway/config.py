@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     bulk_results_max_in_memory: int = Field(default=25_000, ge=100)
     bulk_results_spool_to_disk: bool = True
 
+    # UW Poller
+    uw_poller_publish_max_inflight: int = Field(default=16, ge=1)
+
 
 @lru_cache
 def get_settings() -> Settings:

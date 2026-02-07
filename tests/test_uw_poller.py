@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+import gateway.core.uw_poller as uw_poller_module
 from gateway.core.uw_poller import HEBER_STREAM, UWPoller
 
 
@@ -88,3 +90,18 @@ async def test_publish_envelopes_respects_max_inflight_limit() -> None:
     assert published == 8
     assert duplicates == 0
     assert sink.max_inflight <= 2
+
+
+def test_uw_poller_publish_limit_reads_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        uw_poller_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            cache_redis_enabled=False,
+            cache_redis_url="",
+            uw_poller_publish_max_inflight=7,
+        ),
+    )
+
+    poller = UWPoller()
+    assert poller._publish_max_inflight == 7

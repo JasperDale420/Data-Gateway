@@ -89,7 +89,7 @@ class UWPoller:
         # Keep IDs for last 2 hours to handle polling overlap
         self._seen_ids: dict[str, datetime] = {}
         self._cache_ttl_seconds = 7200  # 2 hours
-        self._publish_max_inflight = 16
+        self._publish_max_inflight = max(1, int(settings.uw_poller_publish_max_inflight))
         self._redis_dedupe: RedisCache | None = None
         if settings.cache_redis_enabled and settings.cache_redis_url:
             self._redis_dedupe = RedisCache(

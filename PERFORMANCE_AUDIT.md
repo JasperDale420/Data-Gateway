@@ -103,9 +103,8 @@ The fastest, lowest-risk wins are:
 8. UW poller per-event sequential dedupe/publish path (remediated 2026-02-07).
 - Evidence:
   - `gateway/core/uw_poller.py` now performs batched Redis dedupe reads, bounded-concurrency publish fanout, and batched dedupe-write updates via shared `_publish_envelopes(...)`.
+  - Publish concurrency is now runtime-configurable via `GATEWAY_UW_POLLER_PUBLISH_MAX_INFLIGHT`.
 - Impact: Reduces per-event round-trip serialization in flow/darkpool/market-tide/sector-tide poll loops and improves poll-cycle throughput under bursty snapshots.
-- Follow-up:
-  - Optional: expose `uw_poller` publish concurrency as runtime config for environment-specific tuning.
 
 9. yfinance historical conversion uses `iterrows()`.
 - Evidence:

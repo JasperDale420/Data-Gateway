@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.64] - 2026-02-07
+
+### Added
+
+- **UW poller settings coverage test**: Expanded `tests/test_uw_poller.py` to verify poller publish concurrency reads from runtime settings.
+
+### Changed
+
+- **Configurable UW poller publish concurrency**: Added `uw_poller_publish_max_inflight` in `gateway/config.py` and wired `gateway/core/uw_poller.py` to use it for bounded publish fanout limits.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to record UW poller publish concurrency as runtime configurable.
+
 ## [0.5.63] - 2026-02-07
 
 ### Added
