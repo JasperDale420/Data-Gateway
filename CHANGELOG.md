@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.83] - 2026-02-07
+
+### Added
+
+- **Provider contract generator tests**: Added `tests/test_generate_provider_contract.py` with coverage for function-index extraction and route-to-handler lookup behavior.
+
+### Changed
+
+- **Contract generator handler pre-indexing**: Updated `scripts/generate_provider_contract.py` to pre-index function definition offsets once per file and resolve handlers via indexed lookup, removing repeated full-text regex scans after each route match.
+- **Contract generator helper extraction**: Added `_index_function_defs(...)` and `_resolve_handler_name(...)` in `scripts/generate_provider_contract.py` to centralize handler mapping logic.
+- **Core-modules audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark script follow-ups complete and narrow remaining core-module remediation scope.
+
 ## [0.5.82] - 2026-02-07
 
 ### Added
