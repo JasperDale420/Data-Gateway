@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.75] - 2026-02-07
+
+### Added
+
+- **Symbology batch guardrail tests**: Added `tests/test_symbology_api.py` to validate batch size limits (`max 500`) and symbology batch-size metric emission.
+
+### Changed
+
+- **Symbology batch request limits**: Updated `gateway/api/symbology.py` `BatchResolveRequest` to enforce bounded symbol counts (`min 1`, `max 500`) for `/symbology/batch`.
+- **Symbology request-size telemetry**: Added `gateway_symbology_batch_symbols` histogram and `record_symbology_batch_size(...)` in `gateway/core/metrics.py`, and wired metric recording in `gateway/api/symbology.py`.
+- **Non-provider audit tracking updates**: Updated `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` to mark symbology batch guardrails/telemetry remediated.
+- **Top-level audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` non-provider follow-up notes to reflect symbology batch remediation completion.
+
 ## [0.5.74] - 2026-02-07
 
 ### Added

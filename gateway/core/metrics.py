@@ -193,6 +193,12 @@ ALPHAVANTAGE_PAYLOAD_BYTES = Histogram(
     buckets=(256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216),
 )
 
+SYMBOLOGY_BATCH_SIZE = Histogram(
+    "gateway_symbology_batch_symbols",
+    "Number of symbols per symbology batch request",
+    buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000),
+)
+
 # Memory pressure metric (for 11.2.4 alerting)
 MEMORY_PRESSURE = Gauge(
     "gateway_memory_pressure",
@@ -265,6 +271,11 @@ def update_memory_metrics_if_due(
     update_memory_metrics()
     _LAST_MEMORY_METRICS_UPDATE_MONOTONIC = now
     return True
+
+
+def record_symbology_batch_size(batch_size: int) -> None:
+    """Record symbol count for symbology batch requests."""
+    SYMBOLOGY_BATCH_SIZE.observe(max(0, batch_size))
 
 
 def record_request(method: str, path: str, status: int, duration: float) -> None:

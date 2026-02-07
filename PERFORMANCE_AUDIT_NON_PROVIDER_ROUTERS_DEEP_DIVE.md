@@ -145,20 +145,20 @@ Evidence:
 Impact:
 - Reduces repeated system-call/process-probe overhead on high-frequency metrics scrapes while preserving metric names/labels and scrape response behavior.
 
-### P2-7: Unbounded batch symbol resolution can become CPU-heavy for oversized payloads
+### P2-7: Unbounded batch symbol resolution can become CPU-heavy for oversized payloads (remediated 2026-02-07)
 
 Evidence:
-- Batch request model has no explicit max length:
+- `BatchResolveRequest` now enforces symbol-count bounds (`1..500`):
   - `gateway/api/symbology.py:47`
-- Endpoint iterates and resolves each symbol serially:
-  - `gateway/api/symbology.py:137`
+- Batch endpoint now records request-size telemetry via dedicated metric:
+  - `gateway/api/symbology.py:139`
+  - `gateway/core/metrics.py:192`
+- Regression coverage validates max-size guardrails and metric emission:
+  - `tests/test_symbology_api.py:8`
+  - `tests/test_symbology_api.py:19`
 
 Impact:
-- Very large request bodies can create burst CPU and response latency.
-
-Low-risk fix path:
-1. Add max symbol count guard on `BatchResolveRequest`.
-2. Keep response schema and per-symbol error behavior unchanged.
+- Prevents oversized batch payload bursts from creating unbounded CPU work while preserving existing response schema and per-symbol error behavior.
 
 ### P2-8: List endpoints return full in-memory collections with no pagination controls (remediated 2026-02-07)
 
@@ -193,7 +193,7 @@ Impact:
 ### Wave NPR-3
 
 1. Throttle metrics memory-refresh frequency (completed 2026-02-07).
-2. Add symbology batch size limits and request metrics.
+2. Add symbology batch size limits and request metrics (completed 2026-02-07).
 3. Add per-endpoint cache-hit/miss instrumentation for applicable read-heavy routes.
 
 ## File-Level Audit Tracker (This Run)
@@ -208,7 +208,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/api/news.py` | 3 | COMPLETE | Cache-hit-first parsing path, cache key normalization |
 | `gateway/api/quality.py` | 3 | COMPLETE | Real analyzer integration path and payload size controls |
 | `gateway/api/replay.py` | 6 | COMPLETE | Replay-task completion telemetry and websocket lifecycle observability |
-| `gateway/api/symbology.py` | 4 | COMPLETE | Batch request caps and lightweight response caching |
+| `gateway/api/symbology.py` | 4 | COMPLETE | Lightweight response caching and optional batch parallelization profiling |
 | `gateway/api/metrics.py` | 1 | COMPLETE | Dynamic metric refresh throttling |
 
 ## Remaining Audit Scope (Future Runs)

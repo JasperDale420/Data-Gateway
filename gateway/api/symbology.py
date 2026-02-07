@@ -4,9 +4,10 @@ Symbol resolution and format conversion as specified in PRD (lines 459-523).
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gateway.api.deps import require_api_key
+from gateway.core.metrics import record_symbology_batch_size
 from gateway.core.symbology import get_symbol_resolver
 from gateway.schemas import SuccessResponse
 
@@ -47,7 +48,12 @@ class SymbolValidateResponse(BaseModel):
 class BatchResolveRequest(BaseModel):
     """Request for batch symbol resolution."""
 
-    symbols: list[str]
+    symbols: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="List of symbols to resolve (max 500)",
+    )
 
 
 class BatchResolveResponse(BaseModel):
@@ -131,6 +137,7 @@ async def batch_resolve_symbols(
     Returns results for valid symbols and errors for invalid ones.
     """
     resolver = get_symbol_resolver()
+    record_symbology_batch_size(len(request.symbols))
     results = []
     errors = []
 
