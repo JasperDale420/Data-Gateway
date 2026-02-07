@@ -126,19 +126,19 @@ The fastest, lowest-risk wins are:
 
 ### P2 (Medium Priority)
 
-11. Cache custom TTL path performs full custom-cache expiry scan on each custom set.
+11. Cache custom TTL expiry pruning cadence (remediated 2026-02-07).
 - Evidence:
-  - `gateway/core/cache.py:80`, `152-157`.
-- Impact: O(n) behavior on custom-TTL heavy workloads.
-- Low-risk fix:
-  - Prune opportunistically on interval/count threshold, not every set.
+  - `gateway/core/cache.py` now uses `CUSTOM_PRUNE_SET_INTERVAL` + `_custom_sets_since_prune` to prune custom-TTL expiries periodically instead of scanning on every custom set.
+- Impact: Reduces repeated O(n) expiry scan overhead on custom-TTL-heavy write paths while preserving on-read expiry validation behavior.
+- Follow-up:
+  - Optional: tune prune interval with production write profiles.
 
-12. In-memory cache max-size enforcement may pop entries one-by-one in tight loop.
+12. In-memory cache max-size enforcement loop behavior (remediated 2026-02-07).
 - Evidence:
-  - `gateway/core/cache.py:159-170`.
-- Impact: Burst inserts can spend time in repeated loop iteration.
-- Low-risk fix:
-  - Compute overflow count and pop in bounded for-loop with counter.
+  - `gateway/core/cache.py` now computes overflow once and evicts exact counts from custom/default tiers using bounded loops.
+- Impact: Avoids repeated size recomputation/branch churn under burst insert overflow while preserving eviction order semantics (custom LRU-first, then default cache).
+- Follow-up:
+  - Optional: add dedicated microbenchmark for burst over-capacity insertion.
 
 13. WebSocket message-loop settings lookup overhead (remediated 2026-02-07).
 - Evidence:
@@ -187,7 +187,7 @@ The fastest, lowest-risk wins are:
 ### Wave 3
 
 1. Add streaming storage for bulk/replay outputs.
-2. Improve cache pruning strategy for custom TTL workloads.
+2. Improve cache pruning strategy for custom TTL workloads (completed 2026-02-07).
 3. Add envelope fast-path serialization for websocket traffic.
 
 ## Verification Plan (for each wave)

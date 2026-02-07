@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.53] - 2026-02-07
+
+### Added
+
+- **Cache optimization regression tests**: Expanded `tests/test_cache.py` with coverage for deferred custom-TTL prune cadence and exact overflow-eviction counting behavior in max-size enforcement.
+
+### Changed
+
+- **Custom-TTL prune cadence optimization**: Updated `gateway/core/cache.py` to prune expired custom-TTL entries on configurable set-interval cadence (`CUSTOM_PRUNE_SET_INTERVAL`) instead of scanning custom cache entries on every custom set.
+- **Overflow-count max-size enforcement**: Updated `gateway/core/cache.py` max-size enforcement to compute overflow once and evict bounded counts from custom/default tiers, reducing repeated loop/size checks under burst inserts.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark cache prune and max-size enforcement optimizations completed.
+
 ## [0.5.52] - 2026-02-07
 
 ### Added
