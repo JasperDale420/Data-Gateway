@@ -4,9 +4,11 @@ Implements market hours, trading days, and earnings calendar as specified in PRD
 """
 
 import asyncio
+import time as time_module
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, cast
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
@@ -31,6 +33,11 @@ from gateway.types.provider_protocols import (
 )
 
 router = APIRouter(prefix="/api/v1/calendar", tags=["Trading Calendar"])
+logger = structlog.get_logger()
+
+_CALENDAR_PROVIDER_DEGRADE_WINDOW_SECONDS = 30.0
+_CALENDAR_PROVIDER_DEGRADED_UNTIL: dict[str, float] = {}
+_CALENDAR_PROVIDER_LAST_LOG_AT: dict[str, float] = {}
 
 
 def _parse_alpaca_time(value: str | None) -> time | None:
@@ -42,6 +49,36 @@ def _parse_alpaca_time(value: str | None) -> time | None:
         except ValueError:
             continue
     return None
+
+
+def _calendar_provider_is_degraded(route_key: str, now_monotonic: float | None = None) -> bool:
+    now = now_monotonic if now_monotonic is not None else time_module.monotonic()
+    degraded_until = _CALENDAR_PROVIDER_DEGRADED_UNTIL.get(route_key, 0.0)
+    return now < degraded_until
+
+
+def _mark_calendar_provider_failure(
+    route_key: str,
+    error: Exception,
+    now_monotonic: float | None = None,
+) -> None:
+    now = now_monotonic if now_monotonic is not None else time_module.monotonic()
+    _CALENDAR_PROVIDER_DEGRADED_UNTIL[route_key] = now + _CALENDAR_PROVIDER_DEGRADE_WINDOW_SECONDS
+
+    last_log = _CALENDAR_PROVIDER_LAST_LOG_AT.get(route_key, 0.0)
+    if last_log <= 0 or (now - last_log) >= _CALENDAR_PROVIDER_DEGRADE_WINDOW_SECONDS:
+        _CALENDAR_PROVIDER_LAST_LOG_AT[route_key] = now
+        logger.warning(
+            "calendar_provider_fallback_degraded",
+            route=route_key,
+            cooldown_seconds=_CALENDAR_PROVIDER_DEGRADE_WINDOW_SECONDS,
+            error=str(error),
+        )
+
+
+def _mark_calendar_provider_success(route_key: str) -> None:
+    _CALENDAR_PROVIDER_DEGRADED_UNTIL.pop(route_key, None)
+    _CALENDAR_PROVIDER_LAST_LOG_AT.pop(route_key, None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,7 +145,8 @@ async def get_market_hours(
     calendar = get_trading_calendar()
     provider = cast(SupportsAlpacaCalendar | None, registry.get("alpaca"))
 
-    if provider:
+    route_key = "market_hours"
+    if provider and not _calendar_provider_is_degraded(route_key):
         try:
             await require_provider_rate_limit("alpaca")
             entries = await asyncio.to_thread(provider.get_calendar, query_date, query_date)
@@ -134,6 +172,7 @@ async def get_market_hours(
                     is_holiday=False,
                     is_early_close=is_early,
                 )
+                _mark_calendar_provider_success(route_key)
                 return MarketHoursResponse(**hours.to_dict())
 
             # No trading day returned by provider
@@ -150,10 +189,11 @@ async def get_market_hours(
                 is_early_close=False,
                 holiday_name=None,
             )
+            _mark_calendar_provider_success(route_key)
             return MarketHoursResponse(**hours.to_dict())
-        except Exception:
-            # Fall back to static calendar
-            pass
+        except Exception as e:
+            # Fall back to static calendar and briefly suppress repeated upstream retries.
+            _mark_calendar_provider_failure(route_key, e)
 
     hours = calendar.get_market_hours(query_date)
     return MarketHoursResponse(**hours.to_dict())
@@ -199,7 +239,8 @@ async def get_trading_days(
     calendar = get_trading_calendar()
     provider = cast(SupportsAlpacaCalendar | None, registry.get("alpaca"))
 
-    if provider:
+    route_key = "trading_days"
+    if provider and not _calendar_provider_is_degraded(route_key):
         try:
             await require_provider_rate_limit("alpaca")
             entries = await asyncio.to_thread(provider.get_calendar, start_date, end_date)
@@ -237,13 +278,14 @@ async def get_trading_days(
                     holidays.append(Holiday(date=current, name="Market Holiday"))
                 current += timedelta(days=1)
 
+            _mark_calendar_provider_success(route_key)
             return TradingDaysResponse(
                 trading_days=[d.isoformat() for d in trading_days],
                 holidays=[h.to_dict() for h in holidays],
                 early_closes=[e.to_dict() for e in early_closes],
             )
-        except Exception:
-            pass
+        except Exception as e:
+            _mark_calendar_provider_failure(route_key, e)
 
     trading_days, holidays, early_closes = calendar.get_trading_days(start_date, end_date)
     return TradingDaysResponse(

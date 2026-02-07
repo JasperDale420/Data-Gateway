@@ -96,24 +96,23 @@ Evidence:
 Impact:
 - Removes per-session timeout exception churn from idle replay WebSocket control paths while preserving existing control semantics.
 
-### P1-4: Calendar route fallbacks swallow provider failures and immediately retry on each request
+### P1-4: Calendar route fallbacks swallow provider failures and immediately retry on each request (remediated 2026-02-07)
 
 Evidence:
-- Broad fallback exception handling:
-  - `gateway/api/calendar.py:154`
+- Calendar provider fallback now uses per-route degraded windows with cooldown:
+  - `gateway/api/calendar.py:36`
+  - `gateway/api/calendar.py:48`
+  - `gateway/api/calendar.py:76`
+- Market-hours/trading-days provider paths now gate retries with degraded-state checks:
+  - `gateway/api/calendar.py:151`
   - `gateway/api/calendar.py:245`
-- Provider call path uses sync SDK offloaded with `to_thread`:
-  - `gateway/api/calendar.py:114`
-  - `gateway/api/calendar.py:205`
+- Regression coverage validates degraded-window behavior and retry after cooldown expiry:
+  - `tests/test_calendar_api.py:35`
+  - `tests/test_calendar_api.py:48`
+  - `tests/test_calendar_api.py:79`
 
 Impact:
-- Repeated upstream failure periods can keep paying provider call latency every request.
-- Hidden failure mode reduces observability of degraded performance.
-
-Low-risk fix path:
-1. Add short-lived degraded-mode/circuit flag after repeated provider failures.
-2. Log fallback reason once per interval.
-3. Keep static calendar fallback output unchanged.
+- Reduces repeated upstream retry latency during provider outages while preserving static-calendar fallback responses and adding bounded degradation logging.
 
 ### P1-5: News route parses datetime parameters before cache-hit short-circuit (remediated 2026-02-07)
 
@@ -188,7 +187,7 @@ Impact:
 ### Wave NPR-2
 
 1. Replace replay exception-driven timeout loop with dedicated control-receive task (completed 2026-02-07).
-2. Add calendar fallback degradation cache/window on provider failure.
+2. Add calendar fallback degradation cache/window on provider failure (completed 2026-02-07).
 3. Add optional pagination to bulk/replay list endpoints (completed 2026-02-07).
 
 ### Wave NPR-3
@@ -204,7 +203,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | File | Endpoints | Audit Status | Future Run Focus |
 |---|---:|---|---|
 | `gateway/api/bulk.py` | 7 | COMPLETE | Optional startup-only fetcher wiring and list ordering/retention policy |
-| `gateway/api/calendar.py` | 5 | COMPLETE | Failure fallback throttling and provider call guardrails |
+| `gateway/api/calendar.py` | 5 | COMPLETE | Provider call guardrails and fallback telemetry tuning |
 | `gateway/api/corporate.py` | 5 | COMPLETE | Route-level dedupe/caching policy review |
 | `gateway/api/news.py` | 3 | COMPLETE | Cache-hit-first parsing path, cache key normalization |
 | `gateway/api/quality.py` | 3 | COMPLETE | Real analyzer integration path and payload size controls |

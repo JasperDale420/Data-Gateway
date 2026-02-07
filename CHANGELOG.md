@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.74] - 2026-02-07
+
+### Added
+
+- **Calendar fallback throttle tests**: Added `tests/test_calendar_api.py` to validate calendar provider degraded-window behavior, skip-on-degraded retries, and retry behavior once degraded state is cleared.
+
+### Changed
+
+- **Calendar fallback degradation window**: Updated `gateway/api/calendar.py` to add short-lived per-route degraded-mode guards for market-hours/trading-days provider calls after upstream failures.
+- **Calendar fallback observability**: Added bounded warning logging for degraded fallback entry (`calendar_provider_fallback_degraded`) to reduce noisy repeated error logs during outage windows.
+- **Non-provider audit tracking updates**: Updated `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` to mark calendar fallback degradation/throttling remediated.
+- **Top-level audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` non-provider follow-up notes to reflect calendar fallback throttling completion.
+
 ## [0.5.73] - 2026-02-07
 
 ### Added
