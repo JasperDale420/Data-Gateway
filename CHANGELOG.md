@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.61] - 2026-02-07
+
+### Added
+
+- **Auth log-level regression test**: Expanded `tests/test_auth.py` with coverage that successful authentication uses debug-level logging and avoids info-level hot-path log emission.
+
+### Changed
+
+- **Auth success log-volume reduction**: Updated `gateway/core/auth.py` to emit `auth_success` at debug level instead of info while preserving failure-path warning logs.
+- **Core-infra audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` to mark auth success log-volume remediation complete.
+
 ## [0.5.60] - 2026-02-07
 
 ### Added

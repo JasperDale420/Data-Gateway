@@ -137,17 +137,17 @@ Low-risk fix path:
 1. Sleep based on computed `retry_after` (bounded by `max_wait`) instead of generic exponential stepping.
 2. Preserve existing API and exceptions.
 
-### P2-6: Auth success logs at info level on every authenticated request
+### P2-6: Auth success log-volume on hot path (remediated 2026-02-07)
 
 Evidence:
-- `gateway/core/auth.py:123`
+- `gateway/core/auth.py` now logs auth success at debug level.
 
 Impact:
 - High request rates produce heavy structured logging overhead.
 
-Low-risk fix path:
-1. Demote to debug or sampled info logging.
-2. Preserve warning/error logs for failed auth paths.
+Remediation:
+1. Demoted auth success logging from `info` to `debug`.
+2. Preserved warning/error logs for failed auth paths.
 
 ### P2-7: Metrics path normalization repeats heuristic parsing on every request
 
@@ -194,7 +194,7 @@ Wave status (2026-02-06):
 
 1. Add lock striping/per-key optimization to request deduplicator.
 2. Add LRU memoization for metrics path normalization.
-3. Reduce auth success log volume (`info` -> `debug`/sampled).
+3. Reduce auth success log volume (`info` -> `debug`/sampled) (completed 2026-02-07).
 
 ### Wave CORE-INFRA-3
 

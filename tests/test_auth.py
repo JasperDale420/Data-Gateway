@@ -1,5 +1,7 @@
 """Tests for authentication."""
 
+import gateway.core.auth as auth_module
+
 
 def test_authenticate_valid_key(test_authenticator, test_api_key):
     """Valid key returns client."""
@@ -57,3 +59,30 @@ def test_hash_key():
     assert hash1 != hash3
     assert hash1.startswith("sha256:")
     assert len(hash1) == 71  # "sha256:" (7) + 64 hex chars
+
+
+def test_authenticate_valid_key_logs_debug_not_info(test_authenticator, test_api_key, monkeypatch):
+    """Successful auth should use debug-level logging to reduce hot-path log volume."""
+
+    class _FakeLogger:
+        def __init__(self) -> None:
+            self.info_calls = 0
+            self.debug_calls = 0
+
+        def info(self, *_args, **_kwargs) -> None:
+            self.info_calls += 1
+
+        def debug(self, *_args, **_kwargs) -> None:
+            self.debug_calls += 1
+
+        def warning(self, *_args, **_kwargs) -> None:
+            return None
+
+    fake_logger = _FakeLogger()
+    monkeypatch.setattr(auth_module, "logger", fake_logger)
+
+    client = test_authenticator.authenticate(test_api_key)
+
+    assert client is not None
+    assert fake_logger.debug_calls == 1
+    assert fake_logger.info_calls == 0

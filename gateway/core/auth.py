@@ -120,7 +120,7 @@ class ClientAuthenticator:
             logger.warning("auth_failed_client_disabled", client_id=client_id)
             return None
 
-        logger.info("auth_success", client_id=client_id)
+        logger.debug("auth_success", client_id=client_id)
         return client
 
     def get_client(self, client_id: str) -> Client | None:
