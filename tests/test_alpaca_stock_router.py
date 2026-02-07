@@ -62,15 +62,17 @@ async def test_get_stock_trades_threads_limit_to_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = _FakeProvider()
-    registry = _FakeRegistry({"alpaca": provider})
+    route_registry = _FakeRegistry({"alpaca": provider})
     start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     end = datetime(2026, 1, 1, 13, 0, tzinfo=UTC)
 
-    async def _fake_rate_limit(provider_name: str, block: bool = True) -> None:
-        assert provider_name == "alpaca"
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool):
+        assert registry is cast(ProviderRegistry, route_registry)
         assert block is True
+        provider_obj = registry.get("alpaca")
+        return await provider_call(provider_obj)
 
-    monkeypatch.setattr(stock, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(stock, "execute_alpaca_provider_call", _execute_alpaca_call)
 
     response = await stock.get_stock_trades(
         symbol="aapl",
@@ -78,7 +80,7 @@ async def test_get_stock_trades_threads_limit_to_provider(
         end=end,
         limit=5,
         client=cast(Any, SimpleNamespace(id="test-client")),
-        registry=cast(ProviderRegistry, registry),
+        registry=cast(ProviderRegistry, route_registry),
     )
 
     assert len(provider.calls) == 1
@@ -93,18 +95,20 @@ async def test_get_stock_snapshot_fetches_quotes_and_bars_concurrently(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = _SnapshotProvider()
-    registry = _FakeRegistry({"alpaca": provider})
+    route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _fake_rate_limit(provider_name: str, block: bool = True) -> None:
-        assert provider_name == "alpaca"
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool):
+        assert registry is cast(ProviderRegistry, route_registry)
         assert block is True
+        provider_obj = registry.get("alpaca")
+        return await provider_call(provider_obj)
 
-    monkeypatch.setattr(stock, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(stock, "execute_alpaca_provider_call", _execute_alpaca_call)
 
     response = await stock.get_stock_snapshot(
         symbol="aapl",
         client=cast(Any, SimpleNamespace(id="test-client")),
-        registry=cast(ProviderRegistry, registry),
+        registry=cast(ProviderRegistry, route_registry),
     )
 
     assert response["success"] is True

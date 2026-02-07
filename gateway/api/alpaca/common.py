@@ -1,5 +1,8 @@
 """Common dependencies and constants for Alpaca API endpoints."""
 
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
+
 from fastapi import Depends, HTTPException
 
 from gateway.api.deps import get_registry, require_api_key, require_provider_rate_limit
@@ -15,6 +18,7 @@ DESC_COMMA_SYMBOLS = "Comma-separated symbols"
 
 # Error message constants
 ERR_PROVIDER_NOT_AVAILABLE = "Alpaca provider not available"
+T = TypeVar("T")
 
 
 def parse_comma_values(
@@ -41,6 +45,26 @@ async def get_alpaca_provider(
     return provider
 
 
+async def execute_alpaca_provider_call(
+    *,
+    registry: ProviderRegistry,
+    provider_call: Callable[[Any], Awaitable[T]],
+    block: bool = False,
+) -> T:
+    """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling."""
+    provider = registry.get("alpaca")
+    if not provider:
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
+
+    try:
+        await require_provider_rate_limit("alpaca", block=block)
+        return await provider_call(provider)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}") from e
+
+
 __all__ = [
     "DESC_BAR_TIMEFRAME",
     "DESC_START_TIME",
@@ -50,6 +74,7 @@ __all__ = [
     "ERR_PROVIDER_NOT_AVAILABLE",
     "parse_comma_values",
     "get_alpaca_provider",
+    "execute_alpaca_provider_call",
     "require_api_key",
     "require_provider_rate_limit",
     "Client",

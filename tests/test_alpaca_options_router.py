@@ -40,17 +40,22 @@ async def test_option_chain_snapshot_threads_limit_to_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = _FakeProvider()
-    registry = _FakeRegistry({"alpaca": provider})
+    route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _fake_rate_limit(provider_name: str) -> None:
-        assert provider_name == "alpaca"
+    async def _execute_alpaca_call(
+        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
+    ):
+        assert registry is cast(ProviderRegistry, route_registry)
+        assert block is False
+        provider_obj = registry.get("alpaca")
+        return await provider_call(provider_obj)
 
-    monkeypatch.setattr(options, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(options, "execute_alpaca_provider_call", _execute_alpaca_call)
 
     response = await options.get_option_chain_snapshot(
         underlying="aapl",
         client=cast(Any, SimpleNamespace(id="test-client")),
-        registry=cast(ProviderRegistry, registry),
+        registry=cast(ProviderRegistry, route_registry),
     )
 
     assert len(provider.calls) == 1

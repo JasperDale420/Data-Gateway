@@ -11,12 +11,11 @@ from gateway.api.alpaca.common import (
     DESC_END_TIME,
     DESC_MAX_BARS,
     DESC_START_TIME,
-    ERR_PROVIDER_NOT_AVAILABLE,
     Client,
+    execute_alpaca_provider_call,
     get_registry,
     parse_comma_values,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
@@ -36,44 +35,38 @@ async def get_stock_bars(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical bars for a stock."""
-    provider = registry.get("alpaca")
-
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
     # Default time range: last 24 hours
     if not end:
         end = datetime.now(UTC)
     if not start:
         start = end - timedelta(hours=24)
 
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        bars = await provider.get_bars(
+    bars = await execute_alpaca_provider_call(
+        registry=registry,
+        block=True,
+        provider_call=lambda provider: provider.get_bars(
             symbols=[symbol.upper()],
             timeframe=timeframe,
             start=start,
             end=end,
             limit=limit,
             feed=feed,
-        )
+        ),
+    )
 
-        return {
-            "success": True,
-            "data": {
-                "symbol": symbol.upper(),
-                "timeframe": timeframe,
-                "bars": [bar.model_dump(mode="json") for bar in bars],
-            },
-            "meta": {
-                "count": len(bars),
-                "provider": "alpaca",
-                "feed": feed,
-            },
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    return {
+        "success": True,
+        "data": {
+            "symbol": symbol.upper(),
+            "timeframe": timeframe,
+            "bars": [bar.model_dump(mode="json") for bar in bars],
+        },
+        "meta": {
+            "count": len(bars),
+            "provider": "alpaca",
+            "feed": feed,
+        },
+    }
 
 
 @router.get("/stocks/{symbol}/quotes", response_model=SuccessResponse)
@@ -83,28 +76,19 @@ async def get_stock_quotes(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest quote for a stock."""
-    provider = registry.get("alpaca")
+    quotes = await execute_alpaca_provider_call(
+        registry=registry,
+        block=True,
+        provider_call=lambda provider: provider.get_quotes(symbols=[symbol.upper()]),
+    )
+    if not quotes:
+        raise HTTPException(status_code=404, detail=f"No quote found for {symbol}")
 
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        quotes = await provider.get_quotes(symbols=[symbol.upper()])
-
-        if not quotes:
-            raise HTTPException(status_code=404, detail=f"No quote found for {symbol}")
-
-        return {
-            "success": True,
-            "data": quotes[0].model_dump(mode="json"),
-            "meta": {"provider": "alpaca"},
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    return {
+        "success": True,
+        "data": quotes[0].model_dump(mode="json"),
+        "meta": {"provider": "alpaca"},
+    }
 
 
 @router.get("/stocks/{symbol}/trades", response_model=SuccessResponse)
@@ -117,39 +101,33 @@ async def get_stock_trades(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical trades for a stock."""
-    provider = registry.get("alpaca")
-
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
     if not end:
         end = datetime.now(UTC)
     if not start:
         start = end - timedelta(hours=1)
 
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        trades = await provider.get_trades(
+    trades = await execute_alpaca_provider_call(
+        registry=registry,
+        block=True,
+        provider_call=lambda provider: provider.get_trades(
             symbols=[symbol.upper()],
             start=start,
             end=end,
             limit=limit,
-        )
+        ),
+    )
 
-        return {
-            "success": True,
-            "data": {
-                "symbol": symbol.upper(),
-                "trades": [t.model_dump(mode="json") for t in trades],
-            },
-            "meta": {
-                "count": len(trades),
-                "provider": "alpaca",
-            },
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    return {
+        "success": True,
+        "data": {
+            "symbol": symbol.upper(),
+            "trades": [t.model_dump(mode="json") for t in trades],
+        },
+        "meta": {
+            "count": len(trades),
+            "provider": "alpaca",
+        },
+    }
 
 
 @router.get("/stocks/{symbol}/snapshot", response_model=SuccessResponse)
@@ -159,16 +137,11 @@ async def get_stock_snapshot(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get current snapshot for a stock (latest bar + quote)."""
-    provider = registry.get("alpaca")
 
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
+    async def _fetch_snapshot(provider):
         end = datetime.now(UTC)
         start = end - timedelta(minutes=5)
-        quotes, bars = await asyncio.gather(
+        return await asyncio.gather(
             provider.get_quotes(symbols=[symbol.upper()]),
             provider.get_bars(
                 symbols=[symbol.upper()],
@@ -179,18 +152,20 @@ async def get_stock_snapshot(
             ),
         )
 
-        return {
-            "success": True,
-            "data": {
-                "symbol": symbol.upper(),
-                "quote": quotes[0].model_dump(mode="json") if quotes else None,
-                "latest_bar": bars[0].model_dump(mode="json") if bars else None,
-            },
-            "meta": {"provider": "alpaca"},
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    quotes, bars = await execute_alpaca_provider_call(
+        registry=registry,
+        block=True,
+        provider_call=_fetch_snapshot,
+    )
+    return {
+        "success": True,
+        "data": {
+            "symbol": symbol.upper(),
+            "quote": quotes[0].model_dump(mode="json") if quotes else None,
+            "latest_bar": bars[0].model_dump(mode="json") if bars else None,
+        },
+        "meta": {"provider": "alpaca"},
+    }
 
 
 @router.get("/stocks/bars/latest", response_model=SuccessResponse)
@@ -200,21 +175,17 @@ async def get_latest_bars(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest bar for each symbol."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = parse_comma_values(symbols, uppercase=True)
-        bars = await provider.get_latest_bars(symbols_list)
-        return {
-            "success": True,
-            "data": [b.model_dump(mode="json") for b in bars],
-            "meta": {"count": len(bars), "provider": "alpaca"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    symbols_list = parse_comma_values(symbols, uppercase=True)
+    bars = await execute_alpaca_provider_call(
+        registry=registry,
+        block=True,
+        provider_call=lambda provider: provider.get_latest_bars(symbols_list),
+    )
+    return {
+        "success": True,
+        "data": [b.model_dump(mode="json") for b in bars],
+        "meta": {"count": len(bars), "provider": "alpaca"},
+    }
 
 
 @router.get("/stocks/trades/latest", response_model=SuccessResponse)
@@ -224,21 +195,17 @@ async def get_latest_trades(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest trade for each symbol."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = parse_comma_values(symbols, uppercase=True)
-        trades = await provider.get_latest_trades(symbols_list)
-        return {
-            "success": True,
-            "data": [t.model_dump(mode="json") for t in trades],
-            "meta": {"count": len(trades), "provider": "alpaca"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    symbols_list = parse_comma_values(symbols, uppercase=True)
+    trades = await execute_alpaca_provider_call(
+        registry=registry,
+        block=True,
+        provider_call=lambda provider: provider.get_latest_trades(symbols_list),
+    )
+    return {
+        "success": True,
+        "data": [t.model_dump(mode="json") for t in trades],
+        "meta": {"count": len(trades), "provider": "alpaca"},
+    }
 
 
 @router.get("/stocks/quotes", response_model=SuccessResponse)
@@ -251,21 +218,19 @@ async def get_historical_quotes(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical quotes for symbols."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = parse_comma_values(symbols, uppercase=True)
-        quotes = await provider.get_historical_quotes(symbols_list, start, end, limit)
-        return {
-            "success": True,
-            "data": [q.model_dump(mode="json") for q in quotes],
-            "meta": {"count": len(quotes), "provider": "alpaca"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    symbols_list = parse_comma_values(symbols, uppercase=True)
+    quotes = await execute_alpaca_provider_call(
+        registry=registry,
+        block=True,
+        provider_call=lambda provider: provider.get_historical_quotes(
+            symbols_list, start, end, limit
+        ),
+    )
+    return {
+        "success": True,
+        "data": [q.model_dump(mode="json") for q in quotes],
+        "meta": {"count": len(quotes), "provider": "alpaca"},
+    }
 
 
 @router.get("/stocks/snapshots", response_model=SuccessResponse)
@@ -275,21 +240,17 @@ async def get_snapshots(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get current snapshots for symbols."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = parse_comma_values(symbols, uppercase=True)
-        snapshots = await provider.get_snapshots(symbols_list)
-        return {
-            "success": True,
-            "data": snapshots,
-            "meta": {"count": len(snapshots), "provider": "alpaca"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    symbols_list = parse_comma_values(symbols, uppercase=True)
+    snapshots = await execute_alpaca_provider_call(
+        registry=registry,
+        block=True,
+        provider_call=lambda provider: provider.get_snapshots(symbols_list),
+    )
+    return {
+        "success": True,
+        "data": snapshots,
+        "meta": {"count": len(snapshots), "provider": "alpaca"},
+    }
 
 
 @router.get("/stocks/auctions", response_model=SuccessResponse)
@@ -302,18 +263,14 @@ async def get_auctions(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get auction data for symbols."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = parse_comma_values(symbols, uppercase=True)
-        auctions = await provider.get_auctions(symbols_list, start, end, limit)
-        return {
-            "success": True,
-            "data": auctions,
-            "meta": {"count": len(auctions), "provider": "alpaca"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    symbols_list = parse_comma_values(symbols, uppercase=True)
+    auctions = await execute_alpaca_provider_call(
+        registry=registry,
+        block=True,
+        provider_call=lambda provider: provider.get_auctions(symbols_list, start, end, limit),
+    )
+    return {
+        "success": True,
+        "data": auctions,
+        "meta": {"count": len(auctions), "provider": "alpaca"},
+    }

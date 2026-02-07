@@ -10,12 +10,11 @@ from gateway.api.alpaca.common import (
     DESC_END_TIME,
     DESC_MAX_BARS,
     DESC_START_TIME,
-    ERR_PROVIDER_NOT_AVAILABLE,
     Client,
+    execute_alpaca_provider_call,
     get_registry,
     parse_comma_values,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
@@ -36,14 +35,9 @@ async def get_option_chain(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get full option chain with greeks for an underlying."""
-    provider = registry.get("alpaca")
-
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca")
-        contracts = await provider.get_option_chain(
+    contracts = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_chain(
             underlying=underlying.upper(),
             expiration_date=expiration_date,
             expiration_gte=expiration_date_gte,
@@ -51,22 +45,20 @@ async def get_option_chain(
             strike_gte=strike_price_gte,
             strike_lte=strike_price_lte,
             option_type=option_type,
-        )
+        ),
+    )
 
-        return {
-            "success": True,
-            "data": {
-                "underlying": underlying.upper(),
-                "contracts": [c.model_dump(mode="json") for c in contracts],
-            },
-            "meta": {
-                "count": len(contracts),
-                "provider": "alpaca",
-            },
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    return {
+        "success": True,
+        "data": {
+            "underlying": underlying.upper(),
+            "contracts": [c.model_dump(mode="json") for c in contracts],
+        },
+        "meta": {
+            "count": len(contracts),
+            "provider": "alpaca",
+        },
+    }
 
 
 @router.get("/options/chain/{underlying}/snapshot", response_model=SuccessResponse)
@@ -76,36 +68,28 @@ async def get_option_chain_snapshot(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get current option chain snapshot for an underlying."""
-    provider = registry.get("alpaca")
-
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca")
-        # Get near-term expirations only for snapshot
-        today = date_type.today()
-        contracts = await provider.get_option_chain(
+    today = date_type.today()
+    contracts = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_chain(
             underlying=underlying.upper(),
             expiration_gte=today.isoformat(),
             limit=100,
-        )
+        ),
+    )
 
-        return {
-            "success": True,
-            "data": {
-                "underlying": underlying.upper(),
-                "contracts": [c.model_dump(mode="json") for c in contracts],
-            },
-            "meta": {
-                "count": len(contracts),
-                "total_available": len(contracts),
-                "provider": "alpaca",
-            },
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    return {
+        "success": True,
+        "data": {
+            "underlying": underlying.upper(),
+            "contracts": [c.model_dump(mode="json") for c in contracts],
+        },
+        "meta": {
+            "count": len(contracts),
+            "total_available": len(contracts),
+            "provider": "alpaca",
+        },
+    }
 
 
 @router.get("/options/{contract}/bars", response_model=SuccessResponse)
@@ -119,41 +103,34 @@ async def get_option_bars(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical bars for an option contract."""
-    provider = registry.get("alpaca")
-
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
     if not end:
         end = datetime.now(UTC)
     if not start:
         start = end - timedelta(days=30)
 
-    try:
-        await require_provider_rate_limit("alpaca")
-        bars = await provider.get_option_bars(
+    bars = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_bars(
             contracts=[contract.upper()],
             timeframe=timeframe,
             start=start,
             end=end,
             limit=limit,
-        )
+        ),
+    )
 
-        return {
-            "success": True,
-            "data": {
-                "contract": contract.upper(),
-                "timeframe": timeframe,
-                "bars": [bar.model_dump(mode="json") for bar in bars],
-            },
-            "meta": {
-                "count": len(bars),
-                "provider": "alpaca",
-            },
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    return {
+        "success": True,
+        "data": {
+            "contract": contract.upper(),
+            "timeframe": timeframe,
+            "bars": [bar.model_dump(mode="json") for bar in bars],
+        },
+        "meta": {
+            "count": len(bars),
+            "provider": "alpaca",
+        },
+    }
 
 
 @router.get("/options/{contract}/quotes", response_model=SuccessResponse)
@@ -163,28 +140,18 @@ async def get_option_quotes(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest quote for an option contract."""
-    provider = registry.get("alpaca")
+    quotes = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_quotes(contracts=[contract.upper()]),
+    )
+    if not quotes:
+        raise HTTPException(status_code=404, detail=f"No quote found for {contract}")
 
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca")
-        quotes = await provider.get_option_quotes(contracts=[contract.upper()])
-
-        if not quotes:
-            raise HTTPException(status_code=404, detail=f"No quote found for {contract}")
-
-        return {
-            "success": True,
-            "data": quotes[0].model_dump(mode="json"),
-            "meta": {"provider": "alpaca"},
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    return {
+        "success": True,
+        "data": quotes[0].model_dump(mode="json"),
+        "meta": {"provider": "alpaca"},
+    }
 
 
 @router.get("/options/trades", response_model=SuccessResponse)
@@ -197,21 +164,18 @@ async def get_options_trades(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical trades for option contracts."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca")
-        contracts_list = parse_comma_values(contracts, uppercase=True)
-        trades = await provider.get_option_trades(contracts_list, start, end, limit)
-        return {
-            "success": True,
-            "data": [t.model_dump(mode="json") for t in trades],
-            "meta": {"count": len(trades), "provider": "alpaca"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    contracts_list = parse_comma_values(contracts, uppercase=True)
+    trades = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_trades(
+            contracts_list, start, end, limit
+        ),
+    )
+    return {
+        "success": True,
+        "data": [t.model_dump(mode="json") for t in trades],
+        "meta": {"count": len(trades), "provider": "alpaca"},
+    }
 
 
 @router.get("/options/trades/latest", response_model=SuccessResponse)
@@ -221,21 +185,16 @@ async def get_options_latest_trades(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest trades for option contracts."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca")
-        contracts_list = parse_comma_values(contracts, uppercase=True)
-        trades = await provider.get_option_latest_trades(contracts_list)
-        return {
-            "success": True,
-            "data": [t.model_dump(mode="json") for t in trades],
-            "meta": {"count": len(trades), "provider": "alpaca"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    contracts_list = parse_comma_values(contracts, uppercase=True)
+    trades = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_latest_trades(contracts_list),
+    )
+    return {
+        "success": True,
+        "data": [t.model_dump(mode="json") for t in trades],
+        "meta": {"count": len(trades), "provider": "alpaca"},
+    }
 
 
 @router.get("/options/snapshots/{underlying}", response_model=SuccessResponse)
@@ -245,21 +204,16 @@ async def get_options_snapshots(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get snapshots for all options on an underlying."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca")
-        snapshots = await provider.get_option_snapshots(underlying)
-        return {
-            "success": True,
-            "data": snapshots,
-            "meta": {
-                "count": len(snapshots),
-                "underlying": underlying.upper(),
-                "provider": "alpaca",
-            },
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    snapshots = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_snapshots(underlying),
+    )
+    return {
+        "success": True,
+        "data": snapshots,
+        "meta": {
+            "count": len(snapshots),
+            "underlying": underlying.upper(),
+            "provider": "alpaca",
+        },
+    }

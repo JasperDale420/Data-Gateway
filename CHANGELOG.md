@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.93] - 2026-02-07
+
+### Added
+
+- **Alpaca execution-helper tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_common.py` with coverage for shared execution-helper success path, missing-provider handling, provider exception wrapping, and HTTPException passthrough.
+
+### Changed
+
+- **Shared Alpaca execution helper**: Added `execute_alpaca_provider_call(...)` in `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/common.py` to centralize provider lookup, provider rate limiting, and provider error wrapping for route handlers.
+- **Route-helper consolidation rollout**: Migrated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/stock.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/options.py` to the shared execution helper, reducing repeated provider/rate-limit/exception boilerplate while preserving response schemas.
+- **Route regression updates**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_stock_router.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_options_router.py` to validate helper-driven call paths and block-mode behavior.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark stock/options execution-helper rollout and refine remaining Alpaca router follow-ups.
+
 ## [0.5.92] - 2026-02-07
 
 ### Removed
