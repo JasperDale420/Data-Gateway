@@ -17,6 +17,20 @@ DESC_COMMA_SYMBOLS = "Comma-separated symbols"
 ERR_PROVIDER_NOT_AVAILABLE = "Alpaca provider not available"
 
 
+def parse_comma_values(
+    raw: str,
+    *,
+    uppercase: bool = False,
+    drop_empty: bool = False,
+) -> list[str]:
+    """Parse comma-separated values with whitespace trimming."""
+    values = [item.strip() for item in raw.split(",")]
+    if drop_empty:
+        values = [item for item in values if item]
+    parsed = [item.upper() if uppercase else item for item in values]
+    return parsed
+
+
 async def get_alpaca_provider(
     registry: ProviderRegistry = Depends(get_registry),
 ):
@@ -34,6 +48,7 @@ __all__ = [
     "DESC_MAX_BARS",
     "DESC_COMMA_SYMBOLS",
     "ERR_PROVIDER_NOT_AVAILABLE",
+    "parse_comma_values",
     "get_alpaca_provider",
     "require_api_key",
     "require_provider_rate_limit",

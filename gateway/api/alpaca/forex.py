@@ -8,6 +8,7 @@ from gateway.api.alpaca.common import (
     ERR_PROVIDER_NOT_AVAILABLE,
     Client,
     get_registry,
+    parse_comma_values,
     require_api_key,
     require_provider_rate_limit,
 )
@@ -31,7 +32,7 @@ async def get_forex_rates(
 
     try:
         await require_provider_rate_limit("alpaca")
-        pairs_list = [p.strip().upper() for p in pairs.split(",")]
+        pairs_list = parse_comma_values(pairs, uppercase=True)
         data = await provider.get_forex_rates(pairs=pairs_list)
 
         return {
@@ -62,7 +63,7 @@ async def get_forex_rates_historical(
 
     try:
         await require_provider_rate_limit("alpaca")
-        pairs_list = [p.strip().upper() for p in pairs.split(",")]
+        pairs_list = parse_comma_values(pairs, uppercase=True)
         data = await provider.get_forex_rates_historical(
             pairs=pairs_list,
             timeframe=timeframe,

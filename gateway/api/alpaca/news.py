@@ -10,6 +10,7 @@ from gateway.api.alpaca.common import (
     ERR_PROVIDER_NOT_AVAILABLE,
     Client,
     get_registry,
+    parse_comma_values,
     require_api_key,
     require_provider_rate_limit,
 )
@@ -39,7 +40,7 @@ async def get_news(
         await require_provider_rate_limit("alpaca")
         symbols_list = None
         if symbols:
-            symbols_list = [s.strip().upper() for s in symbols.split(",")]
+            symbols_list = parse_comma_values(symbols, uppercase=True)
 
         articles = await provider.get_news(
             symbols=symbols_list,

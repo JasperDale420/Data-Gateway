@@ -12,6 +12,7 @@ from gateway.api.alpaca.common import (
     ERR_PROVIDER_NOT_AVAILABLE,
     Client,
     get_registry,
+    parse_comma_values,
     require_api_key,
     require_provider_rate_limit,
 )
@@ -203,7 +204,7 @@ async def get_crypto_latest_bars(
 
     try:
         await require_provider_rate_limit("alpaca")
-        pairs_list = [p.strip().upper() for p in pairs.split(",")]
+        pairs_list = parse_comma_values(pairs, uppercase=True)
         data = await provider.get_crypto_latest_bars(pairs_list)
         return {
             "success": True,
@@ -227,7 +228,7 @@ async def get_crypto_latest_trades(
 
     try:
         await require_provider_rate_limit("alpaca")
-        pairs_list = [p.strip().upper() for p in pairs.split(",")]
+        pairs_list = parse_comma_values(pairs, uppercase=True)
         data = await provider.get_crypto_latest_trades(pairs_list)
         return {
             "success": True,

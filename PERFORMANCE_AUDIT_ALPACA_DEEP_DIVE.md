@@ -147,7 +147,7 @@ Low-risk fix path:
 1. Use `asyncio.gather` for independent quote/bar requests (completed 2026-02-07).
 2. Keep same response shape and error handling.
 
-### P2-6: Repeated comma-list parsing/normalization logic is scattered
+### P2-6: Repeated comma-list parsing/normalization logic is scattered (partially remediated 2026-02-07)
 
 Evidence:
 - `split(",")` parsing appears `18` times across route files.
@@ -159,8 +159,9 @@ Impact:
 - Small per-request overhead and inconsistent normalization paths.
 
 Low-risk fix path:
-1. Add shared parser helper for delimited lists in `gateway/api/alpaca/common.py`.
-2. Parameterize trimming/uppercasing so behavior stays explicit.
+1. Add shared parser helper for delimited lists in `gateway/api/alpaca/common.py` (completed 2026-02-07).
+2. Parameterize trimming/uppercasing so behavior stays explicit (completed 2026-02-07).
+3. Continue migrating remaining lower-traffic routes to the shared helper.
 
 ### P2-7: Static-ish metadata/logo endpoints can benefit from cache headers and short TTL route caching
 
@@ -184,7 +185,7 @@ Low-risk fix path:
 ### Wave ALP-1 (Immediate, lowest risk)
 
 1. Introduce shared Alpaca route helper for provider lookup, rate-limit, and standardized exception handling.
-2. Add reusable comma-list parser helper and migrate high-traffic files (`stock.py`, `options.py`, `crypto.py`).
+2. Add reusable comma-list parser helper and migrate high-traffic files (`stock.py`, `options.py`, `crypto.py`) (completed 2026-02-07; also applied to `forex.py` and `news.py`).
 3. Add route cache + in-flight dedupe for selected GET endpoints (market data + metadata only).
 
 ### Wave ALP-2
@@ -206,12 +207,12 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | File | Endpoints | Audit Status | Future Run Focus |
 |---|---:|---|---|
 | `gateway/api/alpaca/__init__.py` | 0 | COMPLETE | Router composition only |
-| `gateway/api/alpaca/common.py` | 0 | COMPLETE | Add shared route execution + list parsing + cache/dedupe helpers |
+| `gateway/api/alpaca/common.py` | 0 | COMPLETE | Shared list parser helper is now implemented; remaining focus is shared route execution + cache/dedupe helpers |
 | `gateway/api/alpaca/stock.py` | 9 | COMPLETE | Over-fetch removal and snapshot concurrency are complete; remaining focus is cache/dedupe |
-| `gateway/api/alpaca/options.py` | 7 | COMPLETE | Chain snapshot over-fetch reduction complete; helper consolidation remains |
-| `gateway/api/alpaca/crypto.py` | 7 | COMPLETE | Cache policy + parser consolidation |
-| `gateway/api/alpaca/forex.py` | 2 | COMPLETE | Cache policy + parser consolidation |
-| `gateway/api/alpaca/news.py` | 1 | COMPLETE | Cache policy + helper consolidation |
+| `gateway/api/alpaca/options.py` | 7 | COMPLETE | Chain snapshot over-fetch reduction and list-parser consolidation are complete; helper consolidation remains |
+| `gateway/api/alpaca/crypto.py` | 7 | COMPLETE | List-parser consolidation is complete; remaining focus is cache policy |
+| `gateway/api/alpaca/forex.py` | 2 | COMPLETE | List-parser consolidation is complete; remaining focus is cache policy |
+| `gateway/api/alpaca/news.py` | 1 | COMPLETE | List-parser consolidation is complete; remaining focus is cache policy + helper consolidation |
 | `gateway/api/alpaca/screener.py` | 2 | COMPLETE | Cache policy + helper consolidation |
 | `gateway/api/alpaca/corporate.py` | 1 | COMPLETE | Helper consolidation |
 | `gateway/api/alpaca/metadata.py` | 4 | COMPLETE | Metadata/logo caching strategy |

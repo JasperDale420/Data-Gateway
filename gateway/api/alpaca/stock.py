@@ -14,6 +14,7 @@ from gateway.api.alpaca.common import (
     ERR_PROVIDER_NOT_AVAILABLE,
     Client,
     get_registry,
+    parse_comma_values,
     require_api_key,
     require_provider_rate_limit,
 )
@@ -205,7 +206,7 @@ async def get_latest_bars(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        symbols_list = parse_comma_values(symbols, uppercase=True)
         bars = await provider.get_latest_bars(symbols_list)
         return {
             "success": True,
@@ -229,7 +230,7 @@ async def get_latest_trades(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        symbols_list = parse_comma_values(symbols, uppercase=True)
         trades = await provider.get_latest_trades(symbols_list)
         return {
             "success": True,
@@ -256,7 +257,7 @@ async def get_historical_quotes(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        symbols_list = parse_comma_values(symbols, uppercase=True)
         quotes = await provider.get_historical_quotes(symbols_list, start, end, limit)
         return {
             "success": True,
@@ -280,7 +281,7 @@ async def get_snapshots(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        symbols_list = parse_comma_values(symbols, uppercase=True)
         snapshots = await provider.get_snapshots(symbols_list)
         return {
             "success": True,
@@ -307,7 +308,7 @@ async def get_auctions(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        symbols_list = parse_comma_values(symbols, uppercase=True)
         auctions = await provider.get_auctions(symbols_list, start, end, limit)
         return {
             "success": True,

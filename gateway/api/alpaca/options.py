@@ -13,6 +13,7 @@ from gateway.api.alpaca.common import (
     ERR_PROVIDER_NOT_AVAILABLE,
     Client,
     get_registry,
+    parse_comma_values,
     require_api_key,
     require_provider_rate_limit,
 )
@@ -202,7 +203,7 @@ async def get_options_trades(
 
     try:
         await require_provider_rate_limit("alpaca")
-        contracts_list = [c.strip().upper() for c in contracts.split(",")]
+        contracts_list = parse_comma_values(contracts, uppercase=True)
         trades = await provider.get_option_trades(contracts_list, start, end, limit)
         return {
             "success": True,
@@ -226,7 +227,7 @@ async def get_options_latest_trades(
 
     try:
         await require_provider_rate_limit("alpaca")
-        contracts_list = [c.strip().upper() for c in contracts.split(",")]
+        contracts_list = parse_comma_values(contracts, uppercase=True)
         trades = await provider.get_option_latest_trades(contracts_list)
         return {
             "success": True,

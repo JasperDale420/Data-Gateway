@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.91] - 2026-02-07
+
+### Added
+
+- **Alpaca shared parser tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_common.py` to validate shared comma-list parsing behavior (trim/uppercase, empty-entry preservation, optional empty-drop mode).
+
+### Changed
+
+- **Alpaca shared comma-list parser helper**: Added `parse_comma_values(...)` to `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/common.py` and migrated repeated parsing logic in `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/stock.py`, `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/options.py`, `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/crypto.py`, `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/forex.py`, and `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/news.py`.
+- **Alpaca route audit tracking updates**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` and `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark high-traffic list-parser consolidation complete and narrow remaining Alpaca route scope.
+
 ## [0.5.90] - 2026-02-07
 
 ### Added
