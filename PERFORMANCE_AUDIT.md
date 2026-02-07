@@ -92,13 +92,14 @@ The fastest, lowest-risk wins are:
 - Remaining low-risk follow-up:
   - Add optional paged backend storage for multi-process/distributed workers.
 
-7. Replay preload/sort overhead (partially remediated 2026-02-07).
+7. Replay preload/sort overhead (substantially remediated 2026-02-07).
 - Evidence:
   - `gateway/core/replay.py` now accepts async/sync iterable loader outputs and streams replay messages without requiring full list materialization.
   - List-backed loaders now sort only when timestamps are out of order.
+  - Large list-backed loader outputs now spool to temp JSONL when above configurable in-memory threshold (`replay_messages_max_in_memory`) and stream from disk with cleanup.
 - Impact: Reduces replay startup/memory pressure for streaming loaders and avoids unnecessary sort cost on already ordered list data.
 - Remaining low-risk follow-up:
-  - Add spill-to-disk or paged replay data source for very large historical windows where loader still returns full lists.
+  - Add optional paged/distributed replay backend for very large windows across multi-worker deployments.
 
 8. UW poller per-event sequential dedupe/publish path (remediated 2026-02-07).
 - Evidence:
@@ -184,7 +185,7 @@ The fastest, lowest-risk wins are:
 
 ### Wave 3
 
-1. Add streaming storage for bulk/replay outputs (bulk JSONL + JSON downloads, replay iterable ingestion, and bulk spill guardrails are complete; optional paged backend storage remains).
+1. Add streaming storage for bulk/replay outputs (bulk JSONL + JSON downloads, replay iterable ingestion + replay/bulk spill guardrails are complete; optional paged backend storage remains).
 2. Improve cache pruning strategy for custom TTL workloads (completed 2026-02-07).
 3. Add envelope fast-path serialization for websocket traffic (completed 2026-02-07).
 

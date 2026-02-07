@@ -102,6 +102,10 @@ class Settings(BaseSettings):
     # UW Poller
     uw_poller_publish_max_inflight: int = Field(default=16, ge=1)
 
+    # Replay
+    replay_messages_max_in_memory: int = Field(default=50_000, ge=100)
+    replay_messages_spool_to_disk: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

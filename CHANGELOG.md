@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.67] - 2026-02-07
+
+### Added
+
+- **Replay spool cleanup tests**: Expanded `tests/test_replay.py` with coverage for large list-message spooling and temp-file cleanup behavior.
+
+### Changed
+
+- **Replay large-list spool guardrail**: Updated `gateway/core/replay.py` list-loader iteration to spool oversized message lists to temp JSONL and stream replay messages back from disk.
+- **Replay spool settings surface**: Added `replay_messages_max_in_memory` and `replay_messages_spool_to_disk` in `gateway/config.py`.
+- **Replay file cleanup hardening**: Temp replay spool files are now removed after streaming iteration completion/failure.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark replay spill-to-disk follow-up substantially remediated.
+
 ## [0.5.66] - 2026-02-07
 
 ### Added

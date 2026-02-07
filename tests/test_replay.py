@@ -1,9 +1,11 @@
 """Tests for Historical Replay Mode."""
 
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+import gateway.core.replay as replay_module
 from gateway.core.replay import (
     ReplayConfig,
     ReplayMessage,
@@ -333,3 +335,48 @@ class TestReplaySessionManager:
         assert session.state == ReplayState.COMPLETED
         assert session.messages_sent == 2
         assert [msg["data"]["close"] for msg in sent] == [10, 11]
+
+    @pytest.mark.asyncio
+    async def test_iter_list_messages_spools_and_cleans_temp_file(self, manager, monkeypatch):
+        """Large list loaders should spool to disk and clean up temp files."""
+        manager._spool_lists_to_disk = True
+        manager._spool_list_threshold = 1
+
+        start = datetime(2024, 1, 15, 9, 30, tzinfo=UTC)
+        messages = [
+            ReplayMessage(
+                feed="stock_bars",
+                symbol="AAPL",
+                data={"close": 1},
+                market_timestamp=start,
+            ),
+            ReplayMessage(
+                feed="stock_bars",
+                symbol="AAPL",
+                data={"close": 2},
+                market_timestamp=start + timedelta(seconds=1),
+            ),
+            ReplayMessage(
+                feed="stock_bars",
+                symbol="AAPL",
+                data={"close": 3},
+                market_timestamp=start + timedelta(seconds=2),
+            ),
+        ]
+
+        removed_paths: list[str] = []
+        real_remove = os.remove
+
+        def _tracking_remove(path: str) -> None:
+            removed_paths.append(path)
+            real_remove(path)
+
+        monkeypatch.setattr(replay_module.os, "remove", _tracking_remove)
+
+        closes: list[int] = []
+        async for message in manager._iter_list_messages(messages):
+            closes.append(message.data["close"])
+
+        assert closes == [1, 2, 3]
+        assert messages == []
+        assert len(removed_paths) == 1
