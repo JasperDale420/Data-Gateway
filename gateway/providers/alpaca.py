@@ -467,6 +467,7 @@ class AlpacaProvider(DataProvider):
         strike_gte: float | None = None,
         strike_lte: float | None = None,
         option_type: str | None = None,
+        limit: int | None = None,
     ) -> list:
         """Get option chain with greeks for an underlying."""
         from gateway.schemas import NormalizedOptionContract
@@ -474,10 +475,11 @@ class AlpacaProvider(DataProvider):
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
+        request_limit = max(1, min(limit, 1000)) if limit is not None else 1000
         params: dict[str, Any] = {
             "underlying_symbols": underlying.upper(),
             "feed": "indicative",
-            "limit": 1000,
+            "limit": request_limit,
         }
 
         if expiration_date:

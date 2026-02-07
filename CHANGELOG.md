@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.88] - 2026-02-07
+
+### Added
+
+- **Alpaca option-chain regression tests**: Added `tests/test_alpaca_provider.py` and `tests/test_alpaca_options_router.py` to verify provider-level option-chain limit handling and snapshot-route limit threading behavior.
+
+### Changed
+
+- **Alpaca option-chain provider limit support**: Updated `gateway/providers/alpaca.py` `get_option_chain(...)` to accept optional bounded `limit` (`1..1000`, default `1000`) so snapshot-style callers can avoid full-chain over-fetch.
+- **Snapshot route over-fetch reduction**: Updated `gateway/api/alpaca/options.py` snapshot endpoint to request `limit=100` directly from provider and return the provider window without local full-chain slicing.
+- **Alpaca audit tracking updates**: Updated `PERFORMANCE_AUDIT.md`, `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md`, and `PERFORMANCE_AUDIT_ALPACA_PROVIDER_DEEP_DIVE.md` to mark option-chain limit threading as completed and narrow remaining Alpaca remediation scope.
+
 ## [0.5.87] - 2026-02-07
 
 ### Added

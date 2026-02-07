@@ -87,16 +87,17 @@ async def get_option_chain_snapshot(
         contracts = await provider.get_option_chain(
             underlying=underlying.upper(),
             expiration_gte=today.isoformat(),
+            limit=100,
         )
 
         return {
             "success": True,
             "data": {
                 "underlying": underlying.upper(),
-                "contracts": [c.model_dump(mode="json") for c in contracts[:100]],
+                "contracts": [c.model_dump(mode="json") for c in contracts],
             },
             "meta": {
-                "count": min(len(contracts), 100),
+                "count": len(contracts),
                 "total_available": len(contracts),
                 "provider": "alpaca",
             },

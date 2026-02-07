@@ -78,20 +78,22 @@ Low-risk fix path:
 2. Prefer SDK-native `model_dump(mode="json")` directly for top-level lists when available.
 3. Keep response schema and field names stable.
 
-### P1-3: Over-fetch tendency in option chain provider path
+### P1-3: Over-fetch tendency in option chain provider path (partially remediated 2026-02-07)
 
 Evidence:
-- Option chain request hard-codes `limit=1000`:
-  - `gateway/providers/alpaca.py:474`
-- Route snapshot callers may only consume first small subset (already observed in route audit).
+- `get_option_chain(...)` now accepts optional bounded `limit` (`1..1000`, default `1000`):
+  - `gateway/providers/alpaca.py`
+- Snapshot callers now thread focused limits (`limit=100`) instead of fetch-all then trim:
+  - `gateway/api/alpaca/options.py`
 
 Impact:
-- Extra network payload and normalization cost when consumers need only top-N contracts.
+- Snapshot-oriented chain calls now avoid unnecessary payload transfer and normalization work.
+- Additional over-fetch opportunities still remain in other Alpaca paths.
 
 Low-risk fix path:
-1. Add optional `limit` parameter to `get_option_chain(...)`.
+1. Add optional `limit` parameter to `get_option_chain(...)` (completed 2026-02-07).
 2. Default to current behavior for compatibility.
-3. Use lower limits from snapshot-focused callers.
+3. Use lower limits from snapshot-focused callers (completed 2026-02-07).
 
 ### P1-4: Repeated in-method imports and repeated request boilerplate
 
@@ -173,7 +175,7 @@ Low-risk fix path:
 ### Wave ALP-PROV-1 (Immediate, lowest risk)
 
 1. Replace ad-hoc blocking `httpx.post` in do-not-exercise with shared client path.
-2. Add optional `limit` parameter to `get_option_chain(...)` and thread through snapshot callers.
+2. Add optional `limit` parameter to `get_option_chain(...)` and thread through snapshot callers (completed 2026-02-07).
 3. Reduce high-volume success logs (`info` -> `debug` or sampled logs).
 
 ### Wave ALP-PROV-2
@@ -196,7 +198,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 | File | Methods | Audit Status | Future Run Focus |
 |---|---:|---|---|
-| `gateway/providers/alpaca.py` | 75 methods (36 async, 39 sync) | COMPLETE | Conversion-path optimization, request helper consolidation, logging/over-fetch tuning |
+| `gateway/providers/alpaca.py` | 75 methods (36 async, 39 sync) | COMPLETE | Conversion-path optimization, request helper consolidation, logging tuning, and remaining non-option-chain over-fetch paths |
 
 ## Remaining Audit Scope (Future Runs)
 
