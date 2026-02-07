@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.82] - 2026-02-07
+
+### Added
+
+- **Live provider smoke helper tests**: Added `tests/test_live_provider_smoke.py` with coverage for missing-provider behavior, health-check failure handling, and semaphore-based concurrency enforcement.
+
+### Changed
+
+- **Bounded provider smoke concurrency**: Updated `scripts/live_provider_smoke.py` to run provider smoke checks through bounded async concurrency (`SMOKE_MAX_CONCURRENCY`) instead of strict serial execution.
+- **Smoke check helper extraction**: Added `_run_provider_smoke_check(...)` in `scripts/live_provider_smoke.py` to centralize per-provider health/sample evaluation with fail-soft handling.
+- **Core-modules audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark `live_provider_smoke.py` concurrency remediation complete and narrow remaining script/core follow-ups.
+
 ## [0.5.81] - 2026-02-07
 
 ### Added

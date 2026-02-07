@@ -173,19 +173,26 @@ Low-risk fix path:
 2. Optionally dedupe symbols before validation where endpoint semantics allow.
 3. Keep error contracts unchanged.
 
-### P2-7: Runtime scripts are sequential where bounded concurrency is safe
+### P2-7: Runtime scripts are sequential where bounded concurrency is safe (partially remediated 2026-02-07)
 
 Evidence:
-- `live_provider_smoke.py` executes provider checks serially:
-  - `scripts/live_provider_smoke.py:101-124`
+- `live_provider_smoke.py` now executes provider checks with bounded async concurrency:
+  - `scripts/live_provider_smoke.py:25`
+  - `scripts/live_provider_smoke.py:84`
+  - `scripts/live_provider_smoke.py:145`
+- Regression coverage added for missing-provider handling, health-check failures, and semaphore enforcement:
+  - `tests/test_live_provider_smoke.py:11`
+  - `tests/test_live_provider_smoke.py:25`
+  - `tests/test_live_provider_smoke.py:44`
 - Route contract generator scans each file and searches for handlers after each route match:
   - `scripts/generate_provider_contract.py:47-55`
 
 Impact:
-- Slower operator feedback for smoke checks and contract generation.
+- Provider smoke checks no longer block on full serial provider sequencing, improving operator feedback time for multi-provider checks.
+- Contract generator still has repeated handler-search work.
 
 Low-risk fix path:
-1. Parallelize provider smoke checks with bounded `asyncio.gather` (small concurrency).
+1. Parallelize provider smoke checks with bounded `asyncio.gather` (small concurrency) (completed 2026-02-07).
 2. In contract generator, pre-index function boundaries once per file.
 3. Preserve outputs and exit-code behavior.
 
@@ -202,7 +209,7 @@ Low-risk fix path:
 
 1. Consolidate quality analyze + issue-detection into a single-pass option.
 2. Add calendar span guardrails and optional pre-allocation hints for trading-day range generation (span guardrails completed 2026-02-07).
-3. Add bounded concurrency for `scripts/live_provider_smoke.py` provider checks.
+3. Add bounded concurrency for `scripts/live_provider_smoke.py` provider checks (completed 2026-02-07).
 
 ### Wave CORE-3
 
@@ -222,11 +229,11 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/core/calendar.py` | COMPLETE | Optional pre-allocation hints and benchmark validation |
 | `gateway/core/symbology.py` | COMPLETE | Microbenchmark cache-hit effectiveness and tune cache-cap strategy if needed |
 | `gateway/core/validator.py` | COMPLETE | Stream-validation microbenchmarking and optional additional alias-path coverage |
-| `scripts/live_provider_smoke.py` | COMPLETE | Parallel provider checks |
+| `scripts/live_provider_smoke.py` | COMPLETE | Optional concurrency tuning and end-to-end latency benchmark |
 | `scripts/generate_provider_contract.py` | COMPLETE | Handler index precomputation |
 
 ## Remaining Audit Scope (Future Runs)
 
 1. Runtime benchmark/profiling suite execution for middleware, stream/replay fanout, bulk memory behavior, and provider/core microbenchmarks.
 2. Full performance audit of `tests/` execution paths (fixture setup cost, heavy integration tests, and benchmark gate strategy).
-3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (quality pass consolidation, script follow-ups, security symbol-batch follow-up, and calendar benchmark validation).
+3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (quality pass consolidation, contract-generator pre-index follow-up, security symbol-batch follow-up, and calendar benchmark validation).
