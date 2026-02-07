@@ -111,6 +111,58 @@ async def test_stream_fanout_respects_inflight_semaphore_bound() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_fanout_batching_bounds_task_burst_with_high_semaphore() -> None:
+    """Batching should bound callback concurrency even when semaphore is permissive."""
+    fanout_batch_size = 6
+    total_clients = 60
+    lock = asyncio.Lock()
+    in_flight = 0
+    peak_in_flight = 0
+    delivered = 0
+
+    async def on_data(client_id: str, data_type: str, envelope: dict[str, Any]) -> None:
+        nonlocal in_flight, peak_in_flight, delivered
+        assert client_id
+        assert data_type == "news"
+        assert "event_id" in envelope
+
+        async with lock:
+            in_flight += 1
+            peak_in_flight = max(peak_in_flight, in_flight)
+        await asyncio.sleep(0.002)
+        async with lock:
+            in_flight -= 1
+            delivered += 1
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=on_data,
+        lazy_connect=True,
+    )
+    multiplexer._fanout_semaphore = asyncio.Semaphore(total_clients)
+    multiplexer._fanout_client_batch_size = fanout_batch_size
+
+    conn = multiplexer._get_connection(AlpacaStreamType.NEWS)
+    assert conn is not None
+    for i in range(total_clients):
+        conn.subscriptions.subscribe(client_id=f"client-batch-{i}", news=["*"])
+
+    message = {
+        "T": "n",
+        "S": "AAPL",
+        "symbols": ["AAPL"],
+        "t": "2026-02-06T00:00:00Z",
+        "headline": "perf-news-batch",
+    }
+
+    await multiplexer._handle_message(AlpacaStreamType.NEWS, message)
+
+    assert delivered == total_clients
+    assert peak_in_flight <= fanout_batch_size
+
+
+@pytest.mark.asyncio
 async def test_sink_publish_backpressure_task_growth_profile() -> None:
     """Validate sink fire-and-forget backlog stays bounded under blocked sink I/O."""
     release_event = asyncio.Event()

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.49] - 2026-02-07
+
+### Added
+
+- **Stream fanout batching perf coverage**: Expanded `tests/perf/test_perf_stream_sink.py` with a high-semaphore fanout test that verifies `StreamMultiplexer` client callback concurrency remains bounded by batch size.
+
+### Changed
+
+- **Stream fanout task-burst reduction**: Updated `gateway/core/stream.py` to fan out clients in bounded batches (`_iter_client_batches(...)`) instead of creating one awaitable per client in a single `gather(...)` call.
+- **Fanout defaults centralized**: Added `DEFAULT_FANOUT_MAX_INFLIGHT` and `DEFAULT_FANOUT_BATCH_SIZE` constants in `gateway/core/stream.py` and wired `StreamMultiplexer` to use them for bounded fanout behavior.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark stream fanout task-burst remediation complete and shift remaining stream work to tuning batch/inflight values with telemetry.
+
 ## [0.5.48] - 2026-02-07
 
 ### Added

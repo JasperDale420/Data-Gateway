@@ -22,13 +22,13 @@ Scope: Repository-wide performance audit focused on low-risk improvements withou
 Top performance bottlenecks are concentrated in three areas:
 
 1. Remaining JSON parse/dump overhead in HTTP envelope path (body re-buffering across cache/envelope has been reduced).
-2. High per-message task/serialization overhead in stream fanout path (stream callback sink coupling has been decoupled).
+2. Remaining stream-path tuning for fanout/sink guardrail parameters after fanout task burst and callback-sink coupling remediations.
 3. Memory-heavy job/replay implementations that materialize full datasets in memory.
 
 The fastest, lowest-risk wins are:
 
 - Continue reducing middleware overhead in `EventEnvelopeMiddleware` (body re-buffering reuse between cache/envelope is implemented).
-- Reduce stream path overhead further (sink publish is now decoupled from callback path; next focus is fanout task burst control).
+- Tune stream path limits further (sink publish decoupling and fanout batching are implemented).
 - Parallelize selected provider fan-out methods and provider health checks.
 - Replace remaining high-overhead parsing loops (`iterrows`, repeated full-cache scans, full-sort-then-slice paths).
 
@@ -54,13 +54,13 @@ The fastest, lowest-risk wins are:
 - Remaining low-risk follow-up:
   - Tune pending/inflight limits with telemetry under production-like fanout load.
 
-3. Stream fanout creates per-message task burst across all clients.
+3. Stream fanout per-message task burst (remediated 2026-02-07).
 - Evidence:
-  - `gateway/core/stream.py:991` uses `asyncio.gather(*(_send(...) for client in clients))` for every inbound message.
-- Impact: Task allocation pressure and event-loop overhead at high message rates/fanout.
-- Low-risk fix:
-  - Reuse a bounded worker queue for outbound fanout instead of per-message task fanout.
-  - Or chunk client sends into fixed-size batches while keeping semaphore control.
+  - Fanout now runs in bounded client batches via `_iter_client_batches(...)` before each `gather(...)`: `gateway/core/stream.py`.
+  - Existing in-flight semaphore bound remains in place (`_fanout_semaphore`).
+- Impact: Reduces single-message task allocation burst and smooths event-loop pressure at high fanout while preserving delivery semantics.
+- Remaining low-risk follow-up:
+  - Tune batch size and in-flight semaphore values with telemetry under production-like loads.
 
 ### P1 (High Value, Low/Medium Risk)
 
@@ -180,7 +180,7 @@ The fastest, lowest-risk wins are:
 
 1. Tune decoupled sink publishing limits/telemetry in stream websocket send path (base decoupling is complete).
 2. Optimize envelope serialization path (cache/envelope body-reuse cooperation completed).
-3. Introduce bounded batch fanout instead of full per-message gather bursts.
+3. Tune bounded fanout batching parameters (base batching rollout is complete).
 
 ### Wave 3
 
@@ -255,7 +255,7 @@ Legend:
 12. Implement core infrastructure Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` (adjustment lookup optimization, breaker caching, rate-limiter wait tuning, and bounded sink dispatch tuning).
 13. Implement tests Wave 1 optimizations from `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` (fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing tests).
 14. Operate BENCH guardrails from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (monitor auto-ratcheted budgets/baselines, tune multipliers/windows, and periodically promote stable active configs via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`).
-15. Continue stream-path optimization from this audit: implement bounded fanout batching/worker queue in `gateway/core/stream.py` to reduce per-message task burst overhead.
+15. Continue stream-path optimization from this audit: telemetry-tune fanout batch/inflight limits in `gateway/core/stream.py` and sink dispatch limits in `gateway/main.py`.
 
 ## Notes
 

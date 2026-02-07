@@ -20,6 +20,9 @@ from gateway.core.validator import get_validator
 
 logger = structlog.get_logger()
 
+DEFAULT_FANOUT_MAX_INFLIGHT = 100
+DEFAULT_FANOUT_BATCH_SIZE = 32
+
 
 class AlpacaStreamType(Enum):
     """Alpaca WebSocket stream types per PRD."""
@@ -683,7 +686,8 @@ class StreamMultiplexer:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
-        self._fanout_semaphore = asyncio.Semaphore(100)
+        self._fanout_semaphore = asyncio.Semaphore(DEFAULT_FANOUT_MAX_INFLIGHT)
+        self._fanout_client_batch_size = DEFAULT_FANOUT_BATCH_SIZE
 
     async def start(self) -> None:
         """Start the multiplexer.
@@ -988,4 +992,11 @@ class StreamMultiplexer:
                     error=str(e),
                 )
 
-        await asyncio.gather(*(_send(client_id) for client_id in clients))
+        for client_batch in self._iter_client_batches(clients):
+            await asyncio.gather(*(_send(client_id) for client_id in client_batch))
+
+    def _iter_client_batches(self, clients: set[str]) -> list[list[str]]:
+        """Build bounded client batches to avoid per-message task bursts."""
+        batch_size = max(1, self._fanout_client_batch_size)
+        client_list = list(clients)
+        return [client_list[i : i + batch_size] for i in range(0, len(client_list), batch_size)]
