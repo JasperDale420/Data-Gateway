@@ -36,15 +36,15 @@ The fastest, lowest-risk wins are:
 
 ### P0 (Do First)
 
-1. Middleware cache/envelope duplicate body buffering (partially remediated on 2026-02-07).
+1. Middleware cache/envelope duplicate body buffering (substantially remediated on 2026-02-07).
 - Evidence:
   - Cache middleware now stores buffered bytes on request state for HIT/MISS paths: `gateway/api/middleware.py:335`, `gateway/api/middleware.py:368`.
-  - Envelope middleware now reuses pre-buffered bytes before iterating body: `gateway/api/middleware.py:616`, `gateway/api/middleware.py:723`.
-  - JSON parse/dump path still exists for wrapping: `gateway/api/middleware.py:626`, `gateway/api/middleware.py:677`.
-- Impact: Duplicate response-body assembly across cache+envelope path is reduced, lowering per-request memory churn; remaining cost is JSON parse/dump for envelope construction.
+  - Envelope middleware now short-circuits responses already marked wrapped (`X-Gateway-Envelope: true`) before body parse/dump work: `gateway/api/middleware.py:616`.
+  - Envelope middleware now reuses `response.body` bytes when present before iterating `body_iterator`: `gateway/api/middleware.py:735`.
+  - Wrapped response serialization now uses compact separators to reduce JSON encoding overhead and response size churn: `gateway/api/middleware.py:681`.
+- Impact: Duplicate response-body assembly across cache+envelope path is reduced further; cache-hit wrapped responses now avoid parse/dump entirely, and standard JSON responses avoid iterator re-buffering when body bytes are already available.
 - Remaining low-risk follow-up:
-  - Add optional cache-hit short-circuit when payload is already wrapped/known-safe.
-  - Evaluate lightweight envelope assembly path to reduce JSON serialization overhead.
+  - Optional: evaluate faster JSON codec (`orjson`/equivalent) behind compatibility guardrails for additional parse/dump CPU reduction.
 
 2. Stream path backpressure coupling: sink publish blocked client message path (remediated 2026-02-07).
 - Evidence:

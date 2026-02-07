@@ -1,10 +1,11 @@
 """Tests for middleware behavior with streaming and large responses."""
 
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -101,6 +102,36 @@ def test_envelope_middleware_bypasses_large_json() -> None:
     assert "items" in data["data"]
 
 
+def test_envelope_middleware_short_circuits_prewrapped_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.add_middleware(EventEnvelopeMiddleware, max_body_bytes=4096)
+
+    @app.get("/api/v1/alpaca/bars")
+    async def wrapped_endpoint():
+        return JSONResponse(
+            {
+                "success": True,
+                "envelope": {"event_id": "evt_cached"},
+                "data": {"symbol": "AAPL"},
+            },
+            headers={"X-Gateway-Envelope": "true"},
+        )
+
+    async def _explode_body_read(*_args, **_kwargs):
+        raise AssertionError("_get_response_body should not run for pre-wrapped payloads")
+
+    monkeypatch.setattr(EventEnvelopeMiddleware, "_get_response_body", _explode_body_read)
+
+    client = TestClient(app)
+    response = client.get("/api/v1/alpaca/bars")
+
+    assert response.status_code == 200
+    assert response.headers["X-Gateway-Envelope"] == "true"
+    assert response.json()["envelope"]["event_id"] == "evt_cached"
+
+
 @pytest.mark.asyncio
 async def test_envelope_middleware_prefers_prebuffered_body_state() -> None:
     app = FastAPI()
@@ -114,6 +145,23 @@ async def test_envelope_middleware_prefers_prebuffered_body_state() -> None:
     body = await middleware._get_response_body(request, response)
 
     assert body == b'{"success":true,"data":{"symbol":"AAPL"}}'
+
+
+@pytest.mark.asyncio
+async def test_envelope_middleware_prefers_response_body_attribute() -> None:
+    app = FastAPI()
+    middleware = EventEnvelopeMiddleware(app, max_body_bytes=4096)
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/api/v1/alpaca/bars", "headers": []}
+    )
+    payload = b'{"success":true,"data":{"symbol":"AAPL"}}'
+    response = Response(content=payload, media_type="application/json")
+    response.body_iterator = _raising_stream()
+
+    body = await middleware._get_response_body(request, response)
+
+    assert body == payload
+    assert request.state._gateway_cached_response_body == payload
 
 
 @pytest.mark.asyncio
@@ -143,9 +191,10 @@ def test_cache_and_envelope_work_together_on_hit_and_miss(test_api_key: str) -> 
 
     client = TestClient(app)
     headers = {"X-Gateway-Key": test_api_key}
+    cache_buster = uuid4().hex
 
-    miss_response = client.get("/api/v1/alpaca/bars", headers=headers)
-    hit_response = client.get("/api/v1/alpaca/bars", headers=headers)
+    miss_response = client.get(f"/api/v1/alpaca/bars?cache_buster={cache_buster}", headers=headers)
+    hit_response = client.get(f"/api/v1/alpaca/bars?cache_buster={cache_buster}", headers=headers)
 
     assert miss_response.status_code == 200
     assert hit_response.status_code == 200

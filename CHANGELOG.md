@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.68] - 2026-02-07
+
+### Added
+
+- **Envelope middleware fast-path tests**: Expanded `tests/test_middleware_streaming.py` with coverage for pre-wrapped response short-circuiting and direct `response.body` reuse fallback behavior.
+
+### Changed
+
+- **Envelope cache-hit short-circuit**: Updated `gateway/api/middleware.py` `EventEnvelopeMiddleware` to skip body parse/dump work when upstream responses already carry `X-Gateway-Envelope: true`.
+- **Envelope body-byte reuse optimization**: Updated `gateway/api/middleware.py` `_get_response_body(...)` to use existing `response.body` bytes when available before consuming `body_iterator`.
+- **Envelope compact JSON serialization**: Updated wrapped-response encoding to use compact separators (`(",", ":")`) for lower serialization overhead and payload size.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark middleware cache/envelope buffering work substantially remediated and narrow remaining scope.
+
 ## [0.5.67] - 2026-02-07
 
 ### Added

@@ -612,6 +612,10 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
         if not self._should_wrap_response(response):
             return response
 
+        # Cache-hit responses that are already wrapped do not need parse/dump work.
+        if response.headers.get("X-Gateway-Envelope", "").lower() == "true":
+            return response
+
         try:
             body = await self._get_response_body(request, response)
             if len(body) > self.max_body_bytes:
@@ -674,7 +678,7 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 "meta": data.get("meta", {}),
             }
 
-            wrapped_body = json.dumps(wrapped, default=str)
+            wrapped_body = json.dumps(wrapped, default=str, separators=(",", ":"))
 
             # Publish to data sink for Heber lakehouse (non-blocking)
             from gateway.api.deps import get_sink_registry
@@ -727,6 +731,15 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
             return cached_body
         if isinstance(cached_body, bytearray):
             return bytes(cached_body)
+
+        response_body = getattr(response, "body", None)
+        if isinstance(response_body, bytes):
+            request.state._gateway_cached_response_body = response_body
+            return response_body
+        if isinstance(response_body, bytearray):
+            body = bytes(response_body)
+            request.state._gateway_cached_response_body = body
+            return body
 
         body_chunks: list[bytes] = []
         async for chunk in response.body_iterator:
