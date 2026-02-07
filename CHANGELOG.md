@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.65] - 2026-02-07
+
+### Added
+
+- **Rate limiter blocking-mode tests**: Added `tests/test_rate_limiter.py` covering retry-after-guided blocking waits and timeout throttling behavior.
+
+### Changed
+
+- **Retry-after aligned blocking waits**: Updated `gateway/core/rate_limiter.py` blocking `acquire(...)` flow to sleep using limiter-provided `retry_after` hints, bounded by remaining `max_wait`, instead of generic exponential backoff.
+- **Core-infra audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` to mark rate limiter blocking-wait remediation complete.
+
 ## [0.5.64] - 2026-02-07
 
 ### Added

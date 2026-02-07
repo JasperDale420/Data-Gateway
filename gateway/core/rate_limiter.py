@@ -257,18 +257,21 @@ class ProviderRateLimitManager:
         limiter = self._limiters[provider]
 
         if block:
-            # Wait for slot with exponential backoff
-            wait_time = 0.1
-            total_waited = 0.0
+            # Wait for slot based on limiter-provided retry_after hints.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + max_wait
 
-            while total_waited < max_wait:
+            while True:
                 allowed, retry_after = limiter.try_acquire()
                 if allowed:
                     return True
 
-                await asyncio.sleep(min(wait_time, max_wait - total_waited))
-                total_waited += wait_time
-                wait_time = min(wait_time * 2, 5.0)
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+
+                sleep_for = min(max(0.01, float(retry_after)), remaining)
+                await asyncio.sleep(sleep_for)
 
             limiter.total_throttled += 1
             raise RateLimitExceeded(provider, int(max_wait), "Timeout waiting for rate limit slot")

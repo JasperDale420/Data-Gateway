@@ -124,18 +124,17 @@ Remediation:
 1. Added lock striping for request keys to reduce unrelated-key contention.
 2. Preserved in-flight request coalescing semantics for identical keys.
 
-### P1-5: Rate limiter blocking mode uses generic backoff sleeps instead of window reset hints
+### P1-5: Rate limiter blocking wait strategy (remediated 2026-02-07)
 
 Evidence:
-- Blocking acquire loop sleeps with exponential backoff: `gateway/core/rate_limiter.py:260-271`
-- `retry_after` from `try_acquire()` is available but not used to schedule sleep exactly.
+- Blocking acquire path now uses `retry_after`-aligned sleep durations bounded by remaining `max_wait`.
 
 Impact:
 - Extra wakeups and longer-than-needed wait behavior under sustained throttling.
 
-Low-risk fix path:
-1. Sleep based on computed `retry_after` (bounded by `max_wait`) instead of generic exponential stepping.
-2. Preserve existing API and exceptions.
+Remediation:
+1. Switched blocking waits from generic exponential backoff to `retry_after`-guided sleeps.
+2. Preserved timeout behavior and existing `RateLimitExceeded` semantics.
 
 ### P2-6: Auth success log-volume on hot path (remediated 2026-02-07)
 
@@ -185,7 +184,7 @@ Low-risk fix path:
 1. Optimize adjustment factor lookup (single sort + binary search strategy).
 2. Add bounded in-flight sink publishing with per-sink limits.
 3. Cache sink circuit breakers and parallelize sink health checks.
-4. Use precise `retry_after` waits in rate limiter blocking mode.
+4. Use precise `retry_after` waits in rate limiter blocking mode (completed 2026-02-07).
 
 Wave status (2026-02-06):
 - `2` complete
