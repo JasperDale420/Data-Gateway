@@ -37,8 +37,9 @@ Key measured patterns:
   - `_to_decimal(...)` call sites: `7` (`gateway/core/validator.py:108-111`, `207-208`, `267`)
   - future timestamp checks with `datetime.now(UTC)`: `3` (`gateway/core/validator.py:123`, `222`, `280`)
 - Quality analyzer repeated timestamp parsing:
-  - `_parse_timestamp(...)` call sites in loops: `5` (`gateway/core/quality.py:248`, `258`, `337`, `340`, `370`)
-  - full sort in gap detection: `gateway/core/quality.py:331`
+  - quote timestamp parse now performed once per quote iteration in `analyze_quotes(...)` (remediated 2026-02-07): `gateway/core/quality.py:248-273`
+  - timeframe map now hoisted to module constant `_TIMEFRAME_TO_MINUTES` (remediated 2026-02-07): `gateway/core/quality.py:15-28`
+  - gap detection now uses sorted-input fast path and single-pass timestamp parsing (remediated 2026-02-07): `gateway/core/quality.py:335-372`
 - Calendar range scan is day-by-day loop:
   - `while current <= end`: `gateway/core/calendar.py:296`
 - Symbology repeated resolve paths:
@@ -91,23 +92,26 @@ Low-risk fix path:
 2. Reuse computed issue data in endpoint response instead of a second full pass.
 3. Preserve response schema.
 
-### P1-3: Quality timestamp parsing and sorting work can be reduced
+### P1-3: Quality timestamp parsing and sorting work can be reduced (remediated 2026-02-07)
 
 Evidence:
-- `analyze_quotes` parses timestamp for the current quote, then reparses for prev assignment:
-  - `gateway/core/quality.py:248`, `258`
-- Gap detection always sorts:
-  - `gateway/core/quality.py:331-334`
-- Timeframe map is rebuilt per call:
-  - `gateway/core/quality.py:438-452`
+- `analyze_quotes(...)` now parses quote timestamp once per loop and reuses it for stale checks and prev assignment:
+  - `gateway/core/quality.py:248`
+  - `gateway/core/quality.py:273`
+- Gap detection now only sorts when input timestamps are not already in order and avoids reparsing previous timestamps every loop:
+  - `gateway/core/quality.py:345`
+  - `gateway/core/quality.py:352`
+  - `gateway/core/quality.py:370`
+- Timeframe lookup map is now module-scoped and reused:
+  - `gateway/core/quality.py:15`
+  - `gateway/core/quality.py:451`
+- Regression coverage added for stale-quote detection and unsorted bar-gap handling:
+  - `tests/test_quality.py:111`
+  - `tests/test_quality.py:159`
 
 Impact:
-- Unnecessary allocations and parsing cost in repeated quality checks.
-
-Low-risk fix path:
-1. Parse quote timestamp once per loop iteration and reuse.
-2. Hoist timeframe map to module/class constant.
-3. Add optional "already sorted" fast path (or monotonicity check) before sorting.
+- Reduces repeated timestamp parsing and per-call dict allocation in quality analysis hot paths while preserving output schemas and issue semantics.
+- Avoids unnecessary full sort work for already ordered bar payloads that dominate normal ingestion flows.
 
 ### P1-4: Calendar trading-day enumeration scales linearly by calendar day
 
@@ -182,7 +186,7 @@ Low-risk fix path:
 ### Wave CORE-1 (Immediate, lowest risk)
 
 1. Add validator hot-path optimizations (single `now_utc`, numeric fast-path, raw-message entry points).
-2. Remove duplicate timestamp parsing in quality analyzer and hoist timeframe map constant.
+2. Remove duplicate timestamp parsing in quality analyzer and hoist timeframe map constant (completed 2026-02-07, including sorted-input fast path for gap detection).
 3. Remove temporary `ResolvedSymbol` allocation in symbology human-format path (completed 2026-02-07, along with bounded resolve memoization).
 4. Hoist middleware input-validator import (completed 2026-02-07).
 
@@ -206,7 +210,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | File | Audit Status | Future Run Focus |
 |---|---|---|
 | `gateway/core/security.py` | COMPLETE | Middleware integration overhead and symbol-validation batching |
-| `gateway/core/quality.py` | COMPLETE | Timestamp parse dedupe, single-pass issue detection |
+| `gateway/core/quality.py` | COMPLETE | Single-pass analyze+issue detection consolidation and benchmark validation |
 | `gateway/core/calendar.py` | COMPLETE | Large-range guardrails and iteration efficiency |
 | `gateway/core/symbology.py` | COMPLETE | Microbenchmark cache-hit effectiveness and tune cache-cap strategy if needed |
 | `gateway/core/validator.py` | COMPLETE | Stream hot-path numeric/timestamp optimization |

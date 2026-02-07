@@ -109,6 +109,14 @@ class TestQualityAnalyzer:
         quality = self.analyzer.analyze_quotes(quotes)
         assert quality.avg_spread_bps > 0
 
+    def test_analyze_quotes_stale_detection(self):
+        quotes = [
+            {"timestamp": "2024-01-15T10:00:00Z", "bid_price": 100.00, "ask_price": 100.10},
+            {"timestamp": "2024-01-15T10:01:05Z", "bid_price": 100.00, "ask_price": 100.10},
+        ]
+        quality = self.analyzer.analyze_quotes(quotes)
+        assert quality.stale == 1
+
     # Analyze trades
     def test_analyze_trades(self):
         trades = [
@@ -146,6 +154,16 @@ class TestQualityAnalyzer:
         issues = self.analyzer.detect_issues(quotes=quotes)
         crossed_issues = [i for i in issues if i.code == QualityCode.CROSSED_QUOTE]
         assert len(crossed_issues) == 1
+
+    def test_analyze_bars_detects_gaps_for_unsorted_input(self):
+        bars = [
+            {"timestamp": "2024-01-15T10:06:00Z", "close": 106},
+            {"timestamp": "2024-01-15T10:00:00Z", "close": 100},
+            {"timestamp": "2024-01-15T10:01:00Z", "close": 101},
+            {"timestamp": "2024-01-15T10:05:00Z", "close": 105},
+        ]
+        quality = self.analyzer.analyze_bars(bars, expected_count=10, timeframe="1Min")
+        assert len(quality.gaps) >= 1
 
     # Quality issue to_dict
     def test_quality_issue_to_dict(self):

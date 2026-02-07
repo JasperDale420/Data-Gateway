@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.79] - 2026-02-07
+
+### Added
+
+- **Quality analyzer regression tests**: Expanded `tests/test_quality.py` with stale-quote detection coverage and unsorted bar-gap detection coverage to lock behavior during performance refactors.
+
+### Changed
+
+- **Quality timestamp parse dedupe**: Updated `gateway/core/quality.py` `analyze_quotes(...)` to parse each quote timestamp once per iteration and reuse it for stale detection and previous-timestamp tracking.
+- **Gap detection sort/parse reductions**: Updated `gateway/core/quality.py` `_detect_bar_gaps(...)` to skip sorting when bars are already ordered and to carry forward parsed timestamps instead of reparsing prior bars each loop.
+- **Hoisted timeframe mapping**: Moved timeframe-to-minutes map to module-level constant (`_TIMEFRAME_TO_MINUTES`) in `gateway/core/quality.py` to avoid rebuilding lookup dicts on each call.
+- **Core-modules audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark quality timestamp/sort reductions complete and narrow remaining core-module follow-ups.
+
 ## [0.5.78] - 2026-02-07
 
 ### Changed
