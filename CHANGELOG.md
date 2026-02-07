@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.98] - 2026-02-07
+
+### Added
+
+- **Alpaca news/screener router regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_news_router.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_screener_router.py` to verify helper-driven provider call wiring, query-parameter threading, and screener validation behavior.
+
+### Changed
+
+- **News route-helper consolidation rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/news.py` to use `execute_alpaca_provider_call(...)` and shared symbol parsing, removing duplicated provider/rate-limit/exception boilerplate while preserving response shape.
+- **Screener route-helper consolidation rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/screener.py` to use `execute_alpaca_provider_call(...)` for upstream execution while retaining route-level `by` input validation behavior.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark news/screener helper rollout complete and narrow remaining Alpaca router follow-up scope.
+
 ## [0.5.97] - 2026-02-07
 
 ### Added
