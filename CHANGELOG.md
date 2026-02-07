@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.60] - 2026-02-07
+
+### Added
+
+- **UW poller publish-path tests**: Added `tests/test_uw_poller.py` covering dedupe behavior (in-memory + Redis-hit) and bounded publish concurrency enforcement.
+
+### Changed
+
+- **UW poller batched dedupe reads/writes**: Updated `gateway/core/uw_poller.py` to batch Redis dedupe lookups and dedupe key writes through shared poller publish flow.
+- **UW poller bounded publish fanout**: Updated `gateway/core/uw_poller.py` to publish envelopes with semaphore-bounded concurrency (`_publish_max_inflight`) instead of strict per-event sequential publishes.
+- **UW poller loop consolidation**: Refactored flow/darkpool/market-tide/sector-tide publish paths to use shared `_publish_envelopes(...)` logic while retaining out-of-order telemetry and duplicate counters.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark UW poller sequential dedupe/publish remediation complete.
+
 ## [0.5.59] - 2026-02-07
 
 ### Added

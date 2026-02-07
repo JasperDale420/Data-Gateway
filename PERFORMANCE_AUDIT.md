@@ -100,13 +100,12 @@ The fastest, lowest-risk wins are:
 - Remaining low-risk follow-up:
   - Add spill-to-disk or paged replay data source for very large historical windows where loader still returns full lists.
 
-8. UW poller does sequential dedupe-read, publish, dedupe-write per event.
+8. UW poller per-event sequential dedupe/publish path (remediated 2026-02-07).
 - Evidence:
-  - `gateway/core/uw_poller.py:327-339`, `387-398`, `455-466`.
-- Impact: High per-event network round trips and limited throughput.
-- Low-risk fix:
-  - Batch dedupe operations (pipeline) where supported.
-  - Publish in bounded batches, not strictly one-by-one.
+  - `gateway/core/uw_poller.py` now performs batched Redis dedupe reads, bounded-concurrency publish fanout, and batched dedupe-write updates via shared `_publish_envelopes(...)`.
+- Impact: Reduces per-event round-trip serialization in flow/darkpool/market-tide/sector-tide poll loops and improves poll-cycle throughput under bursty snapshots.
+- Follow-up:
+  - Optional: expose `uw_poller` publish concurrency as runtime config for environment-specific tuning.
 
 9. yfinance historical conversion uses `iterrows()`.
 - Evidence:

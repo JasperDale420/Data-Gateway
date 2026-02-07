@@ -11,7 +11,7 @@ Features:
 
 import asyncio
 from datetime import UTC, datetime, time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -89,6 +89,7 @@ class UWPoller:
         # Keep IDs for last 2 hours to handle polling overlap
         self._seen_ids: dict[str, datetime] = {}
         self._cache_ttl_seconds = 7200  # 2 hours
+        self._publish_max_inflight = 16
         self._redis_dedupe: RedisCache | None = None
         if settings.cache_redis_enabled and settings.cache_redis_url:
             self._redis_dedupe = RedisCache(
@@ -174,6 +175,109 @@ class UWPoller:
             logger.debug(
                 "uw_poller_cache_cleanup", removed=len(expired), remaining=len(self._seen_ids)
             )
+
+    async def _load_redis_duplicate_ids(
+        self,
+        dedupe_items: list[tuple[str, str]],
+    ) -> set[str]:
+        """Fetch duplicate flags from Redis cache in parallel."""
+        if self._redis_dedupe is None or not dedupe_items:
+            return set()
+
+        checks = await asyncio.gather(
+            *(self._redis_dedupe.get(cache_key) for _, cache_key in dedupe_items),
+            return_exceptions=True,
+        )
+        duplicates: set[str] = set()
+        for (event_id, cache_key), result in zip(dedupe_items, checks, strict=False):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "uw_poller_redis_dedupe_get_failed",
+                    cache_key=cache_key,
+                    error=str(result),
+                )
+                continue
+            if result is not None:
+                duplicates.add(event_id)
+        return duplicates
+
+    async def _publish_envelopes(
+        self,
+        sink_registry: Any,
+        envelopes: list[dict[str, Any]],
+        dedupe_prefix: str,
+        missing_event_log: str,
+    ) -> tuple[int, int]:
+        """Publish envelopes with bounded concurrency and batched dedupe checks."""
+        if not envelopes:
+            return 0, 0
+
+        duplicates = 0
+        to_publish: list[tuple[dict[str, Any], str, str | None]] = []
+        dedupe_items: list[tuple[str, str]] = []
+
+        for envelope in envelopes:
+            event_id = str(envelope.get("event_id", ""))
+            if not event_id:
+                logger.warning(missing_event_log)
+                to_publish.append((envelope, "", None))
+                continue
+            if self._is_duplicate(event_id):
+                duplicates += 1
+                continue
+            dedupe_cache_key = f"{dedupe_prefix}:{event_id}"
+            dedupe_items.append((event_id, dedupe_cache_key))
+            to_publish.append((envelope, event_id, dedupe_cache_key))
+
+        redis_duplicates = await self._load_redis_duplicate_ids(dedupe_items)
+        if redis_duplicates:
+            duplicates += len(redis_duplicates)
+            to_publish = [
+                item for item in to_publish if not item[1] or item[1] not in redis_duplicates
+            ]
+
+        publish_sem = asyncio.Semaphore(max(1, self._publish_max_inflight))
+
+        async def _publish_one(
+            item: tuple[dict[str, Any], str, str | None],
+        ) -> tuple[tuple[dict[str, Any], str, str | None], Exception | None]:
+            envelope, _, _ = item
+            try:
+                async with publish_sem:
+                    await sink_registry.publish_all(HEBER_STREAM, envelope)
+                return item, None
+            except Exception as exc:
+                return item, exc
+
+        publish_results = await asyncio.gather(*(_publish_one(item) for item in to_publish))
+
+        published = 0
+        redis_sets = []
+        for (envelope, event_id, cache_key), publish_error in publish_results:
+            if publish_error is not None:
+                logger.warning(
+                    "uw_poller_publish_failed",
+                    event_id=event_id or "missing",
+                    feed=envelope.get("feed"),
+                    error=str(publish_error),
+                )
+                continue
+
+            published += 1
+            if event_id:
+                self._mark_seen(event_id)
+                if self._redis_dedupe is not None and cache_key:
+                    redis_sets.append(
+                        self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
+                    )
+
+        if redis_sets:
+            set_results = await asyncio.gather(*redis_sets, return_exceptions=True)
+            for result in set_results:
+                if isinstance(result, Exception):
+                    logger.warning("uw_poller_redis_dedupe_set_failed", error=str(result))
+
+        return published, duplicates
 
     def _should_poll_tide(self) -> bool:
         """Check if enough time has passed to poll market tide again."""
@@ -294,10 +398,9 @@ class UWPoller:
         assert self._provider is not None
         try:
             alerts = await self._provider.get_flow_alerts(limit=limit)
-            published = 0
-            duplicates = 0
             out_of_order = 0
             prev_ts: datetime | None = None
+            envelopes: list[dict[str, Any]] = []
 
             for alert in alerts:
                 envelope = wrap_event(
@@ -307,7 +410,6 @@ class UWPoller:
                     source="rest",
                 )
 
-                event_id = envelope.get("event_id", "")
                 ts_event = self._parse_ts(envelope.get("ts_event"))
                 if ts_event and prev_ts and ts_event < prev_ts:
                     out_of_order += 1
@@ -318,25 +420,14 @@ class UWPoller:
                     )
                 if ts_event:
                     prev_ts = ts_event
-                if not event_id:
-                    logger.warning("uw_flow_missing_event_id")
-                else:
-                    if self._is_duplicate(event_id):
-                        duplicates += 1
-                        continue
-                    if self._redis_dedupe is not None:
-                        cache_key = f"uw:flow:{event_id}"
-                        cached = await self._redis_dedupe.get(cache_key)
-                        if cached is not None:
-                            duplicates += 1
-                            continue
+                envelopes.append(envelope)
 
-                await sink_registry.publish_all(HEBER_STREAM, envelope)
-                if event_id:
-                    self._mark_seen(event_id)
-                    if self._redis_dedupe is not None:
-                        await self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
-                published += 1
+            published, duplicates = await self._publish_envelopes(
+                sink_registry=sink_registry,
+                envelopes=envelopes,
+                dedupe_prefix="uw:flow",
+                missing_event_log="uw_flow_missing_event_id",
+            )
 
             logger.info(
                 "uw_poller_flow_published",
@@ -353,10 +444,9 @@ class UWPoller:
         assert self._provider is not None
         try:
             trades = await self._provider.get_darkpool_recent(limit=limit)
-            published = 0
-            duplicates = 0
             out_of_order = 0
             prev_ts: datetime | None = None
+            envelopes: list[dict[str, Any]] = []
 
             for trade in trades:
                 envelope = wrap_event(
@@ -366,7 +456,6 @@ class UWPoller:
                     source="rest",
                 )
 
-                event_id = envelope.get("event_id", "")
                 ts_event = self._parse_ts(envelope.get("ts_event"))
                 if ts_event and prev_ts and ts_event < prev_ts:
                     out_of_order += 1
@@ -377,25 +466,14 @@ class UWPoller:
                     )
                 if ts_event:
                     prev_ts = ts_event
-                if not event_id:
-                    logger.warning("uw_darkpool_missing_event_id")
-                else:
-                    if self._is_duplicate(event_id):
-                        duplicates += 1
-                        continue
-                    if self._redis_dedupe is not None:
-                        cache_key = f"uw:darkpool:{event_id}"
-                        cached = await self._redis_dedupe.get(cache_key)
-                        if cached is not None:
-                            duplicates += 1
-                            continue
+                envelopes.append(envelope)
 
-                await sink_registry.publish_all(HEBER_STREAM, envelope)
-                if event_id:
-                    self._mark_seen(event_id)
-                    if self._redis_dedupe is not None:
-                        await self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
-                published += 1
+            published, duplicates = await self._publish_envelopes(
+                sink_registry=sink_registry,
+                envelopes=envelopes,
+                dedupe_prefix="uw:darkpool",
+                missing_event_log="uw_darkpool_missing_event_id",
+            )
 
             logger.info(
                 "uw_poller_darkpool_published",
@@ -421,10 +499,9 @@ class UWPoller:
             # Take last 5 to cover the 5-minute polling gap
             recent_tides = tides[-5:] if len(tides) > 5 else tides
 
-            published = 0
-            duplicates = 0
             out_of_order = 0
             prev_ts: datetime | None = None
+            envelopes: list[dict[str, Any]] = []
 
             for tide in recent_tides:
                 envelope = wrap_event(
@@ -434,7 +511,6 @@ class UWPoller:
                     source="rest",
                 )
 
-                event_id = envelope.get("event_id", "")
                 ts_event = self._parse_ts(envelope.get("ts_event"))
                 if ts_event and prev_ts and ts_event < prev_ts:
                     out_of_order += 1
@@ -445,25 +521,14 @@ class UWPoller:
                     )
                 if ts_event:
                     prev_ts = ts_event
-                if not event_id:
-                    logger.warning("uw_market_tide_missing_event_id")
-                else:
-                    if self._is_duplicate(event_id):
-                        duplicates += 1
-                        continue
-                    if self._redis_dedupe is not None:
-                        cache_key = f"uw:market_tide:{event_id}"
-                        cached = await self._redis_dedupe.get(cache_key)
-                        if cached is not None:
-                            duplicates += 1
-                            continue
+                envelopes.append(envelope)
 
-                await sink_registry.publish_all(HEBER_STREAM, envelope)
-                if event_id:
-                    self._mark_seen(event_id)
-                    if self._redis_dedupe is not None:
-                        await self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
-                published += 1
+            published, duplicates = await self._publish_envelopes(
+                sink_registry=sink_registry,
+                envelopes=envelopes,
+                dedupe_prefix="uw:market_tide",
+                missing_event_log="uw_market_tide_missing_event_id",
+            )
 
             if published or duplicates:
                 logger.info(
@@ -495,6 +560,7 @@ class UWPoller:
                 # Take last 5 records for each sector
                 recent_tides = tides[-5:] if len(tides) > 5 else tides
                 prev_ts: datetime | None = None
+                sector_envelopes: list[dict[str, Any]] = []
 
                 for tide in recent_tides:
                     envelope = wrap_event(
@@ -504,7 +570,6 @@ class UWPoller:
                         source="rest",
                     )
 
-                    event_id = envelope.get("event_id", "")
                     ts_event = self._parse_ts(envelope.get("ts_event"))
                     if ts_event and prev_ts and ts_event < prev_ts:
                         total_out_of_order += 1
@@ -516,27 +581,16 @@ class UWPoller:
                         )
                     if ts_event:
                         prev_ts = ts_event
-                    if not event_id:
-                        logger.warning("uw_sector_tide_missing_event_id")
-                    else:
-                        if self._is_duplicate(event_id):
-                            total_duplicates += 1
-                            continue
-                        if self._redis_dedupe is not None:
-                            cache_key = f"uw:sector_tide:{event_id}"
-                            cached = await self._redis_dedupe.get(cache_key)
-                            if cached is not None:
-                                total_duplicates += 1
-                                continue
+                    sector_envelopes.append(envelope)
 
-                    await sink_registry.publish_all(HEBER_STREAM, envelope)
-                    if event_id:
-                        self._mark_seen(event_id)
-                        if self._redis_dedupe is not None:
-                            await self._redis_dedupe.set(
-                                cache_key, True, ttl=self._cache_ttl_seconds
-                            )
-                    total_published += 1
+                published, duplicates = await self._publish_envelopes(
+                    sink_registry=sink_registry,
+                    envelopes=sector_envelopes,
+                    dedupe_prefix="uw:sector_tide",
+                    missing_event_log="uw_sector_tide_missing_event_id",
+                )
+                total_published += published
+                total_duplicates += duplicates
 
                 sectors_polled += 1
 
