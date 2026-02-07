@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
     data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
 
+    # Bulk Jobs
+    bulk_results_max_in_memory: int = Field(default=25_000, ge=100)
+    bulk_results_spool_to_disk: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

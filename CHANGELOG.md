@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.59] - 2026-02-07
+
+### Added
+
+- **Bulk spool coverage tests**: Expanded `tests/test_bulk_manager.py` with spool-to-disk result coverage, spool-aware JSONL iteration checks, and expired-job spool file cleanup assertions.
+
+### Changed
+
+- **Bulk memory guardrail via spool fallback**: Updated `gateway/core/bulk.py` to spill oversized job results to temp JSONL storage once in-memory retention crosses `bulk_results_max_in_memory`.
+- **Spool-aware bulk result iteration**: Updated bulk result stream/JSONL helpers in `gateway/core/bulk.py` to iterate transparently across in-memory and spooled records.
+- **Bulk JSON download compatibility for spooled jobs**: Updated `gateway/api/bulk.py` JSON download path to use manager-level spool-aware result retrieval.
+- **Bulk settings surface**: Added `bulk_results_max_in_memory` and `bulk_results_spool_to_disk` settings in `gateway/config.py`.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark bulk in-memory retention follow-up substantially remediated with spill guardrails.
+
 ## [0.5.58] - 2026-02-07
 
 ### Added

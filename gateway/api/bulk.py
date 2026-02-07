@@ -309,7 +309,7 @@ async def download_job_results(
     elif format == "json":
         import json
 
-        content = json.dumps({"data": job.results})
+        content = json.dumps({"data": manager.get_results_json(job_id)})
         return Response(
             content=content,
             media_type="application/json",

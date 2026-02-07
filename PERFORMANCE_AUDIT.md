@@ -82,14 +82,15 @@ The fastest, lowest-risk wins are:
 
 6. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 - Evidence:
-  - `gateway/core/bulk.py:504` keeps extending `job.results` in memory.
+  - `gateway/core/bulk.py` now spills large result sets to temp JSONL storage when in-memory results exceed configured threshold (`bulk_results_max_in_memory`).
   - JSONL downloads were previously materialized as one large string (`lines = [json.dumps(...)]` then join).
 - Impact: Large jobs can hit high RSS and GC churn; download-time amplification for JSONL has been reduced.
 - Remediation completed:
   - `gateway/core/bulk.py` now provides bounded `iter_results_jsonl_chunks(...)` and no longer builds a full list-of-lines for JSONL formatting.
   - `gateway/api/bulk.py` now serves JSONL downloads via `StreamingResponse` backed by chunk iteration.
+  - `gateway/core/bulk.py` now supports transparent result spool-to-disk fallback for oversized jobs and uses spool-aware result iteration for JSONL streaming and result streams.
 - Remaining low-risk follow-up:
-  - Spill/stream in-progress job results out of memory (`job.results`) to temp storage or paged backend for very large jobs.
+  - Add optional paged backend storage for multi-process/distributed workers and consider streaming JSON-array download path for very large JSON format responses.
 
 7. Replay preload/sort overhead (partially remediated 2026-02-07).
 - Evidence:
@@ -185,7 +186,7 @@ The fastest, lowest-risk wins are:
 
 ### Wave 3
 
-1. Add streaming storage for bulk/replay outputs (bulk JSONL and replay iterable ingestion are complete; in-memory job/result retention still pending).
+1. Add streaming storage for bulk/replay outputs (bulk JSONL, replay iterable ingestion, and bulk spill guardrails are complete; optional paged backend + streaming JSON-array response remain).
 2. Improve cache pruning strategy for custom TTL workloads (completed 2026-02-07).
 3. Add envelope fast-path serialization for websocket traffic (completed 2026-02-07).
 

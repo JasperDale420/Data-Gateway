@@ -4,8 +4,11 @@ Implements async job-based bulk data fetching as specified in PRD.
 """
 
 import asyncio
+import contextlib
 import io
 import json
+import os
+import tempfile
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
@@ -202,6 +205,7 @@ class BulkJob:
 
     # Results storage
     results: list[dict[str, Any]] = field(default_factory=list)
+    results_spool_path: str | None = None
     error: str | None = None
 
     # Background task reference
@@ -269,12 +273,15 @@ class BulkJobManager:
     JOB_TTL_SECONDS = 3600  # Jobs expire after 1 hour
 
     def __init__(self) -> None:
+        settings = get_settings()
         self._jobs: dict[str, BulkJob] = {}
         self._lock = asyncio.Lock()
         self._fetch_bars_func: Any | None = None
         self._fetch_options_func: Any | None = None
         self._fetch_adjustments_func: Any | None = None
         self._max_concurrency = 10
+        self._max_results_in_memory = max(1, settings.bulk_results_max_in_memory)
+        self._spill_results_to_disk = settings.bulk_results_spool_to_disk
 
     def set_bars_fetcher(self, func: Any) -> None:
         """Set the function used to fetch bars for a symbol."""
@@ -446,7 +453,7 @@ class BulkJobManager:
         if not job:
             return
 
-        for record in job.results:
+        for record in self._iter_job_results(job):
             yield record
 
     def iter_results_jsonl_chunks(
@@ -464,7 +471,7 @@ class BulkJobManager:
         def _iter_chunks() -> Iterator[bytes]:
             buffer_lines: list[str] = []
             first_chunk = True
-            for index, record in enumerate(job.results, start=1):
+            for index, record in enumerate(self._iter_job_results(job), start=1):
                 buffer_lines.append(json.dumps(record))
                 if index % chunk_size == 0:
                     chunk_text = "\n".join(buffer_lines)
@@ -492,12 +499,74 @@ class BulkJobManager:
         # intermediate list-of-lines materialization.
         output = io.StringIO()
         first = True
-        for record in job.results:
+        for record in self._iter_job_results(job):
             if not first:
                 output.write("\n")
             output.write(json.dumps(record))
             first = False
         return output.getvalue()
+
+    def get_results_json(self, job_id: str) -> list[dict[str, Any]]:
+        """Get results as JSON-serializable list."""
+        job = self._jobs.get(job_id)
+        if not job or job.status != BulkJobStatus.COMPLETE:
+            return []
+        return list(self._iter_job_results(job))
+
+    def _iter_job_results(self, job: BulkJob) -> Iterator[dict[str, Any]]:
+        """Iterate all job results from memory and optional spool storage."""
+        if job.results:
+            yield from job.results
+        if job.results_spool_path:
+            try:
+                with open(job.results_spool_path, encoding="utf-8") as spool_file:
+                    for line in spool_file:
+                        stripped = line.strip()
+                        if stripped:
+                            yield json.loads(stripped)
+            except FileNotFoundError:
+                logger.warning(
+                    "bulk_results_spool_missing",
+                    job_id=job.job_id,
+                    path=job.results_spool_path,
+                )
+
+    def _append_job_results(self, job: BulkJob, records: list[dict[str, Any]]) -> None:
+        """Append records to job results with optional spill-to-disk guardrail."""
+        if not records:
+            return
+        if not self._spill_results_to_disk:
+            job.results.extend(records)
+            return
+
+        if (
+            job.results_spool_path is None
+            and (len(job.results) + len(records)) > self._max_results_in_memory
+        ):
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                prefix=f"{job.job_id}-results-",
+                suffix=".jsonl",
+                delete=False,
+            ) as spool_init_file:
+                spool_path = spool_init_file.name
+                if job.results:
+                    for existing in job.results:
+                        spool_init_file.write(json.dumps(existing))
+                        spool_init_file.write("\n")
+            job.results.clear()
+            job.results_spool_path = spool_path
+            logger.info("bulk_results_spool_created", job_id=job.job_id, path=spool_path)
+
+        if job.results_spool_path:
+            with open(job.results_spool_path, "a", encoding="utf-8") as spool_append_file:
+                for record in records:
+                    spool_append_file.write(json.dumps(record))
+                    spool_append_file.write("\n")
+            return
+
+        job.results.extend(records)
 
     async def _process_bars_job(self, job: BulkJob) -> None:
         """Process a bulk bars job."""
@@ -543,7 +612,7 @@ class BulkJobManager:
                     bars = None
 
                 if bars:
-                    job.results.extend(bars)
+                    self._append_job_results(job, bars)
                     job.records_fetched += len(bars)
 
                 job.symbols_complete += 1
@@ -682,7 +751,7 @@ class BulkJobManager:
                         min_delta=min_delta,
                         max_delta=max_delta,
                     )
-                    job.results.extend(filtered)
+                    self._append_job_results(job, filtered)
                     job.records_fetched += len(filtered)
 
                 job.symbols_complete += 1
@@ -844,7 +913,7 @@ class BulkJobManager:
                     factors = None
 
                 if factors:
-                    job.results.extend(factors)
+                    self._append_job_results(job, factors)
                     job.records_fetched += len(factors)
 
                 job.symbols_complete += 1
@@ -905,6 +974,10 @@ class BulkJobManager:
                 expired.append(job_id)
 
         for job_id in expired:
+            spool_path = self._jobs[job_id].results_spool_path
+            if spool_path:
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(spool_path)
             del self._jobs[job_id]
             logger.debug("bulk_job_expired", job_id=job_id)
 
