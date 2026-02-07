@@ -146,12 +146,12 @@ The fastest, lowest-risk wins are:
 - Follow-up:
   - Optional: add websocket microbenchmark for mixed text/binary frame validation overhead.
 
-14. Envelope construction still pays Pydantic serialization overhead on every message.
+14. Envelope serialization hot-path overhead (remediated 2026-02-07).
 - Evidence:
-  - `gateway/core/envelope.py:328-364` uses `model_construct` then `model_dump`.
-- Impact: Extra object construction on high-throughput stream path.
-- Low-risk fix:
-  - Fast-path dict assembly for known fields; retain model path behind debug/validation flag.
+  - `gateway/core/envelope.py` now builds JSON-ready envelope dicts directly in `wrap_event(...)` rather than constructing/dumping a Pydantic model per event.
+- Impact: Removes per-message model construction/serialization cost on stream hot paths while preserving envelope schema, metrics, and fallback behavior.
+- Follow-up:
+  - Optional: add sampled validation mode toggle for debugging environments.
 
 15. Finnhub bar normalization uses index-based loop.
 - Evidence:
@@ -187,7 +187,7 @@ The fastest, lowest-risk wins are:
 
 1. Add streaming storage for bulk/replay outputs (bulk JSONL and replay iterable ingestion are complete; in-memory job/result retention still pending).
 2. Improve cache pruning strategy for custom TTL workloads (completed 2026-02-07).
-3. Add envelope fast-path serialization for websocket traffic.
+3. Add envelope fast-path serialization for websocket traffic (completed 2026-02-07).
 
 ## Verification Plan (for each wave)
 

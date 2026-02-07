@@ -324,21 +324,22 @@ def wrap_event(
 
     # Create envelope
     try:
-        # Use model_construct to skip validation overhead on hot paths.
-        envelope = EventEnvelope.model_construct(
-            event_id=event_id,
-            provider=provider,
-            feed=feed,
-            source=source,
-            instrument_type=instrument_type,
-            instrument_key=instrument_key,
-            symbol=symbol,
-            ts_event=ts_event,
-            ts_ingest=ts_ingest,
-            lineage=lineage,
-            quality_flags=quality_flags,
-            payload=payload,
-        )
+        # Fast-path dict assembly avoids per-message Pydantic serialization overhead.
+        envelope = {
+            "event_id": event_id,
+            "provider": provider,
+            "feed": feed,
+            "source": source,
+            "instrument_type": instrument_type,
+            "instrument_key": instrument_key,
+            "symbol": symbol,
+            "ts_event": ts_event.isoformat() if ts_event else None,
+            "ts_ingest": ts_ingest.isoformat() if ts_ingest else None,
+            "schema_version": SCHEMA_VERSION,
+            "lineage": lineage,
+            "quality_flags": quality_flags,
+            "payload": payload,
+        }
 
         logger.debug(
             "event_envelope_created",
@@ -357,11 +358,7 @@ def wrap_event(
         except ImportError:
             pass  # Metrics not available
 
-        # Optimize serialization: avoid deep traversal of payload
-        # payload is already a dict/list and doesn't need Pydantic validation/conversion
-        dump = envelope.model_dump(mode="json", exclude={"payload"})
-        dump["payload"] = payload
-        return dump
+        return envelope
 
     except Exception as e:
         logger.error(

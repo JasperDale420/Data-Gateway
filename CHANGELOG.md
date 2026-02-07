@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.55] - 2026-02-07
+
+### Added
+
+- **Envelope fast-path regression tests**: Expanded `tests/test_envelope.py` with coverage for JSON-ready timestamp/lineage fields and Pydantic input payload compatibility on the optimized `wrap_event(...)` path.
+
+### Changed
+
+- **Envelope fast-path serialization**: Updated `gateway/core/envelope.py` `wrap_event(...)` to assemble JSON-ready envelope dicts directly instead of constructing/dumping a Pydantic model per event.
+- **Envelope hot-path parity preservation**: Preserved schema fields (`schema_version`, `lineage`, `quality_flags`, payload pass-through), metrics emission, and fallback envelope behavior while reducing stream-path serialization overhead.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark envelope fast-path serialization remediation complete.
+
 ## [0.5.54] - 2026-02-07
 
 ### Added
