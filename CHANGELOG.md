@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.100] - 2026-02-07
+
+### Added
+
+- **Alpaca watchlists router regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_watchlists_router.py` to cover helper-driven watchlist create/read/update/delete and asset add/remove flows.
+
+### Changed
+
+- **Watchlists route-helper consolidation rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/watchlists.py` to use `execute_alpaca_provider_call(...)` across all watchlist endpoints, removing repeated provider lookup/rate-limit/error wrapping boilerplate while preserving endpoint contracts.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark watchlists helper rollout complete and narrow remaining Alpaca route-helper consolidation scope to `trading.py`.
+
 ## [0.5.99] - 2026-02-07
 
 ### Added
