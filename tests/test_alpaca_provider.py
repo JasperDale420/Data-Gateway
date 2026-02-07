@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
@@ -76,3 +77,25 @@ async def test_get_option_chain_applies_custom_limit_bounds() -> None:
     await provider.get_option_chain("aapl", limit=0)
     assert fake_client.last_params is not None
     assert fake_client.last_params["limit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_trades_applies_limit_bounds() -> None:
+    provider = AlpacaProvider()
+    fake_client = _FakeClient({"trades": {}})
+    provider._client = cast(Any, fake_client)
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 1, tzinfo=UTC)
+
+    await provider.get_trades(["AAPL"], start=start, end=end, limit=250)
+    assert fake_client.last_params is not None
+    assert fake_client.last_params["limit"] == 250
+
+    await provider.get_trades(["AAPL"], start=start, end=end, limit=0)
+    assert fake_client.last_params is not None
+    assert fake_client.last_params["limit"] == 1
+
+    await provider.get_trades(["AAPL"], start=start, end=end, limit=20_000)
+    assert fake_client.last_params is not None
+    assert fake_client.last_params["limit"] == 10_000

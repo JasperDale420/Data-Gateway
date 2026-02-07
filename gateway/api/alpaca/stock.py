@@ -131,13 +131,14 @@ async def get_stock_trades(
             symbols=[symbol.upper()],
             start=start,
             end=end,
+            limit=limit,
         )
 
         return {
             "success": True,
             "data": {
                 "symbol": symbol.upper(),
-                "trades": [t.model_dump(mode="json") for t in trades[:limit]],
+                "trades": [t.model_dump(mode="json") for t in trades],
             },
             "meta": {
                 "count": len(trades),

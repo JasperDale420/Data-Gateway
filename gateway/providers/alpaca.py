@@ -268,6 +268,7 @@ class AlpacaProvider(DataProvider):
         symbols: list[str],
         start: datetime,
         end: datetime,
+        limit: int = 10000,
     ) -> list[NormalizedTrade]:
         """Fetch historical trades from Alpaca."""
         if not self._client:
@@ -275,13 +276,14 @@ class AlpacaProvider(DataProvider):
 
         results: list[NormalizedTrade] = []
         symbols_param = ",".join(symbols)
+        request_limit = max(1, min(limit, 10000))
 
         params: dict[str, str | int] = {
             "symbols": symbols_param,
             "start": start.isoformat(),
             "end": end.isoformat(),
             "feed": self._feed,
-            "limit": 10000,
+            "limit": request_limit,
         }
 
         try:

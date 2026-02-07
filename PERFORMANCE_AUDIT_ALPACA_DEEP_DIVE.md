@@ -115,21 +115,22 @@ Low-risk fix path:
 2. Add bounded executor policy/metrics in one place.
 3. Keep route signatures and response payloads unchanged.
 
-### P1-4: Over-fetch then trim patterns add avoidable CPU/network work (partially remediated 2026-02-07)
+### P1-4: Over-fetch then trim patterns add avoidable CPU/network work (remediated 2026-02-07)
 
 Evidence:
-- Stock trades route accepts `limit`, but provider call path fetches up to `10000` and route slices afterward:
-  - route slice: `gateway/api/alpaca/stock.py:140`
-  - provider fixed limit: `gateway/providers/alpaca.py:284`
+- Stock trades route now threads `limit` into provider call instead of local route slicing:
+  - `gateway/api/alpaca/stock.py`
+  - `gateway/providers/alpaca.py`
 - Option chain snapshot route now requests bounded chain window from provider (`limit=100`) instead of local truncation:
   - `gateway/api/alpaca/options.py`
   - `gateway/providers/alpaca.py`
 
 Impact:
-- Unnecessary payload transfer and normalization on larger symbols/contracts.
+- Removed major route-side over-fetch/trim patterns for Alpaca stock trades and option-chain snapshots.
+- Remaining Alpaca performance work is now centered on helper consolidation, caching, and concurrency tuning.
 
 Low-risk fix path:
-1. Thread endpoint limit through to provider methods where supported.
+1. Thread endpoint limit through to provider methods where supported (completed 2026-02-07 for stock trades and option-chain snapshot).
 2. Add optional `limit` parameter to `get_option_chain(...)` used by snapshot route (completed 2026-02-07).
 3. Preserve existing defaults to keep behavior stable.
 
@@ -189,7 +190,7 @@ Low-risk fix path:
 
 ### Wave ALP-2
 
-1. Remove over-fetch patterns by propagating route limits into provider methods (option-chain snapshot path completed 2026-02-07; stock-trades path remains).
+1. Remove over-fetch patterns by propagating route limits into provider methods (stock-trades and option-chain snapshot paths completed 2026-02-07; continue broader endpoint review).
 2. Parallelize independent snapshot sub-calls (`quotes` + `bars`) with `asyncio.gather`.
 3. Centralize sync provider offload logic (`to_thread`) for trading/account/watchlists.
 
@@ -207,7 +208,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 |---|---:|---|---|
 | `gateway/api/alpaca/__init__.py` | 0 | COMPLETE | Router composition only |
 | `gateway/api/alpaca/common.py` | 0 | COMPLETE | Add shared route execution + list parsing + cache/dedupe helpers |
-| `gateway/api/alpaca/stock.py` | 9 | COMPLETE | Cache/dedupe, over-fetch removal, snapshot concurrency |
+| `gateway/api/alpaca/stock.py` | 9 | COMPLETE | Over-fetch removal complete for trades path; remaining focus is cache/dedupe and snapshot concurrency |
 | `gateway/api/alpaca/options.py` | 7 | COMPLETE | Chain snapshot over-fetch reduction complete; helper consolidation remains |
 | `gateway/api/alpaca/crypto.py` | 7 | COMPLETE | Cache policy + parser consolidation |
 | `gateway/api/alpaca/forex.py` | 2 | COMPLETE | Cache policy + parser consolidation |

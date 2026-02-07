@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.89] - 2026-02-07
+
+### Added
+
+- **Alpaca stock-trades limit threading tests**: Expanded `tests/test_alpaca_provider.py` and added `tests/test_alpaca_stock_router.py` to verify provider trade-limit bounds and route-level limit propagation for stock trades.
+
+### Changed
+
+- **Alpaca trades over-fetch reduction**: Updated `gateway/providers/alpaca.py` `get_trades(...)` to accept bounded `limit` (`1..10000`) and updated `gateway/api/alpaca/stock.py` to pass route `limit` directly to provider instead of route-side slicing.
+- **Alpaca route audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` and `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` to mark stock-trades and option-chain snapshot over-fetch reduction as remediated and narrow remaining Alpaca route follow-ups.
+
 ## [0.5.88] - 2026-02-07
 
 ### Added
