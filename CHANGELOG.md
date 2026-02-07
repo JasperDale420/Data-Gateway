@@ -15,6 +15,12 @@ All notable changes to this project will be documented in this file.
 - **Route regression updates**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_stock_router.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_options_router.py` to validate helper-driven call paths and block-mode behavior.
 - **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark stock/options execution-helper rollout and refine remaining Alpaca router follow-ups.
 
+## [0.5.93] - 2026-02-07
+
+### Added
+
+- **Operations runbook**: Created `runbook.md` covering startup, configuration, health/monitoring, common operations (restart, key rotation, client management, provider toggling, data sink), WebSocket procedures, troubleshooting matrix, maintenance scripts, graceful shutdown, and Docker rebuild checklist.
+
 ## [0.5.92] - 2026-02-07
 
 ### Removed
