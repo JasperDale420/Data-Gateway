@@ -176,8 +176,8 @@ Low-risk fix path:
 3. Introduce shared field accessor helper:
 - Replace dynamic lambda getter pattern in top 10 high-use normalization methods.
 
-Wave status (2026-02-06):
-- `1` in progress (cursor-depth guardrail + shared UW cached route helper implemented)
+Wave status (2026-02-07):
+- `1` complete (cursor-depth guardrail + shared UW cached route helper + UW route cache hit/miss telemetry implemented)
 - `2` complete (shared route helper applied across all UW route modules, including `etf.py`, `earnings.py`, `seasonality.py`, and `screener.py`)
 - `3` in progress (bounded `_call_sync` concurrency + queue-wait/exec/inflight metrics implemented; native offset pagination applied for flow/darkpool/institutions with provider fallback; remaining normalization cleanup and tuning pending)
 
@@ -224,7 +224,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/api/uw/screener.py` | 2 | COMPLETE | Shared helper migration complete; validate short-TTL cache hit-rate |
 | `gateway/api/uw/seasonality.py` | 2 | COMPLETE | Shared helper migration complete; keep count metadata parity |
 | `gateway/api/uw/insiders.py` | 4 | COMPLETE | Shared helper migration complete; validate TTLs by endpoint hit-rate |
-| `gateway/api/uw/common.py` | 0 | COMPLETE | Add shared UW handler wrapper + serializer helper |
+| `gateway/api/uw/common.py` | 0 | COMPLETE | Shared UW handler wrapper + serializer helper + route cache telemetry |
 | `gateway/api/uw/__init__.py` | 0 | COMPLETE | No perf hotspots; keep as router composition only |
 
 ## Future Runs

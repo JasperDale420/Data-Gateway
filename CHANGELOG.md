@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.87] - 2026-02-07
+
+### Added
+
+- **UW cache telemetry tests**: Expanded `tests/test_uw_common.py` with coverage for UW cache-route label normalization and cache miss/hit telemetry emission in the shared UW cached execution helper.
+
+### Changed
+
+- **UW shared cache-helper telemetry rollout**: Updated `gateway/api/uw/common.py` `execute_uw_cached(...)` to emit `record_route_cache(...)` hit/miss events using normalized low-cardinality route labels derived from UW cache keys.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md`, `PERFORMANCE_AUDIT_UW_DEEP_DIVE.md`, and `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` to mark UW shared-helper cache telemetry implementation status and remaining rollout scope.
+
 ## [0.5.86] - 2026-02-07
 
 ### Changed

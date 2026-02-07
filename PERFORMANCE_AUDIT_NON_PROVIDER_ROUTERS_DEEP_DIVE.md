@@ -194,7 +194,7 @@ Impact:
 
 1. Throttle metrics memory-refresh frequency (completed 2026-02-07).
 2. Add symbology batch size limits and request metrics (completed 2026-02-07).
-3. Add per-endpoint cache-hit/miss instrumentation for applicable read-heavy routes (partially completed 2026-02-07: news route cache telemetry).
+3. Add per-endpoint cache-hit/miss instrumentation for applicable read-heavy routes (partially completed 2026-02-07: news route cache telemetry + UW shared cache-helper telemetry).
 
 ## File-Level Audit Tracker (This Run)
 
@@ -205,7 +205,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/api/bulk.py` | 7 | COMPLETE | Optional startup-only fetcher wiring and list ordering/retention policy |
 | `gateway/api/calendar.py` | 5 | COMPLETE | Provider call guardrails and fallback telemetry tuning |
 | `gateway/api/corporate.py` | 5 | COMPLETE | Route-level dedupe/caching policy review |
-| `gateway/api/news.py` | 3 | COMPLETE | Cache key normalization and extending route-cache telemetry beyond news endpoints |
+| `gateway/api/news.py` | 3 | COMPLETE | Cache key normalization and extending route-cache telemetry to remaining non-UW helper surfaces |
 | `gateway/api/quality.py` | 3 | COMPLETE | Real analyzer integration path and payload size controls |
 | `gateway/api/replay.py` | 6 | COMPLETE | Replay-task completion telemetry and websocket lifecycle observability |
 | `gateway/api/symbology.py` | 4 | COMPLETE | Lightweight response caching and optional batch parallelization profiling |

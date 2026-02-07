@@ -96,6 +96,11 @@ def test_make_response_includes_extra_meta_and_serializes_data() -> None:
     }
 
 
+def test_cache_metric_route_normalizes_uw_cache_keys() -> None:
+    assert common._cache_metric_route("uw:etf-tide:SPY") == "uw:etf-tide"
+    assert common._cache_metric_route("not-uw:key") == "uw:unknown"
+
+
 @pytest.mark.asyncio
 async def test_execute_uw_cached_uses_cache_and_rate_limit_once(
     monkeypatch: pytest.MonkeyPatch,
@@ -104,6 +109,7 @@ async def test_execute_uw_cached_uses_cache_and_rate_limit_once(
     provider = object()
     registry = _FakeRegistry(provider=provider)
     calls: dict[str, int] = {"rate": 0, "fetch": 0}
+    cache_events: list[tuple[str, str, str]] = []
 
     async def _fake_rate_limit(provider_name: str) -> None:
         assert provider_name == "unusual_whales"
@@ -117,7 +123,11 @@ async def test_execute_uw_cached_uses_cache_and_rate_limit_once(
     def _build_response(payload: list[int]) -> dict[str, Any]:
         return {"success": True, "data": payload}
 
+    def _record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:
+        cache_events.append((route, status, cache_mode))
+
     monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(common, "record_route_cache", _record_route_cache)
 
     first = await common.execute_uw_cached(
         cache=cache,  # type: ignore[arg-type]
@@ -138,3 +148,4 @@ async def test_execute_uw_cached_uses_cache_and_rate_limit_once(
 
     assert first == second
     assert calls == {"rate": 1, "fetch": 1}
+    assert cache_events == [("uw:test", "miss", "uw"), ("uw:test", "hit", "uw")]
