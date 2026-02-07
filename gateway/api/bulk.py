@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from gateway.api.deps import get_registry, require_api_key, require_provider_rate_limit
@@ -298,9 +299,8 @@ async def download_job_results(
         )
 
     if format == "jsonl":
-        content = manager.get_results_jsonl(job_id)
-        return Response(
-            content=content,
+        return StreamingResponse(
+            content=manager.iter_results_jsonl_chunks(job_id),
             media_type="application/x-ndjson",
             headers={
                 "Content-Disposition": f"attachment; filename={job_id}.jsonl",

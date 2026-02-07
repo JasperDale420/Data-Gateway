@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.51] - 2026-02-07
+
+### Added
+
+- **Bulk JSONL chunking tests**: Added `tests/test_bulk_manager.py` to validate bounded JSONL chunk iteration behavior and output equivalence with legacy JSONL formatting.
+
+### Changed
+
+- **Bulk download JSONL streaming**: Updated `gateway/api/bulk.py` to serve JSONL job downloads via `StreamingResponse` backed by chunked iteration instead of materializing one large response string first.
+- **Bulk manager bounded JSONL iteration**: Added `iter_results_jsonl_chunks(...)` in `gateway/core/bulk.py` and refactored `get_results_jsonl(...)` to reuse chunk assembly, removing the large intermediate list-of-lines allocation.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark bulk JSONL download materialization remediation complete and narrow remaining bulk memory scope to in-memory job result retention strategy.
+
 ## [0.5.50] - 2026-02-07
 
 ### Added

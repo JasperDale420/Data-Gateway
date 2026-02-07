@@ -80,14 +80,16 @@ The fastest, lowest-risk wins are:
 - Low-risk fix:
   - Use bounded concurrency (`Semaphore`) + `asyncio.gather` to fetch symbols in parallel within provider limits.
 
-6. Bulk job result materialization creates high peak memory.
+6. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 - Evidence:
   - `gateway/core/bulk.py:504` keeps extending `job.results` in memory.
-  - `gateway/core/bulk.py:457-458` builds full JSONL list before join.
-- Impact: Large jobs can hit high RSS and GC churn.
-- Low-risk fix:
-  - Stream results to temp file/redis stream as they complete.
-  - Keep summary stats in memory; page result retrieval.
+  - JSONL downloads were previously materialized as one large string (`lines = [json.dumps(...)]` then join).
+- Impact: Large jobs can hit high RSS and GC churn; download-time amplification for JSONL has been reduced.
+- Remediation completed:
+  - `gateway/core/bulk.py` now provides bounded `iter_results_jsonl_chunks(...)` and no longer builds a full list-of-lines for JSONL formatting.
+  - `gateway/api/bulk.py` now serves JSONL downloads via `StreamingResponse` backed by chunk iteration.
+- Remaining low-risk follow-up:
+  - Spill/stream in-progress job results out of memory (`job.results`) to temp storage or paged backend for very large jobs.
 
 7. Replay preloads and sorts full message list.
 - Evidence:
@@ -247,7 +249,7 @@ Legend:
 4. Implement SEC Wave 1 optimizations from `PERFORMANCE_AUDIT_SEC_DEEP_DIVE.md` (cache-before-provider, helper consolidation, filing key normalization).
 5. Continue Finnhub/control-plane Wave 1 optimizations from `PERFORMANCE_AUDIT_FINNHUB_CONTROL_PLANE_DEEP_DIVE.md` (cache-before-provider, dedupe, and date/key helper consolidation; admin health-check parallelization completed).
 6. Implement Alpaca Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` (route helper consolidation, cache/dedupe for safe GETs, over-fetch reductions).
-7. Implement non-provider router Wave 1 optimizations from `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` (bulk streaming downloads, fetcher binding guards, cache-hit-first parsing in news).
+7. Continue non-provider router Wave 1 optimizations from `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` (fetcher binding guards and cache-hit-first parsing in news; bulk JSONL streaming downloads are complete).
 8. Implement Alpaca provider Wave 1 optimizations from `PERFORMANCE_AUDIT_ALPACA_PROVIDER_DEEP_DIVE.md` (shared client use for DNE path, conversion-path optimization, limit/logging tuning).
 9. Continue Alpha Vantage provider follow-up from `PERFORMANCE_AUDIT_ALPHAVANTAGE_PROVIDER_DEEP_DIVE.md` (optional full-history `max_points` tuning + broader runtime profiling).
 10. Implement News provider Wave 1 optimizations from `PERFORMANCE_AUDIT_NEWS_PROVIDER_DEEP_DIVE.md` (keyword hoisting, shared fetch/readiness helpers, pagination normalization with effective page size).

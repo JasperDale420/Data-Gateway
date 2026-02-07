@@ -4,9 +4,10 @@ Implements async job-based bulk data fetching as specified in PRD.
 """
 
 import asyncio
+import io
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum
@@ -448,14 +449,55 @@ class BulkJobManager:
         for record in job.results:
             yield record
 
+    def iter_results_jsonl_chunks(
+        self,
+        job_id: str,
+        records_per_chunk: int = 500,
+    ) -> Iterator[bytes]:
+        """Iterate JSONL bytes in bounded chunks for a completed job."""
+        job = self._jobs.get(job_id)
+        if not job or job.status != BulkJobStatus.COMPLETE:
+            return iter(())
+
+        chunk_size = max(1, records_per_chunk)
+
+        def _iter_chunks() -> Iterator[bytes]:
+            buffer_lines: list[str] = []
+            first_chunk = True
+            for index, record in enumerate(job.results, start=1):
+                buffer_lines.append(json.dumps(record))
+                if index % chunk_size == 0:
+                    chunk_text = "\n".join(buffer_lines)
+                    if not first_chunk:
+                        chunk_text = f"\n{chunk_text}"
+                    yield chunk_text.encode("utf-8")
+                    first_chunk = False
+                    buffer_lines.clear()
+
+            if buffer_lines:
+                chunk_text = "\n".join(buffer_lines)
+                if not first_chunk:
+                    chunk_text = f"\n{chunk_text}"
+                yield chunk_text.encode("utf-8")
+
+        return _iter_chunks()
+
     def get_results_jsonl(self, job_id: str) -> str:
         """Get results as JSONL string."""
         job = self._jobs.get(job_id)
         if not job or job.status != BulkJobStatus.COMPLETE:
             return ""
 
-        lines = [json.dumps(r) for r in job.results]
-        return "\n".join(lines)
+        # Keep a fast string path for legacy call sites while avoiding
+        # intermediate list-of-lines materialization.
+        output = io.StringIO()
+        first = True
+        for record in job.results:
+            if not first:
+                output.write("\n")
+            output.write(json.dumps(record))
+            first = False
+        return output.getvalue()
 
     async def _process_bars_job(self, job: BulkJob) -> None:
         """Process a bulk bars job."""
