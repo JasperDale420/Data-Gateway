@@ -8,7 +8,7 @@ import contextlib
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from gateway.api.deps import get_authenticator, require_api_key
@@ -266,11 +266,27 @@ async def delete_session(
     description="List all replay sessions.",
 )
 async def list_sessions(
+    limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=1000,
+        description="Optional max number of sessions to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of sessions to skip before returning results",
+    ),
     client: Any = Depends(require_api_key),
 ) -> dict[str, Any]:
     """List all replay sessions."""
     manager = get_replay_manager()
     sessions = await manager.list_sessions(client.id)
+
+    if offset:
+        sessions = sessions[offset:]
+    if limit is not None:
+        sessions = sessions[:limit]
 
     return {
         "sessions": [s.to_dict() for s in sessions],

@@ -161,22 +161,21 @@ Low-risk fix path:
 1. Add max symbol count guard on `BatchResolveRequest`.
 2. Keep response schema and per-symbol error behavior unchanged.
 
-### P2-8: List endpoints return full in-memory collections with no pagination controls
+### P2-8: List endpoints return full in-memory collections with no pagination controls (remediated 2026-02-07)
 
 Evidence:
-- Bulk jobs list returns all jobs for client:
+- Bulk jobs endpoint now supports optional `limit`/`offset` query parameters:
+  - `gateway/api/bulk.py:366`
   - `gateway/api/bulk.py:372`
-  - `gateway/api/bulk.py:379`
-- Replay sessions list returns all sessions:
-  - `gateway/api/replay.py:267`
-  - `gateway/api/replay.py:270`
+- Replay sessions endpoint now supports optional `limit`/`offset` query parameters:
+  - `gateway/api/replay.py:269`
+  - `gateway/api/replay.py:275`
+- Regression coverage validates pagination behavior for both endpoints:
+  - `tests/test_list_pagination.py:50`
+  - `tests/test_list_pagination.py:74`
 
 Impact:
-- Response size and serialization cost grow linearly with retained job/session volume.
-
-Low-risk fix path:
-1. Add optional `limit`/`offset` query parameters with current behavior as default when omitted.
-2. Preserve existing response payload shape for backward compatibility.
+- Prevents unbounded response growth on retained job/session-heavy clients while preserving response shape and default behavior when pagination params are omitted.
 
 ## Implementation Plan to Start Addressing Issues
 
@@ -190,7 +189,7 @@ Low-risk fix path:
 
 1. Replace replay exception-driven timeout loop with dedicated control-receive task (completed 2026-02-07).
 2. Add calendar fallback degradation cache/window on provider failure.
-3. Add optional pagination to bulk/replay list endpoints.
+3. Add optional pagination to bulk/replay list endpoints (completed 2026-02-07).
 
 ### Wave NPR-3
 
@@ -204,12 +203,12 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 | File | Endpoints | Audit Status | Future Run Focus |
 |---|---:|---|---|
-| `gateway/api/bulk.py` | 7 | COMPLETE | List pagination and optional startup-only fetcher wiring |
+| `gateway/api/bulk.py` | 7 | COMPLETE | Optional startup-only fetcher wiring and list ordering/retention policy |
 | `gateway/api/calendar.py` | 5 | COMPLETE | Failure fallback throttling and provider call guardrails |
 | `gateway/api/corporate.py` | 5 | COMPLETE | Route-level dedupe/caching policy review |
 | `gateway/api/news.py` | 3 | COMPLETE | Cache-hit-first parsing path, cache key normalization |
 | `gateway/api/quality.py` | 3 | COMPLETE | Real analyzer integration path and payload size controls |
-| `gateway/api/replay.py` | 6 | COMPLETE | List pagination and replay-task completion telemetry |
+| `gateway/api/replay.py` | 6 | COMPLETE | Replay-task completion telemetry and websocket lifecycle observability |
 | `gateway/api/symbology.py` | 4 | COMPLETE | Batch request caps and lightweight response caching |
 | `gateway/api/metrics.py` | 1 | COMPLETE | Dynamic metric refresh throttling |
 

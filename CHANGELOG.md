@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.73] - 2026-02-07
+
+### Added
+
+- **List pagination regression tests**: Added `tests/test_list_pagination.py` to validate optional `limit`/`offset` behavior for bulk job listing and replay session listing endpoints.
+
+### Changed
+
+- **Bulk list pagination controls**: Updated `gateway/api/bulk.py` `list_jobs(...)` to support optional `limit` and `offset` query parameters after status filtering.
+- **Replay list pagination controls**: Updated `gateway/api/replay.py` `list_sessions(...)` to support optional `limit` and `offset` query parameters.
+- **Non-provider audit tracking updates**: Updated `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` to mark list-endpoint pagination remediation complete.
+- **Top-level audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` non-provider follow-up notes to reflect list-pagination completion.
+
 ## [0.5.72] - 2026-02-07
 
 ### Added

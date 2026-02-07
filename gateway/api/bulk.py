@@ -363,6 +363,17 @@ async def cancel_job(
 )
 async def list_jobs(
     status: str | None = Query(default=None, description="Filter by status"),
+    limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=1000,
+        description="Optional max number of jobs to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of jobs to skip before returning results",
+    ),
     client: Any = Depends(require_api_key),
 ) -> dict[str, Any]:
     """List all bulk jobs."""
@@ -372,6 +383,11 @@ async def list_jobs(
     # Filter by status if provided
     if status:
         jobs = [j for j in jobs if j.status.value == status]
+
+    if offset:
+        jobs = jobs[offset:]
+    if limit is not None:
+        jobs = jobs[:limit]
 
     return {
         "jobs": [j.to_dict() for j in jobs],
