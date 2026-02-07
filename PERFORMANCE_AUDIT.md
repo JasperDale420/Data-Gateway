@@ -21,13 +21,13 @@ Scope: Repository-wide performance audit focused on low-risk improvements withou
 
 Top performance bottlenecks are concentrated in three areas:
 
-1. Double buffering and repeated JSON serialization in HTTP middleware chain.
+1. Remaining JSON parse/dump overhead in HTTP envelope path (body re-buffering across cache/envelope has been reduced).
 2. High per-message task/serialization overhead in stream fanout path.
 3. Memory-heavy job/replay implementations that materialize full datasets in memory.
 
 The fastest, lowest-risk wins are:
 
-- Reduce duplicated response buffering in `CacheMiddleware` + `EventEnvelopeMiddleware`.
+- Continue reducing middleware overhead in `EventEnvelopeMiddleware` (body re-buffering reuse between cache/envelope is implemented).
 - Decouple sink publishing from client send in stream path.
 - Parallelize selected provider fan-out methods and provider health checks.
 - Replace remaining high-overhead parsing loops (`iterrows`, repeated full-cache scans, full-sort-then-slice paths).
@@ -36,16 +36,15 @@ The fastest, lowest-risk wins are:
 
 ### P0 (Do First)
 
-1. Middleware double-buffering and re-serialization on GET responses.
+1. Middleware cache/envelope duplicate body buffering (partially remediated on 2026-02-07).
 - Evidence:
-  - `gateway/api/middleware.py:365` buffers response body for cache writes.
-  - `gateway/api/middleware.py:610` buffers response body again for envelope wrapping.
-  - `gateway/api/middleware.py:624` parses JSON and `gateway/api/middleware.py:675` re-dumps JSON.
-- Impact: High CPU + memory amplification on every cachable/wrappable GET; adds latency spikes on larger payloads.
-- Low-risk fix:
-  - Add a request/state flag so envelope middleware can skip re-buffering when response is a cache hit and already wrapped/known-safe.
-  - Short-circuit envelope wrapping for cache hits where `X-Gateway-Envelope` or a deterministic marker is present.
-  - Keep behavior identical for uncached responses.
+  - Cache middleware now stores buffered bytes on request state for HIT/MISS paths: `gateway/api/middleware.py:335`, `gateway/api/middleware.py:368`.
+  - Envelope middleware now reuses pre-buffered bytes before iterating body: `gateway/api/middleware.py:616`, `gateway/api/middleware.py:723`.
+  - JSON parse/dump path still exists for wrapping: `gateway/api/middleware.py:626`, `gateway/api/middleware.py:677`.
+- Impact: Duplicate response-body assembly across cache+envelope path is reduced, lowering per-request memory churn; remaining cost is JSON parse/dump for envelope construction.
+- Remaining low-risk follow-up:
+  - Add optional cache-hit short-circuit when payload is already wrapped/known-safe.
+  - Evaluate lightweight envelope assembly path to reduce JSON serialization overhead.
 
 2. Stream path backpressure coupling: sink publish blocks client message path.
 - Evidence:
@@ -180,7 +179,7 @@ The fastest, lowest-risk wins are:
 ### Wave 2
 
 1. Decouple sink publishing from stream websocket send path.
-2. Reduce middleware duplicate body buffering work (cache/envelope cooperation).
+2. Optimize envelope serialization path (cache/envelope body-reuse cooperation completed).
 3. Introduce bounded batch fanout instead of full per-message gather bursts.
 
 ### Wave 3

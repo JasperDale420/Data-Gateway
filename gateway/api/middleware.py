@@ -332,6 +332,7 @@ class CacheMiddleware(BaseHTTPMiddleware):
             if cached_data:
                 entry = CacheEntry.from_dict(cached_data)
                 if not entry.is_expired():
+                    request.state._gateway_cached_response_body = entry.content
                     record_cache_hit(cache_type)
                     headers = dict(entry.headers or {})
                     headers.update(
@@ -364,6 +365,7 @@ class CacheMiddleware(BaseHTTPMiddleware):
             async for chunk in response.body_iterator:
                 body_chunks.append(chunk)
             body = b"".join(body_chunks)
+            request.state._gateway_cached_response_body = body
 
             # Store headers (excluding hop-by-hop)
             cached_headers = {
@@ -611,11 +613,7 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
             return response
 
         try:
-            # Read response body
-            body_chunks: list[bytes] = []
-            async for chunk in response.body_iterator:
-                body_chunks.append(chunk)
-            body = b"".join(body_chunks)
+            body = await self._get_response_body(request, response)
             if len(body) > self.max_body_bytes:
                 return Response(
                     content=body,
@@ -721,6 +719,21 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 media_type=response.media_type,
                 headers=dict(response.headers),
             )
+
+    async def _get_response_body(self, request: Request, response: Response) -> bytes:
+        """Reuse pre-buffered body bytes from cache middleware when available."""
+        cached_body = getattr(request.state, "_gateway_cached_response_body", None)
+        if isinstance(cached_body, bytes):
+            return cached_body
+        if isinstance(cached_body, bytearray):
+            return bytes(cached_body)
+
+        body_chunks: list[bytes] = []
+        async for chunk in response.body_iterator:
+            body_chunks.append(chunk)
+        body = b"".join(body_chunks)
+        request.state._gateway_cached_response_body = body
+        return body
 
     def _should_wrap_response(self, response: Response) -> bool:
         """Only wrap small JSON responses with explicit length.

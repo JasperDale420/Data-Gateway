@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.47] - 2026-02-07
+
+### Added
+
+- **Middleware body-reuse coverage tests**: Expanded `tests/test_middleware_streaming.py` with cache+envelope MISS/HIT integration coverage and direct `_get_response_body(...)` state-reuse/fallback tests.
+
+### Changed
+
+- **Cache/Envelope duplicate-buffering reduction**: Updated `gateway/api/middleware.py` so `CacheMiddleware` stores pre-buffered response bytes on request state and `EventEnvelopeMiddleware` reuses them via `_get_response_body(...)` before falling back to body iteration.
+- **Envelope middleware body-read helper**: Added `EventEnvelopeMiddleware._get_response_body(...)` to centralize response-body extraction and preserve existing response contracts while reducing repeated body assembly on cache-mediated paths.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark middleware cache/envelope body-reuse remediation complete and narrow remaining middleware performance scope.
+
 ## [0.5.46] - 2026-02-07
 
 ### Added
