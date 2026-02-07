@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.101] - 2026-02-07
+
+### Added
+
+- **Alpaca trading router regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_trading_router.py` covering helper-driven account/order/calendar flows and preserving `create_order` `ValueError -> 400` behavior.
+
+### Changed
+
+- **Trading route-helper consolidation rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/trading.py` to route provider execution through `execute_alpaca_provider_call(...)` with thread-offloaded provider methods, removing repeated provider/rate-limit/error boilerplate while preserving endpoint response contracts.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark Alpaca route-helper consolidation complete across all Alpaca route modules and shift follow-up focus to telemetry tuning and selective safe-GET cache opportunities.
+
 ## [0.5.100] - 2026-02-07
 
 ### Added
