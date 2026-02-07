@@ -1,5 +1,6 @@
 """Alpaca stock data endpoints - bars, quotes, trades, snapshots, auctions."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -164,15 +165,17 @@ async def get_stock_snapshot(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        quotes = await provider.get_quotes(symbols=[symbol.upper()])
         end = datetime.now(UTC)
         start = end - timedelta(minutes=5)
-        bars = await provider.get_bars(
-            symbols=[symbol.upper()],
-            timeframe="1Min",
-            start=start,
-            end=end,
-            limit=1,
+        quotes, bars = await asyncio.gather(
+            provider.get_quotes(symbols=[symbol.upper()]),
+            provider.get_bars(
+                symbols=[symbol.upper()],
+                timeframe="1Min",
+                start=start,
+                end=end,
+                limit=1,
+            ),
         )
 
         return {

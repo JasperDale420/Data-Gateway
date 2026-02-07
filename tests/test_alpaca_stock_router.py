@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -36,6 +37,26 @@ class _FakeProvider:
         return [_ModelLike(i) for i in range(12)]
 
 
+class _SnapshotProvider:
+    def __init__(self) -> None:
+        self.inflight = 0
+        self.max_inflight = 0
+
+    async def get_quotes(self, **_kwargs: Any) -> list[_ModelLike]:
+        self.inflight += 1
+        self.max_inflight = max(self.max_inflight, self.inflight)
+        await asyncio.sleep(0.01)
+        self.inflight -= 1
+        return [_ModelLike(1)]
+
+    async def get_bars(self, **_kwargs: Any) -> list[_ModelLike]:
+        self.inflight += 1
+        self.max_inflight = max(self.max_inflight, self.inflight)
+        await asyncio.sleep(0.01)
+        self.inflight -= 1
+        return [_ModelLike(2)]
+
+
 @pytest.mark.asyncio
 async def test_get_stock_trades_threads_limit_to_provider(
     monkeypatch: pytest.MonkeyPatch,
@@ -65,3 +86,27 @@ async def test_get_stock_trades_threads_limit_to_provider(
     assert provider.calls[0]["limit"] == 5
     assert response["meta"]["count"] == 12
     assert len(response["data"]["trades"]) == 12
+
+
+@pytest.mark.asyncio
+async def test_get_stock_snapshot_fetches_quotes_and_bars_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _SnapshotProvider()
+    registry = _FakeRegistry({"alpaca": provider})
+
+    async def _fake_rate_limit(provider_name: str, block: bool = True) -> None:
+        assert provider_name == "alpaca"
+        assert block is True
+
+    monkeypatch.setattr(stock, "require_provider_rate_limit", _fake_rate_limit)
+
+    response = await stock.get_stock_snapshot(
+        symbol="aapl",
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["symbol"] == "AAPL"
+    assert provider.max_inflight == 2

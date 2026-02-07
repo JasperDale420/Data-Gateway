@@ -134,18 +134,17 @@ Low-risk fix path:
 2. Add optional `limit` parameter to `get_option_chain(...)` used by snapshot route (completed 2026-02-07).
 3. Preserve existing defaults to keep behavior stable.
 
-### P1-5: Sequential snapshot composition increases tail latency
+### P1-5: Sequential snapshot composition increases tail latency (remediated 2026-02-07)
 
 Evidence:
-- Stock snapshot does quote request then bar request sequentially:
-  - `gateway/api/alpaca/stock.py:166`
-  - `gateway/api/alpaca/stock.py:169`
+- Stock snapshot now fetches quote and latest bar concurrently via `asyncio.gather(...)`:
+  - `gateway/api/alpaca/stock.py`
 
 Impact:
-- Combined latency ~= quote latency + bar latency.
+- Lowers snapshot tail latency by running independent provider calls in parallel while preserving response schema.
 
 Low-risk fix path:
-1. Use `asyncio.gather` for independent quote/bar requests.
+1. Use `asyncio.gather` for independent quote/bar requests (completed 2026-02-07).
 2. Keep same response shape and error handling.
 
 ### P2-6: Repeated comma-list parsing/normalization logic is scattered
@@ -191,7 +190,7 @@ Low-risk fix path:
 ### Wave ALP-2
 
 1. Remove over-fetch patterns by propagating route limits into provider methods (stock-trades and option-chain snapshot paths completed 2026-02-07; continue broader endpoint review).
-2. Parallelize independent snapshot sub-calls (`quotes` + `bars`) with `asyncio.gather`.
+2. Parallelize independent snapshot sub-calls (`quotes` + `bars`) with `asyncio.gather` (completed 2026-02-07 for stock snapshot route).
 3. Centralize sync provider offload logic (`to_thread`) for trading/account/watchlists.
 
 ### Wave ALP-3
@@ -208,7 +207,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 |---|---:|---|---|
 | `gateway/api/alpaca/__init__.py` | 0 | COMPLETE | Router composition only |
 | `gateway/api/alpaca/common.py` | 0 | COMPLETE | Add shared route execution + list parsing + cache/dedupe helpers |
-| `gateway/api/alpaca/stock.py` | 9 | COMPLETE | Over-fetch removal complete for trades path; remaining focus is cache/dedupe and snapshot concurrency |
+| `gateway/api/alpaca/stock.py` | 9 | COMPLETE | Over-fetch removal and snapshot concurrency are complete; remaining focus is cache/dedupe |
 | `gateway/api/alpaca/options.py` | 7 | COMPLETE | Chain snapshot over-fetch reduction complete; helper consolidation remains |
 | `gateway/api/alpaca/crypto.py` | 7 | COMPLETE | Cache policy + parser consolidation |
 | `gateway/api/alpaca/forex.py` | 2 | COMPLETE | Cache policy + parser consolidation |

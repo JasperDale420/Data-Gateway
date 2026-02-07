@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.90] - 2026-02-07
+
+### Added
+
+- **Alpaca stock snapshot concurrency tests**: Expanded `tests/test_alpaca_stock_router.py` with coverage that stock snapshot fetches quotes and bars concurrently.
+
+### Changed
+
+- **Stock snapshot latency reduction**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/stock.py` `get_stock_snapshot(...)` to fetch quote and latest bar via `asyncio.gather(...)` instead of sequential awaits.
+- **Alpaca route audit tracking updates**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT_ALPACA_DEEP_DIVE.md` and `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark stock snapshot concurrency remediation complete and narrow remaining Alpaca route scope.
+
 ## [0.5.89] - 2026-02-07
 
 ### Added
