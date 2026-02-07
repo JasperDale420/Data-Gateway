@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.48] - 2026-02-07
+
+### Added
+
+- **Stream sink dispatch coverage tests**: Added `tests/test_main_stream_sink.py` covering non-blocking `_on_stream_data(...)` sink scheduling behavior and pending-task backpressure drop behavior.
+
+### Changed
+
+- **Stream callback sink decoupling**: Updated `gateway/main.py` so `_on_stream_data(...)` schedules sink publishes off-path instead of awaiting `publish_all(...)`, reducing client-stream callback latency coupling to sink/dedup I/O.
+- **Bounded sink publish scheduling guardrail**: Added bounded stream sink scheduling controls in `gateway/main.py` (`STREAM_SINK_MAX_INFLIGHT_PUBLISH`, `STREAM_SINK_MAX_PENDING_TASKS`) with warning logs on pending-queue drops.
+- **Stream sink shutdown drain**: Added `_drain_stream_sink_publish_tasks(...)` in `gateway/main.py` and invoked it during lifespan shutdown to flush/cancel outstanding stream sink publish tasks before sink shutdown.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark stream callback/sink decoupling remediation complete and narrow remaining stream performance scope to fanout batching/task burst reduction.
+
 ## [0.5.47] - 2026-02-07
 
 ### Added

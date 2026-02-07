@@ -22,13 +22,13 @@ Scope: Repository-wide performance audit focused on low-risk improvements withou
 Top performance bottlenecks are concentrated in three areas:
 
 1. Remaining JSON parse/dump overhead in HTTP envelope path (body re-buffering across cache/envelope has been reduced).
-2. High per-message task/serialization overhead in stream fanout path.
+2. High per-message task/serialization overhead in stream fanout path (stream callback sink coupling has been decoupled).
 3. Memory-heavy job/replay implementations that materialize full datasets in memory.
 
 The fastest, lowest-risk wins are:
 
 - Continue reducing middleware overhead in `EventEnvelopeMiddleware` (body re-buffering reuse between cache/envelope is implemented).
-- Decouple sink publishing from client send in stream path.
+- Reduce stream path overhead further (sink publish is now decoupled from callback path; next focus is fanout task burst control).
 - Parallelize selected provider fan-out methods and provider health checks.
 - Replace remaining high-overhead parsing loops (`iterrows`, repeated full-cache scans, full-sort-then-slice paths).
 
@@ -46,13 +46,13 @@ The fastest, lowest-risk wins are:
   - Add optional cache-hit short-circuit when payload is already wrapped/known-safe.
   - Evaluate lightweight envelope assembly path to reduce JSON serialization overhead.
 
-2. Stream path backpressure coupling: sink publish blocks client message path.
+2. Stream path backpressure coupling: sink publish blocked client message path (remediated 2026-02-07).
 - Evidence:
-  - `gateway/main.py:122` awaits `sink_registry.publish_all(...)` inside `_on_stream_data`.
-- Impact: Slow sink/Redis path directly increases client message latency and drop risk under load.
-- Low-risk fix:
-  - Move sink publish to fire-and-forget task (bounded queue/semaphore) so websocket send path is not blocked.
-  - Preserve at-least-once best effort with structured error logs and metrics.
+  - Sink publish now schedules off callback path via `_schedule_stream_sink_publish(...)`: `gateway/main.py`.
+  - Bounded scheduling guardrails and shutdown draining are in place: `gateway/main.py` (`STREAM_SINK_MAX_PENDING_TASKS`, `_drain_stream_sink_publish_tasks`).
+- Impact: Stream callback no longer waits on sink publish/dedup I/O, reducing callback latency coupling under sink backpressure.
+- Remaining low-risk follow-up:
+  - Tune pending/inflight limits with telemetry under production-like fanout load.
 
 3. Stream fanout creates per-message task burst across all clients.
 - Evidence:
@@ -178,7 +178,7 @@ The fastest, lowest-risk wins are:
 
 ### Wave 2
 
-1. Decouple sink publishing from stream websocket send path.
+1. Tune decoupled sink publishing limits/telemetry in stream websocket send path (base decoupling is complete).
 2. Optimize envelope serialization path (cache/envelope body-reuse cooperation completed).
 3. Introduce bounded batch fanout instead of full per-message gather bursts.
 
@@ -255,6 +255,7 @@ Legend:
 12. Implement core infrastructure Wave 1 optimizations from `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` (adjustment lookup optimization, breaker caching, rate-limiter wait tuning, and bounded sink dispatch tuning).
 13. Implement tests Wave 1 optimizations from `PERFORMANCE_AUDIT_TESTS_DEEP_DIVE.md` (fixture scope caching, autouse override narrowing, sleep-free circuit breaker timing tests).
 14. Operate BENCH guardrails from `PERFORMANCE_AUDIT_BENCHMARKING_DEEP_DIVE.md` (monitor auto-ratcheted budgets/baselines, tune multipliers/windows, and periodically promote stable active configs via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`).
+15. Continue stream-path optimization from this audit: implement bounded fanout batching/worker queue in `gateway/core/stream.py` to reduce per-message task burst overhead.
 
 ## Notes
 

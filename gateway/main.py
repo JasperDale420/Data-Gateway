@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
@@ -80,6 +81,70 @@ structlog.configure(
 logger = structlog.get_logger()
 attach_error_buffer_handler()
 
+STREAM_SINK_TOPIC = "heber:events"
+STREAM_SINK_MAX_INFLIGHT_PUBLISH = 32
+STREAM_SINK_MAX_PENDING_TASKS = 512
+
+_stream_sink_publish_semaphore: asyncio.Semaphore | None = None
+_stream_sink_publish_tasks: set[asyncio.Task[None]] = set()
+
+
+def _get_stream_sink_publish_semaphore() -> asyncio.Semaphore:
+    global _stream_sink_publish_semaphore
+    if _stream_sink_publish_semaphore is None:
+        _stream_sink_publish_semaphore = asyncio.Semaphore(STREAM_SINK_MAX_INFLIGHT_PUBLISH)
+    return _stream_sink_publish_semaphore
+
+
+def _on_stream_sink_publish_done(task: asyncio.Task[None]) -> None:
+    _stream_sink_publish_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        logger.warning("stream_sink_publish_task_failed", error=str(exc))
+
+
+async def _publish_stream_event(sink_registry, envelope: dict) -> None:
+    semaphore = _get_stream_sink_publish_semaphore()
+    async with semaphore:
+        await sink_registry.publish_all(STREAM_SINK_TOPIC, envelope)
+
+
+def _schedule_stream_sink_publish(sink_registry, envelope: dict) -> None:
+    if len(_stream_sink_publish_tasks) >= STREAM_SINK_MAX_PENDING_TASKS:
+        logger.warning(
+            "stream_sink_publish_backpressure_drop",
+            pending_tasks=len(_stream_sink_publish_tasks),
+            max_pending_tasks=STREAM_SINK_MAX_PENDING_TASKS,
+            event_id=envelope.get("event_id", "unknown"),
+        )
+        return
+
+    task = asyncio.create_task(_publish_stream_event(sink_registry, envelope))
+    _stream_sink_publish_tasks.add(task)
+    task.add_done_callback(_on_stream_sink_publish_done)
+
+
+async def _drain_stream_sink_publish_tasks(timeout_seconds: float = 2.0) -> None:
+    if not _stream_sink_publish_tasks:
+        return
+
+    pending = list(_stream_sink_publish_tasks)
+    try:
+        await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout_seconds)
+    except TimeoutError:
+        logger.warning(
+            "stream_sink_publish_drain_timeout",
+            timeout_seconds=timeout_seconds,
+            pending_tasks=len(_stream_sink_publish_tasks),
+        )
+    finally:
+        for task in pending:
+            if not task.done():
+                task.cancel()
+        _stream_sink_publish_tasks.clear()
+
 
 async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> None:
     """Callback when stream data arrives. Sends envelope to connected client.
@@ -118,14 +183,13 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
 
     sink_registry = get_sink_registry()
     if sink_registry:
-        # Publish all events to single Heber stream for unified ingestion
-        await sink_registry.publish_all("heber:events", envelope)
+        # Schedule sink publish off the stream callback path.
+        _schedule_stream_sink_publish(sink_registry, envelope)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
-    import asyncio
     import signal
 
     settings = get_settings()
@@ -256,6 +320,9 @@ async def lifespan(app: FastAPI):
     # Wait for drain period (allow in-flight requests to complete)
     if drain_seconds > 0:
         await asyncio.sleep(drain_seconds)
+
+    # Flush scheduled stream-to-sink publish tasks before sink shutdown.
+    await _drain_stream_sink_publish_tasks()
 
     # Shutdown UW poller
     if uw_poller:
