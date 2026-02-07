@@ -51,27 +51,29 @@ Key measured patterns:
 
 ## Priority Findings (Low-Risk Changes Only)
 
-### P0-1: Stream validation path pays high per-message conversion overhead
+### P0-1: Stream validation path pays high per-message conversion overhead (remediated 2026-02-07)
 
 Evidence:
-- Stream handler validates each incoming bar/quote/trade message:
-  - `gateway/core/stream.py:893-925`
-- Validator converts numeric fields via `Decimal(str(...))` in hot paths:
-  - `gateway/core/validator.py:108-111`
-  - `gateway/core/validator.py:207-208`
-  - `gateway/core/validator.py:267`
-- Each validator method performs separate `datetime.now(UTC)` future checks:
-  - `gateway/core/validator.py:123`, `222`, `280`
+- Stream handler now validates raw provider payloads directly, removing per-message remapping dict allocations:
+  - `gateway/core/stream.py:901-908`
+- Validator now accepts canonical and stream-native key shapes in-place (`symbol/S`, `timestamp/t`, price/size aliases):
+  - `gateway/core/validator.py:106-116`
+  - `gateway/core/validator.py:209-216`
+  - `gateway/core/validator.py:270-274`
+- Decimal conversion now uses type-aware fast paths (`Decimal`, `int`, `float`, `str`) before generic fallback:
+  - `gateway/core/validator.py:320-340`
+- Future timestamp checks now compute `now_utc` once per validate call and reuse it in helper comparison:
+  - `gateway/core/validator.py:125-131`
+  - `gateway/core/validator.py:225-231`
+  - `gateway/core/validator.py:283-289`
+- Regression coverage added for stream-native validator payloads:
+  - `tests/test_validator.py:186`
+  - `tests/test_validator.py:242`
+  - `tests/test_validator.py:278`
 
 Impact:
-- Extra CPU and allocations on high-rate stream traffic.
-- Increased event-loop pressure under fanout load.
-
-Low-risk fix path:
-1. Add raw-message validator entry points to avoid intermediate dict remapping in `stream.py`.
-2. Introduce numeric fast-path (int/float) before Decimal fallback where precision-sensitive arithmetic is not required.
-3. Resolve `now_utc` once per validate call and reuse.
-4. Keep error codes and rejection behavior unchanged.
+- Removes avoidable hot-path allocations and reduces conversion overhead during high-frequency stream validation.
+- Preserves validation error codes/contracts while broadening accepted input shapes for internal stream paths.
 
 ### P0-2: `/quality/analyze` endpoint traverses payloads multiple times
 
@@ -185,7 +187,7 @@ Low-risk fix path:
 
 ### Wave CORE-1 (Immediate, lowest risk)
 
-1. Add validator hot-path optimizations (single `now_utc`, numeric fast-path, raw-message entry points).
+1. Add validator hot-path optimizations (single `now_utc`, numeric fast-path, raw-message entry points) (completed 2026-02-07).
 2. Remove duplicate timestamp parsing in quality analyzer and hoist timeframe map constant (completed 2026-02-07, including sorted-input fast path for gap detection).
 3. Remove temporary `ResolvedSymbol` allocation in symbology human-format path (completed 2026-02-07, along with bounded resolve memoization).
 4. Hoist middleware input-validator import (completed 2026-02-07).
@@ -213,7 +215,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 | `gateway/core/quality.py` | COMPLETE | Single-pass analyze+issue detection consolidation and benchmark validation |
 | `gateway/core/calendar.py` | COMPLETE | Large-range guardrails and iteration efficiency |
 | `gateway/core/symbology.py` | COMPLETE | Microbenchmark cache-hit effectiveness and tune cache-cap strategy if needed |
-| `gateway/core/validator.py` | COMPLETE | Stream hot-path numeric/timestamp optimization |
+| `gateway/core/validator.py` | COMPLETE | Stream-validation microbenchmarking and optional additional alias-path coverage |
 | `scripts/live_provider_smoke.py` | COMPLETE | Parallel provider checks |
 | `scripts/generate_provider_contract.py` | COMPLETE | Handler index precomputation |
 
@@ -221,4 +223,4 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 1. Runtime benchmark/profiling suite execution for middleware, stream/replay fanout, bulk memory behavior, and provider/core microbenchmarks.
 2. Full performance audit of `tests/` execution paths (fixture setup cost, heavy integration tests, and benchmark gate strategy).
-3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (validator hot path, quality pass consolidation, calendar/script follow-ups, security symbol-batch follow-up).
+3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (quality pass consolidation, calendar/script follow-ups, security symbol-batch follow-up).

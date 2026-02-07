@@ -901,37 +901,11 @@ class StreamMultiplexer:
         if data_type in {"bars", "quotes", "trades"}:
             validator = get_validator()
             if data_type == "bars":
-                result = validator.validate_bar(
-                    {
-                        "symbol": message.get("S"),
-                        "timestamp": message.get("t"),
-                        "open": message.get("o"),
-                        "high": message.get("h"),
-                        "low": message.get("l"),
-                        "close": message.get("c"),
-                        "volume": message.get("v"),
-                    }
-                )
+                result = validator.validate_bar(message)
             elif data_type == "quotes":
-                result = validator.validate_quote(
-                    {
-                        "symbol": message.get("S"),
-                        "timestamp": message.get("t"),
-                        "bid_price": message.get("bp"),
-                        "ask_price": message.get("ap"),
-                        "bid_size": message.get("bs"),
-                        "ask_size": message.get("as"),
-                    }
-                )
+                result = validator.validate_quote(message)
             else:
-                result = validator.validate_trade(
-                    {
-                        "symbol": message.get("S"),
-                        "timestamp": message.get("t"),
-                        "price": message.get("p"),
-                        "size": message.get("s"),
-                    }
-                )
+                result = validator.validate_trade(message)
 
             if not result.valid:
                 logger.warning(

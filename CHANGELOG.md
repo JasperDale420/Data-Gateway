@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.80] - 2026-02-07
+
+### Added
+
+- **Validator stream-shape tests**: Expanded `tests/test_validator.py` with coverage that stream-native payload keys (`S/t/o/h/l/c/v`, `bp/ap/bs/as`, `p/s`) validate correctly without intermediate remapping.
+
+### Changed
+
+- **Stream validation allocation trim**: Updated `gateway/core/stream.py` to pass raw provider payloads directly into validator methods for bars/quotes/trades, removing per-message remap dict allocations in the stream hot path.
+- **Validator alias-key support**: Updated `gateway/core/validator.py` to validate both canonical API keys and stream-native provider keys in-place, preserving validation error semantics.
+- **Validator conversion fast paths**: Added type-aware `Decimal` conversion fast paths in `gateway/core/validator.py` for `Decimal`/`int`/`float`/`str` inputs to reduce repeated generic conversion overhead.
+- **Validator timestamp check helper reuse**: Consolidated future-timestamp checks through `_is_future_timestamp(...)` with per-call `now_utc` capture in `gateway/core/validator.py`.
+- **Core-modules audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to mark validator hot-path optimization complete and narrow remaining core-module follow-ups.
+
 ## [0.5.79] - 2026-02-07
 
 ### Added

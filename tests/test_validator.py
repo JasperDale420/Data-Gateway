@@ -191,6 +191,20 @@ class TestValidateBar:
         result = validator.validate_bar(bar)
         assert result.valid is True
 
+    def test_stream_bar_shape_passes(self, validator: DataValidator) -> None:
+        """Raw stream bar payload shape should be validated without remapping."""
+        bar = {
+            "S": "AAPL",
+            "t": "2026-01-15T10:30:00Z",
+            "o": 185.50,
+            "h": 186.00,
+            "l": 185.00,
+            "c": 185.75,
+            "v": 100000,
+        }
+        result = validator.validate_bar(bar)
+        assert result.valid is True
+
 
 class TestValidateQuote:
     """Tests for quote validation."""
@@ -220,6 +234,19 @@ class TestValidateQuote:
         assert result.valid is False
         assert ValidationErrorCodes.INVALID_PRICE in result.error_codes
 
+    def test_stream_quote_shape_passes(self, validator: DataValidator) -> None:
+        """Raw stream quote payload shape should be validated without remapping."""
+        quote = {
+            "S": "AAPL",
+            "t": "2026-01-15T10:30:00Z",
+            "bp": 185.50,
+            "ap": 185.55,
+            "bs": 100,
+            "as": 200,
+        }
+        result = validator.validate_quote(quote)
+        assert result.valid is True
+
 
 class TestValidateTrade:
     """Tests for trade validation."""
@@ -244,6 +271,17 @@ class TestValidateTrade:
         result = validator.validate_trade(trade)
         assert result.valid is False
         assert ValidationErrorCodes.INVALID_PRICE in result.error_codes
+
+    def test_stream_trade_shape_passes(self, validator: DataValidator) -> None:
+        """Raw stream trade payload shape should be validated without remapping."""
+        trade = {
+            "S": "AAPL",
+            "t": "2026-01-15T10:30:00Z",
+            "p": 185.50,
+            "s": 100,
+        }
+        result = validator.validate_trade(trade)
+        assert result.valid is True
 
 
 class TestSymbolPatterns:
