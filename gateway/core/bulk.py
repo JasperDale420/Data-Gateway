@@ -513,6 +513,40 @@ class BulkJobManager:
             return []
         return list(self._iter_job_results(job))
 
+    def iter_results_json_chunks(
+        self,
+        job_id: str,
+        records_per_chunk: int = 500,
+    ) -> Iterator[bytes]:
+        """Iterate JSON bytes for `{\"data\":[...]}` in bounded chunks."""
+        job = self._jobs.get(job_id)
+        if not job or job.status != BulkJobStatus.COMPLETE:
+            return iter(())
+
+        chunk_size = max(1, records_per_chunk)
+
+        def _iter_chunks() -> Iterator[bytes]:
+            yield b'{"data":['
+            buffer_parts: list[str] = []
+            first = True
+            for index, record in enumerate(self._iter_job_results(job), start=1):
+                if first:
+                    buffer_parts.append(json.dumps(record))
+                    first = False
+                else:
+                    buffer_parts.append(",")
+                    buffer_parts.append(json.dumps(record))
+
+                if index % chunk_size == 0:
+                    yield "".join(buffer_parts).encode("utf-8")
+                    buffer_parts.clear()
+
+            if buffer_parts:
+                yield "".join(buffer_parts).encode("utf-8")
+            yield b"]}"
+
+        return _iter_chunks()
+
     def _iter_job_results(self, job: BulkJob) -> Iterator[dict[str, Any]]:
         """Iterate all job results from memory and optional spool storage."""
         if job.results:

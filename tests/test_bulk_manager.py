@@ -37,6 +37,16 @@ def test_iter_results_jsonl_chunks_matches_legacy_jsonl_output() -> None:
     assert manager.get_results_jsonl(job.job_id) == expected
 
 
+def test_iter_results_json_chunks_matches_json_output() -> None:
+    manager = BulkJobManager()
+    job = _make_complete_job("bulk-json")
+    manager._jobs[job.job_id] = job
+
+    chunks = list(manager.iter_results_json_chunks(job.job_id, records_per_chunk=2))
+    reconstructed = b"".join(chunks).decode("utf-8")
+    assert json.loads(reconstructed) == {"data": job.results}
+
+
 def test_iter_results_jsonl_chunks_returns_empty_for_incomplete_job() -> None:
     manager = BulkJobManager()
     request = BulkBarsRequest(symbols=["AAPL"], start="2025-01-01", end="2025-01-02")

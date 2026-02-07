@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.66] - 2026-02-07
+
+### Added
+
+- **Bulk streaming JSON test coverage**: Expanded `tests/test_bulk_manager.py` with `iter_results_json_chunks(...)` output-equivalence coverage.
+
+### Changed
+
+- **Bulk JSON download streaming**: Updated `gateway/api/bulk.py` JSON download path to return `StreamingResponse` backed by chunked JSON iteration instead of materializing full payload strings.
+- **Bulk manager chunked JSON iterator**: Added `iter_results_json_chunks(...)` in `gateway/core/bulk.py` for bounded `{\"data\":[...]}` payload generation across in-memory/spooled result sources.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark streaming JSON-array download follow-up complete.
+
 ## [0.5.65] - 2026-02-07
 
 ### Added

@@ -307,11 +307,8 @@ async def download_job_results(
             },
         )
     elif format == "json":
-        import json
-
-        content = json.dumps({"data": manager.get_results_json(job_id)})
-        return Response(
-            content=content,
+        return StreamingResponse(
+            content=manager.iter_results_json_chunks(job_id),
             media_type="application/json",
             headers={
                 "Content-Disposition": f"attachment; filename={job_id}.json",
