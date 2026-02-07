@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.81] - 2026-02-07
+
+### Added
+
+- **Calendar range guardrail tests**: Expanded `tests/test_calendar.py` with coverage for oversized date-range rejection and inverted-range empty results.
+
+### Changed
+
+- **Calendar span guardrail**: Updated `gateway/core/calendar.py` `TradingCalendar.get_trading_days(...)` to enforce an explicit max date-span limit before iteration and fail fast for unrealistic ranges.
+- **Calendar truncation safety cleanup**: Removed the late `len(trading_days) > 1000` break in `gateway/core/calendar.py` so oversized requests are rejected early rather than returning silent partial results.
+- **Core-modules audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` and `PERFORMANCE_AUDIT.md` to record calendar span-guardrail completion and narrow remaining core-module follow-ups.
+
 ## [0.5.80] - 2026-02-07
 
 ### Added

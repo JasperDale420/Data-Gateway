@@ -224,6 +224,7 @@ class TradingCalendar:
     REGULAR_EARLY_END = time(13, 0)
     AFTERHOURS_START = time(16, 0)
     AFTERHOURS_END = time(20, 0)
+    MAX_TRADING_RANGE_DAYS = 3660
 
     def __init__(self, market: str = "NYSE") -> None:
         self.market = market
@@ -288,6 +289,13 @@ class TradingCalendar:
         Returns:
             Tuple of (trading_days, holidays, early_closes)
         """
+        if end < start:
+            return [], [], []
+
+        date_span_days = (end - start).days
+        if date_span_days > self.MAX_TRADING_RANGE_DAYS:
+            raise ValueError(f"Date range cannot exceed {self.MAX_TRADING_RANGE_DAYS} days")
+
         trading_days = []
         holidays = []
         early_closes = []
@@ -316,10 +324,6 @@ class TradingCalendar:
 
             # Move to next day
             current += timedelta(days=1)
-
-            # Safety limit
-            if len(trading_days) > 1000:
-                break
 
         return trading_days, holidays, early_closes
 

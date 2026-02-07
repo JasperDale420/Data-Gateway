@@ -41,7 +41,8 @@ Key measured patterns:
   - timeframe map now hoisted to module constant `_TIMEFRAME_TO_MINUTES` (remediated 2026-02-07): `gateway/core/quality.py:15-28`
   - gap detection now uses sorted-input fast path and single-pass timestamp parsing (remediated 2026-02-07): `gateway/core/quality.py:335-372`
 - Calendar range scan is day-by-day loop:
-  - `while current <= end`: `gateway/core/calendar.py:296`
+  - `while current <= end`: `gateway/core/calendar.py:305`
+  - upfront max-span guardrail now enforced (remediated 2026-02-07): `gateway/core/calendar.py:299-303`
 - Symbology repeated resolve paths:
   - `self.resolve(...)` called by public helpers at `gateway/core/symbology.py:397`
   - bounded resolver memoization + clone-on-read now implemented in `gateway/core/symbology.py:142-220` (remediated 2026-02-07)
@@ -115,20 +116,25 @@ Impact:
 - Reduces repeated timestamp parsing and per-call dict allocation in quality analysis hot paths while preserving output schemas and issue semantics.
 - Avoids unnecessary full sort work for already ordered bar payloads that dominate normal ingestion flows.
 
-### P1-4: Calendar trading-day enumeration scales linearly by calendar day
+### P1-4: Calendar trading-day enumeration scales linearly by calendar day (partially remediated 2026-02-07)
 
 Evidence:
-- Day-by-day loop for range generation:
-  - `gateway/core/calendar.py:296-318`
-- Hard stop triggered only after >1000 trading days:
-  - `gateway/core/calendar.py:321`
+- Calendar trading-day path now applies explicit date-span guard before loop:
+  - `gateway/core/calendar.py:299`
+  - `gateway/core/calendar.py:300`
+- Legacy partial-result safety break (`len(trading_days) > 1000`) was removed:
+  - `gateway/core/calendar.py` (`get_trading_days` no longer truncates via late break)
+- Regression coverage added for oversize-range guard and inverted-range behavior:
+  - `tests/test_calendar.py:102`
+  - `tests/test_calendar.py:110`
 
 Impact:
-- Large date ranges can spend significant CPU in date iteration.
+- Prevents unbounded large-range iteration and avoids silently truncated partial results for oversized requests.
+- Keeps small/normal ranges unchanged; core iteration remains linear within accepted bounds.
 
 Low-risk fix path:
-1. Add explicit max date-span guard using `(end - start).days` before iteration.
-2. Keep existing semantics but fail fast on unrealistic windows.
+1. Add explicit max date-span guard using `(end - start).days` before iteration (completed 2026-02-07).
+2. Keep existing semantics but fail fast on unrealistic windows (completed 2026-02-07).
 3. Optionally pre-allocate expected list capacity via span heuristics.
 
 ### P1-5: Symbology helpers re-resolve and reformat repeatedly (remediated 2026-02-07)
@@ -195,7 +201,7 @@ Low-risk fix path:
 ### Wave CORE-2
 
 1. Consolidate quality analyze + issue-detection into a single-pass option.
-2. Add calendar span guardrails and optional pre-allocation hints for trading-day range generation.
+2. Add calendar span guardrails and optional pre-allocation hints for trading-day range generation (span guardrails completed 2026-02-07).
 3. Add bounded concurrency for `scripts/live_provider_smoke.py` provider checks.
 
 ### Wave CORE-3
@@ -213,7 +219,7 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 |---|---|---|
 | `gateway/core/security.py` | COMPLETE | Middleware integration overhead and symbol-validation batching |
 | `gateway/core/quality.py` | COMPLETE | Single-pass analyze+issue detection consolidation and benchmark validation |
-| `gateway/core/calendar.py` | COMPLETE | Large-range guardrails and iteration efficiency |
+| `gateway/core/calendar.py` | COMPLETE | Optional pre-allocation hints and benchmark validation |
 | `gateway/core/symbology.py` | COMPLETE | Microbenchmark cache-hit effectiveness and tune cache-cap strategy if needed |
 | `gateway/core/validator.py` | COMPLETE | Stream-validation microbenchmarking and optional additional alias-path coverage |
 | `scripts/live_provider_smoke.py` | COMPLETE | Parallel provider checks |
@@ -223,4 +229,4 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 1. Runtime benchmark/profiling suite execution for middleware, stream/replay fanout, bulk memory behavior, and provider/core microbenchmarks.
 2. Full performance audit of `tests/` execution paths (fixture setup cost, heavy integration tests, and benchmark gate strategy).
-3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (quality pass consolidation, calendar/script follow-ups, security symbol-batch follow-up).
+3. Implementation and measurement pass for remaining Wave CORE-1/2 recommendations (quality pass consolidation, script follow-ups, security symbol-batch follow-up, and calendar benchmark validation).
