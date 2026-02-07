@@ -10,14 +10,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from gateway.api.alpaca.common import (
     DESC_COMMA_SYMBOLS,
     Client,
+    execute_alpaca_cached_call,
     execute_alpaca_provider_call,
+    get_cache,
     get_registry,
     require_api_key,
 )
+from gateway.core.cache import HybridCache, InMemoryCache
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
+TRADING_ASSETS_CACHE_TTL_SECONDS = 600
+TRADING_CALENDAR_CACHE_TTL_SECONDS = 3600
 
 
 async def _execute_trading_call(
@@ -27,6 +32,25 @@ async def _execute_trading_call(
 ) -> Any:
     return await execute_alpaca_provider_call(
         registry=registry,
+        provider_call=lambda provider: asyncio.to_thread(provider_fn, provider),
+    )
+
+
+async def _execute_trading_cached_call(
+    *,
+    registry: ProviderRegistry,
+    cache: InMemoryCache | HybridCache,
+    cache_key: str,
+    ttl: int,
+    route_label: str,
+    provider_fn: Callable[[Any], Any],
+) -> Any:
+    return await execute_alpaca_cached_call(
+        registry=registry,
+        cache=cache,
+        cache_key=cache_key,
+        ttl=ttl,
+        route_label=route_label,
         provider_call=lambda provider: asyncio.to_thread(provider_fn, provider),
     )
 
@@ -299,11 +323,21 @@ async def get_assets(
     ),
     exchange: str | None = Query(default=None, description="Exchange filter"),
     client: Client = Depends(require_api_key),
+    cache: InMemoryCache | HybridCache = Depends(get_cache),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get available assets."""
-    data = await _execute_trading_call(
+    normalized_status = (status or "none").strip().lower()
+    normalized_asset_class = (asset_class or "none").strip().lower()
+    normalized_exchange = (exchange or "all").strip().lower()
+    data = await _execute_trading_cached_call(
         registry=registry,
+        cache=cache,
+        cache_key=(
+            f"alpaca:trading:assets:{normalized_status}:{normalized_asset_class}:{normalized_exchange}"
+        ),
+        ttl=TRADING_ASSETS_CACHE_TTL_SECONDS,
+        route_label="alpaca_trading_assets",
         provider_fn=lambda provider: provider.get_assets(
             status=status,
             asset_class=asset_class,
@@ -321,11 +355,17 @@ async def get_assets(
 async def get_asset(
     symbol: str,
     client: Client = Depends(require_api_key),
+    cache: InMemoryCache | HybridCache = Depends(get_cache),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get a specific asset by symbol."""
-    data = await _execute_trading_call(
+    normalized_symbol = symbol.strip().upper()
+    data = await _execute_trading_cached_call(
         registry=registry,
+        cache=cache,
+        cache_key=f"alpaca:trading:asset:{normalized_symbol}",
+        ttl=TRADING_ASSETS_CACHE_TTL_SECONDS,
+        route_label="alpaca_trading_asset",
         provider_fn=lambda provider: provider.get_asset(symbol),
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
@@ -349,11 +389,18 @@ async def get_calendar(
     start: date | None = Query(default=None, description="Start date (YYYY-MM-DD)"),
     end: date | None = Query(default=None, description="End date (YYYY-MM-DD)"),
     client: Client = Depends(require_api_key),
+    cache: InMemoryCache | HybridCache = Depends(get_cache),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get trading calendar."""
-    data = await _execute_trading_call(
+    start_key = start.isoformat() if start else "none"
+    end_key = end.isoformat() if end else "none"
+    data = await _execute_trading_cached_call(
         registry=registry,
+        cache=cache,
+        cache_key=f"alpaca:trading:calendar:{start_key}:{end_key}",
+        ttl=TRADING_CALENDAR_CACHE_TTL_SECONDS,
+        route_label="alpaca_trading_calendar",
         provider_fn=lambda provider: provider.get_calendar(start, end),
     )
     return {

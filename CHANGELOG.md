@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.102] - 2026-02-07
+
+### Added
+
+- **Trading cache-key regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_trading_router.py` to validate cached-helper key/route wiring for trading `assets` and `asset` endpoints.
+
+### Changed
+
+- **Trading safe-GET cache rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/trading.py` to apply `execute_alpaca_cached_call(...)` for low-churn trading reads (`/assets`, `/assets/{symbol}`, `/calendar`) with bounded TTLs and normalized cache keys.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to note trading safe-GET cache rollout status and keep remaining cache-expansion work targeted to explicitly low-churn endpoints.
+
 ## [0.5.101] - 2026-02-07
 
 ### Added
