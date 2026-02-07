@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.105] - 2026-02-07
+
+### Added
+
+- **News cache-key regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_news_router.py` to validate cached-helper key/route wiring for Alpaca news queries.
+
+### Changed
+
+- **News short-TTL cache rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/news.py` to use `execute_alpaca_cached_call(...)` for safe GET news reads with normalized cache keys and short TTLs.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to include news route cache coverage in the selective safe-GET cache rollout status.
+
 ## [0.5.104] - 2026-02-07
 
 ### Added
