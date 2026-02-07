@@ -18,6 +18,7 @@ from gateway.core.metrics import (
     record_rate_limit_exceeded,
     record_request,
 )
+from gateway.core.security import get_input_validator
 
 logger = structlog.get_logger()
 
@@ -51,8 +52,6 @@ class InputValidationMiddleware(BaseHTTPMiddleware):
         content_length = request.headers.get("content-length")
         if content_length:
             try:
-                from gateway.core.security import get_input_validator
-
                 validator = get_input_validator()
                 error = validator.validate_request_size(int(content_length), endpoint_type="rest")
                 if error:

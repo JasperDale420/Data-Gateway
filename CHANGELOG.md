@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.78] - 2026-02-07
+
+### Changed
+
+- **Input validator import hoist**: Updated `gateway/api/middleware.py` to import `get_input_validator` at module scope, removing per-request dynamic import work from `InputValidationMiddleware` content-length checks.
+- **Core-modules audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_MODULES_DEEP_DIVE.md` to mark middleware input-validator import work complete (with remaining security symbol-batch optimization still pending).
+- **Top-level audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` core-modules follow-up notes to reflect middleware import-hoist completion.
+
 ## [0.5.77] - 2026-02-07
 
 ### Added
