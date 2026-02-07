@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.62] - 2026-02-07
+
+### Added
+
+- **Metrics helper tests**: Added `tests/test_metrics.py` for path normalization placeholder behavior and bounded cache-size enforcement.
+
+### Changed
+
+- **Bounded metrics path-normalization cache**: Updated `gateway/core/metrics.py` `_normalize_path(...)` to use a bounded in-process cache for repeated paths, reducing repeated string parsing on hot request paths.
+- **Metrics cache guardrail**: Added cache cap/reset behavior to prevent unbounded normalization cache growth.
+- **Core-infra audit tracking updates**: Updated `PERFORMANCE_AUDIT_CORE_INFRA_DEEP_DIVE.md` to mark metrics path-normalization memoization remediation complete.
+
 ## [0.5.61] - 2026-02-07
 
 ### Added

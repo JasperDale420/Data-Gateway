@@ -149,18 +149,18 @@ Remediation:
 1. Demoted auth success logging from `info` to `debug`.
 2. Preserved warning/error logs for failed auth paths.
 
-### P2-7: Metrics path normalization repeats heuristic parsing on every request
+### P2-7: Metrics path normalization hot-path repetition (remediated 2026-02-07)
 
 Evidence:
-- Request metrics always call `_normalize_path(...)`: `gateway/core/metrics.py:210`
-- Normalization loops path segments + heuristic checks: `gateway/core/metrics.py:252-263`
+- Request metrics still call `_normalize_path(...)`, but normalized paths are now cached in a bounded in-process map.
+- Cache guardrail clears at configured cap to avoid unbounded growth.
 
 Impact:
 - Small but constant CPU overhead on hot HTTP path.
 
-Low-risk fix path:
-1. Add small LRU cache for normalized path strings.
-2. Keep cardinality-reduction behavior unchanged.
+Remediation:
+1. Added bounded normalization cache for repeated paths.
+2. Preserved existing cardinality-reduction placeholder behavior.
 
 ### P2-8: Legacy/dormant core modules add maintenance overhead with minimal runtime value
 
@@ -193,7 +193,7 @@ Wave status (2026-02-06):
 ### Wave CORE-INFRA-2
 
 1. Add lock striping/per-key optimization to request deduplicator.
-2. Add LRU memoization for metrics path normalization.
+2. Add LRU memoization for metrics path normalization (completed 2026-02-07).
 3. Reduce auth success log volume (`info` -> `debug`/sampled) (completed 2026-02-07).
 
 ### Wave CORE-INFRA-3

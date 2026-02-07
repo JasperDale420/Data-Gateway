@@ -2,6 +2,9 @@
 
 from prometheus_client import Counter, Gauge, Histogram, Info
 
+_PATH_NORMALIZATION_CACHE_MAX = 4096
+_PATH_NORMALIZATION_CACHE: dict[str, str] = {}
+
 # Gateway info
 GATEWAY_INFO = Info(
     "gateway",
@@ -312,6 +315,10 @@ def _normalize_path(path: str) -> str:
 
     Replaces variable path segments with placeholders.
     """
+    cached = _PATH_NORMALIZATION_CACHE.get(path)
+    if cached is not None:
+        return cached
+
     parts = path.split("/")
     normalized = []
 
@@ -328,7 +335,11 @@ def _normalize_path(path: str) -> str:
         else:
             normalized.append(part)
 
-    return "/" + "/".join(normalized)
+    normalized_path = "/" + "/".join(normalized)
+    if len(_PATH_NORMALIZATION_CACHE) >= _PATH_NORMALIZATION_CACHE_MAX:
+        _PATH_NORMALIZATION_CACHE.clear()
+    _PATH_NORMALIZATION_CACHE[path] = normalized_path
+    return normalized_path
 
 
 def _looks_like_symbol(s: str) -> bool:
