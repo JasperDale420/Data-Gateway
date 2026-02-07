@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.108] - 2026-02-07
+
+### Added
+
+- **Architecture documentation**: Created `docs/ARCHITECTURE.md` with 4 mermaid diagrams covering system overview, data pipeline, WebSocket multiplexer, UW poller, data sink, and full module map (19 core + 19 API modules).
+- **README coverage**: Added Data Pipeline, UW Poller, and Data Sink sections to `README.md` with updated architecture diagram and EOD/sink config tables.
+- **Runbook EOD config**: Added 7 UW EOD polling parameters to `runbook.md` tuning parameters table.
+
+### Changed
+
+- **`.env.example` completeness**: Added 20+ missing config settings from `config.py` — UW EOD polling (6), cache Redis (2), data sink tuning (2), stream fanout, bulk/replay spool, rate limiting, GC threshold. Organized into clear sections.
+- **Renamed `production.md` → `DEVELOPMENT.md`**: The file contains development rules and patterns, not production deployment instructions.
+
 ## [0.5.107] - 2026-02-07
 
 ### Added

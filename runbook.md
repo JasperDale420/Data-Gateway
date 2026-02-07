@@ -81,6 +81,13 @@ Full defaults live in `gateway/config.py`; see `.env.example` for a commented te
 | `GATEWAY_SHUTDOWN_DRAIN_SECONDS`          | `30`      | Graceful shutdown drain period       |
 | `GATEWAY_DATA_SINK_ENABLED`              | `false`   | Enable Redis Streams data sink       |
 | `GATEWAY_DATA_SINK_REDIS_URL`            | —         | Redis URL for data sink              |
+| `GATEWAY_UW_EOD_ENABLED`                | `false`   | Enable daily EOD ticker polling      |
+| `GATEWAY_UW_EOD_HOUR`                   | `16`      | EOD poll hour (ET, 0-23)            |
+| `GATEWAY_UW_EOD_MINUTE`                 | `30`      | EOD poll minute (ET, 0-59)          |
+| `GATEWAY_UW_CORE_TICKERS`               | —         | Comma-separated core ticker override |
+| `GATEWAY_UW_DYNAMIC_TICKER_COUNT`       | `20`      | Dynamic tickers from UW screener     |
+| `GATEWAY_UW_EOD_CONCURRENCY`            | `5`       | Max concurrent ticker polls          |
+| `GATEWAY_UW_POLLER_PUBLISH_MAX_INFLIGHT`| `16`      | Max in-flight poller publishes       |
 
 ### 2.3  Config Files
 
