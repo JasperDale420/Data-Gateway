@@ -411,8 +411,14 @@ class AlpacaProvider(DataProvider):
             response.raise_for_status()
             data = response.json()
 
-            logger.info("alpaca_snapshots_fetched", count=len(data.get("snapshots", {})))
-            return data.get("snapshots", {})
+            # Alpaca returns snapshots at the top level keyed by symbol,
+            # not under a "snapshots" sub-key
+            snapshots = data.get("snapshots", data)
+            # Filter out non-snapshot keys like 'next_page_token'
+            snapshots = {k: v for k, v in snapshots.items() if isinstance(v, dict)}
+
+            logger.info("alpaca_snapshots_fetched", count=len(snapshots))
+            return snapshots
 
         except httpx.HTTPStatusError as e:
             logger.error("alpaca_snapshots_error", status=e.response.status_code)
