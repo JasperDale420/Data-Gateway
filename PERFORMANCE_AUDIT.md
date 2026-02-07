@@ -244,7 +244,7 @@ Legend:
 | Provider `gateway/providers/yfinance.py` | 1 (386 LOC) | COMPLETE | Cache-before-provider, route helper consolidation, health-check offload, `iterrows` remediation |
 | Provider `gateway/providers/sec.py` | 1 (434 LOC) | COMPLETE | Cache-before-provider, helper consolidation, filing key normalization |
 | Provider `gateway/providers/finnhub.py` | 1 (1280 LOC) | COMPLETE | Cache-before-provider, dedupe, date/key helper consolidation, admin health-check parallelization |
-| API routers `gateway/api/alpaca/*` | 14 files (60 endpoints) | COMPLETE | Option-chain snapshot + stock-trades over-fetch reductions, stock snapshot concurrency, shared list-parser rollout, shared execution-helper rollout for stock/options/metadata/forex/account/corporate/news/screener, metadata safe-GET cache + in-flight dedupe rollout |
+| API routers `gateway/api/alpaca/*` | 14 files (60 endpoints) | COMPLETE | Option-chain snapshot + stock-trades over-fetch reductions, stock snapshot concurrency, shared list-parser rollout, shared execution-helper rollout for stock/options/metadata/forex/account/corporate/news/screener/crypto, metadata safe-GET cache + in-flight dedupe rollout |
 | API routers `gateway/api/finnhub/*` + control-plane routers | 15 files (61 endpoints) | COMPLETE | Cache-before-provider, dedupe, date/key helper consolidation |
 | API routers `gateway/api/uw/*` | 26 (125 endpoints) | COMPLETE | Route-helper rollout, route-cache telemetry, native pagination |
 | API routers `gateway/api/alphavantage/*` | 9 (30 endpoints) | COMPLETE | AV-1/AV-2/AV-3 rollouts |
@@ -261,7 +261,7 @@ Legend:
 
 1. **UW provider**: Telemetry-driven inflight tuning; expand native pagination where post-filter semantics allow.
 2. **Alpha Vantage provider**: Optional full-history `max_points` tuning + broader runtime profiling validation.
-3. **Alpaca routers**: Continue shared execution-helper consolidation to remaining route modules (`crypto.py`, `trading.py`, `watchlists.py`) and evaluate additional safe-GET cache/dedupe opportunities beyond metadata endpoints.
+3. **Alpaca routers**: Continue shared execution-helper consolidation to remaining route modules (`trading.py`, `watchlists.py`) and evaluate additional safe-GET cache/dedupe opportunities beyond metadata endpoints.
 4. **Alpaca provider**: Shared client use for DNE path, conversion-path optimization, and logging tuning.
 5. **Non-provider routers**: Optional broader route-level cache telemetry rollout to remaining helper surfaces.
 6. **Core modules**: Benchmark calibration.

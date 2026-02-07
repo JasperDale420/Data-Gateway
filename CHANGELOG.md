@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.99] - 2026-02-07
+
+### Added
+
+- **Alpaca crypto router regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_crypto_router.py` to verify helper-based provider call threading for crypto bars/latest-bars and quote-not-found handling.
+
+### Changed
+
+- **Crypto route-helper consolidation rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/crypto.py` to use `execute_alpaca_provider_call(...)` across bars/trades/quotes/snapshot/orderbook/latest endpoints, removing repeated provider/rate-limit/exception boilerplate while preserving response contracts.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark crypto helper rollout complete and narrow remaining Alpaca route-helper follow-ups.
+
 ## [0.5.98] - 2026-02-07
 
 ### Added
