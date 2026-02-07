@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Generator
 from typing import Any, cast
 
 import pytest
@@ -22,6 +24,26 @@ def _noop_provider_call(_provider: Any):
         return "ok"
 
     return _run()
+
+
+class _FakeAsyncCache:
+    def __init__(self, initial: dict[str, Any] | None = None) -> None:
+        self._store: dict[str, Any] = initial or {}
+        self.set_calls: list[tuple[str, Any, int]] = []
+
+    async def get(self, key: str) -> Any | None:
+        return self._store.get(key)
+
+    async def set(self, key: str, value: Any, ttl: int) -> None:
+        self._store[key] = value
+        self.set_calls.append((key, value, ttl))
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache_inflight() -> Generator[None, None, None]:
+    common._ALPACA_CACHE_INFLIGHT.clear()
+    yield
+    common._ALPACA_CACHE_INFLIGHT.clear()
 
 
 def test_parse_comma_values_trims_and_uppercases() -> None:
@@ -118,3 +140,131 @@ async def test_execute_alpaca_provider_call_passthrough_http_exception(
 
     assert exc.value.status_code == 404
     assert exc.value.detail == "missing"
+
+
+@pytest.mark.asyncio
+async def test_execute_alpaca_cached_call_returns_cached_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _FakeAsyncCache(initial={"alpaca:test:key": {"cached": True}})
+    cache_events: list[tuple[str, str, str]] = []
+
+    async def _unexpected_execute(
+        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
+    ):
+        raise AssertionError("execute_alpaca_provider_call should not run on cache hit")
+
+    def _record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:
+        cache_events.append((route, status, cache_mode))
+
+    monkeypatch.setattr(common, "execute_alpaca_provider_call", _unexpected_execute)
+    monkeypatch.setattr(common, "record_route_cache", _record_route_cache)
+
+    result = await common.execute_alpaca_cached_call(
+        registry=cast(ProviderRegistry, _FakeRegistry({"alpaca": object()})),
+        cache=cast(Any, cache),
+        cache_key="alpaca:test:key",
+        ttl=30,
+        provider_call=_noop_provider_call,
+        route_label="alpaca_meta_conditions",
+    )
+
+    assert result == {"cached": True}
+    assert cache.set_calls == []
+    assert cache_events == [("alpaca_meta_conditions", "hit", "alpaca")]
+
+
+@pytest.mark.asyncio
+async def test_execute_alpaca_cached_call_caches_miss_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _FakeAsyncCache()
+    calls = 0
+    cache_events: list[tuple[str, str, str]] = []
+    registry = _FakeRegistry({"alpaca": object()})
+
+    async def _fake_execute(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        nonlocal calls
+        calls += 1
+        provider = registry.get("alpaca")
+        return await provider_call(provider)
+
+    async def _provider_call(_provider: Any) -> dict[str, int]:
+        return {"value": 1}
+
+    def _record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:
+        cache_events.append((route, status, cache_mode))
+
+    monkeypatch.setattr(common, "execute_alpaca_provider_call", _fake_execute)
+    monkeypatch.setattr(common, "record_route_cache", _record_route_cache)
+
+    first = await common.execute_alpaca_cached_call(
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(Any, cache),
+        cache_key="alpaca:test:key",
+        ttl=30,
+        provider_call=_provider_call,
+        route_label="alpaca_meta_conditions",
+    )
+    second = await common.execute_alpaca_cached_call(
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(Any, cache),
+        cache_key="alpaca:test:key",
+        ttl=30,
+        provider_call=_provider_call,
+        route_label="alpaca_meta_conditions",
+    )
+
+    assert first == {"value": 1}
+    assert second == {"value": 1}
+    assert calls == 1
+    assert cache.set_calls == [("alpaca:test:key", {"value": 1}, 30)]
+    assert cache_events == [
+        ("alpaca_meta_conditions", "miss", "alpaca"),
+        ("alpaca_meta_conditions", "hit", "alpaca"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_alpaca_cached_call_dedupes_concurrent_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _FakeAsyncCache()
+    calls = 0
+    registry = _FakeRegistry({"alpaca": object()})
+
+    async def _fake_execute(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.01)
+        provider = registry.get("alpaca")
+        return await provider_call(provider)
+
+    async def _provider_call(_provider: Any) -> dict[str, int]:
+        return {"value": 42}
+
+    monkeypatch.setattr(common, "execute_alpaca_provider_call", _fake_execute)
+
+    first, second = await asyncio.gather(
+        common.execute_alpaca_cached_call(
+            registry=cast(ProviderRegistry, registry),
+            cache=cast(Any, cache),
+            cache_key="alpaca:test:key",
+            ttl=30,
+            provider_call=_provider_call,
+            route_label="alpaca_meta_conditions",
+        ),
+        common.execute_alpaca_cached_call(
+            registry=cast(ProviderRegistry, registry),
+            cache=cast(Any, cache),
+            cache_key="alpaca:test:key",
+            ttl=30,
+            provider_call=_provider_call,
+            route_label="alpaca_meta_conditions",
+        ),
+    )
+
+    assert first == {"value": 42}
+    assert second == {"value": 42}
+    assert calls == 1
+    assert cache.set_calls == [("alpaca:test:key", {"value": 42}, 30)]

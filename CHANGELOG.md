@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.94] - 2026-02-07
+
+### Added
+
+- **Alpaca metadata/router regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_metadata_router.py` with coverage for metadata cache hit/miss behavior, normalized metadata cache-key usage, logo response/404 handling, and fixed-income ISIN parsing.
+- **Alpaca cached-helper tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_common.py` with coverage for cache-hit short-circuiting, miss-to-cache population, and in-flight request de-duplication on shared cache keys.
+
+### Changed
+
+- **Shared Alpaca cached execution helper**: Added `execute_alpaca_cached_call(...)` in `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/common.py` to centralize cache hit/miss handling, route-cache telemetry emission, and in-flight de-dupe for safe cached route calls.
+- **Metadata route helper rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/metadata.py` to use shared helper paths for condition/exchange metadata caching (`30m TTL`) and shared provider execution for logos/fixed-income while preserving response contracts.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to reflect Alpaca metadata cache/dedupe rollout completion and refine remaining Alpaca router follow-up scope.
+
 ## [0.5.93] - 2026-02-07
 
 ### Added
