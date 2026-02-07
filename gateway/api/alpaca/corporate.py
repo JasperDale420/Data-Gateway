@@ -2,16 +2,16 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from gateway.api.alpaca.common import (
     DESC_END_TIME,
     DESC_START_TIME,
-    ERR_PROVIDER_NOT_AVAILABLE,
     Client,
+    execute_alpaca_provider_call,
     get_registry,
+    parse_comma_values,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
@@ -31,35 +31,25 @@ async def get_corporate_actions(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get corporate actions for a symbol."""
-    provider = registry.get("alpaca")
-
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca")
-        types_list = None
-        if types:
-            types_list = [t.strip() for t in types.split(",")]
-
-        actions = await provider.get_corporate_actions(
+    types_list = parse_comma_values(types) if types else None
+    actions = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_corporate_actions(
             symbols=[symbol.upper()],
             types=types_list,
             start=start,
             end=end,
-        )
+        ),
+    )
 
-        return {
-            "success": True,
-            "data": {
-                "symbol": symbol.upper(),
-                "actions": [a.model_dump(mode="json") for a in actions],
-            },
-            "meta": {
-                "count": len(actions),
-                "provider": "alpaca",
-            },
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    return {
+        "success": True,
+        "data": {
+            "symbol": symbol.upper(),
+            "actions": [a.model_dump(mode="json") for a in actions],
+        },
+        "meta": {
+            "count": len(actions),
+            "provider": "alpaca",
+        },
+    }

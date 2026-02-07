@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.97] - 2026-02-07
+
+### Added
+
+- **Alpaca corporate router regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_corporate_router.py` to validate corporate-action query parameter threading and response shaping through the shared Alpaca execution helper.
+
+### Changed
+
+- **Corporate route-helper consolidation rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/corporate.py` to use `execute_alpaca_provider_call(...)` and shared comma parsing, removing duplicated provider/rate-limit/exception scaffolding while preserving endpoint response contracts.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to mark corporate helper rollout complete and narrow the remaining Alpaca helper-consolidation modules.
+
 ## [0.5.96] - 2026-02-07
 
 ### Added
