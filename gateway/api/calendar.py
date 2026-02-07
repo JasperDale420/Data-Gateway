@@ -298,50 +298,51 @@ async def get_earnings(
     earnings_calendar = get_earnings_calendar()
     provider = cast(SupportsFinnhubEarningsCalendar | None, registry.get("finnhub"))
     if provider:
+        if not earnings_calendar.has_fetcher():
 
-        async def _fetch_earnings(
-            symbols: list[str],
-            start_date: date,
-            end_date: date,
-        ) -> list[EarningsEvent]:
-            await require_provider_rate_limit("finnhub")
-            start_dt = datetime.combine(start_date, time.min, tzinfo=UTC)
-            end_dt = datetime.combine(end_date, time.max, tzinfo=UTC)
-            raw_events = await provider.get_earnings_calendar(start=start_dt, end=end_dt)
+            async def _fetch_earnings(
+                symbols: list[str],
+                start_date: date,
+                end_date: date,
+            ) -> list[EarningsEvent]:
+                await require_provider_rate_limit("finnhub")
+                start_dt = datetime.combine(start_date, time.min, tzinfo=UTC)
+                end_dt = datetime.combine(end_date, time.max, tzinfo=UTC)
+                raw_events = await provider.get_earnings_calendar(start=start_dt, end=end_dt)
 
-            symbol_set = {s.upper() for s in symbols}
-            hour_map = {
-                "bmo": EarningsTime.BEFORE_OPEN,
-                "amc": EarningsTime.AFTER_CLOSE,
-                "dmh": EarningsTime.DURING_MARKET,
-            }
-            mapped: list[EarningsEvent] = []
+                symbol_set = {s.upper() for s in symbols}
+                hour_map = {
+                    "bmo": EarningsTime.BEFORE_OPEN,
+                    "amc": EarningsTime.AFTER_CLOSE,
+                    "dmh": EarningsTime.DURING_MARKET,
+                }
+                mapped: list[EarningsEvent] = []
 
-            for item in raw_events:
-                symbol = str(item.get("symbol", "")).upper()
-                if symbol_set and symbol not in symbol_set:
-                    continue
-                date_str = item.get("date")
-                if not date_str:
-                    continue
-                try:
-                    event_date = date.fromisoformat(date_str)
-                except ValueError:
-                    continue
-                hour = str(item.get("hour", "")).lower()
-                mapped.append(
-                    EarningsEvent(
-                        symbol=symbol,
-                        date=event_date,
-                        time=hour_map.get(hour, EarningsTime.UNKNOWN),
-                        eps_estimate=item.get("eps_estimate"),
-                        revenue_estimate=item.get("revenue_estimate"),
+                for item in raw_events:
+                    symbol = str(item.get("symbol", "")).upper()
+                    if symbol_set and symbol not in symbol_set:
+                        continue
+                    date_str = item.get("date")
+                    if not date_str:
+                        continue
+                    try:
+                        event_date = date.fromisoformat(date_str)
+                    except ValueError:
+                        continue
+                    hour = str(item.get("hour", "")).lower()
+                    mapped.append(
+                        EarningsEvent(
+                            symbol=symbol,
+                            date=event_date,
+                            time=hour_map.get(hour, EarningsTime.UNKNOWN),
+                            eps_estimate=item.get("eps_estimate"),
+                            revenue_estimate=item.get("revenue_estimate"),
+                        )
                     )
-                )
 
-            return mapped
+                return mapped
 
-        earnings_calendar.set_fetcher(_fetch_earnings)
+            earnings_calendar.set_fetcher(_fetch_earnings)
     elif not settings.allow_stub_data:
         raise HTTPException(status_code=503, detail="Finnhub provider not available")
 

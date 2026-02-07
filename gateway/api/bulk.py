@@ -173,28 +173,29 @@ async def create_bulk_bars_job(
 
     provider = cast(SupportsAlpacaBars | None, registry.get("alpaca"))
     if provider:
+        if not manager.has_bars_fetcher():
 
-        async def _fetch_bars(
-            *,
-            symbol: str,
-            start: str,
-            end: str,
-            timeframe: str,
-            adjusted: bool,
-        ):
-            await require_provider_rate_limit("alpaca")
-            start_dt = _parse_datetime(start, end_of_day=False)
-            end_dt = _parse_datetime(end, end_of_day=True)
-            bars = await provider.get_bars(
-                symbols=[symbol],
-                timeframe=timeframe,
-                start=start_dt,
-                end=end_dt,
-                adjustment="all" if adjusted else "raw",
-            )
-            return [bar.model_dump(mode="json") for bar in bars]
+            async def _fetch_bars(
+                *,
+                symbol: str,
+                start: str,
+                end: str,
+                timeframe: str,
+                adjusted: bool,
+            ):
+                await require_provider_rate_limit("alpaca")
+                start_dt = _parse_datetime(start, end_of_day=False)
+                end_dt = _parse_datetime(end, end_of_day=True)
+                bars = await provider.get_bars(
+                    symbols=[symbol],
+                    timeframe=timeframe,
+                    start=start_dt,
+                    end=end_dt,
+                    adjustment="all" if adjusted else "raw",
+                )
+                return [bar.model_dump(mode="json") for bar in bars]
 
-        manager.set_bars_fetcher(_fetch_bars)
+            manager.set_bars_fetcher(_fetch_bars)
     elif not settings.allow_stub_data:
         raise HTTPException(status_code=503, detail="Alpaca provider not available")
 
@@ -414,20 +415,22 @@ async def create_bulk_options_job(
             )
         raise HTTPException(status_code=503, detail="Alpaca provider not available")
 
-    async def _fetch_chain(
-        *,
-        underlying: str,
-        expiration_gte: str | None = None,
-        expiration_lte: str | None = None,
-    ):
-        await require_provider_rate_limit("alpaca")
-        return await provider.get_option_chain(
-            underlying=underlying,
-            expiration_gte=expiration_gte,
-            expiration_lte=expiration_lte,
-        )
+    if not manager.has_options_fetcher():
 
-    manager.set_options_fetcher(_fetch_chain)
+        async def _fetch_chain(
+            *,
+            underlying: str,
+            expiration_gte: str | None = None,
+            expiration_lte: str | None = None,
+        ):
+            await require_provider_rate_limit("alpaca")
+            return await provider.get_option_chain(
+                underlying=underlying,
+                expiration_gte=expiration_gte,
+                expiration_lte=expiration_lte,
+            )
+
+        manager.set_options_fetcher(_fetch_chain)
 
     bulk_request = BulkOptionsRequest(
         underlyings=[u.upper() for u in request.underlyings],

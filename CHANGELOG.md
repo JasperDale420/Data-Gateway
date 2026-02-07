@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.70] - 2026-02-07
+
+### Added
+
+- **Fetcher guard regression tests**: Added `tests/test_router_fetcher_guards.py` to verify bulk bars/options, calendar earnings, and corporate fetcher bindings do not rebind when fetchers are already configured.
+
+### Changed
+
+- **Bulk fetcher rebinding guards**: Updated `gateway/api/bulk.py` to call `set_bars_fetcher(...)` / `set_options_fetcher(...)` only when manager fetchers are missing.
+- **Calendar fetcher rebinding guard**: Updated `gateway/api/calendar.py` earnings route to set provider fetcher only when no fetcher is configured.
+- **Corporate fetcher rebinding guard**: Updated `gateway/api/corporate.py` fetcher configuration helper to avoid resetting existing fetchers each request.
+- **Non-provider audit tracking updates**: Updated `PERFORMANCE_AUDIT_NON_PROVIDER_ROUTERS_DEEP_DIVE.md` to mark request-time singleton fetcher mutation remediation complete.
+- **Top-level audit plan updates**: Updated `PERFORMANCE_AUDIT.md` non-provider follow-up notes to reflect completed fetcher-guard work.
+
 ## [0.5.69] - 2026-02-07
 
 ### Added

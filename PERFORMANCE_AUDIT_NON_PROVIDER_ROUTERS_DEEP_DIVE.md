@@ -62,27 +62,22 @@ Low-risk fix path:
 2. Keep the existing `jsonl`/`json` output contract unchanged.
 3. Preserve current auth/job checks; change only response emission strategy.
 
-### P0-2: Request-time mutation of singleton fetchers in bulk/calendar/corporate routes
+### P0-2: Request-time mutation of singleton fetchers in bulk/calendar/corporate routes (remediated 2026-02-07)
 
 Evidence:
-- Routes set global singleton fetchers on each request:
-  - `gateway/api/bulk.py:196`
-  - `gateway/api/bulk.py:433`
-  - `gateway/api/calendar.py:344`
-  - `gateway/api/corporate.py:153`
-- Singleton services expose mutable fetcher setters:
-  - `gateway/core/bulk.py:278`
-  - `gateway/core/calendar.py:383`
-  - `gateway/core/corporate_actions.py:130`
+- Routes now guard singleton fetcher binding with `has_*_fetcher()` checks:
+  - `gateway/api/bulk.py:176`
+  - `gateway/api/bulk.py:418`
+  - `gateway/api/calendar.py:301`
+  - `gateway/api/corporate.py:90`
+- Regression coverage validates no-rebind behavior across affected routes:
+  - `tests/test_router_fetcher_guards.py:78`
+  - `tests/test_router_fetcher_guards.py:103`
+  - `tests/test_router_fetcher_guards.py:127`
+  - `tests/test_router_fetcher_guards.py:148`
 
 Impact:
-- Repeated closure allocation and global setter writes on hot paths.
-- Raises maintenance and concurrency risk for behavior drift across requests.
-
-Low-risk fix path:
-1. Configure fetchers once during startup/lifespan instead of per-request.
-2. Add `has_*_fetcher` guard paths in routers to avoid repeated setter calls.
-3. Keep existing provider fallback behavior.
+- Removes repeated closure allocation and singleton setter writes from request hot paths while preserving existing provider fallback behavior.
 
 ### P1-3: Replay WebSocket control loop uses exception-driven polling every second
 
@@ -190,7 +185,7 @@ Low-risk fix path:
 ### Wave NPR-1 (Immediate, lowest risk)
 
 1. Stream bulk download responses (`jsonl` first) instead of building full strings in memory.
-2. Guard `set_*fetcher` calls so fetchers are not re-bound on every request.
+2. Guard `set_*fetcher` calls so fetchers are not re-bound on every request (completed 2026-02-07).
 3. Move news datetime parsing to cache-miss path.
 
 ### Wave NPR-2
@@ -211,9 +206,9 @@ Legend: COMPLETE = audited in this run; FUTURE = implementation/profiling follow
 
 | File | Endpoints | Audit Status | Future Run Focus |
 |---|---:|---|---|
-| `gateway/api/bulk.py` | 7 | COMPLETE | Streaming downloads, fetcher binding guard, list pagination |
-| `gateway/api/calendar.py` | 5 | COMPLETE | Failure fallback throttling, provider call guardrails |
-| `gateway/api/corporate.py` | 5 | COMPLETE | Fetcher binding guard and route-level dedupe/caching policy |
+| `gateway/api/bulk.py` | 7 | COMPLETE | List pagination and optional startup-only fetcher wiring |
+| `gateway/api/calendar.py` | 5 | COMPLETE | Failure fallback throttling and provider call guardrails |
+| `gateway/api/corporate.py` | 5 | COMPLETE | Route-level dedupe/caching policy review |
 | `gateway/api/news.py` | 3 | COMPLETE | Cache-hit-first parsing path, cache key normalization |
 | `gateway/api/quality.py` | 3 | COMPLETE | Real analyzer integration path and payload size controls |
 | `gateway/api/replay.py` | 6 | COMPLETE | WebSocket control loop optimization, list pagination |
