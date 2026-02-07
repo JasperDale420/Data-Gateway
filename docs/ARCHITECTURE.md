@@ -295,6 +295,73 @@ flowchart LR
 
 ---
 
+## Schemas (`gateway/schemas/__init__.py`)
+
+All Pydantic data models used for normalization, WebSocket messaging, and API responses.
+
+### WebSocket Messages
+
+| Schema | Purpose |
+|--------|---------|
+| `AuthMessage` | Client authentication (`action: auth`) |
+| `SubscribeMessage` | Subscribe to feeds/symbols |
+| `UnsubscribeMessage` | Unsubscribe from feeds/symbols |
+| `AuthResult` | Auth success/failure response |
+| `SubscriptionAck` | Subscription confirmation |
+
+### Normalized Market Data
+
+| Schema | Fields |
+|--------|--------|
+| `NormalizedBar` | symbol, timestamp, OHLCV, vwap, trade_count, provider, timeframe |
+| `NormalizedQuote` | symbol, timestamp, bid/ask price+size, exchanges, conditions, provider |
+| `NormalizedTrade` | symbol, timestamp, price, size, trade_id, exchange, conditions, provider |
+| `NormalizedOptionContract` | contract_symbol, underlying, strike, expiry, greeks (δγθν), bid/ask, IV |
+
+### UW Flow & Alternative Data
+
+| Schema | Source |
+|--------|--------|
+| `NormalizedFlowAlert` | UW options flow (premium, side, sentiment, sweep/block flags) |
+| `NormalizedDarkpoolTrade` | UW darkpool (notional, NBBO context, ext_hours flag) |
+| `NormalizedMarketTide` | UW market sentiment (net call/put premium, sentiment label) |
+| `NormalizedSectorTide` | UW per-sector GICS sentiment |
+| `NormalizedInsiderTrade` | SEC Form 4 insider filings (shares, value, 10b5-1 flag) |
+| `NormalizedInstitutionHolding` | 13F institutional holdings (shares, % portfolio, change type) |
+| `NormalizedPoliticianTrade` | Congressional trading disclosures |
+
+### Analytics & Screener
+
+| Schema | Purpose |
+|--------|---------|
+| `NormalizedGreekExposure` | GEX/DEX/VEX exposure data |
+| `NormalizedIVRank` | IV rank/percentile with 1Y high/low |
+| `NormalizedOIChange` | Open interest changes (call/put OI delta) |
+| `NormalizedMaxPain` | Max pain strike per expiry |
+| `NormalizedNetPremiumTick` | Net premium flow ticks |
+| `NormalizedScreenerResult` | Stock screener results |
+| `NormalizedMostActive` | Most active stocks by volume |
+| `NormalizedMover` | Top gainers/losers |
+| `NormalizedHottestChain` | Hottest option contracts |
+
+### Other
+
+| Schema | Purpose |
+|--------|---------|
+| `NormalizedNewsArticle` | News articles (headline, source, symbols) |
+| `NormalizedEarnings` | Earnings calendar (EPS/revenue est. vs actual) |
+| `NormalizedETFHolding` | ETF constituent weights |
+| `NormalizedETFFlow` | ETF inflow/outflow data |
+| `NormalizedShortData` | Short interest & days to cover |
+| `NormalizedFTD` | Failures to deliver |
+| `NormalizedCorporateAction` | Splits, dividends, spinoffs |
+| `NormalizedForexRate` | Forex exchange rates |
+| `NormalizedFundamentals` | Company fundamental metrics |
+| `EventEnvelope` | Wrapper for all events (event_id, feed, instrument_key, payload) |
+| `SuccessResponse` | Standard API success wrapper |
+
+---
+
 ## Module Map
 
 ### `gateway/core/` — Business Logic

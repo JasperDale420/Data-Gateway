@@ -107,6 +107,7 @@ python scripts/perf_gate.py \
 Perf promotion/release runbook:
 
 - `PERF_RELEASE_READINESS.md`
+- `runbook.md` — Operations reference (startup, config, troubleshooting, monitoring)
 
 ### Docker
 

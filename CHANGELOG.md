@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.109] - 2026-02-07
+
+### Added
+
+- **API Reference completeness**: Added Replay, Symbology, Quality, and Catalog endpoint documentation to `API_REFERENCE.md` with endpoint tables, request examples, and notes.
+- **Schema documentation**: Added Schemas section to `docs/ARCHITECTURE.md` documenting all 30+ Pydantic models (WebSocket messages, market data, UW flow, analytics, alternative data).
+- **Runbook cross-reference**: Added `runbook.md` to `README.md` documentation section.
+
+### Removed
+
+- **Redundant `DEVELOPMENT.md`**: Duplicate of deleted `production.md`; dev guidelines already live in `CONTRIBUTING.md` and `CLAUDE.MD`.
+
 ## [0.5.108] - 2026-02-07
 
 ### Added
