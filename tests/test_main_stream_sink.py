@@ -32,6 +32,7 @@ class _FakeSinkRegistry:
 def _reset_stream_sink_dispatch_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gateway_main, "_stream_sink_publish_semaphore", None)
     monkeypatch.setattr(gateway_main, "_stream_sink_publish_tasks", set())
+    monkeypatch.setattr(gateway_main, "_stream_sink_registry", None)
     monkeypatch.setattr(
         gateway_main,
         "_stream_sink_max_inflight_publish",
@@ -50,7 +51,7 @@ async def test_on_stream_data_does_not_block_on_sink_publish(
 ) -> None:
     registry = _FakeSinkRegistry(delay_seconds=0.05)
     monkeypatch.setattr(gateway_main, "get_connection_manager", lambda: _FakeConnections())
-    monkeypatch.setattr(gateway_main, "get_sink_registry", lambda: registry)
+    gateway_main._set_stream_sink_registry(registry)
 
     started = time.perf_counter()
     await gateway_main._on_stream_data(

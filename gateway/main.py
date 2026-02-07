@@ -46,7 +46,6 @@ from gateway.api import (
 from gateway.api.admin import attach_error_buffer_handler
 from gateway.api.deps import (
     get_connection_manager,
-    get_sink_registry,
     set_multiplexer,
     set_registry,
 )
@@ -95,6 +94,7 @@ _stream_sink_max_pending_tasks = DEFAULT_STREAM_SINK_MAX_PENDING_TASKS
 
 _stream_sink_publish_semaphore: asyncio.Semaphore | None = None
 _stream_sink_publish_tasks: set[asyncio.Task[None]] = set()
+_stream_sink_registry = None
 
 
 def _configure_stream_sink_dispatch_limits(
@@ -110,6 +110,11 @@ def _configure_stream_sink_dispatch_limits(
     _stream_sink_max_inflight_publish = max(1, int(max_inflight_publish))
     _stream_sink_max_pending_tasks = max(1, int(max_pending_tasks))
     _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
+
+
+def _set_stream_sink_registry(sink_registry) -> None:
+    global _stream_sink_registry
+    _stream_sink_registry = sink_registry
 
 
 def _get_stream_sink_publish_semaphore() -> asyncio.Semaphore:
@@ -202,7 +207,7 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
             )
 
     # Publish to data sink for Heber storage (non-blocking)
-    sink_registry = get_sink_registry()
+    sink_registry = _stream_sink_registry
     if sink_registry:
         # Schedule sink publish off the stream callback path.
         _schedule_stream_sink_publish(sink_registry, envelope)
@@ -218,6 +223,7 @@ async def lifespan(app: FastAPI):
         max_inflight_publish=settings.data_sink_stream_publish_max_inflight,
         max_pending_tasks=settings.data_sink_stream_publish_max_pending,
     )
+    _set_stream_sink_registry(None)
 
     # Startup
     logger.info(
@@ -286,6 +292,7 @@ async def lifespan(app: FastAPI):
         sink_registry.set_dedup_cache(dedup_cache)
 
         set_sink_registry(sink_registry)
+        _set_stream_sink_registry(sink_registry)
         logger.info("data_sink_initialized", sink="redis_streams", dedup_enabled=True)
     elif settings.data_sink_enabled:
         logger.warning("data_sink_skipped", reason="Missing GATEWAY_DATA_SINK_REDIS_URL")
@@ -363,6 +370,7 @@ async def lifespan(app: FastAPI):
     with suppress(asyncio.CancelledError):
         await uptime_task
     logger.info("gateway_shutdown_complete")
+    _set_stream_sink_registry(None)
 
 
 def create_app() -> FastAPI:

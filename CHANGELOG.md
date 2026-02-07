@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.57] - 2026-02-07
+
+### Added
+
+- **Stream sink registry wiring tests**: Updated `tests/test_main_stream_sink.py` to cover stable sink-registry reference usage in `_on_stream_data(...)` with reset-state fixture support.
+
+### Changed
+
+- **Stream callback sink-registry fast path**: Updated `gateway/main.py` to store sink registry once during lifespan (`_set_stream_sink_registry(...)`) and use the stable reference in `_on_stream_data(...)`, removing per-event dependency getter lookups.
+- **Lifespan sink registry lifecycle handling**: Sink registry reference is now explicitly reset on startup/shutdown to avoid stale references across app lifecycle transitions.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark stream callback registry lookup remediation complete.
+
 ## [0.5.56] - 2026-02-07
 
 ### Added

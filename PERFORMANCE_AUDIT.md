@@ -160,12 +160,12 @@ The fastest, lowest-risk wins are:
 - Follow-up:
   - Optional: emit a warning metric when payload arrays are truncated by shortest-list zip behavior.
 
-16. Main stream callback repeated per-event dependency import/lookup (partially remediated 2026-02-07).
+16. Main stream callback sink-registry lookup overhead (remediated 2026-02-07).
 - Evidence:
-  - `gateway/main.py` now imports `get_sink_registry` at module load and no longer performs per-event local import in `_on_stream_data(...)`.
-- Impact: Removes per-event local import overhead in the stream callback; remaining cost is a lightweight function call lookup for registry availability.
-- Remaining low-risk follow-up:
-  - Optionally inject/capture a stable sink-registry getter reference during lifespan for further callback-path trimming.
+  - `gateway/main.py` now stores a stable sink-registry reference via `_set_stream_sink_registry(...)` during lifespan setup and uses it directly in `_on_stream_data(...)`.
+- Impact: Removes per-event dependency/getter lookup from the stream callback hot path while preserving sink enable/disable behavior.
+- Follow-up:
+  - Optional: add stream callback microbenchmark coverage that isolates registry lookup overhead.
 
 ## Recommended Implementation Waves
 
