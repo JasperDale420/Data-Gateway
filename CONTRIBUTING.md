@@ -92,7 +92,7 @@ pytest tests/test_websocket.py -v
 ### Adding a New Provider
 
 1. Create `gateway/providers/{name}.py` implementing `DataProvider`
-2. Add entry to `providers.yaml`
+2. Add entry to `config/providers.yaml`
 3. Add router in `gateway/api/{name}.py`
 4. Register router in `gateway/main.py`
 5. Write tests in `tests/providers/test_{name}.py`

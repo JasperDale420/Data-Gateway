@@ -9,11 +9,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -30,22 +30,14 @@ async def get_net_premium(
     """Get net premium ticks for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:net-premium:{symbol}:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_net_premium_ticks(symbol=symbol, date_str=date)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_net_premium_ticks(symbol=symbol, date_str=date),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/{symbol}/max-pain", response_model=SuccessResponse)
@@ -59,22 +51,14 @@ async def get_max_pain(
     """Get max pain data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:max-pain:{symbol}:{expiry or 'all'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_max_pain(symbol=symbol, expiry=expiry)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_max_pain(symbol=symbol, expiry=expiry),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/{symbol}/iv-rank", response_model=SuccessResponse)
@@ -87,28 +71,26 @@ async def get_iv_rank(
     """Get IV rank for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:iv-rank:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
 
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_iv_rank(symbol=symbol)
+    def _build_response(data):
+        if not data:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"IV rank not found for {symbol}. This may be due to market hours, "
+                    "data unavailability, or subscription tier."
+                ),
+            )
+        return make_response(data, symbol=symbol)
 
-    if not data:
-        raise HTTPException(
-            status_code=404,
-            detail=f"IV rank not found for {symbol}. This may be due to market hours, data unavailability, or subscription tier.",
-        )
-
-    response = {
-        "success": True,
-        "data": data.model_dump(mode="json"),
-        "meta": {"symbol": symbol, "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_iv_rank(symbol=symbol),
+        build_response=_build_response,
+    )
 
 
 @router.get("/{symbol}/oi-change", response_model=SuccessResponse)
@@ -122,19 +104,11 @@ async def get_oi_change(
     """Get OI change data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:oi-change:{symbol}:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_oi_change(symbol=symbol, date_str=date)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_oi_change(symbol=symbol, date_str=date),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )

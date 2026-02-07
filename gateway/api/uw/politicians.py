@@ -7,12 +7,12 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -26,22 +26,14 @@ async def get_politician_people(
 ):
     """Get all politician names and IDs."""
     cache_key = "uw:politicians:people"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_politician_people()
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_politician_people(),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
 
 
 @router.get("/politicians/recent-trades", response_model=SuccessResponse)
@@ -53,17 +45,14 @@ async def get_politician_recent_trades(
 ):
     """Get latest transacted trades by congress members."""
     cache_key = f"uw:politicians:trades:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_politician_recent_trades(limit=limit)
-
-    response = paginate_response(data, limit)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_politician_recent_trades(limit=limit),
+        build_response=lambda data: paginate_response(data, limit),
+    )
 
 
 @router.get("/politicians/{politician_id}/portfolios", response_model=SuccessResponse)
@@ -75,22 +64,18 @@ async def get_politician_portfolios(
 ):
     """Get all portfolios and holdings for a politician."""
     cache_key = f"uw:politicians:{politician_id}:portfolios"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_politician_portfolios(politician_id=politician_id)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"politician_id": politician_id, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_politician_portfolios(politician_id=politician_id),
+        build_response=lambda data: make_response(
+            data,
+            count=len(data),
+            extra_meta={"politician_id": politician_id},
+        ),
+    )
 
 
 @router.get("/politicians/{symbol}/holders", response_model=SuccessResponse)
@@ -103,19 +88,11 @@ async def get_politician_holders(
     """Get politician portfolio holders for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:politicians:holders:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_politician_holders(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_politician_holders(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )

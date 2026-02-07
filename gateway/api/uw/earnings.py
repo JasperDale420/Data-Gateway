@@ -8,12 +8,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -29,17 +28,14 @@ async def get_earnings_premarket(
 ):
     """Get premarket earnings calendar."""
     cache_key = f"uw:earnings:premarket:{date or 'latest'}:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_earnings_premarket(date_str=date)
-
-    response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_earnings_premarket(date_str=date),
+        build_response=lambda data: paginate_response(data, limit),
+    )
 
 
 @router.get("/earnings/afterhours", response_model=SuccessResponse)
@@ -52,17 +48,14 @@ async def get_earnings_afterhours(
 ):
     """Get afterhours earnings calendar."""
     cache_key = f"uw:earnings:afterhours:{date or 'latest'}:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_earnings_afterhours(date_str=date)
-
-    response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_earnings_afterhours(date_str=date),
+        build_response=lambda data: paginate_response(data, limit),
+    )
 
 
 @router.get("/earnings/{symbol}", response_model=SuccessResponse)
@@ -76,14 +69,11 @@ async def get_earnings_ticker(
     """Get historical earnings for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:earnings:{symbol}:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_earnings_ticker(symbol=symbol)
-
-    response = paginate_response([d.model_dump(mode="json") for d in data], limit)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_earnings_ticker(symbol=symbol),
+        build_response=lambda data: paginate_response(data, limit),
+    )

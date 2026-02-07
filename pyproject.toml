@@ -95,7 +95,7 @@ ignore_missing_imports = true
 # Provider routers access methods not in base DataProvider class
 # These are implemented in concrete providers
 [[tool.mypy.overrides]]
-module = ["gateway.api.alpaca", "gateway.api.alpaca.*", "gateway.api.alphavantage", "gateway.api.alphavantage.*", "gateway.api.finnhub", "gateway.api.finnhub.*", "gateway.api.uw", "gateway.api.uw.*", "gateway.api.admin", "gateway.api.yf", "gateway.api.sec", "gateway.api._legacy", "gateway.api._legacy.*"]
+module = ["gateway.api", "gateway.api.__init__", "gateway.api.alpaca", "gateway.api.alpaca.*", "gateway.api.alphavantage", "gateway.api.alphavantage.*", "gateway.api.finnhub", "gateway.api.finnhub.*", "gateway.api.uw", "gateway.api.uw.*", "gateway.api.admin", "gateway.api.yf", "gateway.api.sec", "gateway.api._legacy", "gateway.api._legacy.*"]
 disable_error_code = ["attr-defined", "call-arg", "arg-type"]
 
 # Core modules with pre-existing type issues
@@ -120,8 +120,12 @@ disable_error_code = ["var-annotated"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not perf'"
+markers = [
+    "perf: benchmark/performance tests excluded from default pytest runs",
+]
 
 [tool.coverage.run]
 source = ["gateway"]

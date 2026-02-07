@@ -79,6 +79,26 @@ PROVIDER_HEALTH = Gauge(
     ["provider"],
 )
 
+PROVIDER_SYNC_CALL_WAIT = Histogram(
+    "gateway_provider_sync_call_wait_seconds",
+    "Wait time before provider sync call execution",
+    ["provider"],
+    buckets=(0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0),
+)
+
+PROVIDER_SYNC_CALL_EXEC = Histogram(
+    "gateway_provider_sync_call_exec_seconds",
+    "Execution time for provider sync calls",
+    ["provider"],
+    buckets=(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
+PROVIDER_SYNC_CALL_INFLIGHT = Gauge(
+    "gateway_provider_sync_call_inflight",
+    "Current in-flight provider sync calls",
+    ["provider"],
+)
+
 # Rate limiting metrics
 RATE_LIMIT_EXCEEDED = Counter(
     "gateway_rate_limit_exceeded_total",
@@ -150,6 +170,20 @@ MESSAGE_DROPPED = Counter(
     "gateway_messages_dropped_total",
     "Total messages dropped due to errors",
     ["reason"],  # client_disconnected, buffer_full, timeout
+)
+
+# Alpha Vantage route/cache metrics
+ALPHAVANTAGE_ROUTE_CACHE = Counter(
+    "gateway_alphavantage_route_cache_total",
+    "Alpha Vantage route cache events",
+    ["endpoint", "status", "cache_mode"],  # status: hit, miss
+)
+
+ALPHAVANTAGE_PAYLOAD_BYTES = Histogram(
+    "gateway_alphavantage_payload_bytes",
+    "Alpha Vantage cached payload size in bytes",
+    ["endpoint", "cache_mode"],
+    buckets=(256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216),
 )
 
 # Memory pressure metric (for 11.2.4 alerting)
@@ -232,6 +266,38 @@ def record_provider_request(provider: str, success: bool, duration: float) -> No
 def set_provider_health(provider: str, healthy: bool) -> None:
     """Set provider health status."""
     PROVIDER_HEALTH.labels(provider=provider).set(1 if healthy else 0)
+
+
+def record_provider_sync_call_wait(provider: str, duration: float) -> None:
+    """Record sync-call queue wait duration."""
+    PROVIDER_SYNC_CALL_WAIT.labels(provider=provider).observe(duration)
+
+
+def record_provider_sync_call_exec(provider: str, duration: float) -> None:
+    """Record sync-call execution duration."""
+    PROVIDER_SYNC_CALL_EXEC.labels(provider=provider).observe(duration)
+
+
+def inc_provider_sync_call_inflight(provider: str) -> None:
+    """Increment in-flight sync-call gauge."""
+    PROVIDER_SYNC_CALL_INFLIGHT.labels(provider=provider).inc()
+
+
+def dec_provider_sync_call_inflight(provider: str) -> None:
+    """Decrement in-flight sync-call gauge."""
+    PROVIDER_SYNC_CALL_INFLIGHT.labels(provider=provider).dec()
+
+
+def record_alphavantage_route_cache(endpoint: str, status: str, cache_mode: str) -> None:
+    """Record Alpha Vantage route cache hit/miss event."""
+    ALPHAVANTAGE_ROUTE_CACHE.labels(endpoint=endpoint, status=status, cache_mode=cache_mode).inc()
+
+
+def record_alphavantage_payload_bytes(endpoint: str, cache_mode: str, payload_bytes: int) -> None:
+    """Record Alpha Vantage payload size in bytes."""
+    ALPHAVANTAGE_PAYLOAD_BYTES.labels(endpoint=endpoint, cache_mode=cache_mode).observe(
+        max(payload_bytes, 0)
+    )
 
 
 def record_rate_limit_exceeded(client_id: str) -> None:
@@ -355,3 +421,18 @@ def record_sink_publish(sink: str, topic: str, success: bool) -> None:
     """Record data sink publish result."""
     status = "success" if success else "error"
     SINK_PUBLISH.labels(sink=sink, topic=topic, status=status).inc()
+
+
+def httpx_event_hooks(provider: str) -> dict[str, list]:
+    """Create httpx event hooks to record provider metrics."""
+    import time
+
+    async def _on_request(request) -> None:
+        request.extensions["gateway_metrics_start"] = time.perf_counter()
+
+    async def _on_response(response) -> None:
+        start = response.request.extensions.get("gateway_metrics_start")
+        duration = time.perf_counter() - start if start else 0.0
+        record_provider_request(provider, response.is_success, duration)
+
+    return {"request": [_on_request], "response": [_on_response]}

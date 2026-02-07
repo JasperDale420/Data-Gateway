@@ -53,6 +53,7 @@ async def get_stock_bars(
             start=start,
             end=end,
             limit=limit,
+            feed=feed,
         )
 
         return {

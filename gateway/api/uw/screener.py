@@ -7,11 +7,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -26,25 +26,14 @@ async def get_screener_stocks(
 ):
     """Get stock screener results."""
     cache_key = f"uw:screener:stocks:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_stock_screener(limit=limit)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {
-            "count": len(data),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_stock_screener(limit=limit),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
 
 
 @router.get("/screener/options", response_model=SuccessResponse)
@@ -56,22 +45,11 @@ async def get_screener_options(
 ):
     """Get hottest option chains/contracts."""
     cache_key = f"uw:screener:options:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_hottest_chains(limit=limit)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {
-            "count": len(data),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_hottest_chains(limit=limit),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )

@@ -68,3 +68,8 @@ data_lake/
 codebase.md
 codebase.md
 vendor/
+.perf/
+perf-junit.xml
+perf-output.txt
+perf-summary.json
+perf-history-report.json

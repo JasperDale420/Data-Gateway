@@ -4,15 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
     CACHE_TTL_INDICATOR,
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
+    execute_av_cached,
     get_cache,
     get_registry,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.schemas import SuccessResponse
 
@@ -34,10 +33,6 @@ async def get_technical_indicator(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get technical indicator. Supports: SMA, EMA, RSI, MACD, BBANDS, STOCH, ADX, CCI, ATR, OBV."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key(
         f"av:indicator:{indicator}",
         symbol.upper(),
@@ -45,25 +40,25 @@ async def get_technical_indicator(
         str(time_period),
         series_type,
     )
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        data = await provider.get_technical_indicator(
-            symbol, indicator, interval, time_period, series_type
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=CACHE_TTL_INDICATOR,
+            fetcher=lambda provider: provider.get_technical_indicator(
+                symbol,
+                indicator,
+                interval,
+                time_period,
+                series_type,
+            ),
+            cache_transform=lambda data: data,
+            endpoint="indicator",
+            cache_mode="default",
         )
-        await cache.set(key, data, ttl=CACHE_TTL_INDICATOR)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "alphavantage"},
-        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 

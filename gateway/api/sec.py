@@ -17,9 +17,21 @@ PROVIDER_NOT_AVAILABLE = "SEC provider not available"
 CACHE_TTL = 3600  # 1 hour (filings update infrequently)
 
 
+def _normalize_cache_arg(value) -> str:
+    if value is None:
+        return "<none>"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value == "":
+        return "<empty>"
+    return str(value)
+
+
 def _cache_key(prefix: str, *args) -> str:
     """Generate cache key for SEC data."""
-    parts = [prefix] + [str(a) for a in args if a]
+    parts = [prefix] + [_normalize_cache_arg(a) for a in args]
     return ":".join(parts)
 
 

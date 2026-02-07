@@ -7,12 +7,12 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -27,17 +27,14 @@ async def get_analyst_ratings(
 ):
     """Get analyst ratings from screener."""
     cache_key = f"uw:screener:analysts:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_analyst_ratings(limit=limit)
-
-    response = paginate_response(data, limit)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_analyst_ratings(limit=limit),
+        build_response=lambda data: paginate_response(data, limit),
+    )
 
 
 @router.get("/alerts/all", response_model=SuccessResponse)
@@ -49,17 +46,14 @@ async def get_all_alerts(
 ):
     """Get all alerts."""
     cache_key = f"uw:alerts:all:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_all_alerts(limit=limit)
-
-    response = paginate_response(data, limit)
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_all_alerts(limit=limit),
+        build_response=lambda data: paginate_response(data, limit),
+    )
 
 
 @router.get("/alerts/configuration", response_model=SuccessResponse)
@@ -70,19 +64,11 @@ async def get_alerts_configuration(
 ):
     """Get alerts configuration."""
     cache_key = "uw:alerts:configuration"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_alerts_configuration()
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_alerts_configuration(),
+        build_response=lambda data: make_response(data),
+    )

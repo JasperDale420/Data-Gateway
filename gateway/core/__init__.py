@@ -2,7 +2,7 @@
 
 from gateway.core.auth import Client, ClientAuthenticator
 from gateway.core.balancer import KeyLoadBalancer, alpaca_key_balancer
-from gateway.core.cache import InMemoryCache
+from gateway.core.cache import HybridCache, InMemoryCache, RedisCache
 from gateway.core.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerConfig,
@@ -14,9 +14,7 @@ from gateway.core.circuit_breaker import (
 )
 from gateway.core.connections import ConnectionManager
 from gateway.core.dedup import RequestDeduplicator, get_deduplicator
-from gateway.core.multiplexer import SubscriptionManager
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
-from gateway.core.redis_cache import HybridCache, RedisCache
 from gateway.core.registry import ProviderRegistry
 from gateway.core.replay import (
     ReplayConfig,
@@ -26,7 +24,6 @@ from gateway.core.replay import (
     ReplayState,
     get_replay_manager,
 )
-from gateway.core.ring_buffer import MessageRingBuffer, get_ring_buffer
 from gateway.core.validator import (
     DataValidator,
     ValidationError,
@@ -46,11 +43,8 @@ __all__ = [
     "ProviderCapabilities",
     "HealthStatus",
     "ProviderRegistry",
-    "SubscriptionManager",
     "KeyLoadBalancer",
     "alpaca_key_balancer",
-    "MessageRingBuffer",
-    "get_ring_buffer",
     "RequestDeduplicator",
     "get_deduplicator",
     "DataValidator",

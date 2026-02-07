@@ -3,15 +3,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from gateway.api.alphavantage.common import (
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
+    execute_av_cached,
     get_cache,
     get_registry,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.schemas import SuccessResponse
 
@@ -27,28 +26,20 @@ async def get_forex_rate(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get real-time exchange rate."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:forex-rate", from_currency.upper(), to_currency.upper())
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        data = await provider.get_forex_rate(from_currency, to_currency)
-        await cache.set(key, data, ttl=60)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=60,
+            fetcher=lambda provider: provider.get_forex_rate(from_currency, to_currency),
+            cache_transform=lambda data: data,
+            endpoint="forex_rate",
+            cache_mode="default",
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -62,27 +53,20 @@ async def get_forex_daily(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get daily forex time series."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:forex-daily", from_symbol.upper(), to_symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        data = await provider.get_forex_daily(from_symbol, to_symbol)
-        await cache.set(key, data, ttl=3600)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(data), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=3600,
+            fetcher=lambda provider: provider.get_forex_daily(from_symbol, to_symbol),
+            cache_transform=lambda data: data,
+            miss_meta_builder=lambda data, _cached: {"count": len(data)},
+            endpoint="forex_daily",
+            cache_mode="default",
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")

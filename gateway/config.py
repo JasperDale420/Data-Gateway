@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     app_name: str = "Data Gateway"
     debug: bool = False
     log_level: str = "INFO"
+    allow_stub_data: bool = False
 
     # Server
     host: str = "0.0.0.0"
@@ -36,6 +37,7 @@ class Settings(BaseSettings):
     # Cache
     cache_max_size: int = Field(default=10000, ge=100)
     cache_default_ttl: int = Field(default=300, ge=1)  # seconds
+    cache_max_body_bytes: int = Field(default=524288, ge=1024)  # 512KB
     cache_redis_url: str = Field(default="", alias="GATEWAY_CACHE_REDIS_URL")
     cache_redis_enabled: bool = Field(default=False, alias="GATEWAY_CACHE_REDIS_ENABLED")
 

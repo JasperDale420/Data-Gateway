@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from gateway.api.deps import (
@@ -16,6 +17,33 @@ from gateway.core.auth import ClientAuthenticator
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
 from gateway.main import app
+
+DEFAULT_TEST_API_KEY = "gw_test_dev_key_67890"  # pragma: allowlist secret
+DEFAULT_DISABLED_API_KEY = "gw_disabled_key"  # pragma: allowlist secret
+
+
+def _load_repo_test_api_key() -> str:
+    """Load the test client key from repo config when available."""
+    config_path = Path(__file__).resolve().parents[1] / "config" / "clients.yaml"
+    if not config_path.exists():
+        return DEFAULT_TEST_API_KEY
+
+    try:
+        config = yaml.safe_load(config_path.read_text()) or {}
+    except Exception:
+        return DEFAULT_TEST_API_KEY
+
+    clients = config.get("clients", [])
+    for client_data in clients:
+        if client_data.get("id") == "test":
+            key = client_data.get("key")
+            if isinstance(key, str) and key:
+                return key
+
+    return DEFAULT_TEST_API_KEY
+
+
+TEST_API_KEY = _load_repo_test_api_key()
 
 
 # Test client fixture
@@ -31,10 +59,10 @@ def test_settings(tmp_path: Path):
     """Test settings with temp clients file."""
     clients_file = tmp_path / "clients.yaml"
     clients_file.write_text(
-        """
+        f"""
 clients:
   - id: test
-    key: gw_test_key_12345
+    key: "{TEST_API_KEY}"
     permissions:
       providers: [alpaca]
       feeds: [bars]
@@ -42,7 +70,7 @@ clients:
       rate_limit: 60
     enabled: true
   - id: disabled
-    key: gw_disabled_key
+    key: "{DEFAULT_DISABLED_API_KEY}"
     permissions:
       providers: []
       feeds: []
@@ -233,4 +261,16 @@ def crossed_quote():
 @pytest.fixture
 def auth_headers():
     """Standard authentication headers for tests."""
-    return {"X-Gateway-Key": "gw_test_key_12345"}
+    return {"X-Gateway-Key": TEST_API_KEY}
+
+
+@pytest.fixture
+def test_api_key() -> str:
+    """Canonical API key used for authenticated tests."""
+    return TEST_API_KEY
+
+
+@pytest.fixture
+def disabled_api_key() -> str:
+    """Canonical disabled API key used for auth tests."""
+    return DEFAULT_DISABLED_API_KEY

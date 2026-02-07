@@ -95,10 +95,22 @@ class ConnectionManager:
 
     def get_stats(self) -> dict:
         """Get connection statistics."""
+        total_subscriptions = sum(
+            len(connection.subscriptions) for connection in self._connections.values()
+        )
+        unique_subscriptions = len(
+            {
+                subscription
+                for connection in self._connections.values()
+                for subscription in connection.subscriptions
+            }
+        )
         return {
             "active": self.active_count,
             "authenticated": self.authenticated_count,
             "anonymous": self.active_count - self.authenticated_count,
+            "subscriptions_total": total_subscriptions,
+            "subscriptions_unique": unique_subscriptions,
         }
 
     async def broadcast(self, message: dict, client_ids: list[str] | None = None) -> int:

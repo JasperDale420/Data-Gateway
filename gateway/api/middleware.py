@@ -8,11 +8,62 @@ from dataclasses import dataclass, field
 
 import structlog
 from fastapi import Request, Response
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from gateway.core.envelope import wrap_event
+from gateway.core.metrics import (
+    record_cache_hit,
+    record_cache_miss,
+    record_rate_limit_exceeded,
+    record_request,
+)
 
 logger = structlog.get_logger()
+
+
+class RequestMetricsMiddleware(BaseHTTPMiddleware):
+    """Record basic HTTP request metrics."""
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration = time.perf_counter() - start
+            record_request(request.method, request.url.path, 500, duration)
+            raise
+
+        duration = time.perf_counter() - start
+        record_request(request.method, request.url.path, response.status_code, duration)
+        return response
+
+
+class InputValidationMiddleware(BaseHTTPMiddleware):
+    """Apply basic request input validation limits."""
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Skip safe/public endpoints
+        path = request.url.path
+        if path.startswith("/health") or path in {"/metrics", "/openapi.json", "/docs", "/redoc"}:
+            return await call_next(request)
+
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                from gateway.core.security import get_input_validator
+
+                validator = get_input_validator()
+                error = validator.validate_request_size(int(content_length), endpoint_type="rest")
+                if error:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": error.to_dict()},
+                    )
+            except ValueError:
+                pass
+
+        return await call_next(request)
 
 
 @dataclass
@@ -92,6 +143,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 client_id=client_id,
                 limit=bucket.limit,
             )
+            record_rate_limit_exceeded(client_id)
             return Response(
                 content='{"error": {"code": "GW-E4001", "message": "Rate limit exceeded"}}',
                 status_code=429,
@@ -208,9 +260,16 @@ class CacheMiddleware(BaseHTTPMiddleware):
     - X-Gateway-Cache-TTL: Remaining TTL in milliseconds
     """
 
-    def __init__(self, app, default_ttl: int = 60, max_size: int = 10000):
+    def __init__(
+        self,
+        app,
+        default_ttl: int = 60,
+        max_size: int = 10000,
+        max_body_bytes: int = 524288,
+    ):
         super().__init__(app)
         self.default_ttl = default_ttl
+        self.max_body_bytes = max_body_bytes
         self._cache = None  # Lazy initialization
         self._cache_initialized = False
 
@@ -223,10 +282,36 @@ class CacheMiddleware(BaseHTTPMiddleware):
             self._cache_initialized = True
         return self._cache
 
+    def _cache_type(self, cache) -> str:
+        """Derive cache type for metrics labels."""
+        try:
+            from gateway.core.cache import HybridCache, InMemoryCache, RedisCache
+
+            if isinstance(cache, HybridCache):
+                return "hybrid"
+            if isinstance(cache, RedisCache):
+                return "redis"
+            if isinstance(cache, InMemoryCache):
+                return "memory"
+        except Exception:
+            pass
+
+        return cache.__class__.__name__.lower()
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Only cache GET requests
         if request.method != "GET":
             return await call_next(request)
+
+        path = request.url.path
+        is_public = self._is_public_path(path)
+        request.state.cache_public = is_public
+
+        if not is_public:
+            api_key = request.headers.get("X-Gateway-Key")
+            auth_error = await self._ensure_authenticated(request, api_key)
+            if auth_error is not None:
+                return auth_error
 
         # Check for cache bypass
         if request.headers.get("X-Gateway-Cache") == "bypass":
@@ -239,6 +324,7 @@ class CacheMiddleware(BaseHTTPMiddleware):
 
         # Get cache instance
         cache = self._get_cache()
+        cache_type = self._cache_type(cache)
 
         # Check cache (async for HybridCache)
         try:
@@ -246,6 +332,7 @@ class CacheMiddleware(BaseHTTPMiddleware):
             if cached_data:
                 entry = CacheEntry.from_dict(cached_data)
                 if not entry.is_expired():
+                    record_cache_hit(cache_type)
                     headers = dict(entry.headers or {})
                     headers.update(
                         {
@@ -260,6 +347,7 @@ class CacheMiddleware(BaseHTTPMiddleware):
                         media_type=entry.media_type,
                         headers=headers,
                     )
+            record_cache_miss(cache_type)
         except Exception as e:
             logger.debug("cache_read_error", key=cache_key, error=str(e))
 
@@ -268,6 +356,10 @@ class CacheMiddleware(BaseHTTPMiddleware):
 
         # Cache successful responses
         if response.status_code == 200:
+            if not self._should_cache_response(response):
+                response.headers["X-Gateway-Cache"] = "BYPASS"
+                return response
+
             body_chunks: list[bytes] = []
             async for chunk in response.body_iterator:
                 body_chunks.append(chunk)
@@ -311,7 +403,93 @@ class CacheMiddleware(BaseHTTPMiddleware):
 
     def _cache_key(self, request: Request) -> str:
         """Generate cache key from request."""
-        return f"{request.method}:{request.url.path}:{request.url.query}"
+        scope = self._client_cache_scope(request)
+        return f"{request.method}:{request.url.path}:{request.url.query}:{scope}"
+
+    def _client_cache_scope(self, request: Request) -> str:
+        """Derive a cache scope to avoid cross-client data leakage.
+
+        Prefer authenticated client ID when available; otherwise hash the API key.
+        Falls back to 'public' for unauthenticated requests.
+        """
+        if getattr(request.state, "cache_public", False):
+            return "public"
+
+        # Prefer authenticated client if set elsewhere in the stack
+        if hasattr(request.state, "client") and request.state.client:
+            permission_hash = self._permissions_hash(request.state.client)
+            return f"client:{request.state.client.id}:{permission_hash}"
+
+        # Hash API key if present to avoid storing raw keys in cache
+        api_key = request.headers.get("X-Gateway-Key")
+        if api_key:
+            import hashlib
+
+            digest = hashlib.sha256(api_key.encode()).hexdigest()[:16]
+            return f"key:{digest}"
+
+        return "public"
+
+    def _permissions_hash(self, client) -> str:
+        """Stable hash of permissions to avoid stale cache on permission changes."""
+        import hashlib
+        import json
+
+        payload = {
+            "providers": sorted(client.permissions.providers or []),
+            "feeds": sorted(client.permissions.feeds or []),
+            "max_symbols": client.permissions.max_symbols,
+            "rate_limit": client.permissions.rate_limit,
+            "ws_subscriptions_max": getattr(client.permissions, "ws_subscriptions_max", 0),
+            "role": getattr(client, "role", "client"),
+        }
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        return digest[:8]
+
+    def _is_public_path(self, path: str) -> bool:
+        if path == "/":
+            return True
+        if path in {"/openapi.json", "/docs", "/redoc"}:
+            return True
+        if path.startswith("/health"):
+            return True
+        return False
+
+    async def _ensure_authenticated(self, request: Request, api_key: str | None) -> Response | None:
+        """Authenticate request to avoid serving cached data without auth checks."""
+        from gateway.api.deps import get_authenticator
+
+        if not api_key:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": {"code": "GW-E2001", "message": "Missing X-Gateway-Key header"}},
+            )
+
+        authenticator = get_authenticator()
+        client = authenticator.authenticate(api_key)
+        if client is None:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": {"code": "GW-E2002", "message": "Invalid API key"}},
+            )
+
+        # Attach client for downstream middleware and cache key scoping.
+        request.state.client = client
+        return None
+
+    def _should_cache_response(self, response: Response) -> bool:
+        """Decide if response is safe to cache without buffering large bodies."""
+        content_type = response.headers.get("content-type", "").lower()
+        if "text/event-stream" in content_type or "application/x-ndjson" in content_type:
+            return False
+
+        content_length = response.headers.get("content-length")
+        if not content_length:
+            return False
+        try:
+            return int(content_length) <= self.max_body_bytes
+        except ValueError:
+            return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -411,6 +589,10 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
     Skipped paths: health, metrics, admin endpoints
     """
 
+    def __init__(self, app, max_body_bytes: int = 524288):
+        super().__init__(app)
+        self.max_body_bytes = max_body_bytes
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip non-API and system paths
         path = request.url.path
@@ -424,12 +606,8 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
         # Process request
         response = await call_next(request)
 
-        # Only wrap successful JSON responses
-        if response.status_code != 200:
-            return response
-
-        content_type = response.headers.get("content-type", "")
-        if "application/json" not in content_type:
+        # Only wrap successful JSON responses and skip streaming/large bodies
+        if not self._should_wrap_response(response):
             return response
 
         try:
@@ -438,6 +616,13 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
             async for chunk in response.body_iterator:
                 body_chunks.append(chunk)
             body = b"".join(body_chunks)
+            if len(body) > self.max_body_bytes:
+                return Response(
+                    content=body,
+                    status_code=response.status_code,
+                    media_type=response.media_type,
+                    headers=dict(response.headers),
+                )
 
             # Parse JSON
             data = json.loads(body)
@@ -536,6 +721,29 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 media_type=response.media_type,
                 headers=dict(response.headers),
             )
+
+    def _should_wrap_response(self, response: Response) -> bool:
+        """Only wrap small JSON responses with explicit length.
+
+        This avoids buffering unknown-size/chunked streams (SSE, NDJSON, file streams).
+        """
+        if response.status_code != 200:
+            return False
+
+        content_type = response.headers.get("content-type", "").lower()
+        if "application/json" not in content_type:
+            return False
+        if "text/event-stream" in content_type or "application/x-ndjson" in content_type:
+            return False
+
+        content_length = response.headers.get("content-length")
+        if not content_length:
+            return False
+
+        try:
+            return int(content_length) <= self.max_body_bytes
+        except ValueError:
+            return False
 
     def _extract_route_info(self, path: str) -> tuple[str, str]:
         """Extract provider and feed from request path."""
@@ -710,6 +918,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         # Check global limit (PRD 7.5.1)
         if self._global_requests >= self.global_limit:
             logger.warning("global_rate_limit_exceeded", current=self._global_requests)
+            record_rate_limit_exceeded("global")
             return Response(
                 content=json.dumps(
                     {
@@ -727,6 +936,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         # Check per-IP limit (PRD 7.5.2)
         client_ip = self._get_client_ip(request)
         if not self._check_ip_limit(client_ip):
+            record_rate_limit_exceeded(f"ip:{client_ip}")
             return Response(
                 content=json.dumps(
                     {

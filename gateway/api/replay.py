@@ -9,7 +9,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from gateway.api.deps import require_api_key
+from gateway.api.deps import get_authenticator, require_api_key
+from gateway.config import get_settings
+from gateway.core.auth import ClientAuthenticator
 from gateway.core.replay import (
     ReplayConfig,
     ReplayState,
@@ -116,6 +118,9 @@ async def create_replay_session(
 ) -> ReplaySessionResponse:
     """Create a replay session."""
     manager = get_replay_manager()
+    settings = get_settings()
+    if not manager.has_data_loader() and not settings.allow_stub_data:
+        raise HTTPException(status_code=501, detail="Replay data loader not configured")
 
     config = ReplayConfig(
         name=request.name,
@@ -132,7 +137,7 @@ async def create_replay_session(
         raise HTTPException(status_code=400, detail={"errors": errors})
 
     try:
-        session = await manager.create_session(config)
+        session = await manager.create_session(config, client.id)
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
@@ -162,7 +167,7 @@ async def get_session_status(
     manager = get_replay_manager()
     session = manager.get_session(session_id)
 
-    if not session:
+    if not session or session.client_id != client.id:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
 
     data = session.to_dict()
@@ -184,7 +189,7 @@ async def control_session(
     manager = get_replay_manager()
     session = manager.get_session(session_id)
 
-    if not session:
+    if not session or session.client_id != client.id:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
 
     action = request.action.lower()
@@ -236,6 +241,10 @@ async def delete_session(
     """Delete a replay session."""
     manager = get_replay_manager()
 
+    session = manager.get_session(session_id)
+    if not session or session.client_id != client.id:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
     deleted = await manager.delete_session(session_id)
 
     if not deleted:
@@ -255,7 +264,7 @@ async def list_sessions(
 ) -> dict[str, Any]:
     """List all replay sessions."""
     manager = get_replay_manager()
-    sessions = await manager.list_sessions()
+    sessions = await manager.list_sessions(client.id)
 
     return {
         "sessions": [s.to_dict() for s in sessions],
@@ -272,13 +281,31 @@ async def list_sessions(
 async def replay_websocket(
     websocket: WebSocket,
     session_id: str,
+    auth: ClientAuthenticator = Depends(get_authenticator),
 ) -> None:
     """WebSocket endpoint for replay streaming."""
     manager = get_replay_manager()
-    session = manager.get_session(session_id)
+    settings = get_settings()
 
+    api_key = websocket.headers.get("x-gateway-key")
+    if not api_key:
+        await websocket.close(code=4001, reason="Missing X-Gateway-Key")
+        return
+
+    client = auth.authenticate(api_key)
+    if not client:
+        await websocket.close(code=4001, reason="Invalid API key")
+        return
+
+    session = manager.get_session(session_id)
     if not session:
         await websocket.close(code=4004, reason="Session not found")
+        return
+    if not manager.has_data_loader() and not settings.allow_stub_data:
+        await websocket.close(code=4005, reason="Replay data not available")
+        return
+    if session.client_id != client.id:
+        await websocket.close(code=4003, reason="Session access denied")
         return
 
     await websocket.accept()

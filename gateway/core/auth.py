@@ -27,6 +27,7 @@ class Client:
 
     id: str
     permissions: ClientPermissions
+    role: str = "client"
     enabled: bool = True
 
 
@@ -68,6 +69,7 @@ class ClientAuthenticator:
             client = Client(
                 id=client_id,
                 permissions=permissions,
+                role=str(client_data.get("role", "client")).lower(),
                 enabled=client_data.get("enabled", True),
             )
 

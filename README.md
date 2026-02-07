@@ -53,7 +53,7 @@ graph LR
 | **Alpha Vantage** | Time Series, Indicators, Economic | Required | ✅ Full |
 | **yfinance** | Fundamentals, History, Options | None | ✅ Full |
 | **SEC EDGAR** | Filings, 13F, Insider Trades | None | ✅ Full |
-| **News** | News articles (EventRegistry) | Required | 🚧 Stub |
+| **News** | News articles (NewsAPI.org) | Required | ⚠️ Partial |
 
 ## Quick Start
 
@@ -81,6 +81,21 @@ pytest tests/ -v
 uvicorn gateway.main:app --reload --port 8080
 ```
 
+### Perf Guardrails
+
+```bash
+# Run perf gate locally
+python scripts/perf_gate.py \
+  --budgets-file config/perf_budgets.json \
+  --baseline-file config/perf_baseline.json \
+  --junit-xml perf-junit.xml \
+  --log-file perf-output.txt \
+  --summary-file perf-summary.json
+```
+
+Perf promotion/release runbook:
+- `PERF_RELEASE_READINESS.md`
+
 ### Docker
 
 ```bash
@@ -100,8 +115,14 @@ curl http://localhost:8080/health
 | `/api/v1/sec/*` | SEC EDGAR | filings, 13F, insiders |
 | `/api/v1/calendar/*` | Trading Calendar | market hours, trading days |
 | `/api/v1/symbology/*` | Symbol Resolution | OCC ↔ human format |
+| `/api/v1/bulk/*` | Bulk Jobs | historical batch retrieval |
+| `/api/v1/replay/*` | Historical Replay | backtesting sessions |
 | `/health/*` | Health | liveness, readiness, status |
 | `/ws` | WebSocket | real-time streaming |
+
+Authentication: Most endpoints require `X-Gateway-Key`. Health endpoints are public for probes.
+
+Legacy aliases (deprecated): `/symbology/*`, `/corporate-actions/*`, `/adjustment-factors/*`.
 
 Full OpenAPI docs available at `http://localhost:8080/docs` when running.
 
@@ -111,19 +132,20 @@ The Gateway provides runtime API discovery through catalog endpoints:
 
 ```bash
 # Full API summary
-curl http://localhost:8080/catalog/
+curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/
 
 # WebSocket streams and channels
-curl http://localhost:8080/catalog/streams
+curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/streams
 
 # REST API providers and endpoints
-curl http://localhost:8080/catalog/providers
+curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/providers
 
 # Available feed types for subscriptions
-curl http://localhost:8080/catalog/feeds
+curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/feeds
 ```
 
 See [API_REFERENCE.md](API_REFERENCE.md) for complete documentation.
+Provider route contracts are generated from live routes in [PROVIDER_ENDPOINT_CONTRACT.md](PROVIDER_ENDPOINT_CONTRACT.md) via `python scripts/generate_provider_contract.py`.
 
 ## WebSocket Streaming
 
@@ -139,10 +161,29 @@ ws://localhost:8080/ws
 {"action": "auth", "key": "gw_your_api_key"}
 ```
 
+**Permissions:**
+- Client permissions in `config/clients.yaml` are enforced for REST and WebSocket access.
+- Provider access is restricted by `permissions.providers`.
+- Feed access is restricted by `permissions.feeds`.
+- Subscription and symbol limits are enforced (`max_symbols`, `ws_subscriptions_max`).
+- Admin endpoints require a client `role` of `admin` or `super_admin`.
+- Alpaca trading/account endpoints require a client `role` of `trader`, `admin`, or `super_admin`.
+
+**Connection lifecycle:**
+- On WebSocket disconnect, upstream Alpaca subscriptions are cleaned up automatically.
+
+**Bulk and replay access control:**
+- Bulk jobs and replay sessions are scoped to the client that created them.
+- Replay WebSocket connections require `X-Gateway-Key` in the handshake and are restricted to the owning client.
+
 **Subscribe to feeds:**
 
 ```json
-{"action": "subscribe", "feed": "stock_bars", "symbols": ["AAPL", "MSFT"]}
+{"action": "subscribe", "feeds": ["stock_bars"], "symbols": ["AAPL", "MSFT"]}
+```
+
+```json
+{"action": "subscribe", "feeds": ["news"], "symbols": ["*"]}
 ```
 
 ### Available Feeds
@@ -178,6 +219,7 @@ ws://localhost:8080/ws
 | `GATEWAY_HOST` | Server host | `0.0.0.0` |
 | `GATEWAY_PORT` | Server port | `8080` |
 | `GATEWAY_AUTH_TIMEOUT_SECONDS` | WebSocket auth timeout | `10` |
+| `GATEWAY_ALLOW_STUB_DATA` | Allow stub/mock data responses | `false` |
 
 #### Cache Settings
 
@@ -185,6 +227,8 @@ ws://localhost:8080/ws
 |---|---|---|
 | `GATEWAY_CACHE_MAX_SIZE` | Max cache entries | `10000` |
 | `GATEWAY_CACHE_DEFAULT_TTL` | Default TTL (seconds) | `300` |
+
+> **Note:** Cache entries are scoped per client (by `X-Gateway-Key`) to avoid cross-client data leakage.
 
 #### Provider API Keys
 
@@ -195,13 +239,14 @@ ws://localhost:8080/ws
 | `UNUSUAL_WHALES_API_KEY` | Unusual Whales | Yes |
 | `FINNHUB_API_KEY` | Finnhub | Yes |
 | `ALPHAVANTAGE_API_KEY` | Alpha Vantage | Yes |
-| `NEWS_API_KEY` | EventRegistry | Optional |
+| `NEWS_API_KEY` | NewsAPI.org | Optional |
+| `SEC_USER_AGENT` | SEC EDGAR | Optional (recommended) |
 
 > **Note:** SEC EDGAR and yfinance require no API keys.
 
 ### Client Keys
 
-Edit `clients.yaml` to manage API keys:
+Edit `config/clients.yaml` to manage API keys:
 
 ```yaml
 clients:
@@ -222,6 +267,7 @@ clients:
 pip install -e ".[dev]"
 pre-commit install
 pre-commit run --all-files
+python scripts/generate_provider_contract.py --check
 ```
 
 **Tools:** ruff, black, pyright, bandit, detect-secrets

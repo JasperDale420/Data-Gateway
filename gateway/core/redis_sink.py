@@ -44,6 +44,10 @@ class RedisStreamsSink(DataSink):
     def name(self) -> str:
         return "redis_streams"
 
+    @property
+    def record_publish_metrics(self) -> bool:
+        return True
+
     async def _ensure_connected(self) -> None:
         """Lazy connection to Redis."""
         if self._redis is None:

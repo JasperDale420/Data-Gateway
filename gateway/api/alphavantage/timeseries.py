@@ -5,15 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from gateway.api.alphavantage.common import (
     CACHE_TTL_BARS,
     CACHE_TTL_QUOTE,
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
+    execute_av_cached,
     get_cache,
     get_registry,
+    normalize_search_query,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.schemas import SuccessResponse
 
@@ -28,32 +28,25 @@ async def get_quote(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get real-time quote for a symbol."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:quote", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
 
-    try:
-        await require_provider_rate_limit("alphavantage")
+    async def _fetch_quote(provider):
         quote = await provider.get_quote(symbol)
         if not quote:
             raise HTTPException(status_code=404, detail=f"No data for symbol: {symbol}")
+        return quote
 
-        data = quote.model_dump(mode="json")
-        await cache.set(key, data, ttl=CACHE_TTL_QUOTE)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "alphavantage"},
-        }
+    try:
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=CACHE_TTL_QUOTE,
+            fetcher=_fetch_quote,
+            cache_transform=lambda quote: quote.model_dump(mode="json"),
+            endpoint="quote",
+            cache_mode="default",
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -70,33 +63,29 @@ async def get_intraday(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get intraday time series data."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
+    normalized_outputsize = outputsize.lower()
     key = cache_key("av:intraday", symbol.upper(), interval, outputsize)
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        bars = await provider.get_intraday(symbol, interval=interval, outputsize=outputsize)
-        data = {
-            "symbol": symbol.upper(),
-            "interval": interval,
-            "bars": [bar.model_dump(mode="json") for bar in bars],
-        }
-        await cache.set(key, data, ttl=CACHE_TTL_BARS)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(bars), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=CACHE_TTL_BARS,
+            cache_enabled=normalized_outputsize != "full",
+            fetcher=lambda provider: provider.get_intraday(
+                symbol,
+                interval=interval,
+                outputsize=outputsize,
+            ),
+            cache_transform=lambda bars: {
+                "symbol": symbol.upper(),
+                "interval": interval,
+                "bars": [bar.model_dump(mode="json") for bar in bars],
+            },
+            miss_meta_builder=lambda _bars, data: {"count": len(data["bars"])},
+            endpoint="intraday",
+            cache_mode=normalized_outputsize,
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -111,33 +100,29 @@ async def get_daily(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get daily time series data."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
+    normalized_outputsize = outputsize.lower()
     key = cache_key("av:daily", symbol.upper(), outputsize, str(adjusted))
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        bars = await provider.get_daily(symbol, outputsize=outputsize, adjusted=adjusted)
-        data = {
-            "symbol": symbol.upper(),
-            "adjusted": adjusted,
-            "bars": [bar.model_dump(mode="json") for bar in bars],
-        }
-        await cache.set(key, data, ttl=CACHE_TTL_BARS)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(bars), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=CACHE_TTL_BARS,
+            cache_enabled=normalized_outputsize != "full",
+            fetcher=lambda provider: provider.get_daily(
+                symbol,
+                outputsize=outputsize,
+                adjusted=adjusted,
+            ),
+            cache_transform=lambda bars: {
+                "symbol": symbol.upper(),
+                "adjusted": adjusted,
+                "bars": [bar.model_dump(mode="json") for bar in bars],
+            },
+            miss_meta_builder=lambda _bars, data: {"count": len(data["bars"])},
+            endpoint="daily",
+            cache_mode=normalized_outputsize,
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -151,33 +136,23 @@ async def get_weekly(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get weekly time series data."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:weekly", symbol.upper(), str(adjusted))
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        bars = await provider.get_weekly(symbol, adjusted=adjusted)
-        data = {
-            "symbol": symbol.upper(),
-            "adjusted": adjusted,
-            "bars": [bar.model_dump(mode="json") for bar in bars],
-        }
-        await cache.set(key, data, ttl=CACHE_TTL_BARS)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(bars), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=CACHE_TTL_BARS,
+            fetcher=lambda provider: provider.get_weekly(symbol, adjusted=adjusted),
+            cache_transform=lambda bars: {
+                "symbol": symbol.upper(),
+                "adjusted": adjusted,
+                "bars": [bar.model_dump(mode="json") for bar in bars],
+            },
+            miss_meta_builder=lambda _bars, data: {"count": len(data["bars"])},
+            endpoint="weekly",
+            cache_mode="default",
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -191,29 +166,19 @@ async def get_monthly(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get monthly time series data."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:monthly", symbol.upper(), str(adjusted))
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        bars = await provider.get_monthly(symbol, adjusted=adjusted)
-        data = [bar.model_dump() for bar in bars]
-        await cache.set(key, data, ttl=CACHE_TTL_BARS)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(data), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=CACHE_TTL_BARS,
+            fetcher=lambda provider: provider.get_monthly(symbol, adjusted=adjusted),
+            cache_transform=lambda bars: [bar.model_dump(mode="json") for bar in bars],
+            miss_meta_builder=lambda _bars, data: {"count": len(data)},
+            endpoint="monthly",
+            cache_mode="default",
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -226,27 +191,19 @@ async def search_symbols(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Search for symbols by keywords."""
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
-    key = cache_key("av:search", q.lower())
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
+    normalized_query = normalize_search_query(q)
+    key = cache_key("av:search", normalized_query)
     try:
-        await require_provider_rate_limit("alphavantage")
-        results = await provider.search_symbols(q)
-        await cache.set(key, results, ttl=86400)
-        return {
-            "success": True,
-            "data": results,
-            "meta": {"count": len(results), "cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=86400,
+            fetcher=lambda provider: provider.search_symbols(q),
+            cache_transform=lambda results: results,
+            miss_meta_builder=lambda results, _data: {"count": len(results)},
+            endpoint="search",
+            cache_mode="query",
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")

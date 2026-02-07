@@ -3,12 +3,16 @@
 Provides market hours, trading days, holidays, and earnings calendar.
 """
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from enum import Enum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
+
+from gateway.config import get_settings
 
 logger = structlog.get_logger()
 
@@ -224,6 +228,7 @@ class TradingCalendar:
     def __init__(self, market: str = "NYSE") -> None:
         self.market = market
         self.timezone = "America/New_York"
+        self._tz = ZoneInfo(self.timezone)
 
     def get_market_hours(self, query_date: date) -> MarketHours:
         """Get market hours for a specific date."""
@@ -310,16 +315,7 @@ class TradingCalendar:
                         )
 
             # Move to next day
-            current = date(
-                current.year,
-                current.month,
-                current.day + 1 if current.day < 28 else 1,
-            )
-            if current.day == 1:
-                if current.month < 12:
-                    current = date(current.year, current.month + 1, 1)
-                else:
-                    current = date(current.year + 1, 1, 1)
+            current += timedelta(days=1)
 
             # Safety limit
             if len(trading_days) > 1000:
@@ -338,14 +334,16 @@ class TradingCalendar:
         if dt is None:
             dt = datetime.now(UTC)
 
-        # Convert to date
-        query_date = dt.date()
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+
+        local_dt = dt.astimezone(self._tz)
+        query_date = local_dt.date()
 
         if not self.is_trading_day(query_date):
             return False
 
-        # Check time (simplified - doesn't handle timezone conversion)
-        current_time = dt.time()
+        current_time = local_dt.time()
 
         if query_date in US_EARLY_CLOSES:
             return self.REGULAR_START <= current_time <= self.REGULAR_EARLY_END
@@ -359,20 +357,7 @@ class TradingCalendar:
 
         current = from_date
         for _ in range(10):  # Max 10 days lookahead
-            # Move to next day
-            if current.month == 12 and current.day == 31:
-                current = date(current.year + 1, 1, 1)
-            elif current.day >= 28:
-                # Handle month boundaries
-                try:
-                    current = date(current.year, current.month, current.day + 1)
-                except ValueError:
-                    if current.month < 12:
-                        current = date(current.year, current.month + 1, 1)
-                    else:
-                        current = date(current.year + 1, 1, 1)
-            else:
-                current = date(current.year, current.month, current.day + 1)
+            current += timedelta(days=1)
 
             if self.is_trading_day(current):
                 return current
@@ -391,6 +376,20 @@ class EarningsCalendar:
     def __init__(self) -> None:
         # In production, this would fetch from Alpaca or other provider
         self._cache: dict[str, list[EarningsEvent]] = {}
+        self._fetch_earnings_func: (
+            Callable[[list[str], date, date], Awaitable[list[EarningsEvent]]] | None
+        ) = None
+
+    def set_fetcher(
+        self,
+        func: Callable[[list[str], date, date], Awaitable[list[EarningsEvent]]],
+    ) -> None:
+        """Set the function used to fetch earnings events."""
+        self._fetch_earnings_func = func
+
+    def has_fetcher(self) -> bool:
+        """Check whether an earnings fetcher is configured."""
+        return self._fetch_earnings_func is not None
 
     def get_earnings(
         self,
@@ -402,7 +401,14 @@ class EarningsCalendar:
 
         Note: This is a stub. In production, integrate with data provider.
         """
-        # Return empty for now - would fetch from provider
+        if self._fetch_earnings_func:
+            raise RuntimeError("Async fetcher configured; use fetch_earnings")
+
+        settings = get_settings()
+        if not settings.allow_stub_data:
+            raise RuntimeError("Earnings calendar fetcher not configured")
+
+        # Stub mode: return empty
         return []
 
     async def fetch_earnings(
@@ -412,6 +418,8 @@ class EarningsCalendar:
         end: date,
     ) -> list[EarningsEvent]:
         """Async fetch earnings (for provider integration)."""
+        if self._fetch_earnings_func:
+            return await self._fetch_earnings_func(symbols, start, end)
         return self.get_earnings(symbols, start, end)
 
 

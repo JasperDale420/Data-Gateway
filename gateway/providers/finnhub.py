@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 import structlog
 
+from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
 
@@ -32,7 +33,7 @@ class FinnhubProvider(DataProvider):
             supports_bars=True,
             supports_quotes=True,
             supports_trades=False,
-            supports_streaming=True,
+            supports_streaming=False,
             supports_historical=True,
             supports_news=True,
             rate_limit_requests_per_minute=60,  # Free tier limit
@@ -55,6 +56,7 @@ class FinnhubProvider(DataProvider):
             base_url=self._base_url,
             timeout=30.0,
             params={"token": self._api_key},
+            event_hooks=httpx_event_hooks("finnhub"),
         )
         logger.info("finnhub_provider_initialized")
 

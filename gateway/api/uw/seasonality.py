@@ -7,11 +7,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -25,22 +25,14 @@ async def get_market_seasonality(
 ):
     """Get market-wide seasonality data."""
     cache_key = "uw:seasonality:market"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_market_seasonality()
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_market_seasonality(),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
 
 
 @router.get("/seasonality/{symbol}", response_model=SuccessResponse)
@@ -53,19 +45,11 @@ async def get_ticker_seasonality(
     """Get monthly returns/seasonality for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:seasonality:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_monthly_returns(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": [d.model_dump(mode="json") for d in data],
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_monthly_returns(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )

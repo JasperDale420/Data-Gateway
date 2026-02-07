@@ -1,12 +1,16 @@
 """Prometheus metrics endpoint."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from gateway.api.deps import require_api_key
 from gateway.core.metrics import update_memory_metrics
 
-router = APIRouter(tags=["metrics"])
+router = APIRouter(
+    tags=["metrics"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 @router.get("/metrics", response_class=PlainTextResponse)

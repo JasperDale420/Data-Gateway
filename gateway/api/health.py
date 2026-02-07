@@ -1,17 +1,28 @@
 """Health check endpoints."""
 
+import time
 from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends
 
 from gateway import __version__
-from gateway.api.deps import get_cache, get_connection_manager
+from gateway.api.deps import get_cache, get_connection_manager, get_sink_registry
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
 from gateway.schemas import HealthResponse
 
+logger = structlog.get_logger()
+
 router = APIRouter(prefix="/health", tags=["health"])
+
+_LAST_CACHE_ERROR_LOG: float = 0.0
+_LAST_SINK_ERROR_LOG: float = 0.0
+
+
+def _should_log(last_log: float, interval_seconds: float = 60.0) -> bool:
+    return (time.time() - last_log) >= interval_seconds
 
 
 @router.get("", response_model=HealthResponse)
@@ -39,6 +50,25 @@ async def readiness(
         cache.delete("__health_check__")
     except Exception:
         checks["cache"] = "error"
+        global _LAST_CACHE_ERROR_LOG
+        if _should_log(_LAST_CACHE_ERROR_LOG):
+            _LAST_CACHE_ERROR_LOG = time.time()
+            logger.exception("readiness_cache_check_failed")
+
+    # Verify sink health (including circuit breaker state)
+    sink_registry = get_sink_registry()
+    if sink_registry:
+        checks["sinks"] = "ok"
+        try:
+            sink_results = await sink_registry.health_check_all()
+            if not all(sink_results.values()):
+                checks["sinks"] = "error"
+        except Exception:
+            checks["sinks"] = "error"
+            global _LAST_SINK_ERROR_LOG
+            if _should_log(_LAST_SINK_ERROR_LOG):
+                _LAST_SINK_ERROR_LOG = time.time()
+                logger.exception("readiness_sink_check_failed")
 
     # All checks passed?
     all_ok = all(v == "ok" for v in checks.values())

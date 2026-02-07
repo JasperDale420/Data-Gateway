@@ -13,6 +13,8 @@ from typing import Any
 
 import structlog
 
+from gateway.config import get_settings
+
 logger = structlog.get_logger()
 
 
@@ -116,6 +118,7 @@ class ReplaySession:
 
     session_id: str
     config: ReplayConfig
+    client_id: str
     state: ReplayState = ReplayState.PENDING
 
     # Progress tracking
@@ -233,11 +236,16 @@ class ReplaySessionManager:
         """Set the function used to load historical data."""
         self._data_loader = loader
 
-    async def create_session(self, config: ReplayConfig) -> ReplaySession:
+    def has_data_loader(self) -> bool:
+        """Check whether a data loader is configured."""
+        return self._data_loader is not None
+
+    async def create_session(self, config: ReplayConfig, client_id: str) -> ReplaySession:
         """Create a new replay session.
 
         Args:
             config: Replay configuration
+            client_id: Authenticated client ID
 
         Returns:
             Created session
@@ -247,6 +255,7 @@ class ReplaySessionManager:
         session = ReplaySession(
             session_id=session_id,
             config=config,
+            client_id=client_id,
         )
 
         async with self._lock:
@@ -269,9 +278,12 @@ class ReplaySessionManager:
         """Get a session by ID."""
         return self._sessions.get(session_id)
 
-    async def list_sessions(self) -> list[ReplaySession]:
-        """List all sessions."""
-        return list(self._sessions.values())
+    async def list_sessions(self, client_id: str | None = None) -> list[ReplaySession]:
+        """List sessions, optionally filtered by client."""
+        sessions = list(self._sessions.values())
+        if client_id is None:
+            return sessions
+        return [session for session in sessions if session.client_id == client_id]
 
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
@@ -388,8 +400,11 @@ class ReplaySessionManager:
         if self._data_loader:
             return await self._data_loader(session)
 
-        # Default: generate mock data for testing
-        return self._generate_mock_data(session)
+        settings = get_settings()
+        if settings.allow_stub_data:
+            # Default: generate mock data for testing
+            return self._generate_mock_data(session)
+        raise RuntimeError("Replay data loader not configured")
 
     def _generate_mock_data(self, session: ReplaySession) -> list[ReplayMessage]:
         """Generate mock replay data for testing."""

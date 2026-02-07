@@ -1,0 +1,101 @@
+name: Perf Guardrail
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf-gate:
+    name: Perf Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Restore perf history cache
+        id: perf-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .perf
+          key: ${{ runner.os }}-perf-history-v1-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-perf-history-v1-${{ github.ref_name }}-
+            ${{ runner.os }}-perf-history-v1-
+
+      - name: Resolve active perf config files
+        id: perf-config
+        run: |
+          mkdir -p .perf
+          BUDGETS_FILE=config/perf_budgets.json
+          BASELINE_FILE=config/perf_baseline.json
+          if [ -f .perf/perf_budgets.active.json ]; then
+            BUDGETS_FILE=.perf/perf_budgets.active.json
+          fi
+          if [ -f .perf/perf_baseline.active.json ]; then
+            BASELINE_FILE=.perf/perf_baseline.active.json
+          fi
+          echo "budgets_file=${BUDGETS_FILE}" >> "$GITHUB_OUTPUT"
+          echo "baseline_file=${BASELINE_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Run perf gate
+        run: |
+          python scripts/perf_gate.py \
+            --budgets-file "${{ steps.perf-config.outputs.budgets_file }}" \
+            --baseline-file "${{ steps.perf-config.outputs.baseline_file }}" \
+            --junit-xml perf-junit.xml \
+            --log-file perf-output.txt \
+            --summary-file perf-summary.json
+
+      - name: Refresh perf history/baseline/budgets
+        if: always()
+        run: |
+          python scripts/perf_baseline_manager.py \
+            --summary-file perf-summary.json \
+            --history-file .perf/perf-history.json \
+            --budgets-file "${{ steps.perf-config.outputs.budgets_file }}" \
+            --baseline-file "${{ steps.perf-config.outputs.baseline_file }}" \
+            --out-history-file .perf/perf-history.json \
+            --out-budgets-file .perf/perf_budgets.active.json \
+            --out-baseline-file .perf/perf_baseline.active.json \
+            --report-file perf-history-report.json
+
+      - name: Save perf history cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .perf
+          key: ${{ steps.perf-cache-restore.outputs.cache-primary-key }}
+
+      - name: Upload perf artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: perf-artifacts
+          path: |
+            perf-junit.xml
+            perf-output.txt
+            perf-summary.json
+            perf-history-report.json
+            .perf/perf-history.json
+            .perf/perf_budgets.active.json
+            .perf/perf_baseline.active.json
+          retention-days: 14

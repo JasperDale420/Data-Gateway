@@ -8,11 +8,11 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -28,22 +28,14 @@ async def get_spot_exposures_by_strike(
     """Get gamma and volume confluence per strike."""
     symbol = symbol.upper()
     cache_key = f"uw:spot-exposures:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_spot_exposures_by_strike(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_spot_exposures_by_strike(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/{symbol}/flow-strike", response_model=SuccessResponse)
@@ -57,22 +49,19 @@ async def get_flow_per_strike(
     """Get flow data aggregated by strike price."""
     symbol = symbol.upper()
     cache_key = f"uw:flow-strike:{symbol}:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_flow_per_strike(symbol=symbol, date_str=date)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "date": date, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_flow_per_strike(symbol=symbol, date_str=date),
+        build_response=lambda data: make_response(
+            data,
+            symbol=symbol,
+            count=len(data),
+            extra_meta={"date": date},
+        ),
+    )
 
 
 @router.get("/{symbol}/flow-expiry", response_model=SuccessResponse)
@@ -86,22 +75,19 @@ async def get_flow_per_expiry(
     """Get flow data aggregated by expiration date."""
     symbol = symbol.upper()
     cache_key = f"uw:flow-expiry:{symbol}:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_flow_per_expiry(symbol=symbol, date_str=date)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "date": date, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_flow_per_expiry(symbol=symbol, date_str=date),
+        build_response=lambda data: make_response(
+            data,
+            symbol=symbol,
+            count=len(data),
+            extra_meta={"date": date},
+        ),
+    )
 
 
 @router.get("/{symbol}/greek-flow", response_model=SuccessResponse)
@@ -114,22 +100,14 @@ async def get_greek_flow(
     """Get greek flow data for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:greek-flow:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_greek_flow(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_greek_flow(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )
 
 
 @router.get("/market/net-flow-expiry", response_model=SuccessResponse)
@@ -140,22 +118,14 @@ async def get_net_flow_expiry(
 ):
     """Get net premium flow by expiration category."""
     cache_key = "uw:net-flow-expiry"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_net_flow_expiry()
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_net_flow_expiry(),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
 
 
 @router.get("/{symbol}/interpolated-iv", response_model=SuccessResponse)
@@ -168,19 +138,11 @@ async def get_interpolated_iv(
     """Get interpolated implied volatility."""
     symbol = symbol.upper()
     cache_key = f"uw:interpolated-iv:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_interpolated_iv(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_interpolated_iv(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )

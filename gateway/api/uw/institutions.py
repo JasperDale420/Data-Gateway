@@ -7,12 +7,12 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -27,17 +27,14 @@ async def get_all_institutions(
 ):
     """Get list of all institutions."""
     cache_key = f"uw:institutions:all:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_all_institutions(limit=limit)
-
-    response = paginate_response(data, limit)
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_all_institutions(limit=limit),
+        build_response=lambda data: paginate_response(data, limit),
+    )
 
 
 @router.get("/institutions/latest-filings", response_model=SuccessResponse)
@@ -49,17 +46,14 @@ async def get_latest_institutional_filings(
 ):
     """Get latest institutional filings."""
     cache_key = f"uw:institutions:filings:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_latest_institutional_filings(limit=limit)
-
-    response = paginate_response(data, limit)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_latest_institutional_filings(limit=limit),
+        build_response=lambda data: paginate_response(data, limit),
+    )
 
 
 @router.get("/institutions/{institution_id}/activity", response_model=SuccessResponse)
@@ -71,26 +65,18 @@ async def get_institution_activity(
 ):
     """Get latest activity by an institution."""
     cache_key = f"uw:institutions:{institution_id}:activity"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_institution_activity(institution_id=institution_id)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {
-            "institution_id": institution_id,
-            "count": len(data),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_institution_activity(institution_id=institution_id),
+        build_response=lambda data: make_response(
+            data,
+            count=len(data),
+            extra_meta={"institution_id": institution_id},
+        ),
+    )
 
 
 @router.get("/institutions/{institution_id}/holdings", response_model=SuccessResponse)
@@ -102,26 +88,18 @@ async def get_institution_holdings(
 ):
     """Get current holdings of an institution."""
     cache_key = f"uw:institutions:{institution_id}:holdings"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_institution_holdings(institution_id=institution_id)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {
-            "institution_id": institution_id,
-            "count": len(data),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_institution_holdings(institution_id=institution_id),
+        build_response=lambda data: make_response(
+            data,
+            count=len(data),
+            extra_meta={"institution_id": institution_id},
+        ),
+    )
 
 
 @router.get("/institutions/{institution_id}/sectors", response_model=SuccessResponse)
@@ -133,26 +111,20 @@ async def get_institution_sector_exposure(
 ):
     """Get sector exposure of an institution."""
     cache_key = f"uw:institutions:{institution_id}:sectors"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_institution_sector_exposure(institution_id=institution_id)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {
-            "institution_id": institution_id,
-            "count": len(data),
-            "provider": "unusual_whales",
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_institution_sector_exposure(
+            institution_id=institution_id
+        ),
+        build_response=lambda data: make_response(
+            data,
+            count=len(data),
+            extra_meta={"institution_id": institution_id},
+        ),
+    )
 
 
 @router.get("/institutions/{symbol}/ownership", response_model=SuccessResponse)
@@ -165,19 +137,11 @@ async def get_institutional_ownership(
     """Get institutional ownership for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:institutions:ownership:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_institutional_ownership(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_institutional_ownership(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )

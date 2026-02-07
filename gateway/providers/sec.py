@@ -1,11 +1,13 @@
 """SEC EDGAR data provider for filings and company data."""
 
+import os
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 import structlog
 
+from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 
 logger = structlog.get_logger()
@@ -15,7 +17,7 @@ SEC_BASE_URL = "https://data.sec.gov"
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 
 # SEC requires User-Agent header
-SEC_USER_AGENT = "Empire Trading Framework contact@empire-trading.com"
+DEFAULT_SEC_USER_AGENT = "Empire Trading Framework contact@empire-trading.com"
 
 # Cache TTL for SEC data (filings update infrequently)
 SEC_CACHE_TTL = 3600
@@ -59,9 +61,13 @@ class SECProvider(DataProvider):
 
     async def initialize(self, config: dict[str, Any]) -> None:
         """Initialize SEC provider with HTTP client."""
+        user_agent_env = config.get("user_agent_env", "SEC_USER_AGENT")
+        user_agent = os.environ.get(user_agent_env, DEFAULT_SEC_USER_AGENT)
+
         self._client = httpx.AsyncClient(
-            headers={"User-Agent": SEC_USER_AGENT},
+            headers={"User-Agent": user_agent},
             timeout=30.0,
+            event_hooks=httpx_event_hooks("sec"),
         )
 
         # Load ticker to CIK mapping

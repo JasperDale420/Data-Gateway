@@ -8,12 +8,15 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    cursor_fetch_limit,
+    cursor_page_limit,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_list_response,
+    paginate_offset_response,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -31,17 +34,19 @@ async def get_institutions(
     """Get 13F institutional holdings for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:institutions:{symbol}:{limit}:{cursor or 'start'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    holdings = await provider.get_institutions(symbol=symbol)
-
-    response = paginate_response(holdings, limit, cursor)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    offset, page_limit = cursor_page_limit(limit=limit, cursor=cursor)
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_institutions(
+            symbol=symbol,
+            limit=page_limit,
+            offset=offset,
+        ),
+        build_response=lambda holdings: paginate_offset_response(holdings, limit, offset),
+    )
 
 
 @router.get("/congress/{symbol}", response_model=SuccessResponse)
@@ -56,17 +61,15 @@ async def get_congress(
     """Get congressional trades for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:congress:{symbol}:{limit}:{cursor or 'start'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    trades = await provider.get_congress_trades(symbol=symbol)
-
-    response = paginate_response(trades, limit, cursor)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_congress_trades(symbol=symbol, limit=fetch_limit),
+        build_response=lambda trades: paginate_response(trades, limit, cursor),
+    )
 
 
 @router.get("/insiders/{symbol}", response_model=SuccessResponse)
@@ -81,17 +84,15 @@ async def get_insiders(
     """Get insider transactions for a ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:insiders:{symbol}:{limit}:{cursor or 'start'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    transactions = await provider.get_insiders(symbol=symbol)
-
-    response = paginate_response(transactions, limit, cursor)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    _, fetch_limit = cursor_fetch_limit(limit=limit, cursor=cursor)
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_insiders(symbol=symbol, limit=fetch_limit),
+        build_response=lambda transactions: paginate_response(transactions, limit, cursor),
+    )
 
 
 @router.get("/market/tide", response_model=SuccessResponse)
@@ -103,23 +104,11 @@ async def get_market_tide(
 ):
     """Get market tide/sentiment data."""
     cache_key = f"uw:market:tide:{date or 'latest'}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    tides = await provider.get_market_tide(date_str=date)
-
-    response = {
-        "success": True,
-        "data": [t.model_dump(mode="json") for t in tides],
-        "pagination": {
-            "next_cursor": None,
-            "has_more": False,
-            "total_count": len(tides),
-        },
-    }
-
-    await cache.set(cache_key, response, ttl=60)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=60,
+        fetcher=lambda provider: provider.get_market_tide(date_str=date),
+        build_response=make_list_response,
+    )

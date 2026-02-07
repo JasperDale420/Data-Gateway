@@ -6,21 +6,27 @@ The Data Gateway is a unified financial data gateway providing access to 7+ data
 
 **Base URL:** `http://localhost:8080`
 
+**Authentication:** Most endpoints require `X-Gateway-Key`. Health endpoints (`/health/*`) are public.
+
 **API Discovery:**
 
 ```bash
 # Get full API catalog
-curl http://localhost:8080/catalog/
+curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/
 
 # WebSocket streams
-curl http://localhost:8080/catalog/streams
+curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/streams
 
 # REST providers
-curl http://localhost:8080/catalog/providers
+curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/providers
 
 # OpenAPI docs
 open http://localhost:8080/docs
 ```
+
+**Stub data:** Some endpoints return stub/mock data only when `GATEWAY_ALLOW_STUB_DATA=true`. If disabled (default), those endpoints return `501 Not Implemented` until a real data loader is configured.
+
+**Legacy aliases (deprecated):** `/symbology/*`, `/corporate-actions/*`, `/adjustment-factors/*` (forward to `/api/v1/*`).
 
 ---
 
@@ -45,15 +51,30 @@ Send an auth message immediately after connecting:
 }
 ```
 
+**Access control notes:**
+- Provider access is enforced via `permissions.providers` in `config/clients.yaml`.
+- Feed access is enforced via `permissions.feeds`.
+- Admin endpoints require a client role of `admin` or `super_admin`.
+
 ### Subscribe to Data Feeds
 
 ```json
 {
   "action": "subscribe",
-  "feed": "stock_bars",
+  "feeds": ["stock_bars"],
   "symbols": ["AAPL", "MSFT", "GOOGL"]
 }
 ```
+
+```json
+{
+  "action": "subscribe",
+  "feeds": ["news"],
+  "symbols": ["*"]
+}
+```
+
+Legacy payloads may still send `feed` instead of `feeds`.
 
 ### Available Feeds
 
@@ -91,6 +112,32 @@ Send an auth message immediately after connecting:
 
 ## REST API Providers
 
+Provider endpoint contracts are generated from live routes in `PROVIDER_ENDPOINT_CONTRACT.md`.
+
+## Bulk Data
+
+Bulk data requests are asynchronous jobs. Create a job and poll for status or download results.
+
+**Endpoints:**
+- `POST /api/v1/bulk/bars`
+- `POST /api/v1/bulk/options/chains`
+- `POST /api/v1/bulk/adjustment-factors`
+- `GET /api/v1/bulk/jobs/{job_id}`
+- `GET /api/v1/bulk/jobs/{job_id}/download?format=jsonl|json`
+- `DELETE /api/v1/bulk/jobs/{job_id}`
+- `GET /api/v1/bulk/jobs`
+
+**Bulk options notes:**
+- Uses Alpaca options snapshots when the Alpaca provider is configured.
+- `expiration_range`: `{"min_dte": 0, "max_dte": 45}` (days to expiration).
+- `moneyness_range`: `{"min_delta": 0.2, "max_delta": 0.6}` (absolute delta).
+
+**Bulk adjustment factors notes:**
+- Uses the adjustment factors service (currently stubbed unless `GATEWAY_ALLOW_STUB_DATA=true`).
+
+**Bulk bars notes:**
+- Uses Alpaca historical bars when the Alpaca provider is configured.
+
 ### Alpaca Markets (`/alpaca`)
 
 Stock, options, and crypto market data + trading execution.
@@ -112,15 +159,7 @@ Options flow, dark pool, institutional, and alternative data.
 
 **Documentation:** <https://docs.unusualwhales.com/>
 
-| Category | Endpoints |
-|----------|-----------|
-| Options Flow | `/flow`, `/flow/alerts`, `/flow/historical`, `/flow/ticker/{ticker}` |
-| Dark Pool | `/darkpool`, `/darkpool/ticker/{ticker}` |
-| Institutional | `/institution`, `/institution/{name}`, `/institution/{name}/holdings` |
-| Insider | `/insider/transactions`, `/insider/ticker/{ticker}` |
-| Analytics | `/stock/{ticker}/overview`, `/stock/{ticker}/options/volume`, `/stock/{ticker}/options/greeks` |
-| ETF | `/etf`, `/etf/{ticker}`, `/etf/{ticker}/holdings` |
-| Screeners | `/screener/options`, `/screener/stocks` |
+- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `unusual_whales`.
 
 ---
 
@@ -130,12 +169,7 @@ SEC filings, company facts, and insider data.
 
 **Documentation:** <https://www.sec.gov/developer>
 
-| Category | Endpoints |
-|----------|-----------|
-| Company | `/company/{cik}`, `/company/ticker/{ticker}` |
-| Filings | `/filings/{cik}`, `/filings/{cik}/{form_type}`, `/search` |
-| Institutional | `/13f/{cik}`, `/insiders/{cik}` |
-| XBRL | `/facts/{cik}`, `/concept/{cik}/{concept}`, `/frames/{concept}/{period}` |
+- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `sec`.
 
 ---
 
@@ -145,13 +179,7 @@ Fundamentals, earnings, news, and alternative data.
 
 **Documentation:** <https://finnhub.io/docs/api>
 
-| Category | Endpoints |
-|----------|-----------|
-| Company | `/stock/profile/{symbol}`, `/stock/metric`, `/stock/peers`, `/stock/executive` |
-| Financials | `/stock/financials`, `/stock/financials-reported`, `/stock/revenue-estimate` |
-| Earnings | `/stock/earnings`, `/stock/eps-estimate`, `/calendar/earnings` |
-| News | `/news/company/{symbol}`, `/news/market`, `/news/sentiment` |
-| Alternative | `/stock/social-sentiment`, `/stock/insider-transactions`, `/stock/congressional-trading` |
+- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `finnhub`.
 
 ---
 
@@ -161,12 +189,7 @@ Technical indicators, forex, and economic data.
 
 **Documentation:** <https://www.alphavantage.co/documentation/>
 
-| Category | Endpoints |
-|----------|-----------|
-| Overview | `/company/{symbol}`, `/income/{symbol}`, `/balance/{symbol}`, `/cashflow/{symbol}` |
-| Technical | `/indicator/{indicator}/{symbol}`, `/sma/{symbol}`, `/ema/{symbol}`, `/rsi/{symbol}`, `/macd/{symbol}` |
-| Forex | `/forex/rate`, `/forex/intraday`, `/forex/daily` |
-| Economy | `/economy/gdp`, `/economy/inflation`, `/economy/interest-rate`, `/economy/unemployment` |
+- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `alphavantage`.
 
 ---
 
@@ -174,25 +197,56 @@ Technical indicators, forex, and economic data.
 
 Free stock quotes, financials, and analysis.
 
-| Category | Endpoints |
-|----------|-----------|
-| Quotes | `/ticker/{symbol}`, `/ticker/{symbol}/info`, `/ticker/{symbol}/history` |
-| Financials | `/ticker/{symbol}/financials`, `/ticker/{symbol}/earnings`, `/ticker/{symbol}/dividends` |
-| Options | `/ticker/{symbol}/options`, `/ticker/{symbol}/options/{expiration}` |
-| Analysis | `/ticker/{symbol}/recommendations`, `/ticker/{symbol}/holders`, `/ticker/{symbol}/sustainability` |
+- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `yfinance`.
 
 ---
 
 ### News Aggregator (`/news`)
 
-Consolidated news from multiple sources.
+Provider: NewsAPI.org.
 
 | Category | Endpoints |
 |----------|-----------|
-| Articles | `/articles`, `/articles/{article_id}` |
+| Articles | `/articles` |
 | Sentiment | `/sentiment/{symbol}` |
 
+Notes:
+- NewsAPI.org does not expose a get-by-id endpoint. `/articles/{article_id}` is not supported and will return `501`.
+
 ---
+
+### Trading Calendar (`/calendar`)
+
+Market hours, trading days, and earnings calendar.
+
+| Endpoint | Description |
+|----------|-------------|
+| `/api/v1/calendar/market-hours` | Market hours for a date |
+| `/api/v1/calendar/trading-days` | Trading days in a range |
+| `/api/v1/calendar/earnings` | Earnings calendar for symbols |
+| `/api/v1/calendar/is-open` | Market open status |
+| `/api/v1/calendar/next-trading-day` | Next trading day |
+
+Notes:
+- Market hours/trading days use Alpaca when configured; otherwise fall back to static calendar logic.
+- Earnings calendar uses Finnhub when configured; otherwise returns 501 unless `GATEWAY_ALLOW_STUB_DATA=true`.
+
+---
+
+### Corporate Actions (`/api/v1/corporate-actions`) & Adjustment Factors (`/api/v1/adjustment-factors`)
+
+Corporate actions history and adjustment factors for backtesting.
+
+| Endpoint | Description |
+|----------|-------------|
+| `/api/v1/corporate-actions/{symbol}` | All actions (splits, dividends, etc.) |
+| `/api/v1/corporate-actions/{symbol}/splits` | Splits only |
+| `/api/v1/corporate-actions/{symbol}/dividends` | Dividends only |
+| `/api/v1/adjustment-factors/{symbol}` | Adjustment factors |
+| `/api/v1/adjustment-factors/adjust-prices` | Adjust prices using factors |
+
+Notes:
+- Corporate actions use Alpaca when configured; otherwise return 501 unless `GATEWAY_ALLOW_STUB_DATA=true`.
 
 ## Error Codes
 
@@ -234,5 +288,5 @@ curl http://localhost:8080/health/ready
 curl http://localhost:8080/health/status
 
 # Prometheus metrics
-curl http://localhost:8080/metrics
+curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/metrics
 ```

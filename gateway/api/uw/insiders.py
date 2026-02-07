@@ -7,12 +7,12 @@ from gateway.api.uw.common import (
     InMemoryCache,
     ProviderRegistry,
     SuccessResponse,
+    execute_uw_cached,
     get_cache,
     get_registry,
-    get_uw_provider,
+    make_response,
     paginate_response,
     require_api_key,
-    require_provider_rate_limit,
 )
 
 router = APIRouter(tags=["unusual_whales"])
@@ -27,17 +27,14 @@ async def get_insider_transactions(
 ):
     """Get all recent insider transactions."""
     cache_key = f"uw:insider:transactions:{limit}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_insider_transactions(limit=limit)
-
-    response = paginate_response(data, limit)
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_insider_transactions(limit=limit),
+        build_response=lambda data: paginate_response(data, limit),
+    )
 
 
 @router.get("/insider/sector-flow", response_model=SuccessResponse)
@@ -48,22 +45,14 @@ async def get_insider_sector_flow(
 ):
     """Get insider trading flow by sector."""
     cache_key = "uw:insider:sector-flow"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_insider_sector_flow()
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_insider_sector_flow(),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
 
 
 @router.get("/insider/ticker-flow", response_model=SuccessResponse)
@@ -74,22 +63,14 @@ async def get_insider_ticker_flow(
 ):
     """Get insider trading flow by ticker."""
     cache_key = "uw:insider:ticker-flow"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_insider_ticker_flow()
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=300)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_insider_ticker_flow(),
+        build_response=lambda data: make_response(data, count=len(data)),
+    )
 
 
 @router.get("/insider/{symbol}/insiders", response_model=SuccessResponse)
@@ -102,19 +83,11 @@ async def get_ticker_insiders(
     """Get insiders for a specific ticker."""
     symbol = symbol.upper()
     cache_key = f"uw:insider:insiders:{symbol}"
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    data = await provider.get_ticker_insiders(symbol=symbol)
-
-    response = {
-        "success": True,
-        "data": data,
-        "meta": {"symbol": symbol, "count": len(data), "provider": "unusual_whales"},
-    }
-
-    await cache.set(cache_key, response, ttl=3600)
-    return response
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=3600,
+        fetcher=lambda provider: provider.get_ticker_insiders(symbol=symbol),
+        build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
+    )

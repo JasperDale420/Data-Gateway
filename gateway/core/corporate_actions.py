@@ -4,6 +4,7 @@ Provides corporate action history (splits, dividends, spinoffs)
 as specified in PRD (lines 1126-1191).
 """
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -11,6 +12,8 @@ from enum import Enum
 from typing import Any
 
 import structlog
+
+from gateway.config import get_settings
 
 logger = structlog.get_logger()
 
@@ -118,6 +121,25 @@ class CorporateActionsService:
         splits = await service.get_splits("AAPL", date(2020, 1, 1), date(2024, 1, 1))
     """
 
+    def __init__(self) -> None:
+        self._fetch_actions_func: (
+            Callable[[str, date, date, list[ActionType] | None], Awaitable[list[CorporateAction]]]
+            | None
+        ) = None
+
+    def set_fetcher(
+        self,
+        func: Callable[
+            [str, date, date, list[ActionType] | None], Awaitable[list[CorporateAction]]
+        ],
+    ) -> None:
+        """Set the function used to fetch corporate actions."""
+        self._fetch_actions_func = func
+
+    def has_fetcher(self) -> bool:
+        """Check whether a corporate actions fetcher is configured."""
+        return self._fetch_actions_func is not None
+
     # Well-known historical splits for fallback/validation
     KNOWN_SPLITS = {
         "AAPL": [
@@ -203,15 +225,19 @@ class CorporateActionsService:
         symbol = symbol.upper()
         actions: list[CorporateAction] = []
 
-        # Try to get from known splits first (fallback data)
-        if symbol in self.KNOWN_SPLITS:
-            for action in self.KNOWN_SPLITS[symbol]:
-                if start <= action.ex_date <= end:
-                    if action_types is None or action.type in action_types:
-                        actions.append(action)
+        if self._fetch_actions_func:
+            actions = await self._fetch_actions_func(symbol, start, end, action_types)
+        else:
+            settings = get_settings()
+            if not settings.allow_stub_data:
+                raise RuntimeError("Corporate actions fetcher not configured")
 
-        # TODO: Integrate with Alpaca corporate actions API
-        # TODO: Integrate with yfinance as fallback
+            # Fallback: known splits only (stub mode)
+            if symbol in self.KNOWN_SPLITS:
+                for action in self.KNOWN_SPLITS[symbol]:
+                    if start <= action.ex_date <= end:
+                        if action_types is None or action.type in action_types:
+                            actions.append(action)
 
         # Sort by ex_date
         actions.sort(key=lambda a: a.ex_date)

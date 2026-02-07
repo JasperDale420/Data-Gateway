@@ -4,15 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
     CACHE_TTL_FUNDAMENTALS,
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
+    execute_av_cached,
     get_cache,
     get_registry,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.schemas import SuccessResponse
 
@@ -33,27 +32,19 @@ async def get_economic_indicator(
     FEDERAL_FUNDS_RATE, CPI, INFLATION, RETAIL_SALES, DURABLES,
     UNEMPLOYMENT, NONFARM_PAYROLL
     """
-    provider = registry.get("alphavantage")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("av:economic", indicator.upper(), interval)
-    cached = await cache.get(key)
-    if cached:
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "alphavantage"},
-        }
-
     try:
-        await require_provider_rate_limit("alphavantage")
-        data = await provider.get_economic_indicator(indicator, interval)
-        await cache.set(key, data, ttl=CACHE_TTL_FUNDAMENTALS)
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "alphavantage"},
-        }
+        return await execute_av_cached(
+            cache=cache,
+            cache_key_value=key,
+            registry=registry,
+            ttl=CACHE_TTL_FUNDAMENTALS,
+            fetcher=lambda provider: provider.get_economic_indicator(indicator, interval),
+            cache_transform=lambda data: data,
+            endpoint="economic_indicator",
+            cache_mode="default",
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")

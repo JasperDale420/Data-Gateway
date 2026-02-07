@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import structlog
 
+from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 
 logger = structlog.get_logger()
@@ -55,6 +56,7 @@ class NewsProvider(DataProvider):
             base_url=self._base_url,
             timeout=30.0,
             headers={"X-Api-Key": self._api_key},
+            event_hooks=httpx_event_hooks("news"),
         )
 
         logger.info("news_provider_initialized", api="newsapi.org")
@@ -197,9 +199,7 @@ class NewsProvider(DataProvider):
             raise RuntimeError("Provider not initialized")
 
         # NewsAPI doesn't have a get-by-ID endpoint
-        # Return empty - caller should fetch from original URL
-        logger.warning("news_get_article_not_supported", article_id=article_id)
-        return {}
+        raise NotImplementedError("NewsAPI does not support article lookup by ID")
 
     async def get_sentiment(self, symbol: str) -> dict[str, Any]:
         """Get aggregated sentiment for a symbol (basic implementation)."""
