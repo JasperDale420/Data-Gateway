@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.54] - 2026-02-07
+
+### Added
+
+- **Replay loader compatibility tests**: Expanded `tests/test_replay.py` with coverage for out-of-order list sorting and async-iterable loader replay behavior.
+
+### Changed
+
+- **Replay iterable ingestion support**: Updated `gateway/core/replay.py` so replay loaders can return async/sync iterables in addition to lists, enabling streamed replay ingestion without mandatory list materialization.
+- **Replay sort-on-demand optimization**: Updated `gateway/core/replay.py` list handling to sort replay messages only when timestamps are out of order, skipping unnecessary full-list sorts for already ordered data.
+- **Audit tracking updates**: Updated `PERFORMANCE_AUDIT.md` to mark replay preload/sort item partially remediated and clarify remaining large-window storage follow-up.
+
 ## [0.5.53] - 2026-02-07
 
 ### Added

@@ -245,3 +245,91 @@ class TestReplaySessionManager:
         m1 = get_replay_manager()
         m2 = get_replay_manager()
         assert m1 is m2
+
+    @pytest.mark.asyncio
+    async def test_run_replay_sorts_out_of_order_list_loader(self, manager):
+        """Out-of-order list loader data should be replayed in timestamp order."""
+        start = datetime(2024, 1, 15, 9, 30, tzinfo=UTC)
+        config = ReplayConfig(
+            name="sorted-replay",
+            symbols=["AAPL"],
+            feeds=["bars"],
+            start=start,
+            end=start + timedelta(minutes=1),
+            speed=100.0,
+        )
+        session = ReplaySession(session_id="replay-sort", config=config, client_id="test-client")
+        session.state = ReplayState.RUNNING
+
+        newer = ReplayMessage(
+            feed="stock_bars",
+            symbol="AAPL",
+            data={"close": 2},
+            market_timestamp=start + timedelta(seconds=1),
+        )
+        older = ReplayMessage(
+            feed="stock_bars",
+            symbol="AAPL",
+            data={"close": 1},
+            market_timestamp=start,
+        )
+
+        async def _loader(_session):
+            return [newer, older]
+
+        manager.set_data_loader(_loader)
+
+        sent: list[dict] = []
+
+        async def _callback(message):
+            sent.append(message)
+
+        await manager._run_replay(session, _callback)
+
+        assert session.state == ReplayState.COMPLETED
+        assert [msg["data"]["close"] for msg in sent] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_run_replay_supports_async_iterable_loader(self, manager):
+        """Replay should support streaming async iterable loaders without list materialization."""
+        start = datetime(2024, 1, 15, 9, 30, tzinfo=UTC)
+        config = ReplayConfig(
+            name="streaming-replay",
+            symbols=["AAPL"],
+            feeds=["bars"],
+            start=start,
+            end=start + timedelta(minutes=1),
+            speed=100.0,
+        )
+        session = ReplaySession(session_id="replay-stream", config=config, client_id="test-client")
+        session.state = ReplayState.RUNNING
+
+        async def _loader(_session):
+            async def _messages():
+                yield ReplayMessage(
+                    feed="stock_bars",
+                    symbol="AAPL",
+                    data={"close": 10},
+                    market_timestamp=start,
+                )
+                yield ReplayMessage(
+                    feed="stock_bars",
+                    symbol="AAPL",
+                    data={"close": 11},
+                    market_timestamp=start,
+                )
+
+            return _messages()
+
+        manager.set_data_loader(_loader)
+
+        sent: list[dict] = []
+
+        async def _callback(message):
+            sent.append(message)
+
+        await manager._run_replay(session, _callback)
+
+        assert session.state == ReplayState.COMPLETED
+        assert session.messages_sent == 2
+        assert [msg["data"]["close"] for msg in sent] == [10, 11]
