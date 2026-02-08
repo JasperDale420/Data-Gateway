@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.121] - 2026-02-08
+
+### Added
+
+- **Finnhub ETF/index cache-telemetry regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_finnhub_etf_router.py` to validate route-level cache hit/miss telemetry for ETF profile and index historical endpoints.
+
+### Changed
+
+- **Finnhub ETF/index route cache telemetry rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/finnhub/etf.py` to emit `record_route_cache(...)` hit/miss metrics across cached ETF/index endpoints.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record completed Finnhub ETF/index telemetry rollout and keep remaining non-provider telemetry follow-up scoped.
+
 ## [0.5.120] - 2026-02-08
 
 ### Added
