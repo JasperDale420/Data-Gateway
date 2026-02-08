@@ -14,6 +14,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -35,6 +36,7 @@ async def get_earnings_calendar(
     key = cache_key("finnhub:earnings", start, end)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_earnings_calendar", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -48,6 +50,7 @@ async def get_earnings_calendar(
 
         earnings = await provider.get_earnings_calendar(start=start_dt, end=end_dt)
         await cache.set(key, earnings, ttl=3600)
+        record_route_cache("finnhub_earnings_calendar", "miss", "finnhub")
         return {
             "success": True,
             "data": earnings,
@@ -72,6 +75,7 @@ async def get_recommendations(
     key = cache_key("finnhub:recommendations", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_recommendations", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -82,6 +86,7 @@ async def get_recommendations(
         await require_provider_rate_limit("finnhub")
         recs = await provider.get_recommendation_trends(symbol)
         await cache.set(key, recs, ttl=3600)
+        record_route_cache("finnhub_recommendations", "miss", "finnhub")
         return {
             "success": True,
             "data": recs,
@@ -107,6 +112,7 @@ async def get_eps_estimates(
     key = cache_key("finnhub:eps-estimates", symbol.upper(), freq)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_eps_estimates", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -117,6 +123,7 @@ async def get_eps_estimates(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_eps_estimates(symbol, freq=freq)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_eps_estimates", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -142,6 +149,7 @@ async def get_revenue_estimates(
     key = cache_key("finnhub:revenue-estimates", symbol.upper(), freq)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_revenue_estimates", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -152,6 +160,7 @@ async def get_revenue_estimates(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_revenue_estimates(symbol, freq=freq)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_revenue_estimates", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -177,6 +186,7 @@ async def get_ebit_estimates(
     key = cache_key("finnhub:ebit-estimates", symbol.upper(), freq)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_ebit_estimates", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -187,6 +197,7 @@ async def get_ebit_estimates(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_ebit_estimates(symbol, freq=freq)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_ebit_estimates", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -212,6 +223,7 @@ async def get_ebitda_estimates(
     key = cache_key("finnhub:ebitda-estimates", symbol.upper(), freq)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_ebitda_estimates", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -222,6 +234,7 @@ async def get_ebitda_estimates(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_ebitda_estimates(symbol, freq=freq)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_ebitda_estimates", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -246,6 +259,7 @@ async def get_price_target(
     key = cache_key("finnhub:price-target", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_price_target", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -256,6 +270,7 @@ async def get_price_target(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_price_target(symbol)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_price_target", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
