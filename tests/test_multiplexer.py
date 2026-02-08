@@ -1,9 +1,11 @@
 """Tests for subscription manager."""
 
+from types import SimpleNamespace
+
 import pytest
 
 import gateway.core.stream as stream_module
-from gateway.core.stream import StreamMultiplexer
+from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
 
 
 @pytest.fixture
@@ -228,3 +230,40 @@ async def test_iter_client_batches_is_lazy(
     assert len(remaining_batches) == 1
     assert len(remaining_batches[0]) == 2
     assert batch_sizes == [3, 2]
+
+
+@pytest.mark.asyncio
+async def test_stream_multiplexer_reuses_cached_validator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    get_validator_calls = 0
+    validation_calls = 0
+
+    class _Validator:
+        def validate_bar(self, _message: dict[str, str]) -> SimpleNamespace:
+            nonlocal validation_calls
+            validation_calls += 1
+            return SimpleNamespace(valid=False, error_codes=["GW-E9999"])
+
+    def _get_validator() -> _Validator:
+        nonlocal get_validator_calls
+        get_validator_calls += 1
+        return _Validator()
+
+    monkeypatch.setattr(stream_module, "get_validator", _get_validator)
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+
+    await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "AAPL"})
+    await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "MSFT"})
+
+    assert get_validator_calls == 1
+    assert validation_calls == 2

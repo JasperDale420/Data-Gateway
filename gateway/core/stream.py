@@ -27,6 +27,12 @@ logger = structlog.get_logger()
 
 DEFAULT_FANOUT_MAX_INFLIGHT = 100
 DEFAULT_FANOUT_BATCH_SIZE = 32
+MESSAGE_TYPE_TO_DATA_TYPE = {
+    "b": "bars",
+    "q": "quotes",
+    "t": "trades",
+    "n": "news",
+}
 
 
 class AlpacaStreamType(Enum):
@@ -702,6 +708,13 @@ class StreamMultiplexer:
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._fanout_semaphore = asyncio.Semaphore(self._fanout_max_inflight)
+        self._validator: Any | None = None
+
+    def _get_stream_validator(self) -> Any:
+        """Lazily resolve and cache the shared market-data validator."""
+        if self._validator is None:
+            self._validator = get_validator()
+        return self._validator
 
     async def start(self) -> None:
         """Start the multiplexer.
@@ -894,21 +907,13 @@ class StreamMultiplexer:
         """Route incoming message to subscribed clients."""
         msg_type = message.get("T", "")
 
-        # Map Alpaca message types to our data types
-        data_type_map = {
-            "b": "bars",
-            "q": "quotes",
-            "t": "trades",
-            "n": "news",
-        }
-
-        data_type = data_type_map.get(msg_type)
+        data_type = MESSAGE_TYPE_TO_DATA_TYPE.get(msg_type)
         if not data_type:
             # System message, heartbeat, etc.
             return
 
         if data_type in {"bars", "quotes", "trades"}:
-            validator = get_validator()
+            validator = self._get_stream_validator()
             if data_type == "bars":
                 result = validator.validate_bar(message)
             elif data_type == "quotes":

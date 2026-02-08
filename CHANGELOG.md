@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.127] - 2026-02-08
+
+### Added
+
+- **Stream validator-cache regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` with `test_stream_multiplexer_reuses_cached_validator` to enforce single validator resolution across multiple validated messages.
+
+### Changed
+
+- **Stream validation hot-path optimization**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/stream.py` to cache the validator instance via `_get_stream_validator(...)` and to use a module-level message-type map, reducing repeated allocations/lookups during bars/quotes/trades fanout processing.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record validator/map hot-path reductions alongside stream fanout remediations.
+
 ## [0.5.126] - 2026-02-08
 
 ### Added
