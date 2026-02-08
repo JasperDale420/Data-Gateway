@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.115] - 2026-02-08
+
+### Added
+
+- **Finnhub mutual-funds cache-telemetry regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_finnhub_funds_router.py` to validate route-level cache hit/miss telemetry for mutual-fund profile, holdings, and sector endpoints.
+
+### Changed
+
+- **Finnhub mutual-funds route cache telemetry rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/finnhub/funds.py` to emit `record_route_cache(...)` hit/miss metrics for `finnhub_mutual_fund_profile`, `finnhub_mutual_fund_holdings`, and `finnhub_mutual_fund_sector` cache paths.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record completed Finnhub mutual-funds telemetry rollout and keep remaining non-provider telemetry work clearly scoped.
+
 ## [0.5.114] - 2026-02-08
 
 ### Added

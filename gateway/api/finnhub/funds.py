@@ -13,6 +13,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -33,6 +34,7 @@ async def get_mutual_fund_profile(
     key = cache_key("finnhub:mf-profile", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_mutual_fund_profile", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -43,6 +45,7 @@ async def get_mutual_fund_profile(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_mutual_fund_profile(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_mutual_fund_profile", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -67,6 +70,7 @@ async def get_mutual_fund_holdings(
     key = cache_key("finnhub:mf-holdings", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_mutual_fund_holdings", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -77,6 +81,7 @@ async def get_mutual_fund_holdings(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_mutual_fund_holdings(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_mutual_fund_holdings", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -101,6 +106,7 @@ async def get_mutual_fund_sector(
     key = cache_key("finnhub:mf-sector", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_mutual_fund_sector", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -111,6 +117,7 @@ async def get_mutual_fund_sector(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_mutual_fund_sector(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_mutual_fund_sector", "miss", "finnhub")
         return {
             "success": True,
             "data": data,

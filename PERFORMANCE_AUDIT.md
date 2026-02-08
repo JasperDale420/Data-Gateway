@@ -245,7 +245,7 @@ Legend:
 | Provider `gateway/providers/sec.py` | 1 (434 LOC) | COMPLETE | Cache-before-provider, helper consolidation, filing key normalization |
 | Provider `gateway/providers/finnhub.py` | 1 (1280 LOC) | COMPLETE | Cache-before-provider, dedupe, date/key helper consolidation, admin health-check parallelization |
 | API routers `gateway/api/alpaca/*` | 14 files (60 endpoints) | COMPLETE | Option-chain snapshot + stock-trades over-fetch reductions, stock snapshot concurrency, shared list-parser rollout, shared execution-helper rollout across all Alpaca route modules (stock/options/metadata/forex/account/corporate/news/screener/crypto/watchlists/trading), safe-GET cache + in-flight dedupe rollout for metadata, news, corporate actions, account configurations, trading low-churn reads (`assets`, `asset`, `calendar`), screener endpoints (`most-actives`, `movers`), and both live/historical forex reads (`/forex/rates`, `/forex/rates/historical`) |
-| API routers `gateway/api/finnhub/*` + control-plane routers | 15 files (61 endpoints) | COMPLETE | Cache-before-provider, dedupe, date/key helper consolidation, Finnhub route-level cache hit/miss telemetry (`finnhub_company_news`, `finnhub_market_news`, `finnhub_quote`, `finnhub_bars`) |
+| API routers `gateway/api/finnhub/*` + control-plane routers | 15 files (61 endpoints) | COMPLETE | Cache-before-provider, dedupe, date/key helper consolidation, Finnhub route-level cache hit/miss telemetry (`finnhub_company_news`, `finnhub_market_news`, `finnhub_quote`, `finnhub_bars`, `finnhub_mutual_fund_profile`, `finnhub_mutual_fund_holdings`, `finnhub_mutual_fund_sector`) |
 | API routers `gateway/api/uw/*` | 26 (125 endpoints) | COMPLETE | Route-helper rollout, route-cache telemetry, native pagination |
 | API routers `gateway/api/alphavantage/*` | 9 (30 endpoints) | COMPLETE | AV-1/AV-2/AV-3 rollouts |
 | API router `gateway/api/yf.py` | 1 (16 endpoints) | COMPLETE | Cache-before-provider, route helper consolidation |
@@ -263,7 +263,7 @@ Legend:
 2. **Alpha Vantage provider**: Optional full-history `max_points` tuning + broader runtime profiling validation.
 3. **Alpaca routers**: Route-helper consolidation is complete; continue selective safe-GET cache/dedupe expansion where payload shape and staleness bounds are clear (metadata, news, corporate actions, account configurations, trading low-churn reads, screener endpoints, and both live/historical forex reads are now covered).
 4. **Alpaca provider**: Continue shared client-use and logging tuning follow-ups; timestamp conversion-path consolidation is now in place.
-5. **Non-provider routers**: Continue route-level cache telemetry rollout to remaining helper surfaces (Finnhub news + quote/bars endpoints completed on 2026-02-08).
+5. **Non-provider routers**: Continue route-level cache telemetry rollout to remaining helper surfaces (Finnhub news + quote/bars + mutual-funds endpoints completed on 2026-02-08).
 6. **Core modules**: Benchmark calibration.
 7. **Stream path**: Telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`).
 8. **Perf guardrails**: Continue periodic monitoring/tuning via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`.
