@@ -6,24 +6,33 @@ from fastapi import APIRouter, Depends, Query
 
 from gateway.api.alpaca.common import (
     Client,
+    execute_alpaca_cached_call,
     execute_alpaca_provider_call,
+    get_cache,
     get_registry,
     require_api_key,
 )
+from gateway.core.cache import HybridCache, InMemoryCache
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
+ACCOUNT_CONFIG_CACHE_TTL_SECONDS = 300
 
 
 @router.get("/account/configurations", response_model=SuccessResponse)
 async def get_account_configurations(
     client: Client = Depends(require_api_key),
+    cache: InMemoryCache | HybridCache = Depends(get_cache),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get account configuration settings."""
-    data = await execute_alpaca_provider_call(
+    data = await execute_alpaca_cached_call(
         registry=registry,
+        cache=cache,
+        cache_key="alpaca:account:configurations",
+        ttl=ACCOUNT_CONFIG_CACHE_TTL_SECONDS,
+        route_label="alpaca_account_configurations",
         provider_call=lambda provider: asyncio.to_thread(provider.get_account_configurations),
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}

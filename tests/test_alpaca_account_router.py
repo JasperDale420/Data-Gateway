@@ -6,6 +6,7 @@ from typing import Any, cast
 import pytest
 
 from gateway.api.alpaca import account
+from gateway.core.cache import InMemoryCache
 from gateway.core.registry import ProviderRegistry
 
 
@@ -43,22 +44,27 @@ async def test_get_account_configurations_uses_shared_helper(
 ) -> None:
     provider = _FakeProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
+    cache = InMemoryCache(max_size=32, default_ttl=60)
+    observed: dict[str, Any] = {}
 
-    async def _execute_alpaca_call(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
+    async def _execute_alpaca_cached_call(
+        **kwargs: Any,
     ):
-        assert registry is cast(ProviderRegistry, route_registry)
-        assert block is False
-        provider_obj = registry.get("alpaca")
-        return await provider_call(provider_obj)
+        observed["key"] = kwargs["cache_key"]
+        observed["route_label"] = kwargs["route_label"]
+        provider_obj = kwargs["registry"].get("alpaca")
+        return await kwargs["provider_call"](provider_obj)
 
-    monkeypatch.setattr(account, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(account, "execute_alpaca_cached_call", _execute_alpaca_cached_call)
 
     response = await account.get_account_configurations(
         client=cast(Any, SimpleNamespace(id="test-client")),
+        cache=cache,
         registry=cast(ProviderRegistry, route_registry),
     )
 
+    assert observed["key"] == "alpaca:account:configurations"
+    assert observed["route_label"] == "alpaca_account_configurations"
     assert response["success"] is True
     assert response["data"]["dtbp_check"] == "both"
     assert response["meta"]["provider"] == "alpaca"

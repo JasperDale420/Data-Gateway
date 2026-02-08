@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.110] - 2026-02-08
+
+### Added
+
+- **Account-config cache-key regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_account_router.py` to validate cached-helper key/route wiring for account configuration reads.
+
+### Changed
+
+- **Account configuration short-TTL cache rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/account.py` to use `execute_alpaca_cached_call(...)` for `GET /account/configurations` with bounded TTL and fixed cache key.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to include account-configuration cache coverage in selective safe-GET rollout status.
+
 ## [0.5.109] - 2026-02-07
 
 ### Added
