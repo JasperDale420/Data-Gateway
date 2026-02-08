@@ -239,7 +239,7 @@ Legend:
 | `gateway/api/websocket.py` | 1 | COMPLETE | Message loop + subscription path audited |
 | Provider `gateway/providers/news.py` | 1 (333 LOC) | COMPLETE | Keyword hoisting, shared fetch/readiness helpers, pagination normalization |
 | Provider `gateway/providers/alphavantage.py` | 1 (946 LOC) | COMPLETE | csv.DictReader, bounded quote fan-out, shared fetch helper, sort-head optimization |
-| Provider `gateway/providers/alpaca.py` | 1 (2153 LOC) | COMPLETE | Option-chain limit threading, shared client DNE path, conversion-path optimization |
+| Provider `gateway/providers/alpaca.py` | 1 (2153 LOC) | COMPLETE | Option-chain limit threading, shared client DNE path, conversion-path optimization, shared timestamp-parse helper reuse across news/orderbook/normalization paths |
 | Provider `gateway/providers/uw.py` | 1 (4672 LOC) | COMPLETE | Route-helper rollout, route-cache telemetry, `_call_sync` concurrency gating, native pagination |
 | Provider `gateway/providers/yfinance.py` | 1 (386 LOC) | COMPLETE | Cache-before-provider, route helper consolidation, health-check offload, `iterrows` remediation |
 | Provider `gateway/providers/sec.py` | 1 (434 LOC) | COMPLETE | Cache-before-provider, helper consolidation, filing key normalization |
@@ -262,7 +262,7 @@ Legend:
 1. **UW provider**: Telemetry-driven inflight tuning; expand native pagination where post-filter semantics allow.
 2. **Alpha Vantage provider**: Optional full-history `max_points` tuning + broader runtime profiling validation.
 3. **Alpaca routers**: Route-helper consolidation is complete; continue selective safe-GET cache/dedupe expansion where payload shape and staleness bounds are clear (metadata, news, corporate actions, account configurations, trading low-churn reads, screener endpoints, and historical forex reads are now covered).
-4. **Alpaca provider**: Shared client use for DNE path, conversion-path optimization, and logging tuning.
+4. **Alpaca provider**: Continue shared client-use and logging tuning follow-ups; timestamp conversion-path consolidation is now in place.
 5. **Non-provider routers**: Optional broader route-level cache telemetry rollout to remaining helper surfaces.
 6. **Core modules**: Benchmark calibration.
 7. **Stream path**: Telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`).

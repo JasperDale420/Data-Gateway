@@ -1071,9 +1071,7 @@ class AlpacaProvider(DataProvider):
                         url=article.get("url"),
                         source=article.get("source", "unknown"),
                         author=article.get("author"),
-                        published_at=datetime.fromisoformat(
-                            article.get("created_at", "").replace("Z", UTC_OFFSET)
-                        ),
+                        published_at=self._parse_timestamp(article.get("created_at", "")),
                         symbols=article.get("symbols", []),
                         provider="alpaca",
                     )
@@ -1361,9 +1359,7 @@ class AlpacaProvider(DataProvider):
 
             timestamp_str = ob_data.get("t")
             timestamp = (
-                datetime.fromisoformat(str(timestamp_str).replace("Z", UTC_OFFSET))
-                if timestamp_str
-                else datetime.now(UTC)
+                self._parse_timestamp(str(timestamp_str)) if timestamp_str else datetime.now(UTC)
             )
 
             result = NormalizedOrderbook(
@@ -2111,11 +2107,17 @@ class AlpacaProvider(DataProvider):
     # Normalization
     # ─────────────────────────────────────────────────────────────────
 
+    def _parse_timestamp(self, value: str | datetime) -> datetime:
+        """Parse Alpaca timestamps with fast-path support for datetime values."""
+        if isinstance(value, datetime):
+            return value
+        return datetime.fromisoformat(value.replace("Z", UTC_OFFSET))
+
     def _normalize_bar(self, symbol: str, raw: dict[str, Any]) -> NormalizedBar:
         """Convert Alpaca bar to normalized format."""
         return NormalizedBar(
             symbol=symbol,
-            timestamp=datetime.fromisoformat(raw["t"].replace("Z", UTC_OFFSET)),
+            timestamp=self._parse_timestamp(raw["t"]),
             open=Decimal(str(raw["o"])),
             high=Decimal(str(raw["h"])),
             low=Decimal(str(raw["l"])),
@@ -2130,7 +2132,7 @@ class AlpacaProvider(DataProvider):
         """Convert Alpaca quote to normalized format."""
         return NormalizedQuote(
             symbol=symbol,
-            timestamp=datetime.fromisoformat(raw["t"].replace("Z", UTC_OFFSET)),
+            timestamp=self._parse_timestamp(raw["t"]),
             bid_price=Decimal(str(raw["bp"])),
             bid_size=int(raw["bs"]),
             ask_price=Decimal(str(raw["ap"])),
@@ -2146,7 +2148,7 @@ class AlpacaProvider(DataProvider):
         """Convert Alpaca trade to normalized format."""
         return NormalizedTrade(
             symbol=symbol,
-            timestamp=datetime.fromisoformat(raw["t"].replace("Z", UTC_OFFSET)),
+            timestamp=self._parse_timestamp(raw["t"]),
             price=Decimal(str(raw["p"])),
             size=int(raw["s"]),
             trade_id=str(raw["i"]) if raw.get("i") else None,

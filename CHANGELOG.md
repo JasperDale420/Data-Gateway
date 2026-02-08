@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.111] - 2026-02-08
+
+### Added
+
+- **Alpaca timestamp parser regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_provider.py` with coverage for shared timestamp parsing (`Z`-suffix parsing and datetime passthrough).
+
+### Changed
+
+- **Provider timestamp parse helper rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/providers/alpaca.py` to centralize timestamp parsing via `_parse_timestamp(...)` and reuse it in news parsing, crypto orderbook timestamp handling, and bar/quote/trade normalization hot paths.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to reflect Alpaca provider timestamp-conversion consolidation progress.
+
 ## [0.5.110] - 2026-02-08
 
 ### Added

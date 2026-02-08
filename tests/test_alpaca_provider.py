@@ -99,3 +99,16 @@ async def test_get_trades_applies_limit_bounds() -> None:
     await provider.get_trades(["AAPL"], start=start, end=end, limit=20_000)
     assert fake_client.last_params is not None
     assert fake_client.last_params["limit"] == 10_000
+
+
+def test_parse_timestamp_accepts_z_suffix() -> None:
+    provider = AlpacaProvider()
+    parsed = provider._parse_timestamp("2026-01-01T12:00:00Z")
+    assert parsed == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+
+def test_parse_timestamp_returns_datetime_input_unchanged() -> None:
+    provider = AlpacaProvider()
+    source = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    parsed = provider._parse_timestamp(source)
+    assert parsed is source
