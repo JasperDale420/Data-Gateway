@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.113] - 2026-02-08
+
+### Added
+
+- **Finnhub news cache-telemetry regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_finnhub_news_router.py` to validate route-level cache hit/miss telemetry for company and market news endpoints.
+
+### Changed
+
+- **Finnhub news route cache telemetry rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/finnhub/news.py` to emit `record_route_cache(...)` hit/miss metrics for `finnhub_company_news` and `finnhub_market_news` cache paths.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record completed Finnhub news telemetry rollout and narrow remaining non-provider telemetry follow-up scope.
+
 ## [0.5.112] - 2026-02-08
 
 ### Added
