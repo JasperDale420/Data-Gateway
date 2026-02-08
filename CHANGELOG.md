@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.114] - 2026-02-08
+
+### Added
+
+- **Finnhub quotes cache-telemetry regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_finnhub_quotes_router.py` to validate route-level cache hit/miss telemetry for quote and bars endpoints.
+
+### Changed
+
+- **Finnhub quotes route cache telemetry rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/finnhub/quotes.py` to emit `record_route_cache(...)` hit/miss metrics for `finnhub_quote` and `finnhub_bars` cache paths.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record completed Finnhub quote/bars telemetry rollout and further narrow remaining non-provider telemetry follow-up scope.
+
 ## [0.5.113] - 2026-02-08
 
 ### Added

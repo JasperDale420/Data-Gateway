@@ -15,6 +15,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -35,6 +36,7 @@ async def get_quote(
     key = cache_key("finnhub:quote", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_quote", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -49,6 +51,7 @@ async def get_quote(
 
         data = quote.model_dump(mode="json")
         await cache.set(key, data, ttl=CACHE_TTL)
+        record_route_cache("finnhub_quote", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -78,6 +81,7 @@ async def get_bars(
     key = cache_key("finnhub:bars", symbol.upper(), resolution, start, end)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_bars", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -96,6 +100,7 @@ async def get_bars(
             "bars": [bar.model_dump(mode="json") for bar in bars],
         }
         await cache.set(key, data, ttl=300)
+        record_route_cache("finnhub_bars", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
