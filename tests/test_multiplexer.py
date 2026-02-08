@@ -2,6 +2,7 @@
 
 import pytest
 
+import gateway.core.stream as stream_module
 from gateway.core.stream import StreamMultiplexer
 
 
@@ -136,3 +137,58 @@ async def test_stream_multiplexer_clamps_invalid_fanout_limits() -> None:
 
     assert multiplexer._fanout_max_inflight == 1
     assert multiplexer._fanout_client_batch_size == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_multiplexer_records_fanout_limits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, int]] = []
+
+    def _set_limits(*, max_inflight: int, batch_size: int) -> None:
+        calls.append((max_inflight, batch_size))
+
+    monkeypatch.setattr(stream_module, "set_stream_fanout_limits_metrics", _set_limits)
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+        fanout_max_inflight=9,
+        fanout_batch_size=4,
+    )
+
+    assert calls == [(9, 4)]
+
+
+@pytest.mark.asyncio
+async def test_iter_client_batches_records_batch_size_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch_sizes: list[int] = []
+
+    def _record_batch_size(size: int) -> None:
+        batch_sizes.append(size)
+
+    monkeypatch.setattr(stream_module, "record_stream_fanout_batch_size", _record_batch_size)
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+        fanout_max_inflight=8,
+        fanout_batch_size=3,
+    )
+
+    batches = multiplexer._iter_client_batches({"a", "b", "c", "d", "e"})
+
+    assert len(batches) == 2
+    assert sorted(batch_sizes) == [2, 3]

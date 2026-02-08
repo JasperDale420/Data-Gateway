@@ -160,10 +160,34 @@ STREAM_SINK_DISPATCH_LIMIT = Gauge(
     ["limit_type"],  # max_inflight_publish, max_pending_tasks
 )
 
+STREAM_FANOUT_EVENTS = Counter(
+    "gateway_stream_fanout_events_total",
+    "WebSocket stream fanout dispatch events",
+    ["status"],  # delivered, error
+)
+
+STREAM_FANOUT_BATCH_SIZE = Histogram(
+    "gateway_stream_fanout_batch_size",
+    "Number of clients in each fanout dispatch batch",
+    buckets=(1, 2, 4, 8, 16, 32, 64, 128, 256, 512),
+)
+
+STREAM_FANOUT_LIMIT = Gauge(
+    "gateway_stream_fanout_limit",
+    "Configured stream fanout limits",
+    ["limit_type"],  # max_inflight, batch_size
+)
+
 _STREAM_SINK_DISPATCH_SNAPSHOT: dict[str, Any] = {
     "limits": {"max_inflight_publish": 1, "max_pending_tasks": 1},
     "pending_tasks": 0,
     "events": {},
+}
+
+_STREAM_FANOUT_SNAPSHOT: dict[str, Any] = {
+    "limits": {"max_inflight": 1, "batch_size": 1},
+    "events": {},
+    "batches": {"count": 0, "total_clients": 0, "max_batch_size": 0},
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -541,6 +565,40 @@ def set_stream_sink_dispatch_limits_metrics(
 def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
     """Get stream-to-sink scheduler telemetry snapshot for admin status surfaces."""
     return deepcopy(_STREAM_SINK_DISPATCH_SNAPSHOT)
+
+
+def record_stream_fanout_dispatch_event(status: str) -> None:
+    """Record stream fanout dispatch lifecycle events."""
+    STREAM_FANOUT_EVENTS.labels(status=status).inc()
+    events = _STREAM_FANOUT_SNAPSHOT["events"]
+    if isinstance(events, dict):
+        events[status] = int(events.get(status, 0)) + 1
+
+
+def record_stream_fanout_batch_size(batch_size: int) -> None:
+    """Record fanout client batch size for each dispatch batch."""
+    bounded_size = max(0, batch_size)
+    STREAM_FANOUT_BATCH_SIZE.observe(bounded_size)
+    batches = _STREAM_FANOUT_SNAPSHOT["batches"]
+    if isinstance(batches, dict):
+        batches["count"] = int(batches.get("count", 0)) + 1
+        batches["total_clients"] = int(batches.get("total_clients", 0)) + bounded_size
+        batches["max_batch_size"] = max(int(batches.get("max_batch_size", 0)), bounded_size)
+
+
+def set_stream_fanout_limits_metrics(*, max_inflight: int, batch_size: int) -> None:
+    """Set configured stream fanout limits."""
+    STREAM_FANOUT_LIMIT.labels(limit_type="max_inflight").set(max(1, max_inflight))
+    STREAM_FANOUT_LIMIT.labels(limit_type="batch_size").set(max(1, batch_size))
+    limits = _STREAM_FANOUT_SNAPSHOT["limits"]
+    if isinstance(limits, dict):
+        limits["max_inflight"] = max(1, max_inflight)
+        limits["batch_size"] = max(1, batch_size)
+
+
+def get_stream_fanout_snapshot() -> dict[str, Any]:
+    """Get stream fanout telemetry snapshot for admin status surfaces."""
+    return deepcopy(_STREAM_FANOUT_SNAPSHOT)
 
 
 def httpx_event_hooks(provider: str) -> dict[str, list]:

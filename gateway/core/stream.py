@@ -16,6 +16,11 @@ import websockets
 from websockets.client import WebSocketClientProtocol
 
 from gateway.core.envelope import wrap_event
+from gateway.core.metrics import (
+    record_stream_fanout_batch_size,
+    record_stream_fanout_dispatch_event,
+    set_stream_fanout_limits_metrics,
+)
 from gateway.core.validator import get_validator
 
 logger = structlog.get_logger()
@@ -660,6 +665,10 @@ class StreamMultiplexer:
         self._lazy_connect = lazy_connect
         self._fanout_max_inflight = max(1, fanout_max_inflight)
         self._fanout_client_batch_size = max(1, fanout_batch_size)
+        set_stream_fanout_limits_metrics(
+            max_inflight=self._fanout_max_inflight,
+            batch_size=self._fanout_client_batch_size,
+        )
 
         stock_type = AlpacaStreamType.STOCKS_IEX if use_iex else AlpacaStreamType.STOCKS_SIP
 
@@ -962,7 +971,9 @@ class StreamMultiplexer:
             try:
                 async with self._fanout_semaphore:
                     await self.on_data(client_id, data_type, envelope)
+                record_stream_fanout_dispatch_event("delivered")
             except Exception as e:
+                record_stream_fanout_dispatch_event("error")
                 logger.error(
                     "fanout_error",
                     client_id=client_id,
@@ -978,4 +989,7 @@ class StreamMultiplexer:
         """Build bounded client batches to avoid per-message task bursts."""
         batch_size = self._fanout_client_batch_size
         client_list = list(clients)
-        return [client_list[i : i + batch_size] for i in range(0, len(client_list), batch_size)]
+        batches = [client_list[i : i + batch_size] for i in range(0, len(client_list), batch_size)]
+        for batch in batches:
+            record_stream_fanout_batch_size(len(batch))
+        return batches

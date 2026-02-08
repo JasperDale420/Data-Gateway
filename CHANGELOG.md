@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.125] - 2026-02-08
+
+### Added
+
+- **Stream fanout telemetry regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` to validate stream-fanout limits/batch/event telemetry updates and fanout batch-size instrumentation hooks.
+- **Admin status fanout telemetry coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` to validate that `/api/v1/status` includes stream fanout telemetry snapshots.
+
+### Changed
+
+- **Stream fanout telemetry rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/stream.py` to emit fanout lifecycle metrics (`gateway_stream_fanout_events_total`, `gateway_stream_fanout_batch_size`, `gateway_stream_fanout_limit`) and maintain a fanout telemetry snapshot for calibration workflows.
+- **Admin status telemetry surface expansion**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to include `stream_fanout` in `/api/v1/status` payloads.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record stream fanout telemetry visibility and stream-path next-run calibration inputs.
+
 ## [0.5.124] - 2026-02-08
 
 ### Added

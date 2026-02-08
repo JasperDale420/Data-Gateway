@@ -16,7 +16,7 @@ from gateway.api.deps import (
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
-from gateway.core.metrics import get_stream_sink_dispatch_snapshot
+from gateway.core.metrics import get_stream_fanout_snapshot, get_stream_sink_dispatch_snapshot
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
@@ -103,6 +103,7 @@ async def get_status(
     # Connection stats
     connection_stats = connections.get_stats()
     stream_sink_dispatch = get_stream_sink_dispatch_snapshot()
+    stream_fanout = get_stream_fanout_snapshot()
 
     return {
         "success": True,
@@ -119,6 +120,7 @@ async def get_status(
             "connections": connection_stats,
             "registry": registry.get_stats(),
             "stream_sink_dispatch": stream_sink_dispatch,
+            "stream_fanout": stream_fanout,
         },
         "meta": {
             "timestamp": datetime.now(UTC).isoformat(),

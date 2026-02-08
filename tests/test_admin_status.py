@@ -48,7 +48,13 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
         "pending_tasks": 3,
         "events": {"scheduled": 12, "completed": 9, "dropped_backpressure": 1},
     }
+    fanout_snapshot = {
+        "limits": {"max_inflight": 100, "batch_size": 32},
+        "events": {"delivered": 1200, "error": 4},
+        "batches": {"count": 100, "total_clients": 2300, "max_batch_size": 32},
+    }
     monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
 
     response = await admin.get_status(
         client=cast(Client, SimpleNamespace(id="test-client")),
@@ -59,3 +65,4 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
 
     assert response["success"] is True
     assert response["data"]["stream_sink_dispatch"] == snapshot
+    assert response["data"]["stream_fanout"] == fanout_snapshot

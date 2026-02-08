@@ -84,3 +84,21 @@ def test_stream_sink_dispatch_snapshot_tracks_updates() -> None:
     assert after["pending_tasks"] == 5
     assert int(after["events"].get("scheduled", 0)) == before_scheduled + 1
     assert int(after["events"].get("completed", 0)) == before_completed + 1
+
+
+def test_stream_fanout_snapshot_tracks_updates() -> None:
+    before = metrics.get_stream_fanout_snapshot()
+    before_delivered = int(before["events"].get("delivered", 0))
+
+    metrics.set_stream_fanout_limits_metrics(max_inflight=9, batch_size=4)
+    metrics.record_stream_fanout_batch_size(4)
+    metrics.record_stream_fanout_batch_size(2)
+    metrics.record_stream_fanout_dispatch_event("delivered")
+
+    after = metrics.get_stream_fanout_snapshot()
+    assert after["limits"]["max_inflight"] == 9
+    assert after["limits"]["batch_size"] == 4
+    assert after["batches"]["count"] >= 2
+    assert after["batches"]["total_clients"] >= 6
+    assert after["batches"]["max_batch_size"] >= 4
+    assert int(after["events"].get("delivered", 0)) == before_delivered + 1
