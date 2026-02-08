@@ -14,6 +14,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -34,6 +35,7 @@ async def get_forex_rates(
     key = cache_key("finnhub:forex-rates", base.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_forex_rates", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -44,6 +46,7 @@ async def get_forex_rates(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_forex_rates(base=base)
         await cache.set(key, data, ttl=60)
+        record_route_cache("finnhub_forex_rates", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -67,6 +70,7 @@ async def get_forex_exchanges(
     key = cache_key("finnhub:forex-exchanges")
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_forex_exchanges", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -77,6 +81,7 @@ async def get_forex_exchanges(
         await require_provider_rate_limit("finnhub")
         exchanges = await provider.get_forex_exchanges()
         await cache.set(key, exchanges, ttl=86400)
+        record_route_cache("finnhub_forex_exchanges", "miss", "finnhub")
         return {
             "success": True,
             "data": {"exchanges": exchanges},
@@ -101,6 +106,7 @@ async def get_forex_symbols(
     key = cache_key("finnhub:forex-symbols", exchange)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_forex_symbols", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -112,6 +118,7 @@ async def get_forex_symbols(
         symbols = await provider.get_forex_symbols(exchange)
         data = {"exchange": exchange, "symbols": symbols}
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_forex_symbols", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -139,6 +146,7 @@ async def get_forex_candles(
     key = cache_key("finnhub:forex-candles", symbol, resolution, start, end)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_forex_candles", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -154,6 +162,7 @@ async def get_forex_candles(
             symbol, resolution=resolution, start=start_dt, end=end_dt
         )
         await cache.set(key, data, ttl=300)
+        record_route_cache("finnhub_forex_candles", "miss", "finnhub")
         return {
             "success": True,
             "data": data,

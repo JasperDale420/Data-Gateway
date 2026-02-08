@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.117] - 2026-02-08
+
+### Added
+
+- **Finnhub forex cache-telemetry regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_finnhub_forex_router.py` to validate route-level cache hit/miss telemetry for forex rates and candles endpoints.
+
+### Changed
+
+- **Finnhub forex route cache telemetry rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/finnhub/forex.py` to emit `record_route_cache(...)` hit/miss metrics across cached forex endpoints (`forex_rates`, `forex_exchanges`, `forex_symbols`, `forex_candles`).
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record completed Finnhub forex telemetry rollout and keep remaining non-provider telemetry follow-up scoped.
+
 ## [0.5.116] - 2026-02-08
 
 ### Added
