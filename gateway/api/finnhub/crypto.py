@@ -14,6 +14,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -33,6 +34,7 @@ async def get_crypto_exchanges(
     key = cache_key("finnhub:crypto-exchanges")
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_crypto_exchanges", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -43,6 +45,7 @@ async def get_crypto_exchanges(
         await require_provider_rate_limit("finnhub")
         exchanges = await provider.get_crypto_exchanges()
         await cache.set(key, exchanges, ttl=86400)
+        record_route_cache("finnhub_crypto_exchanges", "miss", "finnhub")
         return {
             "success": True,
             "data": {"exchanges": exchanges},
@@ -67,6 +70,7 @@ async def get_crypto_symbols(
     key = cache_key("finnhub:crypto-symbols", exchange)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_crypto_symbols", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -78,6 +82,7 @@ async def get_crypto_symbols(
         symbols = await provider.get_crypto_symbols(exchange)
         data = {"exchange": exchange, "symbols": symbols}
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_crypto_symbols", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -105,6 +110,7 @@ async def get_crypto_candles(
     key = cache_key("finnhub:crypto-candles", symbol, resolution, start, end)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_crypto_candles", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -120,6 +126,7 @@ async def get_crypto_candles(
             symbol, resolution=resolution, start=start_dt, end=end_dt
         )
         await cache.set(key, data, ttl=300)
+        record_route_cache("finnhub_crypto_candles", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -144,6 +151,7 @@ async def get_crypto_profile(
     key = cache_key("finnhub:crypto-profile", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_crypto_profile", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -154,6 +162,7 @@ async def get_crypto_profile(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_crypto_profile(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_crypto_profile", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
