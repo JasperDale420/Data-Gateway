@@ -65,7 +65,7 @@ The fastest, lowest-risk wins are:
   - In-flight semaphore and batch limits are now runtime-configurable through `stream_fanout_max_inflight` and `stream_fanout_batch_size`.
   - Fanout telemetry is now emitted for calibration: `gateway/core/metrics.py` (`gateway_stream_fanout_events_total`, `gateway_stream_fanout_batch_size`, `gateway_stream_fanout_limit`) and hooked into fanout lifecycle in `gateway/core/stream.py`.
   - Admin status now exposes stream fanout telemetry snapshot via `/api/v1/status` (`stream_fanout`) for operator visibility during tuning.
-- Impact: Reduces single-message task allocation burst and smooths event-loop pressure at high fanout while preserving delivery semantics.
+- Impact: Reduces single-message task allocation burst and smooths event-loop pressure at high fanout while preserving delivery semantics. `_iter_client_batches(...)` now yields lazily without precomputing full batch lists, reducing per-message allocation overhead for large subscriber sets.
 - Remaining low-risk follow-up:
   - Calibrate `stream_fanout_max_inflight` and `stream_fanout_batch_size` with telemetry under production-like loads.
 

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.126] - 2026-02-08
+
+### Added
+
+- **Lazy fanout-batch regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` with `test_iter_client_batches_is_lazy` and updated fanout-batch tests to validate iterator-based batch consumption and telemetry emission order.
+
+### Changed
+
+- **Stream fanout batch allocation optimization**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/stream.py` so `_iter_client_batches(...)` yields batches lazily instead of precomputing full batch lists, reducing per-message allocation pressure under high subscriber fanout.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record lazy fanout batch generation as part of stream-path remediations.
+
 ## [0.5.125] - 2026-02-08
 
 ### Added

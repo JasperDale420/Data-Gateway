@@ -116,7 +116,7 @@ async def test_stream_multiplexer_applies_fanout_limits() -> None:
 
     assert multiplexer._fanout_max_inflight == 7
     assert multiplexer._fanout_client_batch_size == 5
-    batches = multiplexer._iter_client_batches({"a", "b", "c", "d", "e", "f"})
+    batches = list(multiplexer._iter_client_batches({"a", "b", "c", "d", "e", "f"}))
     assert len(batches) == 2
     assert len(batches[0]) == 5
 
@@ -188,7 +188,43 @@ async def test_iter_client_batches_records_batch_size_metrics(
         fanout_batch_size=3,
     )
 
-    batches = multiplexer._iter_client_batches({"a", "b", "c", "d", "e"})
+    batches = list(multiplexer._iter_client_batches({"a", "b", "c", "d", "e"}))
 
     assert len(batches) == 2
     assert sorted(batch_sizes) == [2, 3]
+
+
+@pytest.mark.asyncio
+async def test_iter_client_batches_is_lazy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch_sizes: list[int] = []
+
+    def _record_batch_size(size: int) -> None:
+        batch_sizes.append(size)
+
+    monkeypatch.setattr(stream_module, "record_stream_fanout_batch_size", _record_batch_size)
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+        fanout_max_inflight=8,
+        fanout_batch_size=3,
+    )
+
+    batch_iter = multiplexer._iter_client_batches({"a", "b", "c", "d", "e"})
+    assert batch_sizes == []
+
+    first_batch = next(batch_iter)
+    assert len(first_batch) == 3
+    assert batch_sizes == [3]
+
+    remaining_batches = list(batch_iter)
+    assert len(remaining_batches) == 1
+    assert len(remaining_batches[0]) == 2
+    assert batch_sizes == [3, 2]

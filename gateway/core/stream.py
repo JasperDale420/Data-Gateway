@@ -6,7 +6,7 @@ crypto, news) and fans out received data to subscribed downstream clients.
 
 import asyncio
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -985,11 +985,16 @@ class StreamMultiplexer:
         for client_batch in self._iter_client_batches(clients):
             await asyncio.gather(*(_send(client_id) for client_id in client_batch))
 
-    def _iter_client_batches(self, clients: set[str]) -> list[list[str]]:
-        """Build bounded client batches to avoid per-message task bursts."""
+    def _iter_client_batches(self, clients: set[str]) -> Iterator[list[str]]:
+        """Yield bounded client batches to avoid per-message task bursts."""
         batch_size = self._fanout_client_batch_size
-        client_list = list(clients)
-        batches = [client_list[i : i + batch_size] for i in range(0, len(client_list), batch_size)]
-        for batch in batches:
+        batch: list[str] = []
+        for client_id in clients:
+            batch.append(client_id)
+            if len(batch) == batch_size:
+                record_stream_fanout_batch_size(len(batch))
+                yield batch
+                batch = []
+        if batch:
             record_stream_fanout_batch_size(len(batch))
-        return batches
+            yield batch
