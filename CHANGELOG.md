@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.112] - 2026-02-08
+
+### Added
+
+- **Forex-rates cache-key regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_forex_router.py` to validate cached-helper key/route wiring for live forex-rate reads.
+
+### Changed
+
+- **Live forex short-TTL cache rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alpaca/forex.py` to use `execute_alpaca_cached_call(...)` for `GET /forex/rates` with normalized pair-key caching and a short TTL.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to include live forex-rate cache coverage in selective safe-GET rollout status.
+
 ## [0.5.111] - 2026-02-08
 
 ### Added

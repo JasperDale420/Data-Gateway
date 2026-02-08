@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, Query
 from gateway.api.alpaca.common import (
     Client,
     execute_alpaca_cached_call,
-    execute_alpaca_provider_call,
     get_cache,
     get_registry,
     parse_comma_values,
@@ -18,6 +17,7 @@ from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
+FOREX_RATES_CACHE_TTL_SECONDS = 10
 FOREX_HISTORICAL_CACHE_TTL_SECONDS = 300
 
 
@@ -25,12 +25,18 @@ FOREX_HISTORICAL_CACHE_TTL_SECONDS = 300
 async def get_forex_rates(
     pairs: str = Query(..., description="Comma-separated pairs: EUR/USD,GBP/USD"),
     client: Client = Depends(require_api_key),
+    cache: InMemoryCache | HybridCache = Depends(get_cache),
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest forex rates."""
     pairs_list = parse_comma_values(pairs, uppercase=True)
-    data = await execute_alpaca_provider_call(
+    pairs_key = ",".join(pairs_list)
+    data = await execute_alpaca_cached_call(
         registry=registry,
+        cache=cache,
+        cache_key=f"alpaca:forex:rates:{pairs_key}",
+        ttl=FOREX_RATES_CACHE_TTL_SECONDS,
+        route_label="alpaca_forex_rates",
         provider_call=lambda provider: provider.get_forex_rates(pairs=pairs_list),
     )
 
