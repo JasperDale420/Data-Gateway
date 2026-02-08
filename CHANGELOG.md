@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.122] - 2026-02-08
+
+### Added
+
+- **Finnhub fundamentals cache-telemetry regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_finnhub_fundamentals_router.py` to validate route-level cache hit/miss telemetry for company profile and insider transactions endpoints.
+
+### Changed
+
+- **Finnhub fundamentals route cache telemetry rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/finnhub/fundamentals.py` to emit `record_route_cache(...)` hit/miss metrics across cached fundamentals endpoints.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record completed Finnhub fundamentals telemetry rollout and mark the Finnhub telemetry sweep complete.
+
 ## [0.5.121] - 2026-02-08
 
 ### Added

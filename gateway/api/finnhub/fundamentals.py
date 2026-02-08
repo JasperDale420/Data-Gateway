@@ -14,6 +14,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -34,6 +35,7 @@ async def get_company_profile(
     key = cache_key("finnhub:profile", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_company_profile", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -47,6 +49,7 @@ async def get_company_profile(
             raise HTTPException(status_code=404, detail=f"No profile for symbol: {symbol}")
 
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_company_profile", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -73,6 +76,7 @@ async def get_financials(
     key = cache_key("finnhub:financials", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_financials", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -83,6 +87,7 @@ async def get_financials(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_financials(symbol)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_financials", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -107,6 +112,7 @@ async def get_peers(
     key = cache_key("finnhub:peers", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_peers", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -118,6 +124,7 @@ async def get_peers(
         peers = await provider.get_peers(symbol)
         data = {"symbol": symbol.upper(), "peers": peers}
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_peers", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -143,6 +150,7 @@ async def get_metrics(
     key = cache_key("finnhub:metrics", symbol.upper(), metric)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_metrics", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -153,6 +161,7 @@ async def get_metrics(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_metrics(symbol, metric=metric)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_metrics", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -177,6 +186,7 @@ async def get_executives(
     key = cache_key("finnhub:executives", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_executives", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -188,6 +198,7 @@ async def get_executives(
         execs = await provider.get_executives(symbol)
         data = {"symbol": symbol.upper(), "executives": execs}
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_executives", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -213,6 +224,7 @@ async def get_ownership(
     key = cache_key("finnhub:ownership", symbol.upper(), str(limit))
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_ownership", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -223,6 +235,7 @@ async def get_ownership(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_ownership(symbol, limit=limit)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_ownership", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -248,6 +261,7 @@ async def get_fund_ownership(
     key = cache_key("finnhub:fund-ownership", symbol.upper(), str(limit))
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_fund_ownership", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -258,6 +272,7 @@ async def get_fund_ownership(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_fund_ownership(symbol, limit=limit)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_fund_ownership", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -284,6 +299,7 @@ async def get_insider_transactions(
     key = cache_key("finnhub:insider-tx", symbol.upper(), start, end)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_insider_transactions", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -298,6 +314,7 @@ async def get_insider_transactions(
         txs = await provider.get_insider_transactions(symbol, start=start_dt, end=end_dt)
         data = {"symbol": symbol.upper(), "transactions": txs}
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_insider_transactions", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
