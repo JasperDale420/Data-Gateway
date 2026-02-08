@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.128] - 2026-02-08
+
+### Added
+
+- **News-symbol lookup dedupe regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` with `test_news_symbol_lookup_deduplicates_symbols` to validate duplicate-symbol suppression before fanout subscription lookups.
+
+### Changed
+
+- **News fanout lookup optimization**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/stream.py` so news symbol lookups in `_handle_message(...)` deduplicate repeated symbols before querying subscription indexes, reducing redundant per-message lookup work.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record duplicate-symbol lookup elimination in stream-path remediations.
+
 ## [0.5.127] - 2026-02-08
 
 ### Added

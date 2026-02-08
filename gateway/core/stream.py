@@ -947,17 +947,19 @@ class StreamMultiplexer:
             if not symbols:
                 symbols = ["*"]
             symbol_for_log = symbols[0] if symbols else "*"
+            unique_symbols: list[str] = list(dict.fromkeys(symbols))
         else:
             symbol = message.get("S", "")
             if not symbol:
                 return
             symbols = [symbol]
             symbol_for_log = symbol
+            unique_symbols = symbols
 
         clients: set[str] = set()
         if data_type == "news":
             clients.update(conn.subscriptions.get_clients_for_symbol("*", data_type))
-        for sym in symbols:
+        for sym in unique_symbols:
             clients.update(conn.subscriptions.get_clients_for_symbol(sym, data_type))
         if not clients:
             return

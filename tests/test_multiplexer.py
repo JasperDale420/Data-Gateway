@@ -267,3 +267,35 @@ async def test_stream_multiplexer_reuses_cached_validator(
 
     assert get_validator_calls == 1
     assert validation_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_news_symbol_lookup_deduplicates_symbols() -> None:
+    calls: list[str] = []
+
+    class _Subscriptions:
+        def get_clients_for_symbol(self, symbol: str, _data_type: str) -> list[str]:
+            calls.append(symbol)
+            return []
+
+    class _Connection:
+        def __init__(self) -> None:
+            self.subscriptions = _Subscriptions()
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+    multiplexer._connections[AlpacaStreamType.NEWS] = _Connection()  # type: ignore[assignment]
+
+    await multiplexer._handle_message(
+        AlpacaStreamType.NEWS,
+        {"T": "n", "S": "AAPL", "symbols": ["AAPL", "AAPL", "MSFT"]},
+    )
+
+    assert calls == ["*", "AAPL", "MSFT"]
