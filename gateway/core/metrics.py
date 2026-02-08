@@ -1,6 +1,8 @@
 """Prometheus metrics for gateway observability."""
 
 import time
+from copy import deepcopy
+from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram, Info
 
@@ -157,6 +159,12 @@ STREAM_SINK_DISPATCH_LIMIT = Gauge(
     "Configured stream-to-sink dispatch limits",
     ["limit_type"],  # max_inflight_publish, max_pending_tasks
 )
+
+_STREAM_SINK_DISPATCH_SNAPSHOT: dict[str, Any] = {
+    "limits": {"max_inflight_publish": 1, "max_pending_tasks": 1},
+    "pending_tasks": 0,
+    "events": {},
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SLI Metrics (PRD 11.1.2-4)
@@ -502,11 +510,16 @@ def record_sink_publish(sink: str, topic: str, success: bool) -> None:
 def record_stream_sink_dispatch_event(status: str) -> None:
     """Record stream-to-sink scheduler lifecycle events."""
     STREAM_SINK_DISPATCH_EVENTS.labels(status=status).inc()
+    events = _STREAM_SINK_DISPATCH_SNAPSHOT["events"]
+    if isinstance(events, dict):
+        events[status] = int(events.get(status, 0)) + 1
 
 
 def set_stream_sink_pending_tasks(count: int) -> None:
     """Set current pending stream-to-sink task count."""
-    STREAM_SINK_PENDING_TASKS.set(max(0, count))
+    pending = max(0, count)
+    STREAM_SINK_PENDING_TASKS.set(pending)
+    _STREAM_SINK_DISPATCH_SNAPSHOT["pending_tasks"] = pending
 
 
 def set_stream_sink_dispatch_limits_metrics(
@@ -519,6 +532,15 @@ def set_stream_sink_dispatch_limits_metrics(
         max(1, max_inflight_publish)
     )
     STREAM_SINK_DISPATCH_LIMIT.labels(limit_type="max_pending_tasks").set(max(1, max_pending_tasks))
+    limits = _STREAM_SINK_DISPATCH_SNAPSHOT["limits"]
+    if isinstance(limits, dict):
+        limits["max_inflight_publish"] = max(1, max_inflight_publish)
+        limits["max_pending_tasks"] = max(1, max_pending_tasks)
+
+
+def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
+    """Get stream-to-sink scheduler telemetry snapshot for admin status surfaces."""
+    return deepcopy(_STREAM_SINK_DISPATCH_SNAPSHOT)
 
 
 def httpx_event_hooks(provider: str) -> dict[str, list]:

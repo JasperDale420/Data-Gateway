@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.124] - 2026-02-08
+
+### Added
+
+- **Admin status stream-telemetry coverage**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` to validate that `/api/v1/status` includes stream sink dispatch telemetry snapshots.
+- **Metrics snapshot coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` with stream-sink dispatch snapshot update assertions.
+
+### Changed
+
+- **Stream sink dispatch snapshot API**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` with `get_stream_sink_dispatch_snapshot()` and in-memory snapshot tracking for dispatch limits, pending tasks, and scheduler events.
+- **Admin status telemetry surface**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to include `stream_sink_dispatch` in `/api/v1/status` payloads for tuning workflows.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to reflect stream-path telemetry visibility progress.
+
 ## [0.5.123] - 2026-02-08
 
 ### Added

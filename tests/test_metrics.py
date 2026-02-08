@@ -66,3 +66,21 @@ async def test_metrics_endpoint_calls_throttled_updater(monkeypatch) -> None:
     assert called["update"] == 1
     assert response.body == b"# test 1\n"
     assert response.media_type == "text/plain; version=0.0.4"
+
+
+def test_stream_sink_dispatch_snapshot_tracks_updates() -> None:
+    before = metrics.get_stream_sink_dispatch_snapshot()
+    before_scheduled = int(before["events"].get("scheduled", 0))
+    before_completed = int(before["events"].get("completed", 0))
+
+    metrics.set_stream_sink_dispatch_limits_metrics(max_inflight_publish=7, max_pending_tasks=21)
+    metrics.set_stream_sink_pending_tasks(5)
+    metrics.record_stream_sink_dispatch_event("scheduled")
+    metrics.record_stream_sink_dispatch_event("completed")
+
+    after = metrics.get_stream_sink_dispatch_snapshot()
+    assert after["limits"]["max_inflight_publish"] == 7
+    assert after["limits"]["max_pending_tasks"] == 21
+    assert after["pending_tasks"] == 5
+    assert int(after["events"].get("scheduled", 0)) == before_scheduled + 1
+    assert int(after["events"].get("completed", 0)) == before_completed + 1

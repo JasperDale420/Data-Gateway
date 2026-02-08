@@ -53,6 +53,7 @@ The fastest, lowest-risk wins are:
   - Sink publish now schedules off callback path via `_schedule_stream_sink_publish(...)`: `gateway/main.py`.
   - Bounded scheduling guardrails, runtime limit configuration, and shutdown draining are in place: `gateway/main.py` (`_configure_stream_sink_dispatch_limits`, `_drain_stream_sink_publish_tasks`).
   - Stream-to-sink scheduler telemetry is now emitted for calibration: `gateway/core/metrics.py` (`gateway_stream_sink_dispatch_events_total`, `gateway_stream_sink_pending_tasks`, `gateway_stream_sink_dispatch_limit`) and hooked into scheduler lifecycle in `gateway/main.py`.
+  - Admin status now exposes stream scheduler telemetry snapshot via `/api/v1/status` (`stream_sink_dispatch`) for operator visibility during tuning.
 - Impact: Stream callback no longer waits on sink publish/dedup I/O, reducing callback latency coupling under sink backpressure.
 - Remaining low-risk follow-up:
   - Calibrate `data_sink_stream_publish_max_inflight` and `data_sink_stream_publish_max_pending` using the new dispatch telemetry under production-like fanout load.
@@ -266,7 +267,7 @@ Legend:
 4. **Alpaca provider**: Continue shared client-use and logging tuning follow-ups; timestamp conversion-path consolidation is now in place.
 5. **Non-provider routers**: Finnhub cached-router telemetry sweep is complete (news, quotes/bars, funds, analysis, forex, crypto, alternative-data, earnings, ETF/index, fundamentals). Follow-up is optional telemetry naming/metric-cardinality review during regular perf monitoring.
 6. **Core modules**: Benchmark calibration.
-7. **Stream path**: Telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`) using `gateway_stream_sink_dispatch_events_total`, `gateway_stream_sink_pending_tasks`, and `gateway_stream_sink_dispatch_limit`.
+7. **Stream path**: Telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`) using `gateway_stream_sink_dispatch_events_total`, `gateway_stream_sink_pending_tasks`, `gateway_stream_sink_dispatch_limit`, and `/api/v1/status` `stream_sink_dispatch` snapshots.
 8. **Perf guardrails**: Continue periodic monitoring/tuning via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`.
 
 ## Notes
