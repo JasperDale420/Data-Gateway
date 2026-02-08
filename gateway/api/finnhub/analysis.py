@@ -13,6 +13,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -33,6 +34,7 @@ async def get_insider_sentiment(
     key = cache_key("finnhub:insider-sentiment", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_insider_sentiment", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -43,6 +45,7 @@ async def get_insider_sentiment(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_insider_sentiment(symbol)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_insider_sentiment", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -67,6 +70,7 @@ async def get_upgrade_downgrade(
     key = cache_key("finnhub:upgrade-downgrade", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_upgrade_downgrade", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -77,6 +81,7 @@ async def get_upgrade_downgrade(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_upgrade_downgrade(symbol)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_upgrade_downgrade", "miss", "finnhub")
         return {
             "success": True,
             "data": {"symbol": symbol.upper(), "history": data},
@@ -101,6 +106,7 @@ async def get_social_sentiment(
     key = cache_key("finnhub:social-sentiment", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_social_sentiment", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -111,6 +117,7 @@ async def get_social_sentiment(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_social_sentiment(symbol)
         await cache.set(key, data, ttl=1800)
+        record_route_cache("finnhub_social_sentiment", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -136,6 +143,7 @@ async def get_support_resistance(
     key = cache_key("finnhub:support-resistance", symbol.upper(), resolution)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_support_resistance", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -146,6 +154,7 @@ async def get_support_resistance(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_support_resistance(symbol, resolution=resolution)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_support_resistance", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -171,6 +180,7 @@ async def get_pattern_recognition(
     key = cache_key("finnhub:patterns", symbol.upper(), resolution)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_pattern_recognition", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -181,6 +191,7 @@ async def get_pattern_recognition(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_pattern_recognition(symbol, resolution=resolution)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_pattern_recognition", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
