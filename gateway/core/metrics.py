@@ -141,6 +141,23 @@ SINK_PUBLISH = Counter(
     ["sink", "topic", "status"],  # status: success, error
 )
 
+STREAM_SINK_DISPATCH_EVENTS = Counter(
+    "gateway_stream_sink_dispatch_events_total",
+    "Stream-to-sink scheduler events",
+    ["status"],  # scheduled, dropped_backpressure, completed, failed, cancelled
+)
+
+STREAM_SINK_PENDING_TASKS = Gauge(
+    "gateway_stream_sink_pending_tasks",
+    "Current number of queued stream-to-sink publish tasks",
+)
+
+STREAM_SINK_DISPATCH_LIMIT = Gauge(
+    "gateway_stream_sink_dispatch_limit",
+    "Configured stream-to-sink dispatch limits",
+    ["limit_type"],  # max_inflight_publish, max_pending_tasks
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SLI Metrics (PRD 11.1.2-4)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -480,6 +497,28 @@ def record_sink_publish(sink: str, topic: str, success: bool) -> None:
     """Record data sink publish result."""
     status = "success" if success else "error"
     SINK_PUBLISH.labels(sink=sink, topic=topic, status=status).inc()
+
+
+def record_stream_sink_dispatch_event(status: str) -> None:
+    """Record stream-to-sink scheduler lifecycle events."""
+    STREAM_SINK_DISPATCH_EVENTS.labels(status=status).inc()
+
+
+def set_stream_sink_pending_tasks(count: int) -> None:
+    """Set current pending stream-to-sink task count."""
+    STREAM_SINK_PENDING_TASKS.set(max(0, count))
+
+
+def set_stream_sink_dispatch_limits_metrics(
+    *,
+    max_inflight_publish: int,
+    max_pending_tasks: int,
+) -> None:
+    """Set configured stream-to-sink scheduler limits."""
+    STREAM_SINK_DISPATCH_LIMIT.labels(limit_type="max_inflight_publish").set(
+        max(1, max_inflight_publish)
+    )
+    STREAM_SINK_DISPATCH_LIMIT.labels(limit_type="max_pending_tasks").set(max(1, max_pending_tasks))
 
 
 def httpx_event_hooks(provider: str) -> dict[str, list]:

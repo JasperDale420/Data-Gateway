@@ -8,6 +8,7 @@ load_dotenv()
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from typing import Any, cast
 
 # Configure stdlib logging for structlog integration
 logging.basicConfig(
@@ -61,7 +62,14 @@ from gateway.api.middleware import (
     SecurityHeadersMiddleware,
 )
 from gateway.config import get_settings
-from gateway.core.metrics import init_metrics, init_uptime, update_uptime
+from gateway.core.metrics import (
+    init_metrics,
+    init_uptime,
+    record_stream_sink_dispatch_event,
+    set_stream_sink_dispatch_limits_metrics,
+    set_stream_sink_pending_tasks,
+    update_uptime,
+)
 from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import StreamMultiplexer
 
@@ -110,6 +118,11 @@ def _configure_stream_sink_dispatch_limits(
     _stream_sink_max_inflight_publish = max(1, int(max_inflight_publish))
     _stream_sink_max_pending_tasks = max(1, int(max_pending_tasks))
     _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
+    set_stream_sink_dispatch_limits_metrics(
+        max_inflight_publish=_stream_sink_max_inflight_publish,
+        max_pending_tasks=_stream_sink_max_pending_tasks,
+    )
+    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
 
 
 def _set_stream_sink_registry(sink_registry) -> None:
@@ -126,11 +139,16 @@ def _get_stream_sink_publish_semaphore() -> asyncio.Semaphore:
 
 def _on_stream_sink_publish_done(task: asyncio.Task[None]) -> None:
     _stream_sink_publish_tasks.discard(task)
+    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
     if task.cancelled():
+        record_stream_sink_dispatch_event("cancelled")
         return
     exc = task.exception()
     if exc:
+        record_stream_sink_dispatch_event("failed")
         logger.warning("stream_sink_publish_task_failed", error=str(exc))
+        return
+    record_stream_sink_dispatch_event("completed")
 
 
 async def _publish_stream_event(sink_registry, envelope: dict) -> None:
@@ -141,6 +159,7 @@ async def _publish_stream_event(sink_registry, envelope: dict) -> None:
 
 def _schedule_stream_sink_publish(sink_registry, envelope: dict) -> None:
     if len(_stream_sink_publish_tasks) >= _stream_sink_max_pending_tasks:
+        record_stream_sink_dispatch_event("dropped_backpressure")
         logger.warning(
             "stream_sink_publish_backpressure_drop",
             pending_tasks=len(_stream_sink_publish_tasks),
@@ -151,6 +170,8 @@ def _schedule_stream_sink_publish(sink_registry, envelope: dict) -> None:
 
     task = asyncio.create_task(_publish_stream_event(sink_registry, envelope))
     _stream_sink_publish_tasks.add(task)
+    record_stream_sink_dispatch_event("scheduled")
+    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
     task.add_done_callback(_on_stream_sink_publish_done)
 
 
@@ -172,6 +193,7 @@ async def _drain_stream_sink_publish_tasks(timeout_seconds: float = 2.0) -> None
             if not task.done():
                 task.cancel()
         _stream_sink_publish_tasks.clear()
+        set_stream_sink_pending_tasks(0)
 
 
 async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> None:
@@ -393,7 +415,7 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
     )
-    app.add_exception_handler(HTTPException, gateway_http_exception_handler)
+    app.add_exception_handler(HTTPException, cast(Any, gateway_http_exception_handler))
 
     # Middleware (order matters: first added = outermost)
     # Security headers should be outermost (applied last, seen first by client)

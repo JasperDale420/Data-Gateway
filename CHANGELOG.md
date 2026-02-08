@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.123] - 2026-02-08
+
+### Added
+
+- **Stream sink dispatch telemetry assertions**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_main_stream_sink.py` with coverage for scheduler telemetry hooks (dispatch limits and scheduled task events).
+
+### Changed
+
+- **Stream sink scheduler telemetry rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/main.py` to emit stream-to-sink scheduler telemetry (scheduled/completed/failed/cancelled/drop events, pending-task gauge, and configured limit gauges) for fanout/sink calibration work.
+- **Typing compatibility hardening**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/main.py` exception-handler registration with an explicit cast to keep strict type-checking green when touching app setup.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record stream scheduler telemetry progress for the stream-path calibration backlog.
+
 ## [0.5.122] - 2026-02-08
 
 ### Added

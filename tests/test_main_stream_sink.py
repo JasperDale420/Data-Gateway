@@ -87,9 +87,49 @@ async def test_stream_sink_publish_backpressure_drops_when_pending_limit_reached
     assert registry.calls[0][1]["event_id"] == "e1"
 
 
-def test_configure_stream_sink_dispatch_limits_clamps_and_resets_semaphore() -> None:
+def test_configure_stream_sink_dispatch_limits_clamps_and_resets_semaphore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatch_limits: list[tuple[int, int]] = []
+    pending_counts: list[int] = []
+
+    def _set_dispatch_limits(*, max_inflight_publish: int, max_pending_tasks: int) -> None:
+        dispatch_limits.append((max_inflight_publish, max_pending_tasks))
+
+    def _set_pending(count: int) -> None:
+        pending_counts.append(count)
+
+    monkeypatch.setattr(
+        gateway_main, "set_stream_sink_dispatch_limits_metrics", _set_dispatch_limits
+    )
+    monkeypatch.setattr(gateway_main, "set_stream_sink_pending_tasks", _set_pending)
     gateway_main._configure_stream_sink_dispatch_limits(max_inflight_publish=0, max_pending_tasks=0)
 
     assert gateway_main._stream_sink_max_inflight_publish == 1
     assert gateway_main._stream_sink_max_pending_tasks == 1
     assert gateway_main._stream_sink_publish_semaphore is not None
+    assert dispatch_limits == [(1, 1)]
+    assert pending_counts[-1] == 0
+
+
+@pytest.mark.asyncio
+async def test_schedule_stream_sink_publish_records_scheduler_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    pending_counts: list[int] = []
+
+    def _record_dispatch_event(status: str) -> None:
+        events.append(status)
+
+    def _set_pending(count: int) -> None:
+        pending_counts.append(count)
+
+    monkeypatch.setattr(gateway_main, "record_stream_sink_dispatch_event", _record_dispatch_event)
+    monkeypatch.setattr(gateway_main, "set_stream_sink_pending_tasks", _set_pending)
+
+    gateway_main._schedule_stream_sink_publish(_FakeSinkRegistry(), {"event_id": "e1"})
+    await gateway_main._drain_stream_sink_publish_tasks(timeout_seconds=1.0)
+
+    assert "scheduled" in events
+    assert pending_counts and 1 in pending_counts
