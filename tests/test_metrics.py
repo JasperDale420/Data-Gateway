@@ -182,6 +182,12 @@ def test_provider_health_check_snapshot_tracks_updates_and_derivatives() -> None
     assert derived["error_rate"] == ok["error_count"] / ok["count"]
 
 
+def test_record_provider_quote_batch_size_accepts_non_negative_values() -> None:
+    metrics.record_provider_quote_batch_size("alphavantage", 5)
+    metrics.record_provider_quote_batch_size("finnhub", 0)
+    metrics.record_provider_quote_batch_size("finnhub", -3)
+
+
 def test_stream_sink_dispatch_snapshot_includes_calibration_guidance() -> None:
     before = metrics.get_stream_sink_dispatch_snapshot()
     before_scheduled = int(before["events"].get("scheduled", 0))

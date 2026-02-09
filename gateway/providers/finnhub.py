@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import structlog
 
-from gateway.core.metrics import httpx_event_hooks
+from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
 
@@ -149,6 +149,7 @@ class FinnhubProvider(DataProvider):
 
     async def get_quotes(self, symbols: list[str]) -> list[NormalizedQuote]:
         """Get quotes for multiple symbols."""
+        record_provider_quote_batch_size(self.name, len(symbols))
         if not symbols:
             return []
 

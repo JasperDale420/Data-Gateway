@@ -82,6 +82,13 @@ PROVIDER_LATENCY = Histogram(
     buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
 
+PROVIDER_QUOTE_BATCH_SIZE = Histogram(
+    "gateway_provider_quote_batch_size",
+    "Number of symbols requested in provider multi-quote calls",
+    ["provider"],
+    buckets=(1, 2, 5, 10, 25, 50, 100, 250, 500, 1000),
+)
+
 PROVIDER_HEALTH = Gauge(
     "gateway_provider_healthy",
     "Provider health status (1=healthy, 0=unhealthy)",
@@ -370,6 +377,11 @@ def record_provider_request(provider: str, success: bool, duration: float) -> No
     status = "success" if success else "error"
     PROVIDER_REQUESTS.labels(provider=provider, status=status).inc()
     PROVIDER_LATENCY.labels(provider=provider).observe(duration)
+
+
+def record_provider_quote_batch_size(provider: str, batch_size: int) -> None:
+    """Record requested symbol count for provider multi-quote calls."""
+    PROVIDER_QUOTE_BATCH_SIZE.labels(provider=provider).observe(max(0, batch_size))
 
 
 def set_provider_health(provider: str, healthy: bool) -> None:

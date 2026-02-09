@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.150] - 2026-02-09
+
+### Added
+
+- **Provider quote-batch telemetry regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alphavantage_provider.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_finnhub_provider.py` with coverage for multi-quote batch-size metric emission.
+- **Quote-batch metrics helper coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` with `record_provider_quote_batch_size(...)` helper coverage.
+
+### Changed
+
+- **Provider quote-batch histogram**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` with `gateway_provider_quote_batch_size{provider}` and `record_provider_quote_batch_size(...)` for requested-symbol-count calibration.
+- **Alpha Vantage quote-batch telemetry**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/providers/alphavantage.py` so `get_quotes(...)` records requested symbol batch size before fan-out.
+- **Finnhub quote-batch telemetry**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/providers/finnhub.py` so `get_quotes(...)` records requested symbol batch size before fan-out.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record provider quote-batch telemetry rollout.
+
 ## [0.5.149] - 2026-02-09
 
 ### Added

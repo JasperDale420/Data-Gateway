@@ -117,3 +117,25 @@ async def test_get_quotes_skips_errors_without_failing_batch(
     quotes = await provider.get_quotes(["AAPL", "FAIL", "MSFT"])
 
     assert quotes == [{"symbol": "AAPL"}, {"symbol": "MSFT"}]
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_records_requested_batch_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = FinnhubProvider()
+    provider._quotes_max_concurrency = 2
+    recorded: list[tuple[str, int]] = []
+
+    async def _fake_get_quote(symbol: str):
+        await asyncio.sleep(0)
+        return {"symbol": symbol}
+
+    monkeypatch.setattr(provider, "get_quote", _fake_get_quote)
+    monkeypatch.setattr(
+        "gateway.providers.finnhub.record_provider_quote_batch_size",
+        lambda provider_name, batch_size: recorded.append((provider_name, batch_size)),
+    )
+
+    quotes = await provider.get_quotes(["AAPL", "MSFT", "NVDA"])
+
+    assert len(quotes) == 3
+    assert recorded == [("finnhub", 3)]
