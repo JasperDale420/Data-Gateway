@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.154] - 2026-02-09
+
+### Added
+
+- **Status cache-pruning regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for stale optional-cache shape pruning.
+- **Status cache metadata regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for `optional_cache_entries` and `stream_cache_entries` metadata in `/api/v1/status`.
+
+### Changed
+
+- **Optional/stream cache pruning**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to prune stale shape-keyed cache entries for optional sections and stream sections during status requests.
+- **Status cache cardinality visibility**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `status_sections` reports `optional_cache_entries` and `stream_cache_entries` for cache calibration.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record status cache pruning + cache-entry visibility rollout.
+
 ## [0.5.153] - 2026-02-09
 
 ### Added

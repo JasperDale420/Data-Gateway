@@ -173,6 +173,10 @@ The fastest, lowest-risk wins are:
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now keys optional-section cache entries by inclusion-shape flags, preventing cross-request cache-shape reuse when status clients toggle section flags.
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now keys stream-section cache entries by stream inclusion-shape flags, preventing incompatible stream cache reuse when `include_stream_sink_dispatch`/`include_stream_fanout` differ across requests.
     - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with shape-aware cache behavior tests for both optional and stream section caches.
+  - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now prunes stale optional-section and stream-section cache entries as part of status request handling, bounding cache growth for long-running admin polling workloads.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now includes cache cardinality metadata (`optional_cache_entries`, `stream_cache_entries`) in `status_sections` for calibration visibility.
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for stale-cache pruning and cache-entry metadata output.
 
 1. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 

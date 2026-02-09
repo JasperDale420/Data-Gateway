@@ -158,6 +158,25 @@ def _status_section_cache_is_fresh(
     return (now - _status_section_stats_cache_at[cache_key]).total_seconds() <= ttl_seconds
 
 
+def _prune_stale_status_section_cache(*, now: datetime, ttl_seconds: int) -> None:
+    """Prune stale optional-section cache entries to bound cache growth."""
+    global _status_section_stats_cache, _status_section_stats_cache_at
+    if (
+        ttl_seconds <= 0
+        or _status_section_stats_cache is None
+        or _status_section_stats_cache_at is None
+    ):
+        return
+    stale_keys = [
+        key
+        for key, cached_at in _status_section_stats_cache_at.items()
+        if (now - cached_at).total_seconds() > ttl_seconds
+    ]
+    for key in stale_keys:
+        _status_section_stats_cache.pop(key, None)
+        _status_section_stats_cache_at.pop(key, None)
+
+
 def _load_optional_status_sections(
     *,
     registry: ProviderRegistry,
@@ -191,6 +210,7 @@ def _load_optional_status_sections(
         include_provider_quote_batches,
     )
     now = _utcnow()
+    _prune_stale_status_section_cache(now=now, ttl_seconds=status_section_cache_ttl_seconds)
     if (
         status_section_cache_ttl_seconds > 0
         and not force_status_section_refresh
@@ -264,6 +284,25 @@ def _stream_section_cache_is_fresh(
     return (now - _stream_section_stats_cache_at[cache_key]).total_seconds() <= ttl_seconds
 
 
+def _prune_stale_stream_section_cache(*, now: datetime, ttl_seconds: int) -> None:
+    """Prune stale stream-section cache entries to bound cache growth."""
+    global _stream_section_stats_cache, _stream_section_stats_cache_at
+    if (
+        ttl_seconds <= 0
+        or _stream_section_stats_cache is None
+        or _stream_section_stats_cache_at is None
+    ):
+        return
+    stale_keys = [
+        key
+        for key, cached_at in _stream_section_stats_cache_at.items()
+        if (now - cached_at).total_seconds() > ttl_seconds
+    ]
+    for key in stale_keys:
+        _stream_section_stats_cache.pop(key, None)
+        _stream_section_stats_cache_at.pop(key, None)
+
+
 def _load_stream_status_sections(
     *,
     include_stream_sink_dispatch: bool,
@@ -279,6 +318,7 @@ def _load_stream_status_sections(
 
     cache_key = (include_stream_sink_dispatch, include_stream_fanout)
     now = _utcnow()
+    _prune_stale_stream_section_cache(now=now, ttl_seconds=stream_section_cache_ttl_seconds)
     if (
         stream_section_cache_ttl_seconds > 0
         and not force_stream_section_refresh
@@ -511,6 +551,12 @@ async def get_status(
     if include_provider_health_cache_metadata:
         data["provider_health_cache"] = provider_health_cache
     if include_status_sections:
+        optional_cache_entries = (
+            len(_status_section_stats_cache) if isinstance(_status_section_stats_cache, dict) else 0
+        )
+        stream_cache_entries = (
+            len(_stream_section_stats_cache) if isinstance(_stream_section_stats_cache, dict) else 0
+        )
         data["status_sections"] = {
             "cache": include_cache_stats,
             "connections": include_connection_stats,
@@ -522,9 +568,11 @@ async def get_status(
             "optional_stats_source": optional_stats_source,
             "optional_stats_ttl_seconds": status_section_cache_ttl_seconds,
             "optional_stats_age_seconds": optional_stats_age_seconds,
+            "optional_cache_entries": optional_cache_entries,
             "stream_stats_source": stream_stats_source,
             "stream_stats_ttl_seconds": stream_section_cache_ttl_seconds,
             "stream_stats_age_seconds": stream_stats_age_seconds,
+            "stream_cache_entries": stream_cache_entries,
         }
 
     return {

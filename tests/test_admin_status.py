@@ -1088,3 +1088,87 @@ async def test_get_status_stream_cache_is_shape_aware_for_sink_section(
     assert third["data"]["status_sections"]["stream_stats_source"] == "cache"
     assert sink_calls["count"] == 1
     assert fanout_calls["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_status_prunes_stale_optional_cache_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    status_cache: dict[tuple[bool, bool, bool, bool, bool], dict[str, dict[str, Any]]] = {}
+    status_cache_at: dict[tuple[bool, bool, bool, bool, bool], datetime] = {}
+    monkeypatch.setattr(admin, "_status_section_stats_cache", status_cache)
+    monkeypatch.setattr(admin, "_status_section_stats_cache_at", status_cache_at)
+
+    stale_key = (True, False, False, False, False)
+    fresh_key = (False, True, False, False, False)
+    now = datetime(2026, 2, 10, 0, 0, tzinfo=UTC)
+    status_cache[stale_key] = {"cache": {"backend": "memory"}}
+    status_cache[fresh_key] = {"connections": {"active_connections": 0}}
+    status_cache_at[stale_key] = now - timedelta(seconds=10)
+    status_cache_at[fresh_key] = now - timedelta(seconds=1)
+
+    time_ref = {"now": now}
+    monkeypatch.setattr(admin, "_utcnow", lambda: time_ref["now"])
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_cache_stats=False,
+        include_connection_stats=True,
+        include_registry_stats=False,
+        include_provider_health_checks=False,
+        include_provider_quote_batches=False,
+        status_section_cache_ttl_seconds=5,
+    )
+
+    assert response["data"]["status_sections"]["optional_stats_source"] == "cache"
+    assert stale_key not in (admin._status_section_stats_cache or {})
+    assert stale_key not in (admin._status_section_stats_cache_at or {})
+    assert fresh_key in (admin._status_section_stats_cache or {})
+
+
+@pytest.mark.asyncio
+async def test_get_status_reports_status_cache_entry_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(
+        admin, "_status_section_stats_cache", {(True, True, True, True, True): {"cache": {}}}
+    )
+    monkeypatch.setattr(
+        admin,
+        "_status_section_stats_cache_at",
+        {(True, True, True, True, True): datetime(2026, 2, 10, 0, 0, tzinfo=UTC)},
+    )
+    monkeypatch.setattr(
+        admin,
+        "_stream_section_stats_cache",
+        {(True, True): {"stream_sink_dispatch": {}, "stream_fanout": {}}},
+    )
+    monkeypatch.setattr(
+        admin,
+        "_stream_section_stats_cache_at",
+        {(True, True): datetime(2026, 2, 10, 0, 0, tzinfo=UTC)},
+    )
+    monkeypatch.setattr(admin, "_utcnow", lambda: datetime(2026, 2, 10, 0, 0, tzinfo=UTC))
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+    )
+
+    assert response["data"]["status_sections"]["optional_cache_entries"] == 1
+    assert response["data"]["status_sections"]["stream_cache_entries"] == 1
