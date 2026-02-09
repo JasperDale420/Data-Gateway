@@ -421,3 +421,73 @@ async def test_get_status_can_skip_stream_telemetry_sections(
     assert response["data"]["status_sections"]["stream_fanout"] is False
     assert sink_calls["count"] == 0
     assert fanout_calls["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_status_can_return_minimal_provider_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sink_snapshot = {"limits": {}, "events": {}, "pending_tasks": 0, "derived": {}}
+    fanout_snapshot = {"limits": {}, "events": {}, "batches": {}, "derived": {}}
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: sink_snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+
+    now = datetime(2026, 2, 9, 14, 0, tzinfo=UTC)
+    monkeypatch.setattr(admin, "_utcnow", lambda: now)
+
+    registry = _FakeRegistry()
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=True,
+        include_provider_details=False,
+    )
+
+    assert response["success"] is True
+    assert response["data"]["providers"] == {"finnhub": {"healthy": True}}
+    assert response["data"]["provider_health_cache"]["payload_shape"] == "minimal"
+
+
+@pytest.mark.asyncio
+async def test_get_status_provider_payload_shape_tracks_cache_and_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sink_snapshot = {"limits": {}, "events": {}, "pending_tasks": 0, "derived": {}}
+    fanout_snapshot = {"limits": {}, "events": {}, "batches": {}, "derived": {}}
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: sink_snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+
+    now = datetime(2026, 2, 9, 15, 0, tzinfo=UTC)
+    time_ref = {"now": now}
+    monkeypatch.setattr(admin, "_utcnow", lambda: time_ref["now"])
+
+    registry = _FakeRegistry()
+    first = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=True,
+        include_provider_details=True,
+    )
+    time_ref["now"] = now + timedelta(seconds=1)
+    second = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=True,
+        include_provider_details=True,
+    )
+
+    assert first["data"]["provider_health_cache"]["source"] == "live"
+    assert second["data"]["provider_health_cache"]["source"] == "cache"
+    assert first["data"]["provider_health_cache"]["payload_shape"] == "detailed"
+    assert second["data"]["provider_health_cache"]["payload_shape"] == "detailed"
+    assert registry.health_check_calls == 1

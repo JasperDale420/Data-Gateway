@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.137] - 2026-02-09
+
+### Added
+
+- **Provider payload-shape regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for minimal provider payload mode and payload-shape metadata behavior across live/cache responses.
+
+### Changed
+
+- **Optional minimal provider payloads**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `include_provider_details` (default `true`). When `false`, provider payloads include only `healthy`.
+- **Cached provider payload projections**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to precompute/cache both detailed and minimal provider-health payload maps, reducing repeated projection work during status polling.
+- **Provider cache metadata expansion**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to include `payload_shape` in `provider_health_cache` metadata.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record provider payload-shape optimization and cache projection reuse.
+
 ## [0.5.136] - 2026-02-09
 
 ### Added

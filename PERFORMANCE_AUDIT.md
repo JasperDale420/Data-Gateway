@@ -98,6 +98,11 @@ The fastest, lowest-risk wins are:
   - `/api/v1/status` now supports `include_stream_sink_dispatch` and `include_stream_fanout` toggles so polling clients can skip stream telemetry snapshot work when not needed.
   - `/api/v1/status` `status_sections` metadata now includes both stream telemetry section flags for explicit observability of payload composition.
   - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates stream telemetry inclusion and skip behavior.
+- Additional combined optimization batch (2026-02-09):
+  - `/api/v1/status` now supports `include_provider_details` so polling clients can request minimal provider payloads (`healthy` only), reducing response serialization overhead.
+  - Provider-health payload maps are now precomputed and cached for both detailed/minimal shapes in `gateway/api/admin.py`, avoiding repeated per-request provider payload projection during TTL cache hits.
+  - `provider_health_cache` metadata now includes `payload_shape` for operator/debug visibility.
+  - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates minimal payload and payload-shape behavior across live/cache responses.
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
 

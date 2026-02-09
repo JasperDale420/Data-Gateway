@@ -30,6 +30,8 @@ _error_counts_reset: datetime = datetime.now(UTC)
 _PROVIDER_HEALTH_CACHE_TTL_SECONDS = 5
 _provider_health_cache: dict | None = None
 _provider_health_cache_at: datetime | None = None
+_provider_health_payload_cache_detailed: dict[str, dict[str, object]] | None = None
+_provider_health_payload_cache_minimal: dict[str, dict[str, object]] | None = None
 
 
 def _utcnow() -> datetime:
@@ -48,39 +50,84 @@ async def _load_provider_health_status(
     *,
     registry: ProviderRegistry,
     include_provider_health: bool,
+    include_provider_details: bool,
     force_provider_health_refresh: bool,
     provider_health_cache_ttl_seconds: int | None,
 ) -> tuple[dict, dict]:
     """Load provider health status with optional short-lived cache reuse."""
     global _provider_health_cache, _provider_health_cache_at
+    global _provider_health_payload_cache_detailed, _provider_health_payload_cache_minimal
     ttl_seconds = (
         _PROVIDER_HEALTH_CACHE_TTL_SECONDS
         if provider_health_cache_ttl_seconds is None
         else max(0, provider_health_cache_ttl_seconds)
     )
+    payload_shape = "detailed" if include_provider_details else "minimal"
     if not include_provider_health:
-        return {}, {"source": "skipped", "ttl_seconds": ttl_seconds, "age_seconds": None}
+        return {}, {
+            "source": "skipped",
+            "ttl_seconds": ttl_seconds,
+            "age_seconds": None,
+            "payload_shape": payload_shape,
+        }
+
+    def _build_payload_caches(
+        health_status: dict,
+    ) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+        detailed: dict[str, dict[str, object]] = {}
+        minimal: dict[str, dict[str, object]] = {}
+        for name, status in health_status.items():
+            healthy = bool(getattr(status, "healthy", False))
+            minimal[name] = {"healthy": healthy}
+            detailed[name] = {
+                "healthy": healthy,
+                "error": getattr(status, "error", None),
+                "latency_ms": getattr(status, "latency_ms", None),
+            }
+        return detailed, minimal
 
     now = _utcnow()
     if not force_provider_health_refresh and _provider_health_cache_is_fresh(
         now,
         ttl_seconds=ttl_seconds,
     ):
+        if (
+            _provider_health_payload_cache_detailed is None
+            or _provider_health_payload_cache_minimal is None
+        ):
+            detailed, minimal = _build_payload_caches(_provider_health_cache or {})
+            _provider_health_payload_cache_detailed = detailed
+            _provider_health_payload_cache_minimal = minimal
         age_seconds = (
             (now - _provider_health_cache_at).total_seconds()
             if _provider_health_cache_at is not None
             else None
         )
-        return _provider_health_cache or {}, {
+        payload = (
+            _provider_health_payload_cache_detailed
+            if include_provider_details
+            else _provider_health_payload_cache_minimal
+        ) or {}
+        return payload, {
             "source": "cache",
             "ttl_seconds": ttl_seconds,
             "age_seconds": age_seconds,
+            "payload_shape": payload_shape,
         }
 
     health = await registry.health_check_all()
     _provider_health_cache = health
     _provider_health_cache_at = now
-    return health, {"source": "live", "ttl_seconds": ttl_seconds, "age_seconds": 0.0}
+    detailed, minimal = _build_payload_caches(health)
+    _provider_health_payload_cache_detailed = detailed
+    _provider_health_payload_cache_minimal = minimal
+    payload = detailed if include_provider_details else minimal
+    return payload, {
+        "source": "live",
+        "ttl_seconds": ttl_seconds,
+        "age_seconds": 0.0,
+        "payload_shape": payload_shape,
+    }
 
 
 def log_error(error_code: str, message: str, component: str = "gateway") -> None:
@@ -151,6 +198,10 @@ async def get_status(
         bool,
         Query(description="Whether to run live provider health checks (may add latency)"),
     ] = True,
+    include_provider_details: Annotated[
+        bool,
+        Query(description="Whether to include provider error and latency fields"),
+    ] = True,
     force_provider_health_refresh: Annotated[
         bool,
         Query(description="Bypass short-lived provider health cache for this request"),
@@ -184,6 +235,7 @@ async def get_status(
     provider_status, provider_health_cache = await _load_provider_health_status(
         registry=registry,
         include_provider_health=include_provider_health,
+        include_provider_details=include_provider_details,
         force_provider_health_refresh=force_provider_health_refresh,
         provider_health_cache_ttl_seconds=provider_health_cache_ttl_seconds,
     )
@@ -199,14 +251,7 @@ async def get_status(
     return {
         "success": True,
         "data": {
-            "providers": {
-                name: {
-                    "healthy": status.healthy,
-                    "error": status.error,
-                    "latency_ms": status.latency_ms,
-                }
-                for name, status in provider_status.items()
-            },
+            "providers": provider_status,
             "cache": cache_stats,
             "connections": connection_stats,
             "registry": registry_stats,
