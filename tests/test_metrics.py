@@ -188,6 +188,21 @@ def test_record_provider_quote_batch_size_accepts_non_negative_values() -> None:
     metrics.record_provider_quote_batch_size("finnhub", -3)
 
 
+def test_provider_quote_batch_snapshot_tracks_updates_and_derivatives() -> None:
+    metrics.record_provider_quote_batch_size("alpaca", 10)
+    metrics.record_provider_quote_batch_size("alpaca", 20)
+    metrics.record_provider_quote_batch_size("alpaca", 5)
+
+    snapshot = metrics.get_provider_quote_batch_snapshot()
+    alpaca = snapshot["alpaca"]
+    derived = alpaca["derived"]
+
+    assert alpaca["count"] >= 3
+    assert alpaca["total_symbols"] >= 35
+    assert alpaca["max_batch_size"] >= 20
+    assert derived["avg_batch_size"] == alpaca["total_symbols"] / alpaca["count"]
+
+
 def test_stream_sink_dispatch_snapshot_includes_calibration_guidance() -> None:
     before = metrics.get_stream_sink_dispatch_snapshot()
     before_scheduled = int(before["events"].get("scheduled", 0))

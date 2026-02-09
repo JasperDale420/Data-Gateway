@@ -46,6 +46,20 @@ def _option_chain_payload() -> dict[str, Any]:
     }
 
 
+def _quotes_payload() -> dict[str, Any]:
+    return {
+        "quotes": {
+            "AAPL": {
+                "t": datetime(2026, 2, 9, tzinfo=UTC).isoformat(),
+                "bp": 100.0,
+                "ap": 100.1,
+                "bs": 10,
+                "as": 12,
+            }
+        }
+    }
+
+
 @pytest.mark.asyncio
 async def test_get_option_chain_uses_default_limit_when_not_provided() -> None:
     provider = AlpacaProvider()
@@ -112,3 +126,20 @@ def test_parse_timestamp_returns_datetime_input_unchanged() -> None:
     source = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     parsed = provider._parse_timestamp(source)
     assert parsed is source
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_records_requested_batch_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = AlpacaProvider()
+    provider._client = cast(Any, _FakeClient(_quotes_payload()))
+    recorded: list[tuple[str, int]] = []
+
+    monkeypatch.setattr(
+        "gateway.providers.alpaca.record_provider_quote_batch_size",
+        lambda provider_name, batch_size: recorded.append((provider_name, batch_size)),
+    )
+
+    quotes = await provider.get_quotes(["AAPL", "MSFT"])
+
+    assert len(quotes) == 1
+    assert recorded == [("alpaca", 2)]

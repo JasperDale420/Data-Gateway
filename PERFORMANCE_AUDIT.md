@@ -160,6 +160,12 @@ The fastest, lowest-risk wins are:
     - `gateway/core/metrics.py` now includes `gateway_provider_quote_batch_size{provider}` and `record_provider_quote_batch_size(...)` for multi-quote request-size calibration.
     - `gateway/providers/alphavantage.py` and `gateway/providers/finnhub.py` now record requested symbol batch size in `get_quotes(...)` without altering fetch semantics.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alphavantage_provider.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_finnhub_provider.py`.
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/metrics.py` now maintains provider quote-batch telemetry snapshots (`count`, `total_symbols`, `max_batch_size`) with derived metrics (`avg_batch_size`) via `get_provider_quote_batch_snapshot()`.
+    - `gateway/providers/alpaca.py` now records requested symbol batch size in `get_quotes(...)`, aligning quote-batch telemetry across Alpaca, Alpha Vantage, and Finnhub.
+    - `/api/v1/status` now supports optional provider quote-batch telemetry section output via `include_provider_quote_batches` and reuses existing optional-section cache controls for this section.
+    - `status_sections` metadata now includes `provider_quote_batches` inclusion state alongside existing section flags.
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py`, `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py`, and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_provider.py`.
 
 1. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 

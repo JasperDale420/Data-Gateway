@@ -35,7 +35,7 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
-from gateway.core.metrics import httpx_event_hooks
+from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
@@ -239,6 +239,7 @@ class AlpacaProvider(DataProvider):
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
+        record_provider_quote_batch_size(self.name, len(symbols))
         results: list[NormalizedQuote] = []
         symbols_param = ",".join(symbols)
 

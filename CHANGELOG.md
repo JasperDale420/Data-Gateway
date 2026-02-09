@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.151] - 2026-02-09
+
+### Added
+
+- **Provider quote-batch snapshot regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` with coverage for `get_provider_quote_batch_snapshot()` accumulation and derived `avg_batch_size`.
+- **Admin quote-batch section regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for including/skipping `provider_quote_batches` in `/api/v1/status`.
+- **Alpaca provider quote-batch telemetry tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_provider.py` with coverage for quote-batch metric emission in `get_quotes(...)`.
+
+### Changed
+
+- **Provider quote-batch snapshot API**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` so `record_provider_quote_batch_size(...)` also maintains in-memory snapshot state and `get_provider_quote_batch_snapshot()` for admin calibration views.
+- **Admin status quote-batch section control**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `include_provider_quote_batches` and includes `provider_quote_batches` in optional-section cache handling.
+- **Status section metadata expansion**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `status_sections` reports `provider_quote_batches` inclusion state.
+- **Alpaca quote-batch telemetry**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/providers/alpaca.py` so `get_quotes(...)` records requested symbol batch size.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record provider quote-batch snapshot/admin exposure rollout.
+
 ## [0.5.150] - 2026-02-09
 
 ### Added

@@ -19,6 +19,7 @@ from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
 from gateway.core.metrics import (
     get_provider_health_check_snapshot,
+    get_provider_quote_batch_snapshot,
     get_stream_fanout_snapshot,
     get_stream_sink_dispatch_snapshot,
 )
@@ -154,9 +155,10 @@ def _load_optional_status_sections(
     include_connection_stats: bool,
     include_registry_stats: bool,
     include_provider_health_checks: bool,
+    include_provider_quote_batches: bool,
     status_section_cache_ttl_seconds: int,
     force_status_section_refresh: bool,
-) -> tuple[dict, dict, dict, dict, str, float | None]:
+) -> tuple[dict, dict, dict, dict, dict, str, float | None]:
     """Load optional status sections with optional short-lived cache reuse."""
     global _status_section_stats_cache, _status_section_stats_cache_at
 
@@ -165,8 +167,9 @@ def _load_optional_status_sections(
         or include_connection_stats
         or include_registry_stats
         or include_provider_health_checks
+        or include_provider_quote_batches
     ):
-        return {}, {}, {}, {}, "skipped", None
+        return {}, {}, {}, {}, {}, "skipped", None
 
     now = _utcnow()
     if (
@@ -185,6 +188,7 @@ def _load_optional_status_sections(
             cached.get("connections", {}) if include_connection_stats else {},
             cached.get("registry", {}) if include_registry_stats else {},
             (cached.get("provider_health_checks", {}) if include_provider_health_checks else {}),
+            (cached.get("provider_quote_batches", {}) if include_provider_quote_batches else {}),
             "cache",
             age_seconds,
         )
@@ -196,6 +200,9 @@ def _load_optional_status_sections(
         "provider_health_checks": (
             get_provider_health_check_snapshot() if include_provider_health_checks else {}
         ),
+        "provider_quote_batches": (
+            get_provider_quote_batch_snapshot() if include_provider_quote_batches else {}
+        ),
     }
     if status_section_cache_ttl_seconds > 0:
         _status_section_stats_cache = latest
@@ -206,6 +213,7 @@ def _load_optional_status_sections(
         latest["connections"] if include_connection_stats else {},
         latest["registry"] if include_registry_stats else {},
         latest["provider_health_checks"] if include_provider_health_checks else {},
+        latest["provider_quote_batches"] if include_provider_quote_batches else {},
         "live",
         0.0 if status_section_cache_ttl_seconds > 0 else None,
     )
@@ -364,6 +372,10 @@ async def get_status(
         bool,
         Query(description="Whether to include provider health-check telemetry summary"),
     ] = True,
+    include_provider_quote_batches: Annotated[
+        bool,
+        Query(description="Whether to include provider multi-quote batch telemetry summary"),
+    ] = True,
     include_stream_sink_dispatch: Annotated[
         bool,
         Query(description="Whether to include stream sink dispatch telemetry"),
@@ -411,6 +423,7 @@ async def get_status(
         connection_stats,
         registry_stats,
         provider_health_checks,
+        provider_quote_batches,
         optional_stats_source,
         optional_stats_age_seconds,
     ) = _load_optional_status_sections(
@@ -421,6 +434,7 @@ async def get_status(
         include_connection_stats=include_connection_stats,
         include_registry_stats=include_registry_stats,
         include_provider_health_checks=include_provider_health_checks,
+        include_provider_quote_batches=include_provider_quote_batches,
         status_section_cache_ttl_seconds=status_section_cache_ttl_seconds,
         force_status_section_refresh=force_status_section_refresh,
     )
@@ -442,6 +456,7 @@ async def get_status(
         "connections": connection_stats,
         "registry": registry_stats,
         "provider_health_checks": provider_health_checks,
+        "provider_quote_batches": provider_quote_batches,
         "stream_sink_dispatch": stream_sink_dispatch,
         "stream_fanout": stream_fanout,
     }
@@ -453,6 +468,7 @@ async def get_status(
             "connections": include_connection_stats,
             "registry": include_registry_stats,
             "provider_health_checks": include_provider_health_checks,
+            "provider_quote_batches": include_provider_quote_batches,
             "stream_sink_dispatch": include_stream_sink_dispatch,
             "stream_fanout": include_stream_fanout,
             "optional_stats_source": optional_stats_source,

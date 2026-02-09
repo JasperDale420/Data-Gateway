@@ -205,6 +205,7 @@ _STREAM_FANOUT_SNAPSHOT: dict[str, Any] = {
 }
 
 _PROVIDER_HEALTH_CHECK_SNAPSHOT: dict[str, dict[str, Any]] = {}
+_PROVIDER_QUOTE_BATCH_SNAPSHOT: dict[str, dict[str, Any]] = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SLI Metrics (PRD 11.1.2-4)
@@ -381,7 +382,25 @@ def record_provider_request(provider: str, success: bool, duration: float) -> No
 
 def record_provider_quote_batch_size(provider: str, batch_size: int) -> None:
     """Record requested symbol count for provider multi-quote calls."""
-    PROVIDER_QUOTE_BATCH_SIZE.labels(provider=provider).observe(max(0, batch_size))
+    bounded_size = max(0, batch_size)
+    PROVIDER_QUOTE_BATCH_SIZE.labels(provider=provider).observe(bounded_size)
+    snapshot = _PROVIDER_QUOTE_BATCH_SNAPSHOT.setdefault(
+        provider,
+        {"count": 0, "total_symbols": 0, "max_batch_size": 0},
+    )
+    snapshot["count"] = int(snapshot.get("count", 0)) + 1
+    snapshot["total_symbols"] = int(snapshot.get("total_symbols", 0)) + bounded_size
+    snapshot["max_batch_size"] = max(int(snapshot.get("max_batch_size", 0)), bounded_size)
+
+
+def get_provider_quote_batch_snapshot() -> dict[str, dict[str, Any]]:
+    """Get provider multi-quote batch telemetry snapshot for admin status surfaces."""
+    snapshot = deepcopy(_PROVIDER_QUOTE_BATCH_SNAPSHOT)
+    for provider_data in snapshot.values():
+        count = float(int(provider_data.get("count", 0)))
+        total_symbols = float(int(provider_data.get("total_symbols", 0)))
+        provider_data["derived"] = {"avg_batch_size": _safe_ratio(total_symbols, count)}
+    return snapshot
 
 
 def set_provider_health(provider: str, healthy: bool) -> None:
