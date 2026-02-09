@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.168] - 2026-02-09
+
+### Added
+
+- **Windowed bulk download streams**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/bulk.py` so `GET /api/v1/bulk/jobs/{job_id}/download` now supports `offset` and `limit` query parameters for chunked window retrieval in both JSONL and JSON formats.
+- **Window-aware chunk iterators**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/bulk.py` `iter_results_jsonl_chunks(...)` and `iter_results_json_chunks(...)` to support offset/limit windowing without full result materialization.
+
+### Changed
+
+- **Bulk download pagination regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_bulk_manager.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_list_pagination.py` with coverage for windowed chunk iteration and download endpoint forwarding of offset/limit parameters.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record windowed download stream rollout as part of bulk pagination groundwork.
+
 ## [0.5.167] - 2026-02-09
 
 ### Added

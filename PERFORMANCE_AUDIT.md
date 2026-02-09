@@ -232,6 +232,10 @@ The fastest, lowest-risk wins are:
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/bulk.py` now exposes `get_results_page(...)` for offset/limit retrieval against completed jobs, compatible with both in-memory and spool-backed result storage.
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/bulk.py` now exposes `GET /api/v1/bulk/jobs/{job_id}/results` returning paged records with traversal metadata (`total_records`, `has_more`, `next_offset`).
     - Expanded regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_bulk_manager.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_list_pagination.py`.
+  - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/bulk.py` now supports offset/limit windowing for streamed JSONL/JSON download iterators (`iter_results_jsonl_chunks`, `iter_results_json_chunks`), enabling bounded ranged downloads on large result sets.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/bulk.py` download endpoint now accepts `offset` and `limit` query parameters and forwards window bounds into stream generation.
+    - Expanded regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_bulk_manager.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_list_pagination.py` for iterator window semantics and route forwarding behavior.
 
 1. Replay preload/sort overhead (substantially remediated 2026-02-07).
 

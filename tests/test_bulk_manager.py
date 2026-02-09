@@ -47,6 +47,43 @@ def test_iter_results_json_chunks_matches_json_output() -> None:
     assert json.loads(reconstructed) == {"data": job.results}
 
 
+def test_iter_results_jsonl_chunks_supports_offset_limit_window() -> None:
+    manager = BulkJobManager()
+    job = _make_complete_job("bulk-jsonl-window")
+    manager._jobs[job.job_id] = job
+
+    chunks = list(
+        manager.iter_results_jsonl_chunks(
+            job.job_id,
+            records_per_chunk=2,
+            offset=1,
+            limit=3,
+        )
+    )
+    reconstructed = b"".join(chunks).decode("utf-8")
+    expected = "\n".join(json.dumps(record) for record in job.results[1:4])
+
+    assert reconstructed == expected
+
+
+def test_iter_results_json_chunks_supports_offset_limit_window() -> None:
+    manager = BulkJobManager()
+    job = _make_complete_job("bulk-json-window")
+    manager._jobs[job.job_id] = job
+
+    chunks = list(
+        manager.iter_results_json_chunks(
+            job.job_id,
+            records_per_chunk=2,
+            offset=2,
+            limit=2,
+        )
+    )
+    reconstructed = b"".join(chunks).decode("utf-8")
+
+    assert json.loads(reconstructed) == {"data": job.results[2:4]}
+
+
 def test_iter_results_jsonl_chunks_returns_empty_for_incomplete_job() -> None:
     manager = BulkJobManager()
     request = BulkBarsRequest(symbols=["AAPL"], start="2025-01-01", end="2025-01-02")

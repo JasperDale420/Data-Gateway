@@ -492,6 +492,9 @@ class BulkJobManager:
         self,
         job_id: str,
         records_per_chunk: int = 500,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
     ) -> Iterator[bytes]:
         """Iterate JSONL bytes in bounded chunks for a completed job."""
         job = self._jobs.get(job_id)
@@ -499,11 +502,18 @@ class BulkJobManager:
             return iter(())
 
         chunk_size = max(1, records_per_chunk)
+        page_offset = max(0, offset)
+        page_limit = None if limit is None else max(1, limit)
+        paged_records = islice(
+            self._iter_job_results(job),
+            page_offset,
+            None if page_limit is None else page_offset + page_limit,
+        )
 
         def _iter_chunks() -> Iterator[bytes]:
             buffer_lines: list[str] = []
             first_chunk = True
-            for index, record in enumerate(self._iter_job_results(job), start=1):
+            for index, record in enumerate(paged_records, start=1):
                 buffer_lines.append(json.dumps(record))
                 if index % chunk_size == 0:
                     chunk_text = "\n".join(buffer_lines)
@@ -549,6 +559,9 @@ class BulkJobManager:
         self,
         job_id: str,
         records_per_chunk: int = 500,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
     ) -> Iterator[bytes]:
         """Iterate JSON bytes for `{\"data\":[...]}` in bounded chunks."""
         job = self._jobs.get(job_id)
@@ -556,12 +569,19 @@ class BulkJobManager:
             return iter(())
 
         chunk_size = max(1, records_per_chunk)
+        page_offset = max(0, offset)
+        page_limit = None if limit is None else max(1, limit)
+        paged_records = islice(
+            self._iter_job_results(job),
+            page_offset,
+            None if page_limit is None else page_offset + page_limit,
+        )
 
         def _iter_chunks() -> Iterator[bytes]:
             yield b'{"data":['
             buffer_parts: list[str] = []
             first = True
-            for index, record in enumerate(self._iter_job_results(job), start=1):
+            for index, record in enumerate(paged_records, start=1):
                 if first:
                     buffer_parts.append(json.dumps(record))
                     first = False

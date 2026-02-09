@@ -309,6 +309,17 @@ async def get_job_status(
 async def download_job_results(
     job_id: str,
     format: str = Query(default="jsonl", description="Output format: jsonl or json"),
+    limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=5000,
+        description="Optional max number of records to include in download window",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of records to skip before streaming download content",
+    ),
     client: Any = Depends(require_api_key),
 ) -> Response:
     """Download results from a completed job."""
@@ -326,7 +337,7 @@ async def download_job_results(
 
     if format == "jsonl":
         return StreamingResponse(
-            content=manager.iter_results_jsonl_chunks(job_id),
+            content=manager.iter_results_jsonl_chunks(job_id, offset=offset, limit=limit),
             media_type="application/x-ndjson",
             headers={
                 "Content-Disposition": f"attachment; filename={job_id}.jsonl",
@@ -334,7 +345,7 @@ async def download_job_results(
         )
     elif format == "json":
         return StreamingResponse(
-            content=manager.iter_results_json_chunks(job_id),
+            content=manager.iter_results_json_chunks(job_id, offset=offset, limit=limit),
             media_type="application/json",
             headers={
                 "Content-Disposition": f"attachment; filename={job_id}.json",

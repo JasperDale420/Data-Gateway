@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from fastapi.responses import StreamingResponse
 
 from gateway.api import bulk, replay
 
@@ -79,6 +81,24 @@ class _FakeBulkManager:
             (offset + limit) if offset + limit < 3 else None,
         )
 
+    def iter_results_jsonl_chunks(
+        self,
+        _job_id: str,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+    ):
+        yield f"jsonl:{offset}:{limit}".encode()
+
+    def iter_results_json_chunks(
+        self,
+        _job_id: str,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+    ):
+        yield f'{{"window":"{offset}:{limit}"}}'.encode()
+
 
 class _FakeReplayManager:
     def __init__(self, sessions: list[_FakeSession]) -> None:
@@ -106,6 +126,18 @@ class _FakeReplayManager:
         consumed = offset + len(sessions)
         has_more = consumed < total
         return sessions, total, has_more, (consumed if has_more else None)
+
+
+async def _read_streaming_text(response: StreamingResponse) -> str:
+    parts: list[bytes] = []
+    async for chunk in response.body_iterator:
+        if isinstance(chunk, bytes):
+            parts.append(chunk)
+        elif isinstance(chunk, str):
+            parts.append(chunk.encode("utf-8"))
+        else:
+            parts.append(bytes(chunk))
+    return b"".join(parts).decode("utf-8")
 
 
 @pytest.mark.asyncio
@@ -191,3 +223,37 @@ async def test_bulk_get_job_results_page_applies_limit_offset(
         "has_more": False,
         "next_offset": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_bulk_download_job_results_forwards_offset_and_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _FakeBulkManager(jobs=[_FakeJob("job-1", "complete")])
+    monkeypatch.setattr(bulk, "get_bulk_manager", lambda: manager)
+
+    jsonl_response = cast(
+        StreamingResponse,
+        await bulk.download_job_results(
+            job_id="job-1",
+            format="jsonl",
+            limit=5,
+            offset=2,
+            client=SimpleNamespace(id="client-1"),
+        ),
+    )
+    jsonl_body = await _read_streaming_text(jsonl_response)
+    assert jsonl_body == "jsonl:2:5"
+
+    json_response = cast(
+        StreamingResponse,
+        await bulk.download_job_results(
+            job_id="job-1",
+            format="json",
+            limit=4,
+            offset=1,
+            client=SimpleNamespace(id="client-1"),
+        ),
+    )
+    json_body = await _read_streaming_text(json_response)
+    assert json_body == '{"window":"1:4"}'
