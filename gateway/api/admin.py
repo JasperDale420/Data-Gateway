@@ -127,6 +127,15 @@ def _build_stream_tuning_summary(
     suggested_fanout_max_inflight = (
         _suggest_up(fanout_limits.get("max_inflight")) if fanout_error_rate >= 0.005 else None
     )
+    suggested_env: dict[str, int] = {}
+    if suggested_sink_max_pending is not None:
+        suggested_env["GATEWAY_DATA_SINK_STREAM_PUBLISH_MAX_PENDING"] = suggested_sink_max_pending
+    if suggested_sink_max_inflight is not None:
+        suggested_env["GATEWAY_DATA_SINK_STREAM_PUBLISH_MAX_INFLIGHT"] = suggested_sink_max_inflight
+    if suggested_fanout_max_inflight is not None:
+        suggested_env["GATEWAY_STREAM_FANOUT_MAX_INFLIGHT"] = suggested_fanout_max_inflight
+    if suggested_fanout_batch_size is not None:
+        suggested_env["GATEWAY_STREAM_FANOUT_BATCH_SIZE"] = suggested_fanout_batch_size
 
     return {
         "overall_level": overall_level,
@@ -146,6 +155,7 @@ def _build_stream_tuning_summary(
                 "batch_size": suggested_fanout_batch_size,
             },
         },
+        "suggested_env": suggested_env,
         "has_recommendations": bool(recommendations),
         "recommendations": recommendations,
     }

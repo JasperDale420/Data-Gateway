@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.163] - 2026-02-09
+
+### Added
+
+- **Stream tuning report CLI**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` to convert `/api/v1/status` snapshots into operator-ready stream tuning output (text and JSON modes), including `export ...` env lines for suggested settings.
+- **Stream tuning report regression tests**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_stream_tuning_report.py` covering text export rendering and JSON machine-readable output.
+
+### Changed
+
+- **Status-to-env calibration mapping**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `stream_tuning_summary` now includes `suggested_env`, mapping suggested sink/fanout limits into concrete `GATEWAY_...` settings keys for direct application.
+- **Expanded status summary assertions**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` to validate `suggested_env` behavior for both pressure and healthy scenarios.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record status-to-env calibration mapping and CLI report tooling rollout.
+
 ## [0.5.162] - 2026-02-09
 
 ### Added

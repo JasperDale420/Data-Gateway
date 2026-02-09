@@ -242,6 +242,10 @@ async def test_get_status_includes_stream_tuning_summary_and_uw_poller_runtime(
     assert summary["suggested_limits"]["sink"]["max_inflight_publish"] == 40
     assert summary["suggested_limits"]["fanout"]["max_inflight"] == 125
     assert summary["suggested_limits"]["fanout"]["batch_size"] == 40
+    assert summary["suggested_env"]["GATEWAY_DATA_SINK_STREAM_PUBLISH_MAX_PENDING"] == 640
+    assert summary["suggested_env"]["GATEWAY_DATA_SINK_STREAM_PUBLISH_MAX_INFLIGHT"] == 40
+    assert summary["suggested_env"]["GATEWAY_STREAM_FANOUT_MAX_INFLIGHT"] == 125
+    assert summary["suggested_env"]["GATEWAY_STREAM_FANOUT_BATCH_SIZE"] == 40
     assert response["data"]["uw_poller_runtime"]["running"] is True
     assert response["data"]["status_sections"]["stream_tuning_summary"] is True
     assert response["data"]["status_sections"]["uw_poller_runtime"] is True
@@ -321,6 +325,7 @@ async def test_get_status_stream_tuning_summary_omits_limit_changes_when_healthy
     assert suggested["sink"]["max_inflight_publish"] is None
     assert suggested["fanout"]["max_inflight"] is None
     assert suggested["fanout"]["batch_size"] is None
+    assert response["data"]["stream_tuning_summary"]["suggested_env"] == {}
 
 
 @pytest.mark.asyncio

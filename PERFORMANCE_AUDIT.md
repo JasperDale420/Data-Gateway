@@ -86,6 +86,10 @@ The fastest, lowest-risk wins are:
     - Suggested controls include sink (`max_pending_tasks`, `max_inflight_publish`) and fanout (`max_inflight`, `batch_size`) values for direct operator calibration loops.
     - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for both high-pressure and healthy no-change suggestion behavior.
   - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now adds `suggested_env` to `stream_tuning_summary`, mapping suggested limit targets to concrete `GATEWAY_...` environment keys for direct runtime configuration changes.
+    - Added `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` to transform status snapshots into operator-ready text/JSON calibration reports with exportable env lines.
+    - Added regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_stream_tuning_report.py` and expanded coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py`.
+  - Additional combined optimization batch (2026-02-09):
     - `gateway/core/stream.py` now resolves active connection/subscribers before running bar/quote/trade validation in `_handle_message(...)`.
     - This removes validator work from idle/no-subscriber fanout paths while preserving validation behavior for messages that actually fan out.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` for no-connection/no-subscriber skip paths plus existing validator-cache behavior when subscribers exist.
