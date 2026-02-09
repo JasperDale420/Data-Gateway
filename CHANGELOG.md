@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.129] - 2026-02-09
+
+### Fixed
+
+- **CI branch target**: `ci.yml` now triggers on `master` (the actual default branch) instead of `main`
+- **Tracked build artifacts**: Removed `coverage.json`, `.scannerwork/`, `.jules/bolt.md`, empty `unusualwhales_sdk/`, and root-level duplicate `clients.yaml`/`providers.yaml` from git tracking
+- **Dockerfile dependency duplication**: Replaced 16 hardcoded pip install lines with `pip install .` from `pyproject.toml` (single source of truth)
+- **Agent rules filename typo**: Renamed `.agent/rules/produciton.md` → `production.md`
+
+### Removed
+
+- **Redundant `black` pre-commit hook**: `ruff-format` already handles formatting
+
+### Added
+
+- **`config/clients.yaml.example`**: Sanitized template with placeholder keys for onboarding
+- **`.gitignore` entries**: Added `coverage.json`, `.scannerwork/`, `.jules/`, `clients.yaml`; fixed duplicate `codebase.md` entry
+
 ## [0.5.128] - 2026-02-08
 
 ### Added

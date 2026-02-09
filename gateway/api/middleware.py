@@ -686,7 +686,9 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
             if sink_registry:
                 import asyncio
 
-                topic = f"gateway.rest.{feed}"
+                # Publish ALL REST envelopes into Heber's ingest stream so nothing is missed.
+                # (We keep `feed` inside the envelope metadata for downstream routing.)
+                topic = "heber:events"
                 # Fire-and-forget publish (DataSinkRegistry handles task lifecycle)
                 asyncio.create_task(sink_registry.publish_all(topic, envelope))
 

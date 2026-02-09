@@ -61,11 +61,11 @@ cover/
 
 # Project specific
 data_lake/
+clients.yaml
 
 # Code quality tools
 .mypy_cache/
 .ruff_cache/
-codebase.md
 codebase.md
 vendor/
 .perf/
@@ -73,3 +73,6 @@ perf-junit.xml
 perf-output.txt
 perf-summary.json
 perf-history-report.json
+coverage.json
+.scannerwork/
+.jules/
