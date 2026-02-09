@@ -53,6 +53,58 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _get_uw_poller_runtime_snapshot() -> dict[str, Any]:
+    """Load UW poller runtime snapshot without hard-coupling admin startup imports."""
+    from gateway.core.uw_poller import get_uw_poller_snapshot
+
+    return get_uw_poller_snapshot()
+
+
+def _build_stream_tuning_summary(
+    *,
+    stream_sink_dispatch: dict[str, Any],
+    stream_fanout: dict[str, Any],
+) -> dict[str, Any]:
+    """Summarize stream tuning state and merged recommendations."""
+    sink_derived = stream_sink_dispatch.get("derived", {})
+    fanout_derived = stream_fanout.get("derived", {})
+    sink_level = str(sink_derived.get("backpressure_level", "healthy"))
+    fanout_level = str(fanout_derived.get("fanout_level", "healthy"))
+
+    ordered_levels = {"healthy": 0, "warning": 1, "critical": 2}
+    overall_level = max(
+        sink_level,
+        fanout_level,
+        key=lambda level: ordered_levels.get(level, 0),
+    )
+
+    recommendations: list[str] = []
+    seen: set[str] = set()
+    for hint in [
+        *sink_derived.get("recommendations", []),
+        *fanout_derived.get("recommendations", []),
+    ]:
+        if not isinstance(hint, str):
+            continue
+        norm = hint.strip()
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        recommendations.append(norm)
+
+    return {
+        "overall_level": overall_level,
+        "backpressure_level": sink_level,
+        "fanout_level": fanout_level,
+        "limits": {
+            "sink": stream_sink_dispatch.get("limits", {}),
+            "fanout": stream_fanout.get("limits", {}),
+        },
+        "has_recommendations": bool(recommendations),
+        "recommendations": recommendations,
+    }
+
+
 def _provider_health_cache_is_fresh(now: datetime, *, ttl_seconds: int) -> bool:
     """Whether provider-health cache is valid for reuse."""
     if _provider_health_cache is None or _provider_health_cache_at is None:
@@ -549,6 +601,14 @@ async def get_status(
         bool,
         Query(description="Whether to include stream fanout telemetry"),
     ] = True,
+    include_stream_tuning_summary: Annotated[
+        bool,
+        Query(description="Whether to include stream tuning summary and recommendations"),
+    ] = True,
+    include_uw_poller_runtime: Annotated[
+        bool,
+        Query(description="Whether to include UW poller runtime tuning snapshot"),
+    ] = True,
     stream_section_cache_ttl_seconds: Annotated[
         int,
         Query(ge=0, description="TTL seconds for optional stream telemetry section cache"),
@@ -657,6 +717,13 @@ async def get_status(
         "stream_sink_dispatch": stream_sink_dispatch,
         "stream_fanout": stream_fanout,
     }
+    if include_stream_tuning_summary:
+        data["stream_tuning_summary"] = _build_stream_tuning_summary(
+            stream_sink_dispatch=stream_sink_dispatch,
+            stream_fanout=stream_fanout,
+        )
+    if include_uw_poller_runtime:
+        data["uw_poller_runtime"] = _get_uw_poller_runtime_snapshot()
     if include_provider_health_cache_metadata:
         data["provider_health_cache"] = provider_health_cache
     if include_status_sections:
@@ -674,6 +741,8 @@ async def get_status(
             "provider_quote_batches": include_provider_quote_batches,
             "stream_sink_dispatch": include_stream_sink_dispatch,
             "stream_fanout": include_stream_fanout,
+            "stream_tuning_summary": include_stream_tuning_summary,
+            "uw_poller_runtime": include_uw_poller_runtime,
             "optional_stats_source": optional_stats_source,
             "optional_stats_ttl_seconds": status_section_cache_ttl_seconds,
             "optional_stats_age_seconds": optional_stats_age_seconds,

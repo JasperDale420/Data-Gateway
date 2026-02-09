@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.161] - 2026-02-09
+
+### Added
+
+- **UW poller runtime snapshot tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_uw_poller.py` with coverage for `UWPoller.get_runtime_snapshot()` and global `get_uw_poller_snapshot()` behavior when the poller is not running.
+- **Status tuning-section tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for `stream_tuning_summary` and `uw_poller_runtime` inclusion/skip controls.
+
+### Changed
+
+- **UW poller calibration visibility**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/uw_poller.py` to expose runtime/tuning snapshot data (`publish_max_inflight`, dedupe cache state, poll intervals, feed toggles, EOD settings) for operational calibration.
+- **Status tuning summary block**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` can return merged stream tuning guidance (`stream_tuning_summary`) and UW runtime state (`uw_poller_runtime`) with explicit include flags.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record stream/UW calibration visibility rollout.
+
 ## [0.5.160] - 2026-02-09
 
 ### Added

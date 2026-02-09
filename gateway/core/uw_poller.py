@@ -313,6 +313,35 @@ class UWPoller:
         elapsed = (datetime.now(UTC) - self._last_darkpool_poll).total_seconds()
         return elapsed >= self._darkpool_interval
 
+    def get_runtime_snapshot(self) -> dict[str, Any]:
+        """Return lightweight runtime/tuning telemetry for admin surfaces."""
+        return {
+            "running": self._running,
+            "enabled": True,
+            "publish_max_inflight": self._publish_max_inflight,
+            "dedupe_cache_entries": len(self._seen_ids),
+            "dedupe_cache_ttl_seconds": self._cache_ttl_seconds,
+            "poll_intervals_seconds": {
+                "flow": self._flow_interval,
+                "darkpool": self._darkpool_interval,
+                "tide": self._tide_interval,
+                "base_loop": DARKPOOL_POLL_INTERVAL,
+            },
+            "feeds": {
+                "flow": self.flow_enabled,
+                "darkpool": self.darkpool_enabled,
+                "market_tide": self.market_tide_enabled,
+                "sector_tide": self.sector_tide_enabled,
+                "eod": self.eod_enabled,
+            },
+            "eod": {
+                "hour": self._eod_hour,
+                "minute": self._eod_minute,
+                "concurrency": self._eod_concurrency,
+                "last_run_date": self._last_eod_date,
+            },
+        }
+
     async def start(self) -> None:
         """Start the background polling task."""
         if self._running:
@@ -977,6 +1006,23 @@ _uw_poller: UWPoller | None = None
 def get_uw_poller() -> UWPoller | None:
     """Get the global UW poller instance."""
     return _uw_poller
+
+
+def get_uw_poller_snapshot() -> dict[str, Any]:
+    """Get UW poller runtime snapshot for status surfaces."""
+    poller = get_uw_poller()
+    if poller is None:
+        return {
+            "running": False,
+            "enabled": False,
+            "publish_max_inflight": None,
+            "dedupe_cache_entries": 0,
+            "dedupe_cache_ttl_seconds": None,
+            "poll_intervals_seconds": {},
+            "feeds": {},
+            "eod": {},
+        }
+    return poller.get_runtime_snapshot()
 
 
 async def start_uw_poller(

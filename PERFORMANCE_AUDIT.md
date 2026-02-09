@@ -77,6 +77,11 @@ The fastest, lowest-risk wins are:
     - `gateway/core/metrics.py` now adds stream fanout calibration guidance in `get_stream_fanout_snapshot()` with `fanout_level` and actionable `recommendations` derived from batch fill ratio and error rate.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` (`test_stream_fanout_snapshot_includes_calibration_guidance`).
   - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now exposes a merged `stream_tuning_summary` block in `/api/v1/status`, combining sink/fanout pressure levels and deduplicated recommendations for one-pass operator tuning.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now supports `include_stream_tuning_summary` and `include_uw_poller_runtime` flags, allowing low-overhead polling clients to include/omit tuning sections explicitly.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/uw_poller.py` now exposes runtime calibration snapshots via `get_runtime_snapshot()` / `get_uw_poller_snapshot()` (publish inflight cap, dedupe cache size/TTL, poll intervals, feed toggles, EOD settings).
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_uw_poller.py`.
+  - Additional combined optimization batch (2026-02-09):
     - `gateway/core/stream.py` now resolves active connection/subscribers before running bar/quote/trade validation in `_handle_message(...)`.
     - This removes validator work from idle/no-subscriber fanout paths while preserving validation behavior for messages that actually fan out.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` for no-connection/no-subscriber skip paths plus existing validator-cache behavior when subscribers exist.
@@ -381,7 +386,7 @@ Legend:
 
 ## Next-Run Audit Plan (Targeted)
 
-1. **UW provider**: Telemetry-driven inflight tuning; expand native pagination where post-filter semantics allow.
+1. **UW provider**: Runtime calibration visibility is now exposed via `/api/v1/status` (`uw_poller_runtime`); remaining work is telemetry-driven inflight tuning and native pagination expansion where post-filter semantics allow.
 2. **Alpha Vantage provider**: Optional `max_points` tuning is now in place for core timeseries + indicator/forex/crypto daily routes; follow-up is broader runtime profiling validation and selective expansion to remaining heavy AV payload paths only if profiling shows material gains.
 3. **Alpaca routers**: Route-helper consolidation is complete; continue selective safe-GET cache/dedupe expansion where payload shape and staleness bounds are clear (metadata, news, corporate actions, account configurations, trading low-churn reads, screener endpoints, and both live/historical forex reads are now covered).
 4. **Alpaca provider**: Continue shared client-use and logging tuning follow-ups; timestamp conversion-path consolidation is now in place.

@@ -184,6 +184,94 @@ async def test_get_status_can_skip_provider_health_checks(
 
 
 @pytest.mark.asyncio
+async def test_get_status_includes_stream_tuning_summary_and_uw_poller_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sink_snapshot = {
+        "limits": {"max_inflight_publish": 32, "max_pending_tasks": 512},
+        "pending_tasks": 460,
+        "events": {"scheduled": 100, "completed": 92, "dropped_backpressure": 4},
+        "derived": {
+            "pending_utilization": 0.898,
+            "completion_rate": 0.92,
+            "drop_rate": 0.04,
+            "backpressure_level": "critical",
+            "recommendations": ["Increase data_sink_stream_publish_max_pending."],
+        },
+    }
+    fanout_snapshot = {
+        "limits": {"max_inflight": 100, "batch_size": 32},
+        "events": {"delivered": 1000, "error": 10},
+        "batches": {"count": 20, "total_clients": 620, "max_batch_size": 32},
+        "derived": {
+            "avg_batch_size": 31.0,
+            "batch_fill_ratio": 0.96875,
+            "error_rate": 0.0099,
+            "fanout_level": "critical",
+            "recommendations": ["Increase stream_fanout_max_inflight."],
+        },
+    }
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: sink_snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+    monkeypatch.setattr(
+        admin,
+        "_get_uw_poller_runtime_snapshot",
+        lambda: {
+            "running": True,
+            "publish_max_inflight": 16,
+            "dedupe_cache_entries": 23,
+            "dedupe_cache_ttl_seconds": 7200,
+            "poll_intervals_seconds": {"flow": 300, "darkpool": 60, "tide": 3600},
+        },
+    )
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+    )
+
+    summary = response["data"]["stream_tuning_summary"]
+    assert summary["backpressure_level"] == "critical"
+    assert summary["fanout_level"] == "critical"
+    assert summary["has_recommendations"] is True
+    assert summary["recommendations"]
+    assert response["data"]["uw_poller_runtime"]["running"] is True
+    assert response["data"]["status_sections"]["stream_tuning_summary"] is True
+    assert response["data"]["status_sections"]["uw_poller_runtime"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_status_can_skip_stream_tuning_summary_and_uw_poller_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(
+        admin,
+        "_get_uw_poller_runtime_snapshot",
+        lambda: {"running": True},
+    )
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_stream_tuning_summary=False,
+        include_uw_poller_runtime=False,
+    )
+
+    assert "stream_tuning_summary" not in response["data"]
+    assert "uw_poller_runtime" not in response["data"]
+    assert response["data"]["status_sections"]["stream_tuning_summary"] is False
+    assert response["data"]["status_sections"]["uw_poller_runtime"] is False
+
+
+@pytest.mark.asyncio
 async def test_get_status_reuses_provider_health_within_cache_ttl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

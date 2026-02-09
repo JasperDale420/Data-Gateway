@@ -7,7 +7,7 @@ from typing import Any, cast
 import pytest
 
 import gateway.core.uw_poller as uw_poller_module
-from gateway.core.uw_poller import HEBER_STREAM, UWPoller
+from gateway.core.uw_poller import HEBER_STREAM, UWPoller, get_uw_poller_snapshot
 
 
 class _FakeSinkRegistry:
@@ -105,3 +105,28 @@ def test_uw_poller_publish_limit_reads_from_settings(monkeypatch: pytest.MonkeyP
 
     poller = UWPoller()
     assert poller._publish_max_inflight == 7
+
+
+def test_uw_poller_runtime_snapshot_includes_tuning_fields() -> None:
+    poller = UWPoller()
+    poller._running = True
+    poller._seen_ids = {"a": uw_poller_module.datetime.now(uw_poller_module.UTC)}
+
+    snapshot = poller.get_runtime_snapshot()
+
+    assert snapshot["running"] is True
+    assert snapshot["publish_max_inflight"] >= 1
+    assert snapshot["dedupe_cache_entries"] == 1
+    assert snapshot["dedupe_cache_ttl_seconds"] == 7200
+    assert snapshot["poll_intervals_seconds"]["flow"] == 300
+    assert snapshot["poll_intervals_seconds"]["darkpool"] == 60
+    assert snapshot["poll_intervals_seconds"]["tide"] == 3600
+
+
+def test_get_uw_poller_snapshot_returns_disabled_payload_when_not_started() -> None:
+    uw_poller_module._uw_poller = None
+
+    snapshot = get_uw_poller_snapshot()
+
+    assert snapshot["running"] is False
+    assert snapshot["enabled"] is False
