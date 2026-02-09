@@ -58,6 +58,9 @@ The fastest, lowest-risk wins are:
 - Impact: Stream callback no longer waits on sink publish/dedup I/O, reducing callback latency coupling under sink backpressure.
 - Remaining low-risk follow-up:
   - Calibrate `data_sink_stream_publish_max_inflight` and `data_sink_stream_publish_max_pending` using the new dispatch telemetry under production-like fanout load.
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/metrics.py` now adds stream sink calibration guidance in `get_stream_sink_dispatch_snapshot()` with `completion_gap`, `backpressure_level`, and actionable `recommendations` derived from pending utilization, completion rate, and drop rate.
+    - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` (`test_stream_sink_dispatch_snapshot_includes_calibration_guidance`).
 
 1. Stream fanout per-message task burst (remediated 2026-02-07).
 
@@ -70,6 +73,9 @@ The fastest, lowest-risk wins are:
 - Impact: Reduces single-message task allocation burst and smooths event-loop pressure at high fanout while preserving delivery semantics. `_iter_client_batches(...)` now yields lazily without precomputing full batch lists, reducing per-message allocation overhead for large subscriber sets. Stream market-data validation now also reuses a cached validator instance (`_get_stream_validator(...)`) and a static message-type map in `gateway/core/stream.py`, removing repeated hot-path resolver/map allocations per validated message. News-symbol fanout lookup now deduplicates repeated symbols before subscription index reads, trimming redundant lookup work on duplicate-symbol payloads.
 - Remaining low-risk follow-up:
   - Calibrate `stream_fanout_max_inflight` and `stream_fanout_batch_size` with telemetry under production-like loads.
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/metrics.py` now adds stream fanout calibration guidance in `get_stream_fanout_snapshot()` with `fanout_level` and actionable `recommendations` derived from batch fill ratio and error rate.
+    - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` (`test_stream_fanout_snapshot_includes_calibration_guidance`).
   - Additional combined optimization batch (2026-02-09):
     - `gateway/core/stream.py` now resolves active connection/subscribers before running bar/quote/trade validation in `_handle_message(...)`.
     - This removes validator work from idle/no-subscriber fanout paths while preserving validation behavior for messages that actually fan out.
@@ -139,6 +145,9 @@ The fastest, lowest-risk wins are:
     - `gateway/core/registry.py` now records provider health-check duration + status metrics during `health_check_all(...)`, and updates provider health gauges from the same pass.
     - `gateway/core/metrics.py` now includes `gateway_provider_health_check_duration_seconds{provider,status}` for calibration of slow provider checks.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_registry.py` for health-metrics emission on both success and failure paths.
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/metrics.py` now adds provider health-check calibration guidance in `get_provider_health_check_snapshot()` with `health_level`, `latency_level`, and actionable `recommendations` derived from observed error rate and average duration.
+    - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` (`test_provider_health_check_snapshot_includes_calibration_guidance`).
 
 1. Provider multi-quote fan-out serialization (remediated 2026-02-07).
 

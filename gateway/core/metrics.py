@@ -410,9 +410,25 @@ def get_provider_health_check_snapshot() -> dict[str, dict[str, Any]]:
         count = float(int(provider_data.get("count", 0)))
         error_count = float(int(provider_data.get("error_count", 0)))
         total_duration = float(provider_data.get("total_duration_seconds", 0.0))
+        avg_duration_seconds = _safe_ratio(total_duration, count)
+        error_rate = _safe_ratio(error_count, count)
+        health_level = _threshold_level(error_rate, warning_at=0.05, critical_at=0.2)
+        latency_level = _threshold_level(avg_duration_seconds, warning_at=0.3, critical_at=1.0)
+        recommendations: list[str] = []
+        if health_level != "healthy":
+            recommendations.append(
+                "Review failing provider health checks and upstream error budgets."
+            )
+        if latency_level != "healthy":
+            recommendations.append(
+                "Profile provider health endpoint latency and adjust check intervals."
+            )
         provider_data["derived"] = {
-            "avg_duration_seconds": _safe_ratio(total_duration, count),
-            "error_rate": _safe_ratio(error_count, count),
+            "avg_duration_seconds": avg_duration_seconds,
+            "error_rate": error_rate,
+            "health_level": health_level,
+            "latency_level": latency_level,
+            "recommendations": recommendations,
         }
     return snapshot
 
@@ -618,6 +634,15 @@ def _safe_ratio(numerator: float, denominator: float) -> float:
     return numerator / denominator
 
 
+def _threshold_level(value: float, *, warning_at: float, critical_at: float) -> str:
+    """Return health level from simple warning/critical thresholds."""
+    if value >= critical_at:
+        return "critical"
+    if value >= warning_at:
+        return "warning"
+    return "healthy"
+
+
 def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
     """Get stream-to-sink scheduler telemetry snapshot for admin status surfaces."""
     snapshot = deepcopy(_STREAM_SINK_DISPATCH_SNAPSHOT)
@@ -630,10 +655,35 @@ def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
     completed = float(int(events.get("completed", 0)))
     dropped_backpressure = float(int(events.get("dropped_backpressure", 0)))
 
+    pending_utilization = _safe_ratio(pending_tasks, max_pending_tasks)
+    completion_rate = _safe_ratio(completed, scheduled)
+    drop_rate = _safe_ratio(dropped_backpressure, scheduled)
+    backpressure_level = max(
+        _threshold_level(pending_utilization, warning_at=0.7, critical_at=0.9),
+        _threshold_level(drop_rate, warning_at=0.01, critical_at=0.05),
+        key=lambda level: {"healthy": 0, "warning": 1, "critical": 2}[level],
+    )
+    recommendations: list[str] = []
+    if pending_utilization >= 0.7:
+        recommendations.append(
+            "Increase data_sink_stream_publish_max_pending (max_pending_tasks) or reduce sink publish load."
+        )
+    if drop_rate >= 0.01:
+        recommendations.append(
+            "Increase data_sink_stream_publish_max_inflight and inspect sink latency."
+        )
+    if completion_rate < 0.95:
+        recommendations.append(
+            "Investigate sink publish failures/timeouts and callback backpressure."
+        )
+
     snapshot["derived"] = {
-        "pending_utilization": _safe_ratio(pending_tasks, max_pending_tasks),
-        "completion_rate": _safe_ratio(completed, scheduled),
-        "drop_rate": _safe_ratio(dropped_backpressure, scheduled),
+        "pending_utilization": pending_utilization,
+        "completion_rate": completion_rate,
+        "drop_rate": drop_rate,
+        "completion_gap": max(0.0, 1.0 - completion_rate),
+        "backpressure_level": backpressure_level,
+        "recommendations": recommendations,
     }
     return snapshot
 
@@ -681,10 +731,27 @@ def get_stream_fanout_snapshot() -> dict[str, Any]:
     errored = float(int(events.get("error", 0)))
 
     avg_batch_size = _safe_ratio(total_clients, count)
+    batch_fill_ratio = _safe_ratio(avg_batch_size, configured_batch_size)
+    error_rate = _safe_ratio(errored, delivered + errored)
+    fanout_level = max(
+        _threshold_level(batch_fill_ratio, warning_at=0.8, critical_at=0.95),
+        _threshold_level(error_rate, warning_at=0.005, critical_at=0.02),
+        key=lambda level: {"healthy": 0, "warning": 1, "critical": 2}[level],
+    )
+    recommendations: list[str] = []
+    if batch_fill_ratio >= 0.8:
+        recommendations.append("Increase stream_fanout_batch_size or shard high-fanout symbols.")
+    if error_rate >= 0.005:
+        recommendations.append(
+            "Increase stream_fanout_max_inflight and inspect client send latency."
+        )
+
     snapshot["derived"] = {
         "avg_batch_size": avg_batch_size,
-        "batch_fill_ratio": _safe_ratio(avg_batch_size, configured_batch_size),
-        "error_rate": _safe_ratio(errored, delivered + errored),
+        "batch_fill_ratio": batch_fill_ratio,
+        "error_rate": error_rate,
+        "fanout_level": fanout_level,
+        "recommendations": recommendations,
     }
     return snapshot
 

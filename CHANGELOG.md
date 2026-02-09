@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.149] - 2026-02-09
+
+### Added
+
+- **Calibration-guidance regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` with coverage for stream sink, stream fanout, and provider-health-check recommendation metadata.
+
+### Changed
+
+- **Stream sink calibration guidance**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` so `get_stream_sink_dispatch_snapshot()` now includes `completion_gap`, `backpressure_level`, and actionable `recommendations` derived from pending utilization, completion rate, and drop rate.
+- **Stream fanout calibration guidance**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` so `get_stream_fanout_snapshot()` now includes `fanout_level` and actionable `recommendations` derived from batch fill ratio and error rate.
+- **Provider-health calibration guidance**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` so `get_provider_health_check_snapshot()` now includes `health_level`, `latency_level`, and actionable `recommendations` derived from error rate and average check latency.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record calibration-guidance rollout for stream and provider-health snapshots.
+
 ## [0.5.148] - 2026-02-09
 
 ### Added

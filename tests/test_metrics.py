@@ -180,3 +180,45 @@ def test_provider_health_check_snapshot_tracks_updates_and_derivatives() -> None
     assert float(ok["last_duration_seconds"]) == 0.1
     assert derived["avg_duration_seconds"] == ok["total_duration_seconds"] / ok["count"]
     assert derived["error_rate"] == ok["error_count"] / ok["count"]
+
+
+def test_stream_sink_dispatch_snapshot_includes_calibration_guidance() -> None:
+    before = metrics.get_stream_sink_dispatch_snapshot()
+    before_scheduled = int(before["events"].get("scheduled", 0))
+    before_completed = int(before["events"].get("completed", 0))
+
+    metrics.set_stream_sink_dispatch_limits_metrics(max_inflight_publish=8, max_pending_tasks=100)
+    metrics.set_stream_sink_pending_tasks(95)
+    metrics.record_stream_sink_dispatch_event("scheduled")
+    metrics.record_stream_sink_dispatch_event("dropped_backpressure")
+
+    snapshot = metrics.get_stream_sink_dispatch_snapshot()
+    derived = snapshot["derived"]
+    expected_completion_rate = (before_completed) / (before_scheduled + 1)
+
+    assert derived["backpressure_level"] in {"warning", "critical"}
+    assert derived["completion_gap"] == max(0.0, 1.0 - expected_completion_rate)
+    assert any("max_pending_tasks" in hint for hint in derived["recommendations"])
+
+
+def test_stream_fanout_snapshot_includes_calibration_guidance() -> None:
+    metrics.set_stream_fanout_limits_metrics(max_inflight=32, batch_size=4)
+    metrics.record_stream_fanout_batch_size(4)
+    metrics.record_stream_fanout_dispatch_event("delivered")
+    metrics.record_stream_fanout_dispatch_event("error")
+
+    snapshot = metrics.get_stream_fanout_snapshot()
+    derived = snapshot["derived"]
+
+    assert derived["fanout_level"] in {"warning", "critical"}
+    assert any("stream_fanout_max_inflight" in hint for hint in derived["recommendations"])
+
+
+def test_provider_health_check_snapshot_includes_calibration_guidance() -> None:
+    metrics.record_provider_health_check("slow_provider", healthy=False, duration=1.5)
+    snapshot = metrics.get_provider_health_check_snapshot()
+    derived = snapshot["slow_provider"]["derived"]
+
+    assert derived["health_level"] in {"warning", "critical"}
+    assert derived["latency_level"] in {"warning", "critical"}
+    assert any("provider" in hint.lower() for hint in derived["recommendations"])
