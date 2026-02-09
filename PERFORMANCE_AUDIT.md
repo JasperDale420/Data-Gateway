@@ -187,6 +187,10 @@ The fastest, lowest-risk wins are:
   - Additional combined optimization batch (2026-02-09):
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now uses heap-based oldest-key selection (`nsmallest`) for optional/stream cache limit eviction, avoiding full key sorting during multi-overflow eviction paths.
     - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for multi-overflow eviction correctness (newest-shape retention).
+  - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now supports explicit per-request cache-clear controls (`clear_status_section_cache`, `clear_stream_section_cache`) for low-risk operator cache resets during status calibration.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now reports cache maintenance activity (`optional_cache_maintenance_evictions`, `stream_cache_maintenance_evictions`) in `status_sections`.
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for clear-control behavior and maintenance metadata output.
 
 1. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 

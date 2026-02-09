@@ -46,6 +46,8 @@ _stream_section_stats_cache: dict[tuple[bool, bool], dict[str, dict[str, Any]]] 
 _stream_section_stats_cache_at: dict[tuple[bool, bool], datetime] | None = None
 _STATUS_SECTION_CACHE_MAX_ENTRIES = 32
 _STREAM_SECTION_CACHE_MAX_ENTRIES = 16
+_last_optional_cache_maintenance_evictions = 0
+_last_stream_cache_maintenance_evictions = 0
 
 
 def _utcnow() -> datetime:
@@ -161,7 +163,7 @@ def _status_section_cache_is_fresh(
     return (now - _status_section_stats_cache_at[cache_key]).total_seconds() <= ttl_seconds
 
 
-def _prune_stale_status_section_cache(*, now: datetime, ttl_seconds: int) -> None:
+def _prune_stale_status_section_cache(*, now: datetime, ttl_seconds: int) -> int:
     """Prune stale optional-section cache entries to bound cache growth."""
     global _status_section_stats_cache, _status_section_stats_cache_at
     if (
@@ -169,7 +171,7 @@ def _prune_stale_status_section_cache(*, now: datetime, ttl_seconds: int) -> Non
         or _status_section_stats_cache is None
         or _status_section_stats_cache_at is None
     ):
-        return
+        return 0
     stale_keys = [
         key
         for key, cached_at in _status_section_stats_cache_at.items()
@@ -178,22 +180,33 @@ def _prune_stale_status_section_cache(*, now: datetime, ttl_seconds: int) -> Non
     for key in stale_keys:
         _status_section_stats_cache.pop(key, None)
         _status_section_stats_cache_at.pop(key, None)
+    return len(stale_keys)
 
 
-def _enforce_status_section_cache_limit(*, max_entries: int) -> None:
+def _enforce_status_section_cache_limit(*, max_entries: int) -> int:
     """Evict oldest optional-section cache entries when entry limit is exceeded."""
     global _status_section_stats_cache, _status_section_stats_cache_at
     if _status_section_stats_cache is None or _status_section_stats_cache_at is None:
-        return
+        return 0
     overflow = len(_status_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
-        return
+        return 0
     oldest_keys = nsmallest(
         overflow, _status_section_stats_cache_at, key=_status_section_stats_cache_at.get
     )
     for key in oldest_keys:
         _status_section_stats_cache.pop(key, None)
         _status_section_stats_cache_at.pop(key, None)
+    return len(oldest_keys)
+
+
+def _clear_status_section_cache() -> int:
+    """Clear optional section cache and timestamps."""
+    global _status_section_stats_cache, _status_section_stats_cache_at
+    removed = len(_status_section_stats_cache or {})
+    _status_section_stats_cache = {}
+    _status_section_stats_cache_at = {}
+    return removed
 
 
 def _load_optional_status_sections(
@@ -208,6 +221,7 @@ def _load_optional_status_sections(
     include_provider_quote_batches: bool,
     status_section_cache_ttl_seconds: int,
     status_section_cache_max_entries: int,
+    clear_status_section_cache: bool,
     force_status_section_refresh: bool,
 ) -> tuple[dict, dict, dict, dict, dict, str, float | None]:
     """Load optional status sections with optional short-lived cache reuse."""
@@ -222,6 +236,10 @@ def _load_optional_status_sections(
     ):
         return {}, {}, {}, {}, {}, "skipped", None
 
+    global _last_optional_cache_maintenance_evictions
+    evictions = 0
+    if clear_status_section_cache:
+        evictions += _clear_status_section_cache()
     cache_key = (
         include_cache_stats,
         include_connection_stats,
@@ -230,7 +248,9 @@ def _load_optional_status_sections(
         include_provider_quote_batches,
     )
     now = _utcnow()
-    _prune_stale_status_section_cache(now=now, ttl_seconds=status_section_cache_ttl_seconds)
+    evictions += _prune_stale_status_section_cache(
+        now=now, ttl_seconds=status_section_cache_ttl_seconds
+    )
     if (
         status_section_cache_ttl_seconds > 0
         and not force_status_section_refresh
@@ -275,7 +295,10 @@ def _load_optional_status_sections(
             _status_section_stats_cache_at = {}
         _status_section_stats_cache[cache_key] = latest
         _status_section_stats_cache_at[cache_key] = now
-        _enforce_status_section_cache_limit(max_entries=status_section_cache_max_entries)
+        evictions += _enforce_status_section_cache_limit(
+            max_entries=status_section_cache_max_entries
+        )
+    _last_optional_cache_maintenance_evictions = evictions
 
     return (
         latest["cache"] if include_cache_stats else {},
@@ -305,7 +328,7 @@ def _stream_section_cache_is_fresh(
     return (now - _stream_section_stats_cache_at[cache_key]).total_seconds() <= ttl_seconds
 
 
-def _prune_stale_stream_section_cache(*, now: datetime, ttl_seconds: int) -> None:
+def _prune_stale_stream_section_cache(*, now: datetime, ttl_seconds: int) -> int:
     """Prune stale stream-section cache entries to bound cache growth."""
     global _stream_section_stats_cache, _stream_section_stats_cache_at
     if (
@@ -313,7 +336,7 @@ def _prune_stale_stream_section_cache(*, now: datetime, ttl_seconds: int) -> Non
         or _stream_section_stats_cache is None
         or _stream_section_stats_cache_at is None
     ):
-        return
+        return 0
     stale_keys = [
         key
         for key, cached_at in _stream_section_stats_cache_at.items()
@@ -322,22 +345,33 @@ def _prune_stale_stream_section_cache(*, now: datetime, ttl_seconds: int) -> Non
     for key in stale_keys:
         _stream_section_stats_cache.pop(key, None)
         _stream_section_stats_cache_at.pop(key, None)
+    return len(stale_keys)
 
 
-def _enforce_stream_section_cache_limit(*, max_entries: int) -> None:
+def _enforce_stream_section_cache_limit(*, max_entries: int) -> int:
     """Evict oldest stream-section cache entries when entry limit is exceeded."""
     global _stream_section_stats_cache, _stream_section_stats_cache_at
     if _stream_section_stats_cache is None or _stream_section_stats_cache_at is None:
-        return
+        return 0
     overflow = len(_stream_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
-        return
+        return 0
     oldest_keys = nsmallest(
         overflow, _stream_section_stats_cache_at, key=_stream_section_stats_cache_at.get
     )
     for key in oldest_keys:
         _stream_section_stats_cache.pop(key, None)
         _stream_section_stats_cache_at.pop(key, None)
+    return len(oldest_keys)
+
+
+def _clear_stream_section_cache() -> int:
+    """Clear stream section cache and timestamps."""
+    global _stream_section_stats_cache, _stream_section_stats_cache_at
+    removed = len(_stream_section_stats_cache or {})
+    _stream_section_stats_cache = {}
+    _stream_section_stats_cache_at = {}
+    return removed
 
 
 def _load_stream_status_sections(
@@ -346,6 +380,7 @@ def _load_stream_status_sections(
     include_stream_fanout: bool,
     stream_section_cache_ttl_seconds: int,
     stream_section_cache_max_entries: int,
+    clear_stream_section_cache: bool,
     force_stream_section_refresh: bool,
 ) -> tuple[dict, dict, str, float | None]:
     """Load optional stream telemetry sections with optional short-lived cache reuse."""
@@ -354,9 +389,15 @@ def _load_stream_status_sections(
     if not (include_stream_sink_dispatch or include_stream_fanout):
         return {}, {}, "skipped", None
 
+    global _last_stream_cache_maintenance_evictions
+    evictions = 0
+    if clear_stream_section_cache:
+        evictions += _clear_stream_section_cache()
     cache_key = (include_stream_sink_dispatch, include_stream_fanout)
     now = _utcnow()
-    _prune_stale_stream_section_cache(now=now, ttl_seconds=stream_section_cache_ttl_seconds)
+    evictions += _prune_stale_stream_section_cache(
+        now=now, ttl_seconds=stream_section_cache_ttl_seconds
+    )
     if (
         stream_section_cache_ttl_seconds > 0
         and not force_stream_section_refresh
@@ -393,7 +434,10 @@ def _load_stream_status_sections(
             _stream_section_stats_cache_at = {}
         _stream_section_stats_cache[cache_key] = latest
         _stream_section_stats_cache_at[cache_key] = now
-        _enforce_stream_section_cache_limit(max_entries=stream_section_cache_max_entries)
+        evictions += _enforce_stream_section_cache_limit(
+            max_entries=stream_section_cache_max_entries
+        )
+    _last_stream_cache_maintenance_evictions = evictions
 
     return (
         latest["stream_sink_dispatch"],
@@ -523,6 +567,10 @@ async def get_status(
         bool,
         Query(description="Bypass optional stream telemetry section cache for this request"),
     ] = False,
+    clear_stream_section_cache: Annotated[
+        bool,
+        Query(description="Clear optional stream telemetry section cache before this request"),
+    ] = False,
     include_provider_health_cache_metadata: Annotated[
         bool,
         Query(description="Whether to include provider health cache metadata block"),
@@ -542,6 +590,10 @@ async def get_status(
     force_status_section_refresh: Annotated[
         bool,
         Query(description="Bypass optional status section stats cache for this request"),
+    ] = False,
+    clear_status_section_cache: Annotated[
+        bool,
+        Query(description="Clear optional status section cache before this request"),
     ] = False,
 ):
     """Get full system status including clients, providers, and subscriptions."""
@@ -582,6 +634,7 @@ async def get_status(
         include_provider_quote_batches=include_provider_quote_batches,
         status_section_cache_ttl_seconds=status_section_cache_ttl_seconds,
         status_section_cache_max_entries=effective_status_cache_max_entries,
+        clear_status_section_cache=clear_status_section_cache,
         force_status_section_refresh=force_status_section_refresh,
     )
     (
@@ -594,6 +647,7 @@ async def get_status(
         include_stream_fanout=include_stream_fanout,
         stream_section_cache_ttl_seconds=stream_section_cache_ttl_seconds,
         stream_section_cache_max_entries=effective_stream_cache_max_entries,
+        clear_stream_section_cache=clear_stream_section_cache,
         force_stream_section_refresh=force_stream_section_refresh,
     )
 
@@ -629,11 +683,13 @@ async def get_status(
             "optional_stats_age_seconds": optional_stats_age_seconds,
             "optional_cache_entries": optional_cache_entries,
             "optional_cache_max_entries": effective_status_cache_max_entries,
+            "optional_cache_maintenance_evictions": _last_optional_cache_maintenance_evictions,
             "stream_stats_source": stream_stats_source,
             "stream_stats_ttl_seconds": stream_section_cache_ttl_seconds,
             "stream_stats_age_seconds": stream_stats_age_seconds,
             "stream_cache_entries": stream_cache_entries,
             "stream_cache_max_entries": effective_stream_cache_max_entries,
+            "stream_cache_maintenance_evictions": _last_stream_cache_maintenance_evictions,
         }
 
     return {

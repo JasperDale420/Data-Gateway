@@ -1367,6 +1367,70 @@ async def test_get_status_can_override_cache_entry_limits_per_request(
 
 
 @pytest.mark.asyncio
+async def test_get_status_can_clear_optional_section_cache_on_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(
+        admin, "_status_section_stats_cache", {(True, False, False, False, False): {"cache": {}}}
+    )
+    monkeypatch.setattr(
+        admin,
+        "_status_section_stats_cache_at",
+        {(True, False, False, False, False): datetime(2026, 2, 10, 0, 41, tzinfo=UTC)},
+    )
+    monkeypatch.setattr(admin, "_utcnow", lambda: datetime(2026, 2, 10, 0, 42, tzinfo=UTC))
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        clear_status_section_cache=True,
+        status_section_cache_ttl_seconds=0,
+    )
+
+    assert response["data"]["status_sections"]["optional_cache_maintenance_evictions"] >= 1
+    assert len(admin._status_section_stats_cache or {}) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_status_can_clear_stream_section_cache_on_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(
+        admin, "_stream_section_stats_cache", {(True, True): {"stream_sink_dispatch": {}}}
+    )
+    monkeypatch.setattr(
+        admin,
+        "_stream_section_stats_cache_at",
+        {(True, True): datetime(2026, 2, 10, 0, 43, tzinfo=UTC)},
+    )
+    monkeypatch.setattr(admin, "_utcnow", lambda: datetime(2026, 2, 10, 0, 44, tzinfo=UTC))
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        clear_stream_section_cache=True,
+        stream_section_cache_ttl_seconds=0,
+    )
+
+    assert response["data"]["status_sections"]["stream_cache_maintenance_evictions"] >= 1
+    assert len(admin._stream_section_stats_cache or {}) == 0
+
+
+@pytest.mark.asyncio
 async def test_get_status_optional_cache_evicts_oldest_shapes_when_overflow_is_multiple(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

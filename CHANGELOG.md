@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.159] - 2026-02-09
+
+### Added
+
+- **Status-cache clear-control regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for `clear_status_section_cache` and `clear_stream_section_cache` behavior.
+
+### Changed
+
+- **Per-request status-cache clear controls**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `clear_status_section_cache` and `clear_stream_section_cache` flags for operator-driven cache reset during calibration.
+- **Cache-maintenance visibility**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `status_sections` includes `optional_cache_maintenance_evictions` and `stream_cache_maintenance_evictions`.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record status-cache clear controls and maintenance-eviction metadata rollout.
+
 ## [0.5.158] - 2026-02-09
 
 ### Added
