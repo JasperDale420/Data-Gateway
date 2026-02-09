@@ -102,3 +102,59 @@ def test_stream_fanout_snapshot_tracks_updates() -> None:
     assert after["batches"]["total_clients"] >= 6
     assert after["batches"]["max_batch_size"] >= 4
     assert int(after["events"].get("delivered", 0)) == before_delivered + 1
+
+
+def test_stream_sink_dispatch_snapshot_includes_derived_calibration_metrics() -> None:
+    before = metrics.get_stream_sink_dispatch_snapshot()
+    before_scheduled = int(before["events"].get("scheduled", 0))
+    before_completed = int(before["events"].get("completed", 0))
+    before_dropped = int(before["events"].get("dropped_backpressure", 0))
+
+    metrics.set_stream_sink_dispatch_limits_metrics(max_inflight_publish=5, max_pending_tasks=20)
+    metrics.set_stream_sink_pending_tasks(10)
+    metrics.record_stream_sink_dispatch_event("scheduled")
+    metrics.record_stream_sink_dispatch_event("scheduled")
+    metrics.record_stream_sink_dispatch_event("completed")
+    metrics.record_stream_sink_dispatch_event("dropped_backpressure")
+
+    after = metrics.get_stream_sink_dispatch_snapshot()
+    derived = after["derived"]
+
+    expected_scheduled = before_scheduled + 2
+    expected_completed = before_completed + 1
+    expected_dropped = before_dropped + 1
+    expected_completion_rate = expected_completed / expected_scheduled
+    expected_drop_rate = expected_dropped / expected_scheduled
+
+    assert derived["pending_utilization"] == 0.5
+    assert derived["completion_rate"] == expected_completion_rate
+    assert derived["drop_rate"] == expected_drop_rate
+
+
+def test_stream_fanout_snapshot_includes_derived_calibration_metrics() -> None:
+    before = metrics.get_stream_fanout_snapshot()
+    before_count = int(before["batches"].get("count", 0))
+    before_total_clients = int(before["batches"].get("total_clients", 0))
+    before_delivered = int(before["events"].get("delivered", 0))
+    before_error = int(before["events"].get("error", 0))
+
+    metrics.set_stream_fanout_limits_metrics(max_inflight=9, batch_size=6)
+    metrics.record_stream_fanout_batch_size(6)
+    metrics.record_stream_fanout_batch_size(3)
+    metrics.record_stream_fanout_dispatch_event("delivered")
+    metrics.record_stream_fanout_dispatch_event("delivered")
+    metrics.record_stream_fanout_dispatch_event("error")
+
+    after = metrics.get_stream_fanout_snapshot()
+    derived = after["derived"]
+
+    expected_count = before_count + 2
+    expected_total_clients = before_total_clients + 9
+    expected_delivered = before_delivered + 2
+    expected_error = before_error + 1
+    expected_avg_batch_size = expected_total_clients / expected_count
+    expected_error_rate = expected_error / (expected_delivered + expected_error)
+
+    assert derived["avg_batch_size"] == expected_avg_batch_size
+    assert derived["batch_fill_ratio"] == expected_avg_batch_size / 6
+    assert derived["error_rate"] == expected_error_rate

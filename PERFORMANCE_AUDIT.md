@@ -54,6 +54,7 @@ The fastest, lowest-risk wins are:
   - Bounded scheduling guardrails, runtime limit configuration, and shutdown draining are in place: `gateway/main.py` (`_configure_stream_sink_dispatch_limits`, `_drain_stream_sink_publish_tasks`).
   - Stream-to-sink scheduler telemetry is now emitted for calibration: `gateway/core/metrics.py` (`gateway_stream_sink_dispatch_events_total`, `gateway_stream_sink_pending_tasks`, `gateway_stream_sink_dispatch_limit`) and hooked into scheduler lifecycle in `gateway/main.py`.
   - Admin status now exposes stream scheduler telemetry snapshot via `/api/v1/status` (`stream_sink_dispatch`) for operator visibility during tuning.
+  - Stream sink telemetry snapshots now include derived calibration signals (`pending_utilization`, `completion_rate`, `drop_rate`) via `gateway/core/metrics.py`.
 - Impact: Stream callback no longer waits on sink publish/dedup I/O, reducing callback latency coupling under sink backpressure.
 - Remaining low-risk follow-up:
   - Calibrate `data_sink_stream_publish_max_inflight` and `data_sink_stream_publish_max_pending` using the new dispatch telemetry under production-like fanout load.
@@ -65,6 +66,7 @@ The fastest, lowest-risk wins are:
   - In-flight semaphore and batch limits are now runtime-configurable through `stream_fanout_max_inflight` and `stream_fanout_batch_size`.
   - Fanout telemetry is now emitted for calibration: `gateway/core/metrics.py` (`gateway_stream_fanout_events_total`, `gateway_stream_fanout_batch_size`, `gateway_stream_fanout_limit`) and hooked into fanout lifecycle in `gateway/core/stream.py`.
   - Admin status now exposes stream fanout telemetry snapshot via `/api/v1/status` (`stream_fanout`) for operator visibility during tuning.
+  - Stream fanout telemetry snapshots now include derived calibration signals (`avg_batch_size`, `batch_fill_ratio`, `error_rate`) via `gateway/core/metrics.py`.
 - Impact: Reduces single-message task allocation burst and smooths event-loop pressure at high fanout while preserving delivery semantics. `_iter_client_batches(...)` now yields lazily without precomputing full batch lists, reducing per-message allocation overhead for large subscriber sets. Stream market-data validation now also reuses a cached validator instance (`_get_stream_validator(...)`) and a static message-type map in `gateway/core/stream.py`, removing repeated hot-path resolver/map allocations per validated message. News-symbol fanout lookup now deduplicates repeated symbols before subscription index reads, trimming redundant lookup work on duplicate-symbol payloads.
 - Remaining low-risk follow-up:
   - Calibrate `stream_fanout_max_inflight` and `stream_fanout_batch_size` with telemetry under production-like loads.
@@ -269,7 +271,7 @@ Legend:
 4. **Alpaca provider**: Continue shared client-use and logging tuning follow-ups; timestamp conversion-path consolidation is now in place.
 5. **Non-provider routers**: Finnhub cached-router telemetry sweep is complete (news, quotes/bars, funds, analysis, forex, crypto, alternative-data, earnings, ETF/index, fundamentals). Follow-up is optional telemetry naming/metric-cardinality review during regular perf monitoring.
 6. **Core modules**: Benchmark calibration.
-7. **Stream path**: Telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`) using `gateway_stream_sink_dispatch_events_total`, `gateway_stream_sink_pending_tasks`, `gateway_stream_sink_dispatch_limit`, `gateway_stream_fanout_events_total`, `gateway_stream_fanout_batch_size`, `gateway_stream_fanout_limit`, and `/api/v1/status` snapshots (`stream_sink_dispatch`, `stream_fanout`).
+7. **Stream path**: Telemetry-calibrate configured fanout/sink limits (`stream_fanout_max_inflight`, `stream_fanout_batch_size`, `data_sink_stream_publish_max_inflight`, `data_sink_stream_publish_max_pending`) using `gateway_stream_sink_dispatch_events_total`, `gateway_stream_sink_pending_tasks`, `gateway_stream_sink_dispatch_limit`, `gateway_stream_fanout_events_total`, `gateway_stream_fanout_batch_size`, `gateway_stream_fanout_limit`, and `/api/v1/status` snapshots (`stream_sink_dispatch`, `stream_fanout`) including derived metrics (`pending_utilization`, `completion_rate`, `drop_rate`, `avg_batch_size`, `batch_fill_ratio`, `error_rate`).
 8. **Perf guardrails**: Continue periodic monitoring/tuning via `scripts/perf_release_readiness.py` and `PERF_RELEASE_READINESS.md`.
 
 ## Notes

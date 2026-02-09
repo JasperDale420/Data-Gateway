@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.130] - 2026-02-09
+
+### Added
+
+- **Derived stream calibration regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` to validate derived sink/fanout snapshot telemetry for calibration workflows.
+
+### Changed
+
+- **Derived sink/fanout telemetry snapshots**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` so `get_stream_sink_dispatch_snapshot()` and `get_stream_fanout_snapshot()` include `derived` metrics (`pending_utilization`, `completion_rate`, `drop_rate`, `avg_batch_size`, `batch_fill_ratio`, `error_rate`) computed with safe zero-division handling.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to include derived stream calibration signals in stream-path tuning guidance.
+
 ## [0.5.129] - 2026-02-09
 
 ### Fixed

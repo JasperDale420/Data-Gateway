@@ -562,9 +562,31 @@ def set_stream_sink_dispatch_limits_metrics(
         limits["max_pending_tasks"] = max(1, max_pending_tasks)
 
 
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    """Return a bounded ratio and avoid division-by-zero in derived telemetry."""
+    if denominator <= 0:
+        return 0.0
+    return numerator / denominator
+
+
 def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
     """Get stream-to-sink scheduler telemetry snapshot for admin status surfaces."""
-    return deepcopy(_STREAM_SINK_DISPATCH_SNAPSHOT)
+    snapshot = deepcopy(_STREAM_SINK_DISPATCH_SNAPSHOT)
+    limits = snapshot.get("limits", {})
+    events = snapshot.get("events", {})
+
+    max_pending_tasks = float(int(limits.get("max_pending_tasks", 0)))
+    pending_tasks = float(int(snapshot.get("pending_tasks", 0)))
+    scheduled = float(int(events.get("scheduled", 0)))
+    completed = float(int(events.get("completed", 0)))
+    dropped_backpressure = float(int(events.get("dropped_backpressure", 0)))
+
+    snapshot["derived"] = {
+        "pending_utilization": _safe_ratio(pending_tasks, max_pending_tasks),
+        "completion_rate": _safe_ratio(completed, scheduled),
+        "drop_rate": _safe_ratio(dropped_backpressure, scheduled),
+    }
+    return snapshot
 
 
 def record_stream_fanout_dispatch_event(status: str) -> None:
@@ -598,7 +620,24 @@ def set_stream_fanout_limits_metrics(*, max_inflight: int, batch_size: int) -> N
 
 def get_stream_fanout_snapshot() -> dict[str, Any]:
     """Get stream fanout telemetry snapshot for admin status surfaces."""
-    return deepcopy(_STREAM_FANOUT_SNAPSHOT)
+    snapshot = deepcopy(_STREAM_FANOUT_SNAPSHOT)
+    limits = snapshot.get("limits", {})
+    events = snapshot.get("events", {})
+    batches = snapshot.get("batches", {})
+
+    count = float(int(batches.get("count", 0)))
+    total_clients = float(int(batches.get("total_clients", 0)))
+    configured_batch_size = float(int(limits.get("batch_size", 0)))
+    delivered = float(int(events.get("delivered", 0)))
+    errored = float(int(events.get("error", 0)))
+
+    avg_batch_size = _safe_ratio(total_clients, count)
+    snapshot["derived"] = {
+        "avg_batch_size": avg_batch_size,
+        "batch_fill_ratio": _safe_ratio(avg_batch_size, configured_batch_size),
+        "error_rate": _safe_ratio(errored, delivered + errored),
+    }
+    return snapshot
 
 
 def httpx_event_hooks(provider: str) -> dict[str, list]:
