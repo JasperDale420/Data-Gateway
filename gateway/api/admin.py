@@ -43,6 +43,8 @@ _status_section_stats_cache: (
 _status_section_stats_cache_at: dict[tuple[bool, bool, bool, bool, bool], datetime] | None = None
 _stream_section_stats_cache: dict[tuple[bool, bool], dict[str, dict[str, Any]]] | None = None
 _stream_section_stats_cache_at: dict[tuple[bool, bool], datetime] | None = None
+_STATUS_SECTION_CACHE_MAX_ENTRIES = 32
+_STREAM_SECTION_CACHE_MAX_ENTRIES = 16
 
 
 def _utcnow() -> datetime:
@@ -177,6 +179,22 @@ def _prune_stale_status_section_cache(*, now: datetime, ttl_seconds: int) -> Non
         _status_section_stats_cache_at.pop(key, None)
 
 
+def _enforce_status_section_cache_limit() -> None:
+    """Evict oldest optional-section cache entries when entry limit is exceeded."""
+    global _status_section_stats_cache, _status_section_stats_cache_at
+    if _status_section_stats_cache is None or _status_section_stats_cache_at is None:
+        return
+    overflow = len(_status_section_stats_cache_at) - _STATUS_SECTION_CACHE_MAX_ENTRIES
+    if overflow <= 0:
+        return
+    oldest_keys = sorted(_status_section_stats_cache_at, key=_status_section_stats_cache_at.get)[
+        :overflow
+    ]
+    for key in oldest_keys:
+        _status_section_stats_cache.pop(key, None)
+        _status_section_stats_cache_at.pop(key, None)
+
+
 def _load_optional_status_sections(
     *,
     registry: ProviderRegistry,
@@ -255,6 +273,7 @@ def _load_optional_status_sections(
             _status_section_stats_cache_at = {}
         _status_section_stats_cache[cache_key] = latest
         _status_section_stats_cache_at[cache_key] = now
+        _enforce_status_section_cache_limit()
 
     return (
         latest["cache"] if include_cache_stats else {},
@@ -299,6 +318,22 @@ def _prune_stale_stream_section_cache(*, now: datetime, ttl_seconds: int) -> Non
         if (now - cached_at).total_seconds() > ttl_seconds
     ]
     for key in stale_keys:
+        _stream_section_stats_cache.pop(key, None)
+        _stream_section_stats_cache_at.pop(key, None)
+
+
+def _enforce_stream_section_cache_limit() -> None:
+    """Evict oldest stream-section cache entries when entry limit is exceeded."""
+    global _stream_section_stats_cache, _stream_section_stats_cache_at
+    if _stream_section_stats_cache is None or _stream_section_stats_cache_at is None:
+        return
+    overflow = len(_stream_section_stats_cache_at) - _STREAM_SECTION_CACHE_MAX_ENTRIES
+    if overflow <= 0:
+        return
+    oldest_keys = sorted(_stream_section_stats_cache_at, key=_stream_section_stats_cache_at.get)[
+        :overflow
+    ]
+    for key in oldest_keys:
         _stream_section_stats_cache.pop(key, None)
         _stream_section_stats_cache_at.pop(key, None)
 
@@ -355,6 +390,7 @@ def _load_stream_status_sections(
             _stream_section_stats_cache_at = {}
         _stream_section_stats_cache[cache_key] = latest
         _stream_section_stats_cache_at[cache_key] = now
+        _enforce_stream_section_cache_limit()
 
     return (
         latest["stream_sink_dispatch"],

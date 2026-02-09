@@ -177,6 +177,9 @@ The fastest, lowest-risk wins are:
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now prunes stale optional-section and stream-section cache entries as part of status request handling, bounding cache growth for long-running admin polling workloads.
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now includes cache cardinality metadata (`optional_cache_entries`, `stream_cache_entries`) in `status_sections` for calibration visibility.
     - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for stale-cache pruning and cache-entry metadata output.
+  - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now enforces max-entry limits for both optional-section and stream-section shape caches, evicting oldest entries when limits are exceeded.
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for optional/stream cache entry-limit eviction behavior.
 
 1. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 

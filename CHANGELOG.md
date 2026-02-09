@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.155] - 2026-02-09
+
+### Added
+
+- **Status cache entry-limit regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage ensuring optional and stream shape caches enforce max-entry limits and evict oldest entries.
+
+### Changed
+
+- **Optional cache entry cap**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` with `_STATUS_SECTION_CACHE_MAX_ENTRIES` and oldest-entry eviction for optional-section shape cache.
+- **Stream cache entry cap**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` with `_STREAM_SECTION_CACHE_MAX_ENTRIES` and oldest-entry eviction for stream-section shape cache.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record status cache entry-limit guardrails.
+
 ## [0.5.154] - 2026-02-09
 
 ### Added
