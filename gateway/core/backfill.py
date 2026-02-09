@@ -14,7 +14,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from gateway.core.envelope import wrap_event
-from gateway.core.rate_limiter import get_rate_limiter
+from gateway.core.rate_limiter import ProviderRateLimitManager, get_rate_limiter
 
 logger = structlog.get_logger()
 
@@ -346,7 +346,7 @@ class BackfillEngine:
             except asyncio.CancelledError:
                 job.status = BackfillStatus.CANCELLED
                 logger.info("backfill_job_cancelled_during_execution", job_id=job.job_id)
-                return
+                raise
             except Exception as e:
                 job.status = BackfillStatus.FAILED
                 job.errors.append(str(e))
@@ -390,77 +390,88 @@ class BackfillEngine:
         dispatch_fn = BACKFILL_DISPATCH[(job.request.provider, job.request.feed)]
         chunks = _date_chunks(job.request.start, job.request.end, job.request.chunk_days)
         rate_limiter = get_rate_limiter()
-
         delay_ms = PROVIDER_CHUNK_DELAY_MS.get(job.request.provider, DEFAULT_CHUNK_DELAY_MS)
 
         for sym in job.request.symbols:
             if job.status == BackfillStatus.CANCELLED:
                 break
+            await self._process_symbol(
+                job, sym, chunks, dispatch_fn, provider_instance, rate_limiter, delay_ms,
+            )
 
-            sp = job.symbols_progress[sym]
-            sp.status = "running"
+    async def _process_symbol(
+        self,
+        job: BackfillJob,
+        sym: str,
+        chunks: list[tuple[datetime, datetime]],
+        dispatch_fn: Any,
+        provider_instance: Any,
+        rate_limiter: ProviderRateLimitManager,
+        delay_ms: int,
+    ) -> None:
+        """Fetch and publish all chunks for a single symbol."""
+        sp = job.symbols_progress[sym]
+        sp.status = "running"
 
-            for chunk_start, chunk_end in chunks:
-                if job.status == BackfillStatus.CANCELLED:
-                    break
+        for chunk_start, chunk_end in chunks:
+            if job.status == BackfillStatus.CANCELLED:
+                break
+            await self._process_chunk(
+                job, sp, sym, chunk_start, chunk_end,
+                dispatch_fn, provider_instance, rate_limiter,
+            )
+            await asyncio.sleep(delay_ms / 1000)
 
-                try:
-                    # Respect rate limits
-                    await rate_limiter.acquire(job.request.provider, block=True)
+        sp.status = "failed" if sp.errors else "complete"
 
-                    # Fetch data from provider
-                    results = await dispatch_fn(
-                        provider_instance,
-                        sym,
-                        chunk_start,
-                        chunk_end,
-                        timeframe=job.request.timeframe,
-                    )
+    async def _process_chunk(
+        self,
+        job: BackfillJob,
+        sp: SymbolProgress,
+        sym: str,
+        chunk_start: datetime,
+        chunk_end: datetime,
+        dispatch_fn: Any,
+        provider_instance: Any,
+        rate_limiter: ProviderRateLimitManager,
+    ) -> None:
+        """Fetch and publish a single date chunk for a symbol."""
+        try:
+            await rate_limiter.acquire(job.request.provider, block=True)
+            results = await dispatch_fn(
+                provider_instance, sym, chunk_start, chunk_end,
+                timeframe=job.request.timeframe,
+            )
+            if not results:
+                sp.chunks_complete += 1
+                return
 
-                    if not results:
-                        sp.chunks_complete += 1
-                        continue
-
-                    # Normalize results to list of dicts
-                    items = _normalize_results(results)
-
-                    # Wrap each item in an envelope and publish
-                    published = await self._publish_items(
-                        items=items,
-                        provider=job.request.provider,
-                        feed=job.request.feed,
-                        job_id=job.job_id,
-                    )
-
-                    sp.records_published += published
-                    job.records_published += published
-                    sp.chunks_complete += 1
-
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    error_msg = f"{sym} chunk {chunk_start.date()}-{chunk_end.date()}: {e}"
-                    sp.errors.append(error_msg)
-                    job.errors.append(error_msg)
-                    sp.chunks_complete += 1  # Move on even on failure
-                    logger.warning(
-                        "backfill_chunk_failed",
-                        job_id=job.job_id,
-                        symbol=sym,
-                        chunk_start=str(chunk_start.date()),
-                        chunk_end=str(chunk_end.date()),
-                        error=str(e),
-                        exc_info=True,
-                    )
-
-                # Inter-chunk delay to stay under rate limits
-                await asyncio.sleep(delay_ms / 1000)
-
-            # Mark symbol status
-            if sp.errors:
-                sp.status = "failed"
-            else:
-                sp.status = "complete"
+            items = _normalize_results(results)
+            published = await self._publish_items(
+                items=items,
+                provider=job.request.provider,
+                feed=job.request.feed,
+                job_id=job.job_id,
+            )
+            sp.records_published += published
+            job.records_published += published
+            sp.chunks_complete += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            error_msg = f"{sym} chunk {chunk_start.date()}-{chunk_end.date()}: {e}"
+            sp.errors.append(error_msg)
+            job.errors.append(error_msg)
+            sp.chunks_complete += 1
+            logger.warning(
+                "backfill_chunk_failed",
+                job_id=job.job_id,
+                symbol=sym,
+                chunk_start=str(chunk_start.date()),
+                chunk_end=str(chunk_end.date()),
+                error=str(e),
+                exc_info=True,
+            )
 
     async def _publish_items(
         self,
@@ -489,7 +500,7 @@ class BackfillEngine:
 
     async def shutdown(self) -> None:
         """Cancel all running jobs on engine shutdown."""
-        for job_id, task in list(self._running_tasks.items()):
+        for job_id, task in self._running_tasks.items():
             if not task.done():
                 task.cancel()
                 logger.info("backfill_job_cancelled_on_shutdown", job_id=job_id)

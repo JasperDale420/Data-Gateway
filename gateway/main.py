@@ -26,6 +26,7 @@ from gateway.api import (
     admin_router,
     alpaca_router,
     alphavantage_router,
+    backfill_router,
     bulk_router,
     calendar_router,
     catalog_router,
@@ -319,6 +320,16 @@ async def lifespan(app: FastAPI):
     elif settings.data_sink_enabled:
         logger.warning("data_sink_skipped", reason="Missing GATEWAY_DATA_SINK_REDIS_URL")
 
+    # Configure backfill engine with provider and sink registries
+    from gateway.core.backfill import get_backfill_engine
+
+    backfill_engine = get_backfill_engine()
+    backfill_engine.configure(
+        provider_registry=registry,
+        sink_registry=sink_registry,
+    )
+    logger.info("backfill_engine_configured")
+
     # SIGHUP handler for hot config reload (PRD 6.5.4)
     def handle_sighup(signum, frame):
         logger.info("sighup_received", action="reloading_config")
@@ -394,6 +405,11 @@ async def lifespan(app: FastAPI):
 
         await stop_uw_poller()
 
+    # Shutdown backfill engine
+    from gateway.core.backfill import get_backfill_engine
+
+    await get_backfill_engine().shutdown()
+
     # Shutdown remaining components
     await registry.shutdown()
     uptime_task.cancel()
@@ -466,6 +482,7 @@ def create_app() -> FastAPI:
     app.include_router(legacy_adjustments_router)
     app.include_router(quality_router)
     app.include_router(catalog_router)
+    app.include_router(backfill_router)
 
     # Root endpoint
     @app.get("/")
