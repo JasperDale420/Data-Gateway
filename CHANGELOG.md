@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.132] - 2026-02-09
+
+### Added
+
+- **Provider-health cache behavior regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for provider-health TTL cache reuse and force-refresh bypass behavior in `/api/v1/status`.
+
+### Changed
+
+- **Combined admin status performance rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to add a short-lived provider-health cache (5 seconds) for repeated `/api/v1/status` polling when `include_provider_health=true`, and added `force_provider_health_refresh` for explicit cache bypass.
+- **Endpoint parameter typing hardening**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` status query parameters to use `Annotated[..., Query(...)]` with real boolean defaults, keeping direct-call unit tests and FastAPI request behavior aligned.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record the provider-health cache/refresh calibration path.
+
 ## [0.5.131] - 2026-02-09
 
 ### Added

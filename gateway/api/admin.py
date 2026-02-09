@@ -3,6 +3,7 @@
 import logging
 from collections import deque
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
@@ -26,6 +27,42 @@ router = APIRouter(tags=["admin"])
 _error_buffer: deque[dict] = deque(maxlen=1000)
 _error_counts: dict[str, int] = {}
 _error_counts_reset: datetime = datetime.now(UTC)
+_PROVIDER_HEALTH_CACHE_TTL_SECONDS = 5
+_provider_health_cache: dict | None = None
+_provider_health_cache_at: datetime | None = None
+
+
+def _utcnow() -> datetime:
+    """Clock helper for status-related caching and testability."""
+    return datetime.now(UTC)
+
+
+def _provider_health_cache_is_fresh(now: datetime) -> bool:
+    """Whether provider-health cache is valid for reuse."""
+    if _provider_health_cache is None or _provider_health_cache_at is None:
+        return False
+    return (now - _provider_health_cache_at).total_seconds() <= _PROVIDER_HEALTH_CACHE_TTL_SECONDS
+
+
+async def _load_provider_health_status(
+    *,
+    registry: ProviderRegistry,
+    include_provider_health: bool,
+    force_provider_health_refresh: bool,
+) -> dict:
+    """Load provider health status with optional short-lived cache reuse."""
+    global _provider_health_cache, _provider_health_cache_at
+    if not include_provider_health:
+        return {}
+
+    now = _utcnow()
+    if not force_provider_health_refresh and _provider_health_cache_is_fresh(now):
+        return _provider_health_cache or {}
+
+    health = await registry.health_check_all()
+    _provider_health_cache = health
+    _provider_health_cache_at = now
+    return health
 
 
 def log_error(error_code: str, message: str, component: str = "gateway") -> None:
@@ -92,14 +129,21 @@ async def get_status(
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
     connections: ConnectionManager = Depends(get_connection_manager),
-    include_provider_health: bool = Query(
-        default=True,
-        description="Whether to run live provider health checks (may add latency)",
-    ),
+    include_provider_health: Annotated[
+        bool,
+        Query(description="Whether to run live provider health checks (may add latency)"),
+    ] = True,
+    force_provider_health_refresh: Annotated[
+        bool,
+        Query(description="Bypass short-lived provider health cache for this request"),
+    ] = False,
 ):
     """Get full system status including clients, providers, and subscriptions."""
-    # Provider health (optionally skipped for lower-latency status polling)
-    provider_status = await registry.health_check_all() if include_provider_health else {}
+    provider_status = await _load_provider_health_status(
+        registry=registry,
+        include_provider_health=include_provider_health,
+        force_provider_health_refresh=force_provider_health_refresh,
+    )
 
     # Cache stats
     cache_stats = cache.get_stats_dict()
