@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.134] - 2026-02-09
+
+### Added
+
+- **Backfill engine**: Created `gateway/core/backfill.py` with `BackfillEngine`, `BackfillJob`, `BackfillRequest` for bulk historical data fetching and publishing through the Redis Streams → Heber pipeline. Features per-provider concurrency locks, date chunking, rate limiting, symbol-level progress tracking, and dispatch table for 10 provider/feed combinations.
+- **Backfill API**: Created `gateway/api/backfill.py` with 5 endpoints: `POST /api/v1/backfill` (submit), `GET /api/v1/backfill` (list), `GET /api/v1/backfill/{job_id}` (status), `DELETE /api/v1/backfill/{job_id}` (cancel), `GET /api/v1/backfill/feeds` (supported feeds).
+- **Backfill tests**: Added `tests/test_backfill.py` with 27 tests covering date chunking, result normalization, job properties, engine validation, full job execution, error handling, graceful shutdown, API endpoints, and singleton behavior.
+
+### Changed
+
+- **App wiring**: Updated `gateway/main.py` to configure `BackfillEngine` with provider/sink registries during lifespan startup and shut it down during teardown. Updated `gateway/api/__init__.py` to export `backfill_router`.
+
 ## [0.5.133] - 2026-02-09
 
 ### Added
