@@ -78,6 +78,10 @@ The fastest, lowest-risk wins are:
     - `gateway/core/stream.py` now fast-paths single-client fanout batches in `_handle_message(...)` and avoids `asyncio.gather(...)` task allocation when a batch has exactly one downstream client.
     - This reduces per-message scheduling overhead for the common low-subscriber case while preserving existing bounded-batch semantics for multi-client fanout.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` (`test_stream_multiplexer_single_client_fanout_skips_gather`).
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/stream.py` now uses zero-copy subscription views (`get_clients_for_symbol_view(...)`) in `_handle_message(...)` to avoid per-symbol list allocation during client lookup.
+    - Existing `get_clients_for_symbol(...)` behavior is preserved for compatibility, while the hot path uses collection views for lower allocation overhead.
+    - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` for view semantics (`test_stream_subscription_manager_client_view_reuses_index_set`, `test_stream_subscription_manager_client_view_missing_symbol_is_empty`).
 
 ### P1 (High Value, Low/Medium Risk)
 

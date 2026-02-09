@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.145] - 2026-02-09
+
+### Added
+
+- **Subscription-view regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` with coverage for zero-copy subscription view behavior used by stream fanout hot paths.
+
+### Changed
+
+- **Zero-copy stream subscriber lookup**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/stream.py` with `SubscriptionManager.get_clients_for_symbol_view(...)` and switched `_handle_message(...)` to use view-based lookups, reducing per-message list allocations.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record stream subscriber lookup allocation trimming.
+
 ## [0.5.144] - 2026-02-09
 
 ### Added

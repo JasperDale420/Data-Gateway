@@ -7,6 +7,7 @@ import pytest
 
 import gateway.core.stream as stream_module
 from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
+from gateway.core.stream import SubscriptionManager as StreamSubscriptionManager
 
 
 @pytest.fixture
@@ -266,7 +267,8 @@ async def test_stream_multiplexer_reuses_cached_validator(
         Any,
         SimpleNamespace(
             subscriptions=SimpleNamespace(
-                get_clients_for_symbol=lambda _symbol, _data_type: ["client-1"]
+                get_clients_for_symbol=lambda _symbol, _data_type: ["client-1"],
+                get_clients_for_symbol_view=lambda _symbol, _data_type: ["client-1"],
             )
         ),
     )
@@ -321,7 +323,10 @@ async def test_stream_multiplexer_skips_validation_without_subscribers(
     multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
         Any,
         SimpleNamespace(
-            subscriptions=SimpleNamespace(get_clients_for_symbol=lambda _symbol, _data_type: [])
+            subscriptions=SimpleNamespace(
+                get_clients_for_symbol=lambda _symbol, _data_type: [],
+                get_clients_for_symbol_view=lambda _symbol, _data_type: [],
+            )
         ),
     )
 
@@ -336,6 +341,9 @@ async def test_news_symbol_lookup_deduplicates_symbols() -> None:
         def get_clients_for_symbol(self, symbol: str, _data_type: str) -> list[str]:
             calls.append(symbol)
             return []
+
+        def get_clients_for_symbol_view(self, symbol: str, _data_type: str) -> list[str]:
+            return self.get_clients_for_symbol(symbol, _data_type)
 
     class _Connection:
         def __init__(self) -> None:
@@ -393,6 +401,9 @@ async def test_stream_multiplexer_single_client_fanout_skips_gather(
                 return ["client-1"]
             return []
 
+        def get_clients_for_symbol_view(self, symbol: str, _data_type: str) -> list[str]:
+            return self.get_clients_for_symbol(symbol, _data_type)
+
     multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
         Any, SimpleNamespace(subscriptions=_Subscriptions())
     )
@@ -400,3 +411,21 @@ async def test_stream_multiplexer_single_client_fanout_skips_gather(
     await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "AAPL"})
 
     assert delivered == [("client-1", "bars")]
+
+
+def test_stream_subscription_manager_client_view_reuses_index_set() -> None:
+    manager = StreamSubscriptionManager()
+    manager.subscribe(client_id="client-1", bars=["AAPL"])
+
+    clients_view = manager.get_clients_for_symbol_view("AAPL", "bars")
+
+    assert clients_view == {"client-1"}
+    assert clients_view is manager._index["bars"]["AAPL"]  # noqa: SLF001
+
+
+def test_stream_subscription_manager_client_view_missing_symbol_is_empty() -> None:
+    manager = StreamSubscriptionManager()
+
+    clients_view = manager.get_clients_for_symbol_view("MSFT", "bars")
+
+    assert tuple(clients_view) == ()

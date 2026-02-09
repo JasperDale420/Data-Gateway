@@ -6,7 +6,7 @@ crypto, news) and fans out received data to subscribed downstream clients.
 
 import asyncio
 import random
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Collection, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -291,6 +291,13 @@ class SubscriptionManager:
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
         """Get all clients subscribed to a symbol for a data type."""
         return list(self._index.get(data_type, {}).get(symbol, ()))
+
+    def get_clients_for_symbol_view(self, symbol: str, data_type: str) -> Collection[str]:
+        """Get a zero-copy view of clients subscribed to a symbol for a data type."""
+        clients = self._index.get(data_type, {}).get(symbol)
+        if clients is None:
+            return ()
+        return clients
 
     def _aggregate(self) -> tuple[set[str], set[str], set[str], set[str]]:
         """Compute union of all client subscriptions."""
@@ -940,9 +947,9 @@ class StreamMultiplexer:
 
         clients: set[str] = set()
         if data_type == "news":
-            clients.update(conn.subscriptions.get_clients_for_symbol("*", data_type))
+            clients.update(conn.subscriptions.get_clients_for_symbol_view("*", data_type))
         for sym in unique_symbols:
-            clients.update(conn.subscriptions.get_clients_for_symbol(sym, data_type))
+            clients.update(conn.subscriptions.get_clients_for_symbol_view(sym, data_type))
         if not clients:
             return
 
