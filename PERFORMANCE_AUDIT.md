@@ -276,6 +276,9 @@ The fastest, lowest-risk wins are:
 - Impact: Removes per-message model construction/serialization cost on stream hot paths while preserving envelope schema, metrics, and fallback behavior.
 - Follow-up:
   - Optional: add sampled validation mode toggle for debugging environments.
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/metrics.py` now prunes the path-normalization cache incrementally (oldest-entry batch eviction) instead of clearing the full cache on overflow, reducing cache-churn spikes in hot request metric paths.
+    - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` for bounded incremental prune behavior.
 
 1. Finnhub bar normalization index-loop overhead (remediated 2026-02-07).
 

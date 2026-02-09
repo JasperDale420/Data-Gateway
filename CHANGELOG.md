@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.157] - 2026-02-09
+
+### Added
+
+- **Path-normalization cache regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` with coverage for incremental cache pruning behavior that preserves a warm cache set after overflow.
+
+### Changed
+
+- **Incremental path-cache pruning**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` so `_normalize_path()` prunes oldest cache entries in bounded batches instead of clearing the entire path-normalization cache at size limit.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record path-normalization cache prune strategy rollout.
+
 ## [0.5.156] - 2026-02-09
 
 ### Added

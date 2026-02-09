@@ -7,6 +7,7 @@ from typing import Any
 from prometheus_client import Counter, Gauge, Histogram, Info
 
 _PATH_NORMALIZATION_CACHE_MAX = 4096
+_PATH_NORMALIZATION_CACHE_PRUNE_TARGET = _PATH_NORMALIZATION_CACHE_MAX // 4
 _PATH_NORMALIZATION_CACHE: dict[str, str] = {}
 _MEMORY_METRICS_REFRESH_INTERVAL_SECONDS = 10.0
 _LAST_MEMORY_METRICS_UPDATE_MONOTONIC = 0.0
@@ -550,9 +551,18 @@ def _normalize_path(path: str) -> str:
 
     normalized_path = "/" + "/".join(normalized)
     if len(_PATH_NORMALIZATION_CACHE) >= _PATH_NORMALIZATION_CACHE_MAX:
-        _PATH_NORMALIZATION_CACHE.clear()
+        _prune_path_normalization_cache()
     _PATH_NORMALIZATION_CACHE[path] = normalized_path
     return normalized_path
+
+
+def _prune_path_normalization_cache() -> None:
+    """Prune oldest cached normalized paths instead of clearing all entries."""
+    if not _PATH_NORMALIZATION_CACHE:
+        return
+    prune_count = min(_PATH_NORMALIZATION_CACHE_PRUNE_TARGET, len(_PATH_NORMALIZATION_CACHE))
+    for key in list(_PATH_NORMALIZATION_CACHE)[:prune_count]:
+        _PATH_NORMALIZATION_CACHE.pop(key, None)
 
 
 def _looks_like_symbol(s: str) -> bool:

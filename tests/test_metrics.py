@@ -20,6 +20,31 @@ def test_normalize_path_cache_is_bounded() -> None:
     assert len(metrics._PATH_NORMALIZATION_CACHE) <= max_size
 
 
+def test_normalize_path_cache_prunes_incrementally_without_full_clear() -> None:
+    metrics._PATH_NORMALIZATION_CACHE.clear()
+    max_size = metrics._PATH_NORMALIZATION_CACHE_MAX
+    recent_path = "/api/v1/finnhub/quote/RECENT"
+
+    for i in range(max_size):
+        metrics._normalize_path(f"/api/v1/finnhub/quote/SYM{i:05d}")
+    metrics._normalize_path(recent_path)
+    metrics._normalize_path("/api/v1/finnhub/quote/TRIGGER")
+
+    assert recent_path in metrics._PATH_NORMALIZATION_CACHE
+    assert len(metrics._PATH_NORMALIZATION_CACHE) <= max_size
+
+
+def test_normalize_path_cache_prune_avoids_near_empty_cache_after_overflow() -> None:
+    metrics._PATH_NORMALIZATION_CACHE.clear()
+    max_size = metrics._PATH_NORMALIZATION_CACHE_MAX
+
+    for i in range(max_size + 1):
+        metrics._normalize_path(f"/api/v1/finnhub/quote/SYM{i:05d}")
+
+    # Incremental pruning should keep a meaningful warm set instead of clearing all entries.
+    assert len(metrics._PATH_NORMALIZATION_CACHE) >= max_size // 2
+
+
 def test_update_memory_metrics_if_due_is_throttled(monkeypatch) -> None:
     calls = {"count": 0}
 
