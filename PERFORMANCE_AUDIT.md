@@ -79,6 +79,9 @@ The fastest, lowest-risk wins are:
   - `gateway/core/registry.py` now executes checks through `asyncio.gather(...)` in `health_check_all(...)`.
   - Concurrency + exception behavior is covered in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_registry.py`.
 - Impact: Admin/status provider health checks are no longer strictly linear in cumulative provider latency.
+- Additional low-risk optimization (2026-02-09):
+  - `/api/v1/status` now supports `include_provider_health=false` in `gateway/api/admin.py`, allowing low-latency status polling without running upstream provider probes on every request.
+  - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py`.
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
 

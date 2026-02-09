@@ -92,10 +92,14 @@ async def get_status(
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
     connections: ConnectionManager = Depends(get_connection_manager),
+    include_provider_health: bool = Query(
+        default=True,
+        description="Whether to run live provider health checks (may add latency)",
+    ),
 ):
     """Get full system status including clients, providers, and subscriptions."""
-    # Provider health
-    provider_status = await registry.health_check_all()
+    # Provider health (optionally skipped for lower-latency status polling)
+    provider_status = await registry.health_check_all() if include_provider_health else {}
 
     # Cache stats
     cache_stats = cache.get_stats_dict()

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.131] - 2026-02-09
+
+### Added
+
+- **Admin status skip-health regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with `test_get_status_can_skip_provider_health_checks` to validate the low-latency status path and ensure provider probes are bypassed when requested.
+
+### Changed
+
+- **Low-latency status polling option**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `include_provider_health` (default `true`). When set to `false`, provider health checks are skipped to reduce endpoint latency for frequent polling.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record the optional provider-health skip path as part of admin/status performance remediation.
+
 ## [0.5.130] - 2026-02-09
 
 ### Added

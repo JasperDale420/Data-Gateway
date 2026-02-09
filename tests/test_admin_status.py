@@ -15,7 +15,11 @@ from gateway.core.registry import ProviderRegistry
 
 
 class _FakeRegistry:
+    def __init__(self) -> None:
+        self.health_check_calls = 0
+
     async def health_check_all(self) -> dict[str, HealthStatus]:
+        self.health_check_calls += 1
         return {
             "finnhub": HealthStatus(
                 healthy=True,
@@ -56,9 +60,11 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
     monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: snapshot)
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
 
+    registry = _FakeRegistry()
+
     response = await admin.get_status(
         client=cast(Client, SimpleNamespace(id="test-client")),
-        registry=cast(ProviderRegistry, _FakeRegistry()),
+        registry=cast(ProviderRegistry, registry),
         cache=cast(InMemoryCache, _FakeCache()),
         connections=cast(ConnectionManager, _FakeConnections()),
     )
@@ -66,3 +72,39 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
     assert response["success"] is True
     assert response["data"]["stream_sink_dispatch"] == snapshot
     assert response["data"]["stream_fanout"] == fanout_snapshot
+    assert registry.health_check_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_get_status_can_skip_provider_health_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = {
+        "limits": {"max_inflight_publish": 32, "max_pending_tasks": 512},
+        "pending_tasks": 1,
+        "events": {"scheduled": 4, "completed": 4},
+        "derived": {"pending_utilization": 0.0, "completion_rate": 1.0, "drop_rate": 0.0},
+    }
+    fanout_snapshot = {
+        "limits": {"max_inflight": 100, "batch_size": 32},
+        "events": {"delivered": 100, "error": 0},
+        "batches": {"count": 4, "total_clients": 64, "max_batch_size": 16},
+        "derived": {"avg_batch_size": 16.0, "batch_fill_ratio": 0.5, "error_rate": 0.0},
+    }
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+
+    registry = _FakeRegistry()
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+    )
+
+    assert response["success"] is True
+    assert response["data"]["providers"] == {}
+    assert response["data"]["stream_sink_dispatch"]["derived"]["completion_rate"] == 1.0
+    assert response["data"]["stream_fanout"]["derived"]["batch_fill_ratio"] == 0.5
+    assert registry.health_check_calls == 0
