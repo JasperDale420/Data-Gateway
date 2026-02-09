@@ -180,6 +180,10 @@ The fastest, lowest-risk wins are:
   - Additional combined optimization batch (2026-02-09):
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now enforces max-entry limits for both optional-section and stream-section shape caches, evicting oldest entries when limits are exceeded.
     - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for optional/stream cache entry-limit eviction behavior.
+  - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now supports per-request status cache cap overrides (`status_section_cache_max_entries`, `stream_section_cache_max_entries`) so operators can tune cache cardinality during polling calibration without code changes.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now reports effective cache caps in `status_sections` (`optional_cache_max_entries`, `stream_cache_max_entries`) for observability.
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for override behavior and cap metadata output.
 
 1. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 

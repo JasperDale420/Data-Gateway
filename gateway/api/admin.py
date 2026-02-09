@@ -179,12 +179,12 @@ def _prune_stale_status_section_cache(*, now: datetime, ttl_seconds: int) -> Non
         _status_section_stats_cache_at.pop(key, None)
 
 
-def _enforce_status_section_cache_limit() -> None:
+def _enforce_status_section_cache_limit(*, max_entries: int) -> None:
     """Evict oldest optional-section cache entries when entry limit is exceeded."""
     global _status_section_stats_cache, _status_section_stats_cache_at
     if _status_section_stats_cache is None or _status_section_stats_cache_at is None:
         return
-    overflow = len(_status_section_stats_cache_at) - _STATUS_SECTION_CACHE_MAX_ENTRIES
+    overflow = len(_status_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
         return
     oldest_keys = sorted(_status_section_stats_cache_at, key=_status_section_stats_cache_at.get)[
@@ -206,6 +206,7 @@ def _load_optional_status_sections(
     include_provider_health_checks: bool,
     include_provider_quote_batches: bool,
     status_section_cache_ttl_seconds: int,
+    status_section_cache_max_entries: int,
     force_status_section_refresh: bool,
 ) -> tuple[dict, dict, dict, dict, dict, str, float | None]:
     """Load optional status sections with optional short-lived cache reuse."""
@@ -273,7 +274,7 @@ def _load_optional_status_sections(
             _status_section_stats_cache_at = {}
         _status_section_stats_cache[cache_key] = latest
         _status_section_stats_cache_at[cache_key] = now
-        _enforce_status_section_cache_limit()
+        _enforce_status_section_cache_limit(max_entries=status_section_cache_max_entries)
 
     return (
         latest["cache"] if include_cache_stats else {},
@@ -322,12 +323,12 @@ def _prune_stale_stream_section_cache(*, now: datetime, ttl_seconds: int) -> Non
         _stream_section_stats_cache_at.pop(key, None)
 
 
-def _enforce_stream_section_cache_limit() -> None:
+def _enforce_stream_section_cache_limit(*, max_entries: int) -> None:
     """Evict oldest stream-section cache entries when entry limit is exceeded."""
     global _stream_section_stats_cache, _stream_section_stats_cache_at
     if _stream_section_stats_cache is None or _stream_section_stats_cache_at is None:
         return
-    overflow = len(_stream_section_stats_cache_at) - _STREAM_SECTION_CACHE_MAX_ENTRIES
+    overflow = len(_stream_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
         return
     oldest_keys = sorted(_stream_section_stats_cache_at, key=_stream_section_stats_cache_at.get)[
@@ -343,6 +344,7 @@ def _load_stream_status_sections(
     include_stream_sink_dispatch: bool,
     include_stream_fanout: bool,
     stream_section_cache_ttl_seconds: int,
+    stream_section_cache_max_entries: int,
     force_stream_section_refresh: bool,
 ) -> tuple[dict, dict, str, float | None]:
     """Load optional stream telemetry sections with optional short-lived cache reuse."""
@@ -390,7 +392,7 @@ def _load_stream_status_sections(
             _stream_section_stats_cache_at = {}
         _stream_section_stats_cache[cache_key] = latest
         _stream_section_stats_cache_at[cache_key] = now
-        _enforce_stream_section_cache_limit()
+        _enforce_stream_section_cache_limit(max_entries=stream_section_cache_max_entries)
 
     return (
         latest["stream_sink_dispatch"],
@@ -512,6 +514,10 @@ async def get_status(
         int,
         Query(ge=0, description="TTL seconds for optional stream telemetry section cache"),
     ] = 0,
+    stream_section_cache_max_entries: Annotated[
+        int | None,
+        Query(ge=1, description="Optional max entries for stream telemetry section cache"),
+    ] = None,
     force_stream_section_refresh: Annotated[
         bool,
         Query(description="Bypass optional stream telemetry section cache for this request"),
@@ -528,12 +534,26 @@ async def get_status(
         int,
         Query(ge=0, description="TTL seconds for optional status section stats cache"),
     ] = 0,
+    status_section_cache_max_entries: Annotated[
+        int | None,
+        Query(ge=1, description="Optional max entries for optional status section stats cache"),
+    ] = None,
     force_status_section_refresh: Annotated[
         bool,
         Query(description="Bypass optional status section stats cache for this request"),
     ] = False,
 ):
     """Get full system status including clients, providers, and subscriptions."""
+    effective_status_cache_max_entries = (
+        _STATUS_SECTION_CACHE_MAX_ENTRIES
+        if status_section_cache_max_entries is None
+        else max(1, status_section_cache_max_entries)
+    )
+    effective_stream_cache_max_entries = (
+        _STREAM_SECTION_CACHE_MAX_ENTRIES
+        if stream_section_cache_max_entries is None
+        else max(1, stream_section_cache_max_entries)
+    )
     provider_status, provider_health_cache = await _load_provider_health_status(
         registry=registry,
         include_provider_health=include_provider_health,
@@ -560,6 +580,7 @@ async def get_status(
         include_provider_health_checks=include_provider_health_checks,
         include_provider_quote_batches=include_provider_quote_batches,
         status_section_cache_ttl_seconds=status_section_cache_ttl_seconds,
+        status_section_cache_max_entries=effective_status_cache_max_entries,
         force_status_section_refresh=force_status_section_refresh,
     )
     (
@@ -571,6 +592,7 @@ async def get_status(
         include_stream_sink_dispatch=include_stream_sink_dispatch,
         include_stream_fanout=include_stream_fanout,
         stream_section_cache_ttl_seconds=stream_section_cache_ttl_seconds,
+        stream_section_cache_max_entries=effective_stream_cache_max_entries,
         force_stream_section_refresh=force_stream_section_refresh,
     )
 
@@ -605,10 +627,12 @@ async def get_status(
             "optional_stats_ttl_seconds": status_section_cache_ttl_seconds,
             "optional_stats_age_seconds": optional_stats_age_seconds,
             "optional_cache_entries": optional_cache_entries,
+            "optional_cache_max_entries": effective_status_cache_max_entries,
             "stream_stats_source": stream_stats_source,
             "stream_stats_ttl_seconds": stream_section_cache_ttl_seconds,
             "stream_stats_age_seconds": stream_stats_age_seconds,
             "stream_cache_entries": stream_cache_entries,
+            "stream_cache_max_entries": effective_stream_cache_max_entries,
         }
 
     return {

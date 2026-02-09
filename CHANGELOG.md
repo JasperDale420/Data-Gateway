@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.156] - 2026-02-09
+
+### Added
+
+- **Runtime cache-cap override regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for per-request cache-cap overrides and effective-cap metadata in `/api/v1/status`.
+
+### Changed
+
+- **Per-request optional cache cap override**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `status_section_cache_max_entries` and applies it to optional-section cache eviction behavior.
+- **Per-request stream cache cap override**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `stream_section_cache_max_entries` and applies it to stream-section cache eviction behavior.
+- **Cache-cap metadata visibility**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `status_sections` includes `optional_cache_max_entries` and `stream_cache_max_entries`.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record runtime status-cache cap override rollout.
+
 ## [0.5.155] - 2026-02-09
 
 ### Added
