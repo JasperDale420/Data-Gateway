@@ -82,6 +82,10 @@ The fastest, lowest-risk wins are:
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/uw_poller.py` now exposes runtime calibration snapshots via `get_runtime_snapshot()` / `get_uw_poller_snapshot()` (publish inflight cap, dedupe cache size/TTL, poll intervals, feed toggles, EOD settings).
     - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_uw_poller.py`.
   - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now includes concrete `suggested_limits` in `stream_tuning_summary`, deriving conservative next-step limit targets from live sink/fanout pressure signals.
+    - Suggested controls include sink (`max_pending_tasks`, `max_inflight_publish`) and fanout (`max_inflight`, `batch_size`) values for direct operator calibration loops.
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for both high-pressure and healthy no-change suggestion behavior.
+  - Additional combined optimization batch (2026-02-09):
     - `gateway/core/stream.py` now resolves active connection/subscribers before running bar/quote/trade validation in `_handle_message(...)`.
     - This removes validator work from idle/no-subscriber fanout paths while preserving validation behavior for messages that actually fan out.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` for no-connection/no-subscriber skip paths plus existing validator-cache behavior when subscribers exist.

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.162] - 2026-02-09
+
+### Added
+
+- **Stream auto-tuning target regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for `stream_tuning_summary.suggested_limits` in both elevated-pressure and healthy cases.
+
+### Changed
+
+- **Actionable stream tuning targets**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `stream_tuning_summary` now includes concrete `suggested_limits` for sink/fanout controls (`max_pending_tasks`, `max_inflight_publish`, `max_inflight`, `batch_size`) based on telemetry-derived pressure signals.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record stream auto-tuning target rollout.
+
 ## [0.5.161] - 2026-02-09
 
 ### Added

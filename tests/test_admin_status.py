@@ -238,6 +238,10 @@ async def test_get_status_includes_stream_tuning_summary_and_uw_poller_runtime(
     assert summary["fanout_level"] == "critical"
     assert summary["has_recommendations"] is True
     assert summary["recommendations"]
+    assert summary["suggested_limits"]["sink"]["max_pending_tasks"] == 640
+    assert summary["suggested_limits"]["sink"]["max_inflight_publish"] == 40
+    assert summary["suggested_limits"]["fanout"]["max_inflight"] == 125
+    assert summary["suggested_limits"]["fanout"]["batch_size"] == 40
     assert response["data"]["uw_poller_runtime"]["running"] is True
     assert response["data"]["status_sections"]["stream_tuning_summary"] is True
     assert response["data"]["status_sections"]["uw_poller_runtime"] is True
@@ -269,6 +273,54 @@ async def test_get_status_can_skip_stream_tuning_summary_and_uw_poller_runtime(
     assert "uw_poller_runtime" not in response["data"]
     assert response["data"]["status_sections"]["stream_tuning_summary"] is False
     assert response["data"]["status_sections"]["uw_poller_runtime"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_status_stream_tuning_summary_omits_limit_changes_when_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        admin,
+        "get_stream_sink_dispatch_snapshot",
+        lambda: {
+            "limits": {"max_inflight_publish": 32, "max_pending_tasks": 512},
+            "derived": {
+                "pending_utilization": 0.1,
+                "completion_rate": 1.0,
+                "drop_rate": 0.0,
+                "backpressure_level": "healthy",
+                "recommendations": [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        admin,
+        "get_stream_fanout_snapshot",
+        lambda: {
+            "limits": {"max_inflight": 100, "batch_size": 32},
+            "derived": {
+                "batch_fill_ratio": 0.2,
+                "error_rate": 0.0,
+                "fanout_level": "healthy",
+                "recommendations": [],
+            },
+        },
+    )
+    monkeypatch.setattr(admin, "_get_uw_poller_runtime_snapshot", lambda: {"running": False})
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+    )
+
+    suggested = response["data"]["stream_tuning_summary"]["suggested_limits"]
+    assert suggested["sink"]["max_pending_tasks"] is None
+    assert suggested["sink"]["max_inflight_publish"] is None
+    assert suggested["fanout"]["max_inflight"] is None
+    assert suggested["fanout"]["batch_size"] is None
 
 
 @pytest.mark.asyncio

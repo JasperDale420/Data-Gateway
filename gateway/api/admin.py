@@ -66,8 +66,21 @@ def _build_stream_tuning_summary(
     stream_fanout: dict[str, Any],
 ) -> dict[str, Any]:
     """Summarize stream tuning state and merged recommendations."""
+
+    def _suggest_up(limit: Any) -> int | None:
+        try:
+            current = int(limit)
+        except (TypeError, ValueError):
+            return None
+        if current <= 0:
+            return None
+        # Conservative +25% step to provide actionable, low-risk next calibration targets.
+        return max(current + 1, (current * 5 + 3) // 4)
+
     sink_derived = stream_sink_dispatch.get("derived", {})
     fanout_derived = stream_fanout.get("derived", {})
+    sink_limits = stream_sink_dispatch.get("limits", {})
+    fanout_limits = stream_fanout.get("limits", {})
     sink_level = str(sink_derived.get("backpressure_level", "healthy"))
     fanout_level = str(fanout_derived.get("fanout_level", "healthy"))
 
@@ -92,13 +105,46 @@ def _build_stream_tuning_summary(
         seen.add(norm)
         recommendations.append(norm)
 
+    sink_pending_utilization = float(sink_derived.get("pending_utilization", 0.0))
+    sink_drop_rate = float(sink_derived.get("drop_rate", 0.0))
+    sink_completion_rate = float(sink_derived.get("completion_rate", 1.0))
+    fanout_fill_ratio = float(fanout_derived.get("batch_fill_ratio", 0.0))
+    fanout_error_rate = float(fanout_derived.get("error_rate", 0.0))
+
+    suggested_sink_max_pending = (
+        _suggest_up(sink_limits.get("max_pending_tasks"))
+        if sink_pending_utilization >= 0.7
+        else None
+    )
+    suggested_sink_max_inflight = (
+        _suggest_up(sink_limits.get("max_inflight_publish"))
+        if sink_drop_rate >= 0.01 or sink_completion_rate < 0.95
+        else None
+    )
+    suggested_fanout_batch_size = (
+        _suggest_up(fanout_limits.get("batch_size")) if fanout_fill_ratio >= 0.8 else None
+    )
+    suggested_fanout_max_inflight = (
+        _suggest_up(fanout_limits.get("max_inflight")) if fanout_error_rate >= 0.005 else None
+    )
+
     return {
         "overall_level": overall_level,
         "backpressure_level": sink_level,
         "fanout_level": fanout_level,
         "limits": {
-            "sink": stream_sink_dispatch.get("limits", {}),
-            "fanout": stream_fanout.get("limits", {}),
+            "sink": sink_limits,
+            "fanout": fanout_limits,
+        },
+        "suggested_limits": {
+            "sink": {
+                "max_pending_tasks": suggested_sink_max_pending,
+                "max_inflight_publish": suggested_sink_max_inflight,
+            },
+            "fanout": {
+                "max_inflight": suggested_fanout_max_inflight,
+                "batch_size": suggested_fanout_batch_size,
+            },
         },
         "has_recommendations": bool(recommendations),
         "recommendations": recommendations,
