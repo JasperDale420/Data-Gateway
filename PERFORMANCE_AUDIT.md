@@ -228,6 +228,10 @@ The fastest, lowest-risk wins are:
   - `gateway/core/bulk.py` now supports transparent result spool-to-disk fallback for oversized jobs and uses spool-aware result iteration for JSONL streaming and result streams.
 - Remaining low-risk follow-up:
   - Add optional paged backend storage for multi-process/distributed workers.
+  - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/bulk.py` now exposes `get_results_page(...)` for offset/limit retrieval against completed jobs, compatible with both in-memory and spool-backed result storage.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/bulk.py` now exposes `GET /api/v1/bulk/jobs/{job_id}/results` returning paged records with traversal metadata (`total_records`, `has_more`, `next_offset`).
+    - Expanded regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_bulk_manager.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_list_pagination.py`.
 
 1. Replay preload/sort overhead (substantially remediated 2026-02-07).
 

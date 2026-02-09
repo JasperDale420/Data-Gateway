@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum
+from itertools import islice
 from typing import Any
 
 import structlog
@@ -546,6 +547,39 @@ class BulkJobManager:
             yield b"]}"
 
         return _iter_chunks()
+
+    def get_results_page(
+        self,
+        job_id: str,
+        *,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int, bool, int | None]:
+        """Get paged job results with traversal metadata.
+
+        Returns:
+            (page_records, total_records, has_more, next_offset)
+        """
+        job = self._jobs.get(job_id)
+        if not job or job.status != BulkJobStatus.COMPLETE:
+            return [], 0, False, None
+
+        page_limit = max(1, limit)
+        page_offset = max(0, offset)
+        total_records = max(0, int(job.records_fetched))
+
+        page_records = list(
+            islice(
+                self._iter_job_results(job),
+                page_offset,
+                page_offset + page_limit,
+            )
+        )
+        returned = len(page_records)
+        consumed = page_offset + returned
+        has_more = consumed < total_records
+        next_offset = consumed if has_more else None
+        return page_records, total_records, has_more, next_offset
 
     def _iter_job_results(self, job: BulkJob) -> Iterator[dict[str, Any]]:
         """Iterate all job results from memory and optional spool storage."""

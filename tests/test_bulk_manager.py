@@ -88,6 +88,55 @@ def test_spooled_results_are_streamed_and_jsonl_encoded() -> None:
     assert len(expected_records) == 3
 
 
+def test_get_results_page_returns_slice_and_metadata() -> None:
+    manager = BulkJobManager()
+    job = _make_complete_job("bulk-page-memory")
+    job.records_fetched = len(job.results)
+    manager._jobs[job.job_id] = job
+
+    records, total_records, has_more, next_offset = manager.get_results_page(
+        job.job_id,
+        limit=2,
+        offset=1,
+    )
+
+    assert total_records == 5
+    assert [record["close"] for record in records] == [101.0, 102.0]
+    assert has_more is True
+    assert next_offset == 3
+
+
+def test_get_results_page_supports_spooled_jobs() -> None:
+    manager = BulkJobManager()
+    manager._max_results_in_memory = 1
+    manager._spill_results_to_disk = True
+
+    request = BulkBarsRequest(symbols=["AAPL"], start="2025-01-01", end="2025-01-02")
+    job = BulkJob(job_id="bulk-page-spooled", job_type="bars", request=request, client_id="test")
+    manager._append_job_results(
+        job,
+        [
+            {"symbol": "AAPL", "timestamp": "2025-01-01T00:00:00Z", "close": 100.0},
+            {"symbol": "AAPL", "timestamp": "2025-01-01T00:01:00Z", "close": 101.0},
+            {"symbol": "AAPL", "timestamp": "2025-01-01T00:02:00Z", "close": 102.0},
+        ],
+    )
+    job.status = BulkJobStatus.COMPLETE
+    job.records_fetched = 3
+    manager._jobs[job.job_id] = job
+
+    records, total_records, has_more, next_offset = manager.get_results_page(
+        job.job_id,
+        limit=2,
+        offset=0,
+    )
+
+    assert total_records == 3
+    assert [record["close"] for record in records] == [100.0, 101.0]
+    assert has_more is True
+    assert next_offset == 2
+
+
 @pytest.mark.asyncio
 async def test_cleanup_expired_jobs_removes_spool_file() -> None:
     manager = BulkJobManager()

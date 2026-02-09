@@ -156,6 +156,12 @@ class BulkJobStatusResponse(BaseModel):
     error: str | None = None
 
 
+def _job_status_value(job: Any) -> str:
+    """Normalize bulk job status enum/object to its string value."""
+    status = getattr(job, "status", None)
+    return str(getattr(status, "value", status))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
@@ -312,10 +318,10 @@ async def download_job_results(
     if not job or job.client_id != client.id:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
-    if job.status != BulkJobStatus.COMPLETE:
+    if _job_status_value(job) != BulkJobStatus.COMPLETE.value:
         raise HTTPException(
             status_code=400,
-            detail=f"Job not complete, status: {job.status.value}",
+            detail=f"Job not complete, status: {_job_status_value(job)}",
         )
 
     if format == "jsonl":
@@ -339,6 +345,56 @@ async def download_job_results(
             status_code=400,
             detail=f"Unsupported format: {format}. Use 'jsonl' or 'json'.",
         )
+
+
+@router.get(
+    "/jobs/{job_id}/results",
+    response_model=SuccessResponse,
+    summary="Get paged job results",
+    description="Return paged records for a completed bulk job using offset/limit pagination.",
+)
+async def get_job_results_page(
+    job_id: str,
+    limit: int = Query(
+        default=500,
+        ge=1,
+        le=5000,
+        description="Max number of records to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of records to skip before returning page",
+    ),
+    client: Any = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Get paged records from a completed bulk job."""
+    manager = get_bulk_manager()
+    job = await manager.get_job(job_id)
+
+    if not job or job.client_id != client.id:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    if _job_status_value(job) != BulkJobStatus.COMPLETE.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job not complete, status: {_job_status_value(job)}",
+        )
+
+    records, total_records, has_more, next_offset = manager.get_results_page(
+        job_id,
+        limit=limit,
+        offset=offset,
+    )
+    return {
+        "results": records,
+        "count": len(records),
+        "total_records": total_records,
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+        "next_offset": next_offset,
+    }
 
 
 @router.delete(

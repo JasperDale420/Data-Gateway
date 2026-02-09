@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.166] - 2026-02-09
+
+### Added
+
+- **Bulk results page API**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/bulk.py` endpoint `GET /api/v1/bulk/jobs/{job_id}/results` with `offset`/`limit` pagination and traversal metadata (`has_more`, `next_offset`, `total_records`).
+- **Bulk paged manager access**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/bulk.py` `get_results_page(...)` to page completed job results without materializing full payloads, including spool-backed jobs.
+- **Pagination regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_bulk_manager.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_list_pagination.py` with bulk page retrieval tests for both in-memory and spooled result paths.
+
+### Changed
+
+- **Bulk status compatibility check**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/bulk.py` status checks to normalize enum-like status objects before complete-job validation, preserving behavior across test doubles and runtime objects.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record paged bulk-results groundwork rollout.
+
 ## [0.5.165] - 2026-02-09
 
 ### Added

@@ -13,9 +13,10 @@ class _FakeStatus:
 
 
 class _FakeJob:
-    def __init__(self, job_id: str, status: str) -> None:
+    def __init__(self, job_id: str, status: str, client_id: str = "client-1") -> None:
         self.job_id = job_id
         self.status = _FakeStatus(status)
+        self.client_id = client_id
 
     def to_dict(self) -> dict[str, str]:
         return {"job_id": self.job_id, "status": self.status.value}
@@ -35,6 +36,26 @@ class _FakeBulkManager:
 
     async def list_jobs(self, _client_id: str) -> list[_FakeJob]:
         return list(self._jobs)
+
+    async def get_job(self, job_id: str) -> _FakeJob | None:
+        for job in self._jobs:
+            if job.job_id == job_id:
+                return job
+        return None
+
+    def get_results_page(
+        self,
+        _job_id: str,
+        *,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict[str, int]], int, bool, int | None]:
+        return (
+            [{"row": offset + 1}],
+            3,
+            offset + limit < 3,
+            (offset + limit) if offset + limit < 3 else None,
+        )
 
 
 class _FakeReplayManager:
@@ -92,4 +113,29 @@ async def test_replay_list_sessions_applies_limit_offset(monkeypatch: pytest.Mon
             {"session_id": "session-3"},
         ],
         "count": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_bulk_get_job_results_page_applies_limit_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _FakeBulkManager(jobs=[_FakeJob("job-1", "complete")])
+    monkeypatch.setattr(bulk, "get_bulk_manager", lambda: manager)
+
+    response = await bulk.get_job_results_page(
+        job_id="job-1",
+        limit=2,
+        offset=1,
+        client=SimpleNamespace(id="client-1"),
+    )
+
+    assert response == {
+        "results": [{"row": 2}],
+        "count": 1,
+        "total_records": 3,
+        "offset": 1,
+        "limit": 2,
+        "has_more": False,
+        "next_offset": None,
     }
