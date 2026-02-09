@@ -432,6 +432,37 @@ class BulkJobManager:
             return jobs
         return [job for job in jobs if job.client_id == client_id]
 
+    async def list_jobs_page(
+        self,
+        *,
+        client_id: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[BulkJob], int, bool, int | None]:
+        """List jobs with offset/limit pagination metadata.
+
+        Returns:
+            (paged_jobs, total_matches, has_more, next_offset)
+        """
+        jobs = await self.list_jobs(client_id=client_id)
+        if status:
+            jobs = [job for job in jobs if job.status.value == status]
+
+        total_matches = len(jobs)
+        page_offset = max(0, offset)
+        page_limit = None if limit is None else max(1, limit)
+
+        if page_offset:
+            jobs = jobs[page_offset:]
+        if page_limit is not None:
+            jobs = jobs[:page_limit]
+
+        consumed = page_offset + len(jobs)
+        has_more = consumed < total_matches
+        next_offset = consumed if has_more else None
+        return jobs, total_matches, has_more, next_offset
+
     async def cancel_job(self, job_id: str) -> bool:
         """Cancel a job if it's still running."""
         job = self._jobs.get(job_id)

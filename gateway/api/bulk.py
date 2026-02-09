@@ -453,20 +453,21 @@ async def list_jobs(
 ) -> dict[str, Any]:
     """List all bulk jobs."""
     manager = get_bulk_manager()
-    jobs = await manager.list_jobs(client.id)
-
-    # Filter by status if provided
-    if status:
-        jobs = [j for j in jobs if j.status.value == status]
-
-    if offset:
-        jobs = jobs[offset:]
-    if limit is not None:
-        jobs = jobs[:limit]
+    jobs, total, has_more, next_offset = await manager.list_jobs_page(
+        client_id=client.id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
 
     return {
         "jobs": [j.to_dict() for j in jobs],
         "count": len(jobs),
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+        "next_offset": next_offset,
     }
 
 

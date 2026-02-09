@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.167] - 2026-02-09
+
+### Added
+
+- **Bulk job list pagination metadata**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/bulk.py` list endpoint to include `total`, `has_more`, `next_offset`, `offset`, and `limit` for stable pagination traversal.
+- **Replay session list pagination metadata**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/replay.py` list endpoint to include `total`, `has_more`, `next_offset`, `offset`, and `limit`, and added optional `state` filtering for targeted replay control views.
+- **Core pagination helpers**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/bulk.py` `list_jobs_page(...)` and `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/replay.py` `list_sessions_page(...)` for centralized offset/limit pagination logic with traversal metadata.
+
+### Changed
+
+- **Control-plane pagination test coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_list_pagination.py`, `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_bulk_manager.py`, and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_replay.py` to validate manager-level and endpoint-level pagination metadata behavior.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record bulk/replay control-plane pagination metadata rollout.
+
 ## [0.5.166] - 2026-02-09
 
 ### Added

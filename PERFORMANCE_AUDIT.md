@@ -242,6 +242,10 @@ The fastest, lowest-risk wins are:
 - Impact: Reduces replay startup/memory pressure for streaming loaders and avoids unnecessary sort cost on already ordered list data.
 - Remaining low-risk follow-up:
   - Add optional paged/distributed replay backend for very large windows across multi-worker deployments.
+  - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/replay.py` now provides `list_sessions_page(...)` with state filter + traversal metadata (`total`, `has_more`, `next_offset`) for low-overhead replay control-plane pagination.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/replay.py` list endpoint now returns consistent pagination metadata and supports `state` filtering for targeted operator views.
+
 
 1. UW poller per-event sequential dedupe/publish path (remediated 2026-02-07).
 
@@ -349,6 +353,9 @@ The fastest, lowest-risk wins are:
 ### Wave 3
 
 1. Add streaming storage for bulk/replay outputs (bulk JSONL + JSON downloads, replay iterable ingestion + replay/bulk spill guardrails are complete; optional paged backend storage remains).
+   - Additional combined optimization batch (2026-02-09):
+     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/bulk.py` now provides `list_jobs_page(...)` with status filter + traversal metadata (`total`, `has_more`, `next_offset`) for consistent bulk control-plane pagination.
+     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/bulk.py` list endpoint now returns consistent pagination metadata in addition to existing `count`.
 2. Improve cache pruning strategy for custom TTL workloads (completed 2026-02-07).
 3. Add envelope fast-path serialization for websocket traffic (completed 2026-02-07).
 

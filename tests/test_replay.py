@@ -227,6 +227,35 @@ class TestReplaySessionManager:
         assert len(sessions) == 2
 
     @pytest.mark.asyncio
+    async def test_list_sessions_page_returns_total_and_next_offset(self, manager):
+        """Should paginate and report traversal metadata."""
+        config = ReplayConfig(
+            name="test",
+            symbols=["AAPL"],
+            feeds=["bars"],
+            start=datetime.now(UTC),
+            end=datetime.now(UTC) + timedelta(hours=1),
+        )
+
+        await manager.create_session(config, client_id="test-client")
+        s2 = await manager.create_session(config, client_id="test-client")
+        s3 = await manager.create_session(config, client_id="test-client")
+        s2.state = ReplayState.RUNNING
+        s3.state = ReplayState.RUNNING
+
+        sessions, total, has_more, next_offset = await manager.list_sessions_page(
+            client_id="test-client",
+            state="running",
+            limit=1,
+            offset=0,
+        )
+
+        assert total == 2
+        assert [s.session_id for s in sessions] == [s2.session_id]
+        assert has_more is True
+        assert next_offset == 1
+
+    @pytest.mark.asyncio
     async def test_delete_session(self, manager):
         """Should delete sessions."""
         config = ReplayConfig(

@@ -138,6 +138,46 @@ def test_get_results_page_supports_spooled_jobs() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_page_returns_total_and_next_offset() -> None:
+    manager = BulkJobManager()
+    manager._jobs = {
+        "j1": BulkJob(
+            job_id="j1",
+            job_type="bars",
+            request=BulkBarsRequest(symbols=["AAPL"], start="2025-01-01", end="2025-01-02"),
+            client_id="c1",
+            status=BulkJobStatus.COMPLETE,
+        ),
+        "j2": BulkJob(
+            job_id="j2",
+            job_type="bars",
+            request=BulkBarsRequest(symbols=["MSFT"], start="2025-01-01", end="2025-01-02"),
+            client_id="c1",
+            status=BulkJobStatus.RUNNING,
+        ),
+        "j3": BulkJob(
+            job_id="j3",
+            job_type="bars",
+            request=BulkBarsRequest(symbols=["GOOG"], start="2025-01-01", end="2025-01-02"),
+            client_id="c1",
+            status=BulkJobStatus.COMPLETE,
+        ),
+    }
+
+    jobs, total, has_more, next_offset = await manager.list_jobs_page(
+        client_id="c1",
+        status="complete",
+        limit=1,
+        offset=0,
+    )
+
+    assert total == 2
+    assert [job.job_id for job in jobs] == ["j1"]
+    assert has_more is True
+    assert next_offset == 1
+
+
+@pytest.mark.asyncio
 async def test_cleanup_expired_jobs_removes_spool_file() -> None:
     manager = BulkJobManager()
     manager._max_results_in_memory = 1

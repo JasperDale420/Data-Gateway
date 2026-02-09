@@ -287,6 +287,7 @@ async def delete_session(
     description="List all replay sessions.",
 )
 async def list_sessions(
+    state: str | None = Query(default=None, description="Filter by replay session state"),
     limit: int | None = Query(
         default=None,
         ge=1,
@@ -302,16 +303,21 @@ async def list_sessions(
 ) -> dict[str, Any]:
     """List all replay sessions."""
     manager = get_replay_manager()
-    sessions = await manager.list_sessions(client.id)
-
-    if offset:
-        sessions = sessions[offset:]
-    if limit is not None:
-        sessions = sessions[:limit]
+    sessions, total, has_more, next_offset = await manager.list_sessions_page(
+        client_id=client.id,
+        state=state,
+        limit=limit,
+        offset=offset,
+    )
 
     return {
         "sessions": [s.to_dict() for s in sessions],
         "count": len(sessions),
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+        "next_offset": next_offset,
     }
 
 

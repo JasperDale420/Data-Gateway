@@ -37,6 +37,28 @@ class _FakeBulkManager:
     async def list_jobs(self, _client_id: str) -> list[_FakeJob]:
         return list(self._jobs)
 
+    async def list_jobs_page(
+        self,
+        *,
+        client_id: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[_FakeJob], int, bool, int | None]:
+        jobs = list(self._jobs)
+        if client_id is not None:
+            jobs = [job for job in jobs if job.client_id == client_id]
+        if status:
+            jobs = [job for job in jobs if job.status.value == status]
+        total = len(jobs)
+        if offset:
+            jobs = jobs[offset:]
+        if limit is not None:
+            jobs = jobs[:limit]
+        consumed = offset + len(jobs)
+        has_more = consumed < total
+        return jobs, total, has_more, (consumed if has_more else None)
+
     async def get_job(self, job_id: str) -> _FakeJob | None:
         for job in self._jobs:
             if job.job_id == job_id:
@@ -65,6 +87,26 @@ class _FakeReplayManager:
     async def list_sessions(self, _client_id: str) -> list[_FakeSession]:
         return list(self._sessions)
 
+    async def list_sessions_page(
+        self,
+        *,
+        client_id: str | None = None,
+        state: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[_FakeSession], int, bool, int | None]:
+        sessions = list(self._sessions)
+        _ = client_id
+        _ = state
+        total = len(sessions)
+        if offset:
+            sessions = sessions[offset:]
+        if limit is not None:
+            sessions = sessions[:limit]
+        consumed = offset + len(sessions)
+        has_more = consumed < total
+        return sessions, total, has_more, (consumed if has_more else None)
+
 
 @pytest.mark.asyncio
 async def test_bulk_list_jobs_applies_status_limit_offset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -87,6 +129,11 @@ async def test_bulk_list_jobs_applies_status_limit_offset(monkeypatch: pytest.Mo
     assert response == {
         "jobs": [{"job_id": "job-3", "status": "completed"}],
         "count": 1,
+        "total": 2,
+        "offset": 1,
+        "limit": 1,
+        "has_more": False,
+        "next_offset": None,
     }
 
 
@@ -113,6 +160,11 @@ async def test_replay_list_sessions_applies_limit_offset(monkeypatch: pytest.Mon
             {"session_id": "session-3"},
         ],
         "count": 2,
+        "total": 3,
+        "offset": 1,
+        "limit": 2,
+        "has_more": False,
+        "next_offset": None,
     }
 
 
