@@ -100,6 +100,7 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
     assert response["data"]["status_sections"]["registry"] is True
     assert response["data"]["status_sections"]["stream_sink_dispatch"] is True
     assert response["data"]["status_sections"]["stream_fanout"] is True
+    assert response["data"]["provider_health_cache"]["source"] == "live"
     assert registry.health_check_calls == 1
     assert registry.get_stats_calls == 1
     assert cache.get_stats_calls == 1
@@ -491,3 +492,32 @@ async def test_get_status_provider_payload_shape_tracks_cache_and_refresh(
     assert first["data"]["provider_health_cache"]["payload_shape"] == "detailed"
     assert second["data"]["provider_health_cache"]["payload_shape"] == "detailed"
     assert registry.health_check_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_get_status_can_omit_status_metadata_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sink_snapshot = {"limits": {}, "events": {}, "pending_tasks": 0, "derived": {}}
+    fanout_snapshot = {"limits": {}, "events": {}, "batches": {}, "derived": {}}
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: sink_snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+
+    now = datetime(2026, 2, 9, 16, 0, tzinfo=UTC)
+    monkeypatch.setattr(admin, "_utcnow", lambda: now)
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=True,
+        include_status_sections=False,
+        include_provider_health_cache_metadata=False,
+    )
+
+    assert response["success"] is True
+    assert "status_sections" not in response["data"]
+    assert "provider_health_cache" not in response["data"]

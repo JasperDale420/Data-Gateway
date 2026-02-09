@@ -230,6 +230,14 @@ async def get_status(
         bool,
         Query(description="Whether to include stream fanout telemetry"),
     ] = True,
+    include_provider_health_cache_metadata: Annotated[
+        bool,
+        Query(description="Whether to include provider health cache metadata block"),
+    ] = True,
+    include_status_sections: Annotated[
+        bool,
+        Query(description="Whether to include status section inclusion metadata"),
+    ] = True,
 ):
     """Get full system status including clients, providers, and subscriptions."""
     provider_status, provider_health_cache = await _load_provider_health_status(
@@ -248,24 +256,28 @@ async def get_status(
     )
     stream_fanout = get_stream_fanout_snapshot() if include_stream_fanout else {}
 
+    data = {
+        "providers": provider_status,
+        "cache": cache_stats,
+        "connections": connection_stats,
+        "registry": registry_stats,
+        "stream_sink_dispatch": stream_sink_dispatch,
+        "stream_fanout": stream_fanout,
+    }
+    if include_provider_health_cache_metadata:
+        data["provider_health_cache"] = provider_health_cache
+    if include_status_sections:
+        data["status_sections"] = {
+            "cache": include_cache_stats,
+            "connections": include_connection_stats,
+            "registry": include_registry_stats,
+            "stream_sink_dispatch": include_stream_sink_dispatch,
+            "stream_fanout": include_stream_fanout,
+        }
+
     return {
         "success": True,
-        "data": {
-            "providers": provider_status,
-            "cache": cache_stats,
-            "connections": connection_stats,
-            "registry": registry_stats,
-            "provider_health_cache": provider_health_cache,
-            "status_sections": {
-                "cache": include_cache_stats,
-                "connections": include_connection_stats,
-                "registry": include_registry_stats,
-                "stream_sink_dispatch": include_stream_sink_dispatch,
-                "stream_fanout": include_stream_fanout,
-            },
-            "stream_sink_dispatch": stream_sink_dispatch,
-            "stream_fanout": stream_fanout,
-        },
+        "data": data,
         "meta": {
             "timestamp": datetime.now(UTC).isoformat(),
         },

@@ -103,6 +103,9 @@ The fastest, lowest-risk wins are:
   - Provider-health payload maps are now precomputed and cached for both detailed/minimal shapes in `gateway/api/admin.py`, avoiding repeated per-request provider payload projection during TTL cache hits.
   - `provider_health_cache` metadata now includes `payload_shape` for operator/debug visibility.
   - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates minimal payload and payload-shape behavior across live/cache responses.
+- Additional combined optimization batch (2026-02-09):
+  - `/api/v1/status` now supports `include_provider_health_cache_metadata` and `include_status_sections` toggles, allowing low-overhead polling clients to omit status metadata blocks when not needed.
+  - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates metadata omission behavior while preserving default metadata inclusion.
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
 

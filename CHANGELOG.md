@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.138] - 2026-02-09
+
+### Added
+
+- **Status metadata-toggle regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for omitting `provider_health_cache` and `status_sections` blocks while preserving default metadata behavior.
+
+### Changed
+
+- **Optional status metadata controls**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `include_provider_health_cache_metadata` and `include_status_sections` flags for low-overhead polling clients.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record status metadata toggle rollout.
+
 ## [0.5.137] - 2026-02-09
 
 ### Added
