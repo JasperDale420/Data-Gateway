@@ -19,7 +19,6 @@ from gateway.core.backfill import (
     get_backfill_engine,
 )
 
-
 # ── date chunking ──────────────────────────────────────────────────────
 
 
@@ -82,8 +81,11 @@ def test_normalize_results_pydantic_model() -> None:
 
 def test_job_progress_zero_chunks() -> None:
     req = BackfillRequest(
-        provider="alpaca", feed="bars", symbols=["AAPL"],
-        start=date(2025, 1, 1), end=date(2025, 1, 1),
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
     )
     job = BackfillJob(request=req, symbols_progress={})
     assert job.progress == pytest.approx(0.0)
@@ -93,8 +95,11 @@ def test_job_progress_zero_chunks() -> None:
 
 def test_job_progress_tracking() -> None:
     req = BackfillRequest(
-        provider="alpaca", feed="bars", symbols=["AAPL", "MSFT"],
-        start=date(2025, 1, 1), end=date(2025, 1, 1),
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL", "MSFT"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
     )
     sp1 = SymbolProgress(symbol="AAPL", chunks_total=4, chunks_complete=2, status="running")
     sp2 = SymbolProgress(symbol="MSFT", chunks_total=4, chunks_complete=4, status="complete")
@@ -109,8 +114,11 @@ def test_job_progress_tracking() -> None:
 
 def test_job_eta_returns_none_before_start() -> None:
     req = BackfillRequest(
-        provider="alpaca", feed="bars", symbols=["AAPL"],
-        start=date(2025, 1, 1), end=date(2025, 1, 1),
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
     )
     job = BackfillJob(request=req)
     assert job.eta_seconds is None
@@ -136,8 +144,11 @@ def test_submit_validates_provider() -> None:
     engine._provider_registry.get.return_value = None
 
     req = BackfillRequest(
-        provider="nonexistent", feed="bars", symbols=["AAPL"],
-        start=date(2025, 1, 1), end=date(2025, 1, 1),
+        provider="nonexistent",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
     )
     with pytest.raises(ValueError, match="Unknown provider"):
         engine.submit(req)
@@ -146,8 +157,11 @@ def test_submit_validates_provider() -> None:
 def test_submit_validates_feed() -> None:
     engine = _make_engine()
     req = BackfillRequest(
-        provider="alpaca", feed="nonexistent_feed", symbols=["AAPL"],
-        start=date(2025, 1, 1), end=date(2025, 1, 1),
+        provider="alpaca",
+        feed="nonexistent_feed",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
     )
     with pytest.raises(ValueError, match="Unsupported feed"):
         engine.submit(req)
@@ -156,18 +170,26 @@ def test_submit_validates_feed() -> None:
 def test_submit_validates_date_range() -> None:
     engine = _make_engine()
     req = BackfillRequest(
-        provider="alpaca", feed="bars", symbols=["AAPL"],
-        start=date(2025, 1, 5), end=date(2025, 1, 1),
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 5),
+        end=date(2025, 1, 1),
     )
     with pytest.raises(ValueError, match="start must be <= end"):
         engine.submit(req)
 
 
-def test_submit_creates_job_with_correct_structure() -> None:
+@pytest.mark.asyncio
+async def test_submit_creates_job_with_correct_structure() -> None:
     engine = _make_engine()
     req = BackfillRequest(
-        provider="alpaca", feed="bars", symbols=["AAPL", "MSFT"],
-        start=date(2025, 1, 1), end=date(2025, 1, 3), chunk_days=1,
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL", "MSFT"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 3),
+        chunk_days=1,
     )
     job = engine.submit(req)
 
@@ -177,27 +199,39 @@ def test_submit_creates_job_with_correct_structure() -> None:
     assert "MSFT" in job.symbols_progress
     assert job.symbols_progress["AAPL"].chunks_total == 3
 
+    # Cleanup: cancel the background task
+    engine.cancel(job.job_id)
+
 
 def test_get_job_returns_none_for_unknown() -> None:
     engine = _make_engine()
     assert engine.get_job("nonexistent") is None
 
 
-def test_list_jobs() -> None:
+@pytest.mark.asyncio
+async def test_list_jobs() -> None:
     engine = _make_engine()
     req = BackfillRequest(
-        provider="alpaca", feed="bars", symbols=["AAPL"],
-        start=date(2025, 1, 1), end=date(2025, 1, 1),
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
     )
-    engine.submit(req)
+    job = engine.submit(req)
     assert len(engine.list_jobs()) == 1
+    engine.cancel(job.job_id)
 
 
-def test_cancel_running_job() -> None:
+@pytest.mark.asyncio
+async def test_cancel_running_job() -> None:
     engine = _make_engine()
     req = BackfillRequest(
-        provider="alpaca", feed="bars", symbols=["AAPL"],
-        start=date(2025, 1, 1), end=date(2025, 1, 1),
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
     )
     job = engine.submit(req)
     assert engine.cancel(job.job_id)
@@ -222,8 +256,11 @@ def test_supported_feeds() -> None:
 def test_submit_without_config_raises() -> None:
     engine = BackfillEngine()
     req = BackfillRequest(
-        provider="alpaca", feed="bars", symbols=["AAPL"],
-        start=date(2025, 1, 1), end=date(2025, 1, 1),
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
     )
     with pytest.raises(ValueError, match="not configured"):
         engine.submit(req)
@@ -239,19 +276,26 @@ async def test_job_executes_and_publishes() -> None:
     # Mock the dispatch function to return data
     mock_data = [{"symbol": "AAPL", "close": 150.0, "timestamp": "2025-01-01T00:00:00Z"}]
 
-    with patch.dict(
-        "gateway.core.backfill.BACKFILL_DISPATCH",
-        {("alpaca", "bars"): AsyncMock(return_value=mock_data)},
-    ), patch(
-        "gateway.core.backfill.get_rate_limiter",
-        return_value=MagicMock(acquire=AsyncMock()),
-    ), patch(
-        "gateway.core.backfill.wrap_event",
-        return_value={"event_id": "test", "payload": mock_data[0]},
+    with (
+        patch.dict(
+            "gateway.core.backfill.BACKFILL_DISPATCH",
+            {("alpaca", "bars"): AsyncMock(return_value=mock_data)},
+        ),
+        patch(
+            "gateway.core.backfill.get_rate_limiter",
+            return_value=MagicMock(acquire=AsyncMock()),
+        ),
+        patch(
+            "gateway.core.backfill.wrap_event",
+            return_value={"event_id": "test", "payload": mock_data[0]},
+        ),
     ):
         req = BackfillRequest(
-            provider="alpaca", feed="bars", symbols=["AAPL"],
-            start=date(2025, 1, 1), end=date(2025, 1, 1),
+            provider="alpaca",
+            feed="bars",
+            symbols=["AAPL"],
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 1),
         )
         job = engine.submit(req)
 
@@ -268,16 +312,22 @@ async def test_job_executes_and_publishes() -> None:
 async def test_job_handles_provider_error_gracefully() -> None:
     engine = _make_engine()
 
-    with patch.dict(
-        "gateway.core.backfill.BACKFILL_DISPATCH",
-        {("alpaca", "bars"): AsyncMock(side_effect=RuntimeError("API error"))},
-    ), patch(
-        "gateway.core.backfill.get_rate_limiter",
-        return_value=MagicMock(acquire=AsyncMock()),
+    with (
+        patch.dict(
+            "gateway.core.backfill.BACKFILL_DISPATCH",
+            {("alpaca", "bars"): AsyncMock(side_effect=RuntimeError("API error"))},
+        ),
+        patch(
+            "gateway.core.backfill.get_rate_limiter",
+            return_value=MagicMock(acquire=AsyncMock()),
+        ),
     ):
         req = BackfillRequest(
-            provider="alpaca", feed="bars", symbols=["AAPL"],
-            start=date(2025, 1, 1), end=date(2025, 1, 1),
+            provider="alpaca",
+            feed="bars",
+            symbols=["AAPL"],
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 1),
         )
         job = engine.submit(req)
 
@@ -298,16 +348,22 @@ async def test_engine_shutdown_cancels_running_tasks() -> None:
         await asyncio.sleep(10)
         return [{"data": "never"}]
 
-    with patch.dict(
-        "gateway.core.backfill.BACKFILL_DISPATCH",
-        {("alpaca", "bars"): slow_dispatch},
-    ), patch(
-        "gateway.core.backfill.get_rate_limiter",
-        return_value=MagicMock(acquire=AsyncMock()),
+    with (
+        patch.dict(
+            "gateway.core.backfill.BACKFILL_DISPATCH",
+            {("alpaca", "bars"): slow_dispatch},
+        ),
+        patch(
+            "gateway.core.backfill.get_rate_limiter",
+            return_value=MagicMock(acquire=AsyncMock()),
+        ),
     ):
         req = BackfillRequest(
-            provider="alpaca", feed="bars", symbols=["AAPL"],
-            start=date(2025, 1, 1), end=date(2025, 1, 1),
+            provider="alpaca",
+            feed="bars",
+            symbols=["AAPL"],
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 1),
         )
         engine.submit(req)
         await asyncio.sleep(0.1)
@@ -319,36 +375,20 @@ async def test_engine_shutdown_cancels_running_tasks() -> None:
 # ── API Router Tests ───────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_backfill_api_submit() -> None:
-    from unittest.mock import patch as mock_patch
+def test_backfill_api_submit(client, test_api_key) -> None:
+    mock_job = BackfillJob(
+        request=BackfillRequest(
+            provider="alpaca",
+            feed="bars",
+            symbols=["AAPL"],
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 1),
+        ),
+    )
+    mock_engine = MagicMock()
+    mock_engine.submit.return_value = mock_job
 
-    from fastapi.testclient import TestClient
-
-    # Build a minimal test app
-    from fastapi import FastAPI
-
-    from gateway.api.backfill import router
-
-    app = FastAPI()
-    app.include_router(router)
-
-    # Mock the auth and engine
-    with mock_patch("gateway.api.backfill.require_api_key", return_value=lambda: "test"), mock_patch(
-        "gateway.api.backfill.get_backfill_engine"
-    ) as mock_engine_fn:
-        mock_engine = MagicMock()
-        mock_engine_fn.return_value = mock_engine
-
-        mock_job = BackfillJob(
-            request=BackfillRequest(
-                provider="alpaca", feed="bars", symbols=["AAPL"],
-                start=date(2025, 1, 1), end=date(2025, 1, 1),
-            ),
-        )
-        mock_engine.submit.return_value = mock_job
-
-        client = TestClient(app)
+    with patch("gateway.api.backfill.get_backfill_engine", return_value=mock_engine):
         response = client.post(
             "/api/v1/backfill",
             json={
@@ -358,36 +398,25 @@ async def test_backfill_api_submit() -> None:
                 "start": "2025-01-01",
                 "end": "2025-01-01",
             },
+            headers={"X-Gateway-Key": test_api_key},
         )
 
-        assert response.status_code == 202
-        data = response.json()
-        assert data["success"] is True
-        assert "job_id" in data["data"]
+    assert response.status_code == 202
+    data = response.json()
+    assert data["success"] is True
+    assert "job_id" in data["data"]
 
 
-@pytest.mark.asyncio
-async def test_backfill_api_get_status_not_found() -> None:
-    from unittest.mock import patch as mock_patch
+def test_backfill_api_get_status_not_found(client, test_api_key) -> None:
+    mock_engine = MagicMock()
+    mock_engine.get_job.return_value = None
 
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    from gateway.api.backfill import router
-
-    app = FastAPI()
-    app.include_router(router)
-
-    with mock_patch("gateway.api.backfill.require_api_key", return_value=lambda: "test"), mock_patch(
-        "gateway.api.backfill.get_backfill_engine"
-    ) as mock_engine_fn:
-        mock_engine = MagicMock()
-        mock_engine_fn.return_value = mock_engine
-        mock_engine.get_job.return_value = None
-
-        client = TestClient(app)
-        response = client.get("/api/v1/backfill/nonexistent")
-        assert response.status_code == 404
+    with patch("gateway.api.backfill.get_backfill_engine", return_value=mock_engine):
+        response = client.get(
+            "/api/v1/backfill/nonexistent",
+            headers={"X-Gateway-Key": test_api_key},
+        )
+    assert response.status_code == 404
 
 
 # ── Singleton ──────────────────────────────────────────────────────────
