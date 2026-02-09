@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.136] - 2026-02-09
+
+### Added
+
+- **Stream-telemetry section-toggle regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for optional stream telemetry section skipping and default inclusion call paths.
+
+### Changed
+
+- **Optional stream telemetry payload controls**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `include_stream_sink_dispatch` and `include_stream_fanout` flags, allowing low-overhead polling clients to omit stream telemetry snapshots.
+- **Status section metadata expansion**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `data.status_sections` also reports `stream_sink_dispatch` and `stream_fanout` inclusion flags.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record stream telemetry section toggle rollout.
+
 ## [0.5.135] - 2026-02-09
 
 ### Added

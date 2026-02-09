@@ -94,6 +94,10 @@ The fastest, lowest-risk wins are:
   - `/api/v1/status` now supports `include_cache_stats`, `include_connection_stats`, and `include_registry_stats` toggles, enabling low-overhead polling that omits optional section work.
   - `/api/v1/status` now returns `status_sections` metadata to explicitly report which optional sections were included.
   - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates both default inclusion and skip behavior.
+- Additional combined optimization batch (2026-02-09):
+  - `/api/v1/status` now supports `include_stream_sink_dispatch` and `include_stream_fanout` toggles so polling clients can skip stream telemetry snapshot work when not needed.
+  - `/api/v1/status` `status_sections` metadata now includes both stream telemetry section flags for explicit observability of payload composition.
+  - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates stream telemetry inclusion and skip behavior.
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
 

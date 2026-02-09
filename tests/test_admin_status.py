@@ -67,8 +67,19 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
         "events": {"delivered": 1200, "error": 4},
         "batches": {"count": 100, "total_clients": 2300, "max_batch_size": 32},
     }
-    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: snapshot)
-    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+    sink_calls = {"count": 0}
+    fanout_calls = {"count": 0}
+
+    def _get_sink_snapshot() -> dict[str, Any]:
+        sink_calls["count"] += 1
+        return snapshot
+
+    def _get_fanout_snapshot() -> dict[str, Any]:
+        fanout_calls["count"] += 1
+        return fanout_snapshot
+
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", _get_sink_snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", _get_fanout_snapshot)
 
     registry = _FakeRegistry()
     cache = _FakeCache()
@@ -87,10 +98,14 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
     assert response["data"]["status_sections"]["cache"] is True
     assert response["data"]["status_sections"]["connections"] is True
     assert response["data"]["status_sections"]["registry"] is True
+    assert response["data"]["status_sections"]["stream_sink_dispatch"] is True
+    assert response["data"]["status_sections"]["stream_fanout"] is True
     assert registry.health_check_calls == 1
     assert registry.get_stats_calls == 1
     assert cache.get_stats_calls == 1
     assert connections.get_stats_calls == 1
+    assert sink_calls["count"] == 1
+    assert fanout_calls["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -368,3 +383,41 @@ async def test_get_status_can_skip_cache_connection_and_registry_sections(
     assert registry.get_stats_calls == 0
     assert cache.get_stats_calls == 0
     assert connections.get_stats_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_get_status_can_skip_stream_telemetry_sections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sink_calls = {"count": 0}
+    fanout_calls = {"count": 0}
+
+    def _get_sink_snapshot() -> dict[str, Any]:
+        sink_calls["count"] += 1
+        return {"limits": {}, "events": {}, "pending_tasks": 0, "derived": {}}
+
+    def _get_fanout_snapshot() -> dict[str, Any]:
+        fanout_calls["count"] += 1
+        return {"limits": {}, "events": {}, "batches": {}, "derived": {}}
+
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", _get_sink_snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", _get_fanout_snapshot)
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_stream_sink_dispatch=False,
+        include_stream_fanout=False,
+    )
+
+    assert response["success"] is True
+    assert response["data"]["stream_sink_dispatch"] == {}
+    assert response["data"]["stream_fanout"] == {}
+    assert response["data"]["status_sections"]["stream_sink_dispatch"] is False
+    assert response["data"]["status_sections"]["stream_fanout"] is False
+    assert sink_calls["count"] == 0
+    assert fanout_calls["count"] == 0

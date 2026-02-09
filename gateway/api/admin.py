@@ -171,6 +171,14 @@ async def get_status(
         bool,
         Query(description="Whether to include registry stats in status response"),
     ] = True,
+    include_stream_sink_dispatch: Annotated[
+        bool,
+        Query(description="Whether to include stream sink dispatch telemetry"),
+    ] = True,
+    include_stream_fanout: Annotated[
+        bool,
+        Query(description="Whether to include stream fanout telemetry"),
+    ] = True,
 ):
     """Get full system status including clients, providers, and subscriptions."""
     provider_status, provider_health_cache = await _load_provider_health_status(
@@ -183,8 +191,10 @@ async def get_status(
     cache_stats = cache.get_stats_dict() if include_cache_stats else {}
     connection_stats = connections.get_stats() if include_connection_stats else {}
     registry_stats = registry.get_stats() if include_registry_stats else {}
-    stream_sink_dispatch = get_stream_sink_dispatch_snapshot()
-    stream_fanout = get_stream_fanout_snapshot()
+    stream_sink_dispatch = (
+        get_stream_sink_dispatch_snapshot() if include_stream_sink_dispatch else {}
+    )
+    stream_fanout = get_stream_fanout_snapshot() if include_stream_fanout else {}
 
     return {
         "success": True,
@@ -205,6 +215,8 @@ async def get_status(
                 "cache": include_cache_stats,
                 "connections": include_connection_stats,
                 "registry": include_registry_stats,
+                "stream_sink_dispatch": include_stream_sink_dispatch,
+                "stream_fanout": include_stream_fanout,
             },
             "stream_sink_dispatch": stream_sink_dispatch,
             "stream_fanout": stream_fanout,
