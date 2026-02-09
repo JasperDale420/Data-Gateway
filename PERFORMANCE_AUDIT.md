@@ -191,6 +191,9 @@ The fastest, lowest-risk wins are:
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now supports explicit per-request cache-clear controls (`clear_status_section_cache`, `clear_stream_section_cache`) for low-risk operator cache resets during status calibration.
     - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now reports cache maintenance activity (`optional_cache_maintenance_evictions`, `stream_cache_maintenance_evictions`) in `status_sections`.
     - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for clear-control behavior and maintenance metadata output.
+  - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now reports optional/stream cache-maintenance evictions as request-scoped values returned from section loaders, removing stale cross-request global counter reuse on cache-hit/skip paths.
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` for per-request eviction metadata reset behavior.
 
 1. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 
@@ -222,13 +225,12 @@ The fastest, lowest-risk wins are:
   - Publish concurrency is now runtime-configurable via `GATEWAY_UW_POLLER_PUBLISH_MAX_INFLIGHT`.
 - Impact: Reduces per-event round-trip serialization in flow/darkpool/market-tide/sector-tide poll loops and improves poll-cycle throughput under bursty snapshots.
 
-1. yfinance historical conversion uses `iterrows()`.
+1. yfinance historical conversion `iterrows()` hotspot (remediated 2026-02-09).
 
 - Evidence:
-  - `gateway/providers/yfinance.py:190`.
-- Impact: `iterrows` is slow for large DataFrames.
-- Low-risk fix:
-  - Replace with `itertuples(index=True)` and direct attribute access.
+  - `gateway/providers/yfinance.py` now uses `itertuples(index=True)` in `_bars_from_history_df(...)`.
+  - Regression coverage exists in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_yfinance_provider.py` (`test_bars_from_history_df_uses_itertuples_and_builds_normalized_bars`).
+- Impact: Reduced per-row iteration overhead for larger DataFrames while preserving normalized bar output shape.
 
 1. Alpha Vantage provider AV-3 helper/sort rollout is complete; remaining work is optional heavy-series limit tuning.
 

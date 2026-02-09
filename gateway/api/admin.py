@@ -46,8 +46,6 @@ _stream_section_stats_cache: dict[tuple[bool, bool], dict[str, dict[str, Any]]] 
 _stream_section_stats_cache_at: dict[tuple[bool, bool], datetime] | None = None
 _STATUS_SECTION_CACHE_MAX_ENTRIES = 32
 _STREAM_SECTION_CACHE_MAX_ENTRIES = 16
-_last_optional_cache_maintenance_evictions = 0
-_last_stream_cache_maintenance_evictions = 0
 
 
 def _utcnow() -> datetime:
@@ -223,10 +221,11 @@ def _load_optional_status_sections(
     status_section_cache_max_entries: int,
     clear_status_section_cache: bool,
     force_status_section_refresh: bool,
-) -> tuple[dict, dict, dict, dict, dict, str, float | None]:
+) -> tuple[dict, dict, dict, dict, dict, str, float | None, int]:
     """Load optional status sections with optional short-lived cache reuse."""
     global _status_section_stats_cache, _status_section_stats_cache_at
 
+    evictions = 0
     if not (
         include_cache_stats
         or include_connection_stats
@@ -234,10 +233,7 @@ def _load_optional_status_sections(
         or include_provider_health_checks
         or include_provider_quote_batches
     ):
-        return {}, {}, {}, {}, {}, "skipped", None
-
-    global _last_optional_cache_maintenance_evictions
-    evictions = 0
+        return {}, {}, {}, {}, {}, "skipped", None, evictions
     if clear_status_section_cache:
         evictions += _clear_status_section_cache()
     cache_key = (
@@ -275,6 +271,7 @@ def _load_optional_status_sections(
             (cached.get("provider_quote_batches", {}) if include_provider_quote_batches else {}),
             "cache",
             age_seconds,
+            evictions,
         )
 
     latest = {
@@ -298,8 +295,6 @@ def _load_optional_status_sections(
         evictions += _enforce_status_section_cache_limit(
             max_entries=status_section_cache_max_entries
         )
-    _last_optional_cache_maintenance_evictions = evictions
-
     return (
         latest["cache"] if include_cache_stats else {},
         latest["connections"] if include_connection_stats else {},
@@ -308,6 +303,7 @@ def _load_optional_status_sections(
         latest["provider_quote_batches"] if include_provider_quote_batches else {},
         "live",
         0.0 if status_section_cache_ttl_seconds > 0 else None,
+        evictions,
     )
 
 
@@ -382,15 +378,13 @@ def _load_stream_status_sections(
     stream_section_cache_max_entries: int,
     clear_stream_section_cache: bool,
     force_stream_section_refresh: bool,
-) -> tuple[dict, dict, str, float | None]:
+) -> tuple[dict, dict, str, float | None, int]:
     """Load optional stream telemetry sections with optional short-lived cache reuse."""
     global _stream_section_stats_cache, _stream_section_stats_cache_at
 
-    if not (include_stream_sink_dispatch or include_stream_fanout):
-        return {}, {}, "skipped", None
-
-    global _last_stream_cache_maintenance_evictions
     evictions = 0
+    if not (include_stream_sink_dispatch or include_stream_fanout):
+        return {}, {}, "skipped", None, evictions
     if clear_stream_section_cache:
         evictions += _clear_stream_section_cache()
     cache_key = (include_stream_sink_dispatch, include_stream_fanout)
@@ -419,6 +413,7 @@ def _load_stream_status_sections(
             cached.get("stream_fanout", {}) if include_stream_fanout else {},
             "cache",
             age_seconds,
+            evictions,
         )
 
     latest = {
@@ -437,13 +432,12 @@ def _load_stream_status_sections(
         evictions += _enforce_stream_section_cache_limit(
             max_entries=stream_section_cache_max_entries
         )
-    _last_stream_cache_maintenance_evictions = evictions
-
     return (
         latest["stream_sink_dispatch"],
         latest["stream_fanout"],
         "live",
         0.0 if stream_section_cache_ttl_seconds > 0 else None,
+        evictions,
     )
 
 
@@ -623,6 +617,7 @@ async def get_status(
         provider_quote_batches,
         optional_stats_source,
         optional_stats_age_seconds,
+        optional_cache_maintenance_evictions,
     ) = _load_optional_status_sections(
         registry=registry,
         cache=cache,
@@ -642,6 +637,7 @@ async def get_status(
         stream_fanout,
         stream_stats_source,
         stream_stats_age_seconds,
+        stream_cache_maintenance_evictions,
     ) = _load_stream_status_sections(
         include_stream_sink_dispatch=include_stream_sink_dispatch,
         include_stream_fanout=include_stream_fanout,
@@ -683,13 +679,13 @@ async def get_status(
             "optional_stats_age_seconds": optional_stats_age_seconds,
             "optional_cache_entries": optional_cache_entries,
             "optional_cache_max_entries": effective_status_cache_max_entries,
-            "optional_cache_maintenance_evictions": _last_optional_cache_maintenance_evictions,
+            "optional_cache_maintenance_evictions": optional_cache_maintenance_evictions,
             "stream_stats_source": stream_stats_source,
             "stream_stats_ttl_seconds": stream_section_cache_ttl_seconds,
             "stream_stats_age_seconds": stream_stats_age_seconds,
             "stream_cache_entries": stream_cache_entries,
             "stream_cache_max_entries": effective_stream_cache_max_entries,
-            "stream_cache_maintenance_evictions": _last_stream_cache_maintenance_evictions,
+            "stream_cache_maintenance_evictions": stream_cache_maintenance_evictions,
         }
 
     return {

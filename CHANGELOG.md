@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.160] - 2026-02-09
+
+### Added
+
+- **Request-scope cache-maintenance regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage that `optional_cache_maintenance_evictions` and `stream_cache_maintenance_evictions` reset per request instead of leaking prior-request values.
+
+### Changed
+
+- **Request-scoped eviction metadata**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so status cache-maintenance eviction counts are returned from section loaders and reported per request, removing cross-request global counter reuse.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record request-scoped status cache-maintenance eviction metadata rollout.
+
 ## [0.5.159] - 2026-02-09
 
 ### Added

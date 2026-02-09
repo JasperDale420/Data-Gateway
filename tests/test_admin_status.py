@@ -1431,6 +1431,93 @@ async def test_get_status_can_clear_stream_section_cache_on_request(
 
 
 @pytest.mark.asyncio
+async def test_get_status_optional_cache_maintenance_evictions_are_request_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(
+        admin, "_status_section_stats_cache", {(True, False, False, False, False): {"cache": {}}}
+    )
+    monkeypatch.setattr(
+        admin,
+        "_status_section_stats_cache_at",
+        {(True, False, False, False, False): datetime(2026, 2, 10, 0, 41, tzinfo=UTC)},
+    )
+    monkeypatch.setattr(admin, "_utcnow", lambda: datetime(2026, 2, 10, 0, 42, tzinfo=UTC))
+
+    first = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        clear_status_section_cache=True,
+        status_section_cache_ttl_seconds=0,
+    )
+    assert first["data"]["status_sections"]["optional_cache_maintenance_evictions"] >= 1
+
+    second = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_cache_stats=False,
+        include_connection_stats=False,
+        include_registry_stats=False,
+        include_provider_health_checks=False,
+        include_provider_quote_batches=False,
+        status_section_cache_ttl_seconds=0,
+    )
+    assert second["data"]["status_sections"]["optional_cache_maintenance_evictions"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_status_stream_cache_maintenance_evictions_are_request_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(
+        admin, "_stream_section_stats_cache", {(True, True): {"stream_sink_dispatch": {}}}
+    )
+    monkeypatch.setattr(
+        admin,
+        "_stream_section_stats_cache_at",
+        {(True, True): datetime(2026, 2, 10, 0, 43, tzinfo=UTC)},
+    )
+    monkeypatch.setattr(admin, "_utcnow", lambda: datetime(2026, 2, 10, 0, 44, tzinfo=UTC))
+
+    first = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        clear_stream_section_cache=True,
+        stream_section_cache_ttl_seconds=0,
+    )
+    assert first["data"]["status_sections"]["stream_cache_maintenance_evictions"] >= 1
+
+    second = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_stream_sink_dispatch=False,
+        include_stream_fanout=False,
+        stream_section_cache_ttl_seconds=0,
+    )
+    assert second["data"]["status_sections"]["stream_cache_maintenance_evictions"] == 0
+
+
+@pytest.mark.asyncio
 async def test_get_status_optional_cache_evicts_oldest_shapes_when_overflow_is_multiple(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
