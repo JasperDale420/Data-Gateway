@@ -358,3 +358,45 @@ async def test_news_symbol_lookup_deduplicates_symbols() -> None:
     )
 
     assert calls == ["*", "AAPL", "MSFT"]
+
+
+@pytest.mark.asyncio
+async def test_stream_multiplexer_single_client_fanout_skips_gather(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Validator:
+        def validate_bar(self, _message: dict[str, str]) -> SimpleNamespace:
+            return SimpleNamespace(valid=True, error_codes=[])
+
+    monkeypatch.setattr(stream_module, "get_validator", lambda: _Validator())
+
+    async def _forbidden_gather(*_tasks):
+        raise AssertionError("gather should not be used for single-client fanout")
+
+    monkeypatch.setattr(stream_module.asyncio, "gather", _forbidden_gather)
+
+    delivered: list[tuple[str, str]] = []
+
+    async def _on_data(client_id: str, data_type: str, _message: dict) -> None:
+        delivered.append((client_id, data_type))
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+
+    class _Subscriptions:
+        def get_clients_for_symbol(self, symbol: str, _data_type: str) -> list[str]:
+            if symbol == "AAPL":
+                return ["client-1"]
+            return []
+
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
+        Any, SimpleNamespace(subscriptions=_Subscriptions())
+    )
+
+    await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "AAPL"})
+
+    assert delivered == [("client-1", "bars")]

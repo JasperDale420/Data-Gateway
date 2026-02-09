@@ -991,6 +991,9 @@ class StreamMultiplexer:
                 )
 
         for client_batch in self._iter_client_batches(clients):
+            if len(client_batch) == 1:
+                await _send(client_batch[0])
+                continue
             await asyncio.gather(*(_send(client_id) for client_id in client_batch))
 
     def _iter_client_batches(self, clients: set[str]) -> Iterator[list[str]]:

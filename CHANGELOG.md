@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.144] - 2026-02-09
+
+### Added
+
+- **Single-client fanout regression test**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` with coverage ensuring single-client stream fanout avoids `asyncio.gather(...)` task scheduling overhead.
+
+### Changed
+
+- **Stream fanout single-client fast path**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/stream.py` so `_handle_message(...)` directly awaits single-client batch delivery and only uses `asyncio.gather(...)` for multi-client batches.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record the single-client fanout task-allocation optimization.
+
 ## [0.5.143] - 2026-02-09
 
 ### Added

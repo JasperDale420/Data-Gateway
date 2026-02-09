@@ -74,6 +74,10 @@ The fastest, lowest-risk wins are:
     - `gateway/core/stream.py` now resolves active connection/subscribers before running bar/quote/trade validation in `_handle_message(...)`.
     - This removes validator work from idle/no-subscriber fanout paths while preserving validation behavior for messages that actually fan out.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` for no-connection/no-subscriber skip paths plus existing validator-cache behavior when subscribers exist.
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/stream.py` now fast-paths single-client fanout batches in `_handle_message(...)` and avoids `asyncio.gather(...)` task allocation when a batch has exactly one downstream client.
+    - This reduces per-message scheduling overhead for the common low-subscriber case while preserving existing bounded-batch semantics for multi-client fanout.
+    - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` (`test_stream_multiplexer_single_client_fanout_skips_gather`).
 
 ### P1 (High Value, Low/Medium Risk)
 
