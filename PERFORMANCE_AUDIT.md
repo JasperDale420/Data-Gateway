@@ -170,6 +170,11 @@ The fastest, lowest-risk wins are:
 - Impact: Main AV-3 duplication/sort hotspots are remediated; largest remaining Alpha Vantage cost center is full-history parse/sort behavior.
 - Low-risk fix:
   - Optionally add `max_points` limits on heavy full-history methods where route contracts allow.
+- Additional combined optimization batch (2026-02-09):
+  - `gateway/api/alphavantage/timeseries.py` now supports optional `max_points` on `/intraday/{symbol}`, `/daily/{symbol}`, `/weekly/{symbol}`, and `/monthly/{symbol}` to bound response payload size without changing default behavior.
+  - `gateway/providers/alphavantage.py` now accepts `max_points` for `get_intraday(...)`, `get_daily(...)`, `get_weekly(...)`, and `get_monthly(...)` and uses head-window iteration to avoid full-series normalization/sort work when a bounded window is requested.
+  - Route cache keys now include `max_points`, preventing cache-shape collisions between full-history and bounded-window requests.
+  - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alphavantage_provider.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alphavantage_timeseries.py`.
 
 ### P2 (Medium Priority)
 
@@ -298,7 +303,7 @@ Legend:
 ## Next-Run Audit Plan (Targeted)
 
 1. **UW provider**: Telemetry-driven inflight tuning; expand native pagination where post-filter semantics allow.
-2. **Alpha Vantage provider**: Optional full-history `max_points` tuning + broader runtime profiling validation.
+2. **Alpha Vantage provider**: Optional full-history `max_points` tuning is now in place for core timeseries routes; follow-up is broader runtime profiling validation and selective expansion to remaining heavy AV payload paths if needed.
 3. **Alpaca routers**: Route-helper consolidation is complete; continue selective safe-GET cache/dedupe expansion where payload shape and staleness bounds are clear (metadata, news, corporate actions, account configurations, trading low-churn reads, screener endpoints, and both live/historical forex reads are now covered).
 4. **Alpaca provider**: Continue shared client-use and logging tuning follow-ups; timestamp conversion-path consolidation is now in place.
 5. **Non-provider routers**: Finnhub cached-router telemetry sweep is complete (news, quotes/bars, funds, analysis, forex, crypto, alternative-data, earnings, ETF/index, fundamentals). Follow-up is optional telemetry naming/metric-cardinality review during regular perf monitoring.

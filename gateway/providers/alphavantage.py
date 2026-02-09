@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import os
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from decimal import Decimal
 from itertools import islice
@@ -174,6 +175,14 @@ class AlphaVantageProvider(DataProvider):
             return head_items
         return sorted(series.items(), reverse=True)[:limit]
 
+    def _iter_time_series_items(
+        self, series: dict[str, Any], max_points: int | None
+    ) -> Iterable[tuple[str, Any]]:
+        """Return time-series items, optionally limited to newest points only."""
+        if max_points is None:
+            return series.items()
+        return self._top_time_series_items(series, limit=max_points)
+
     # ─────────────────────────────────────────────────────────────────
     # Quote Methods
     # ─────────────────────────────────────────────────────────────────
@@ -233,6 +242,7 @@ class AlphaVantageProvider(DataProvider):
         symbol: str,
         interval: str = "5min",
         outputsize: str = "compact",
+        max_points: int | None = None,
     ) -> list[NormalizedBar]:
         """Get intraday time series data.
 
@@ -264,7 +274,7 @@ class AlphaVantageProvider(DataProvider):
             timeframe = interval_map.get(interval, "5Min")
 
             bars = []
-            for timestamp_str, ohlcv in time_series.items():
+            for timestamp_str, ohlcv in self._iter_time_series_items(time_series, max_points):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
@@ -279,8 +289,9 @@ class AlphaVantageProvider(DataProvider):
                     )
                 )
 
-            # Sort by timestamp descending (most recent first)
-            bars.sort(key=lambda x: x.timestamp, reverse=True)
+            # Sort only when full-series mode is requested.
+            if max_points is None:
+                bars.sort(key=lambda x: x.timestamp, reverse=True)
             logger.info("alphavantage_intraday_fetched", symbol=symbol, count=len(bars))
             return bars
 
@@ -293,6 +304,7 @@ class AlphaVantageProvider(DataProvider):
         symbol: str,
         outputsize: str = "compact",
         adjusted: bool = True,
+        max_points: int | None = None,
     ) -> list[NormalizedBar]:
         """Get daily time series data.
 
@@ -314,7 +326,7 @@ class AlphaVantageProvider(DataProvider):
             time_series = data.get(time_series_key, {})
 
             bars = []
-            for date_str, ohlcv in time_series.items():
+            for date_str, ohlcv in self._iter_time_series_items(time_series, max_points):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
@@ -329,7 +341,8 @@ class AlphaVantageProvider(DataProvider):
                     )
                 )
 
-            bars.sort(key=lambda x: x.timestamp, reverse=True)
+            if max_points is None:
+                bars.sort(key=lambda x: x.timestamp, reverse=True)
             logger.info("alphavantage_daily_fetched", symbol=symbol, count=len(bars))
             return bars
 
@@ -337,7 +350,9 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_daily_failed", symbol=symbol, error=str(e))
             raise
 
-    async def get_weekly(self, symbol: str, adjusted: bool = True) -> list[NormalizedBar]:
+    async def get_weekly(
+        self, symbol: str, adjusted: bool = True, max_points: int | None = None
+    ) -> list[NormalizedBar]:
         """Get weekly time series data."""
         function = "TIME_SERIES_WEEKLY_ADJUSTED" if adjusted else "TIME_SERIES_WEEKLY"
 
@@ -354,7 +369,7 @@ class AlphaVantageProvider(DataProvider):
             time_series = data.get(time_series_key, {})
 
             bars = []
-            for date_str, ohlcv in time_series.items():
+            for date_str, ohlcv in self._iter_time_series_items(time_series, max_points):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
@@ -369,7 +384,8 @@ class AlphaVantageProvider(DataProvider):
                     )
                 )
 
-            bars.sort(key=lambda x: x.timestamp, reverse=True)
+            if max_points is None:
+                bars.sort(key=lambda x: x.timestamp, reverse=True)
             logger.info("alphavantage_weekly_fetched", symbol=symbol, count=len(bars))
             return bars
 
@@ -525,7 +541,9 @@ class AlphaVantageProvider(DataProvider):
     # Time Series Extended
     # ─────────────────────────────────────────────────────────────────
 
-    async def get_monthly(self, symbol: str, adjusted: bool = True) -> list[NormalizedBar]:
+    async def get_monthly(
+        self, symbol: str, adjusted: bool = True, max_points: int | None = None
+    ) -> list[NormalizedBar]:
         """Get monthly time series data."""
         function = "TIME_SERIES_MONTHLY_ADJUSTED" if adjusted else "TIME_SERIES_MONTHLY"
         ts_key = "Monthly Adjusted Time Series" if adjusted else "Monthly Time Series"
@@ -536,8 +554,14 @@ class AlphaVantageProvider(DataProvider):
             )
 
             time_series = data.get(ts_key, {})
+            if max_points is None:
+                items: Iterable[tuple[str, Any]] = time_series.items()
+            else:
+                # Keep monthly output in ascending order while limiting to the newest window.
+                items = reversed(self._top_time_series_items(time_series, limit=max_points))
+
             bars = []
-            for date_str, values in time_series.items():
+            for date_str, values in items:
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
@@ -555,7 +579,9 @@ class AlphaVantageProvider(DataProvider):
                         provider="alphavantage",
                     )
                 )
-            return sorted(bars, key=lambda x: x.timestamp)
+            if max_points is None:
+                return sorted(bars, key=lambda x: x.timestamp)
+            return bars
 
         except Exception as e:
             logger.error("alphavantage_monthly_failed", symbol=symbol, error=str(e))

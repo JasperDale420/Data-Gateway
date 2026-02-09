@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.140] - 2026-02-09
+
+### Added
+
+- **Alpha Vantage max-points regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alphavantage_provider.py` and added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alphavantage_timeseries.py` to validate bounded-window behavior and route wiring/cache-key separation.
+
+### Changed
+
+- **Alpha Vantage bounded history controls**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alphavantage/timeseries.py` so `/intraday/{symbol}`, `/daily/{symbol}`, `/weekly/{symbol}`, and `/monthly/{symbol}` support optional `max_points` query limits.
+- **Provider normalization short-circuit**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/providers/alphavantage.py` time-series methods (`get_intraday`, `get_daily`, `get_weekly`, `get_monthly`) to accept `max_points` and avoid full-series normalization/sort when bounded windows are requested.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record the Alpha Vantage max-points remediation batch and remaining profiling follow-up.
+
 ## [0.5.139] - 2026-02-09
 
 ### Added

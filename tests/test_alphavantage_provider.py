@@ -117,6 +117,92 @@ async def test_fetch_json_raises_on_rate_limit_note() -> None:
         await provider._fetch_json({"function": "GLOBAL_QUOTE", "symbol": "IBM"})
 
 
+@pytest.mark.asyncio
+async def test_get_intraday_honors_max_points(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = AlphaVantageProvider()
+
+    async def _fake_fetch_json(_params: dict[str, object]) -> dict[str, object]:
+        return {
+            "Time Series (5min)": {
+                "2026-02-09 09:35:00": {
+                    "1. open": "101.0",
+                    "2. high": "102.0",
+                    "3. low": "100.5",
+                    "4. close": "101.5",
+                    "5. volume": "1200",
+                },
+                "2026-02-09 09:30:00": {
+                    "1. open": "100.0",
+                    "2. high": "101.0",
+                    "3. low": "99.5",
+                    "4. close": "100.5",
+                    "5. volume": "1100",
+                },
+                "2026-02-09 09:25:00": {
+                    "1. open": "99.0",
+                    "2. high": "100.0",
+                    "3. low": "98.5",
+                    "4. close": "99.5",
+                    "5. volume": "1000",
+                },
+            }
+        }
+
+    monkeypatch.setattr(provider, "_fetch_json", _fake_fetch_json)
+
+    bars = await provider.get_intraday("AAPL", interval="5min", outputsize="full", max_points=2)
+
+    assert len(bars) == 2
+    assert [bar.timestamp.isoformat() for bar in bars] == [
+        "2026-02-09T09:35:00",
+        "2026-02-09T09:30:00",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_monthly_honors_max_points_and_keeps_ascending_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = AlphaVantageProvider()
+
+    async def _fake_fetch_json(_params: dict[str, object]) -> dict[str, object]:
+        return {
+            "Monthly Adjusted Time Series": {
+                "2026-03-01": {
+                    "1. open": "103.0",
+                    "2. high": "104.0",
+                    "3. low": "102.0",
+                    "4. close": "103.5",
+                    "5. adjusted close": "103.5",
+                    "6. volume": "10000",
+                },
+                "2026-02-01": {
+                    "1. open": "102.0",
+                    "2. high": "103.0",
+                    "3. low": "101.0",
+                    "4. close": "102.5",
+                    "5. adjusted close": "102.5",
+                    "6. volume": "9000",
+                },
+                "2026-01-01": {
+                    "1. open": "101.0",
+                    "2. high": "102.0",
+                    "3. low": "100.0",
+                    "4. close": "101.5",
+                    "5. adjusted close": "101.5",
+                    "6. volume": "8000",
+                },
+            }
+        }
+
+    monkeypatch.setattr(provider, "_fetch_json", _fake_fetch_json)
+
+    bars = await provider.get_monthly("AAPL", adjusted=True, max_points=2)
+
+    assert len(bars) == 2
+    assert [bar.timestamp.date().isoformat() for bar in bars] == ["2026-02-01", "2026-03-01"]
+
+
 def test_top_time_series_items_fast_path_keeps_head_order() -> None:
     provider = AlphaVantageProvider()
     series = {
