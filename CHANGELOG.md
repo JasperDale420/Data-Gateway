@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.133] - 2026-02-09
+
+### Added
+
+- **Admin status cache-metadata/TTL regression coverage**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with tests for provider-health cache metadata (`source`, `ttl_seconds`, `age_seconds`) and per-request TTL override behavior.
+
+### Changed
+
+- **Provider-health calibration visibility**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` includes `provider_health_cache` metadata in the response payload.
+- **Per-request cache TTL tuning**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to accept `provider_health_cache_ttl_seconds` (>= 0) for request-scoped provider-health cache TTL overrides.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record admin status cache metadata and TTL override tuning path.
+
 ## [0.5.132] - 2026-02-09
 
 ### Added

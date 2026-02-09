@@ -199,3 +199,105 @@ async def test_get_status_force_refresh_bypasses_provider_health_cache(
     )
 
     assert registry.health_check_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_get_status_reports_provider_health_cache_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = {
+        "limits": {"max_inflight_publish": 32, "max_pending_tasks": 512},
+        "pending_tasks": 1,
+        "events": {"scheduled": 4, "completed": 4},
+        "derived": {"pending_utilization": 0.0, "completion_rate": 1.0, "drop_rate": 0.0},
+    }
+    fanout_snapshot = {
+        "limits": {"max_inflight": 100, "batch_size": 32},
+        "events": {"delivered": 100, "error": 0},
+        "batches": {"count": 4, "total_clients": 64, "max_batch_size": 16},
+        "derived": {"avg_batch_size": 16.0, "batch_fill_ratio": 0.5, "error_rate": 0.0},
+    }
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+
+    now = datetime(2026, 2, 9, 12, 0, tzinfo=UTC)
+    time_ref = {"now": now}
+    monkeypatch.setattr(admin, "_utcnow", lambda: time_ref["now"])
+
+    registry = _FakeRegistry()
+    first = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=True,
+    )
+    time_ref["now"] = now + timedelta(seconds=1)
+    second = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=True,
+    )
+
+    assert first["data"]["provider_health_cache"]["source"] == "live"
+    assert first["data"]["provider_health_cache"]["ttl_seconds"] == 5
+    assert first["data"]["provider_health_cache"]["age_seconds"] == 0.0
+    assert second["data"]["provider_health_cache"]["source"] == "cache"
+    assert second["data"]["provider_health_cache"]["ttl_seconds"] == 5
+    assert second["data"]["provider_health_cache"]["age_seconds"] == 1.0
+    assert registry.health_check_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_get_status_provider_health_ttl_override_controls_cache_reuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = {
+        "limits": {"max_inflight_publish": 32, "max_pending_tasks": 512},
+        "pending_tasks": 1,
+        "events": {"scheduled": 4, "completed": 4},
+        "derived": {"pending_utilization": 0.0, "completion_rate": 1.0, "drop_rate": 0.0},
+    }
+    fanout_snapshot = {
+        "limits": {"max_inflight": 100, "batch_size": 32},
+        "events": {"delivered": 100, "error": 0},
+        "batches": {"count": 4, "total_clients": 64, "max_batch_size": 16},
+        "derived": {"avg_batch_size": 16.0, "batch_fill_ratio": 0.5, "error_rate": 0.0},
+    }
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+
+    now = datetime(2026, 2, 9, 13, 0, tzinfo=UTC)
+    time_ref = {"now": now}
+    monkeypatch.setattr(admin, "_utcnow", lambda: time_ref["now"])
+
+    registry = _FakeRegistry()
+    first = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=True,
+        provider_health_cache_ttl_seconds=0,
+    )
+    time_ref["now"] = now + timedelta(seconds=1)
+    second = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=True,
+        provider_health_cache_ttl_seconds=0,
+    )
+
+    assert first["data"]["provider_health_cache"]["source"] == "live"
+    assert second["data"]["provider_health_cache"]["source"] == "live"
+    assert first["data"]["provider_health_cache"]["ttl_seconds"] == 0
+    assert second["data"]["provider_health_cache"]["ttl_seconds"] == 0
+    assert registry.health_check_calls == 2

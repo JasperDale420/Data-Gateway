@@ -86,6 +86,10 @@ The fastest, lowest-risk wins are:
   - `/api/v1/status` provider health checks now use a short-lived in-memory TTL cache (`5s`) for repeated status polling with `include_provider_health=true`.
   - `/api/v1/status` now supports `force_provider_health_refresh=true` to bypass the TTL cache for one request.
   - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates cache reuse and force-refresh behavior.
+- Additional combined optimization batch (2026-02-09):
+  - `/api/v1/status` now returns `provider_health_cache` metadata (`source`, `ttl_seconds`, `age_seconds`) so operators can confirm whether health status came from live probe, cache reuse, or skip path.
+  - `/api/v1/status` now supports `provider_health_cache_ttl_seconds` for per-request cache TTL tuning during calibration.
+  - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates metadata and TTL override behavior.
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
 

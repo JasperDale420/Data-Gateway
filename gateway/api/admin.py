@@ -37,11 +37,11 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _provider_health_cache_is_fresh(now: datetime) -> bool:
+def _provider_health_cache_is_fresh(now: datetime, *, ttl_seconds: int) -> bool:
     """Whether provider-health cache is valid for reuse."""
     if _provider_health_cache is None or _provider_health_cache_at is None:
         return False
-    return (now - _provider_health_cache_at).total_seconds() <= _PROVIDER_HEALTH_CACHE_TTL_SECONDS
+    return (now - _provider_health_cache_at).total_seconds() <= ttl_seconds
 
 
 async def _load_provider_health_status(
@@ -49,20 +49,38 @@ async def _load_provider_health_status(
     registry: ProviderRegistry,
     include_provider_health: bool,
     force_provider_health_refresh: bool,
-) -> dict:
+    provider_health_cache_ttl_seconds: int | None,
+) -> tuple[dict, dict]:
     """Load provider health status with optional short-lived cache reuse."""
     global _provider_health_cache, _provider_health_cache_at
+    ttl_seconds = (
+        _PROVIDER_HEALTH_CACHE_TTL_SECONDS
+        if provider_health_cache_ttl_seconds is None
+        else max(0, provider_health_cache_ttl_seconds)
+    )
     if not include_provider_health:
-        return {}
+        return {}, {"source": "skipped", "ttl_seconds": ttl_seconds, "age_seconds": None}
 
     now = _utcnow()
-    if not force_provider_health_refresh and _provider_health_cache_is_fresh(now):
-        return _provider_health_cache or {}
+    if not force_provider_health_refresh and _provider_health_cache_is_fresh(
+        now,
+        ttl_seconds=ttl_seconds,
+    ):
+        age_seconds = (
+            (now - _provider_health_cache_at).total_seconds()
+            if _provider_health_cache_at is not None
+            else None
+        )
+        return _provider_health_cache or {}, {
+            "source": "cache",
+            "ttl_seconds": ttl_seconds,
+            "age_seconds": age_seconds,
+        }
 
     health = await registry.health_check_all()
     _provider_health_cache = health
     _provider_health_cache_at = now
-    return health
+    return health, {"source": "live", "ttl_seconds": ttl_seconds, "age_seconds": 0.0}
 
 
 def log_error(error_code: str, message: str, component: str = "gateway") -> None:
@@ -137,12 +155,17 @@ async def get_status(
         bool,
         Query(description="Bypass short-lived provider health cache for this request"),
     ] = False,
+    provider_health_cache_ttl_seconds: Annotated[
+        int | None,
+        Query(ge=0, description="Optional override for provider-health cache TTL seconds"),
+    ] = None,
 ):
     """Get full system status including clients, providers, and subscriptions."""
-    provider_status = await _load_provider_health_status(
+    provider_status, provider_health_cache = await _load_provider_health_status(
         registry=registry,
         include_provider_health=include_provider_health,
         force_provider_health_refresh=force_provider_health_refresh,
+        provider_health_cache_ttl_seconds=provider_health_cache_ttl_seconds,
     )
 
     # Cache stats
@@ -167,6 +190,7 @@ async def get_status(
             "cache": cache_stats,
             "connections": connection_stats,
             "registry": registry.get_stats(),
+            "provider_health_cache": provider_health_cache,
             "stream_sink_dispatch": stream_sink_dispatch,
             "stream_fanout": stream_fanout,
         },
