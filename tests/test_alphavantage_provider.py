@@ -203,6 +203,100 @@ async def test_get_monthly_honors_max_points_and_keeps_ascending_order(
     assert [bar.timestamp.date().isoformat() for bar in bars] == ["2026-02-01", "2026-03-01"]
 
 
+@pytest.mark.asyncio
+async def test_get_technical_indicator_honors_max_points(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = AlphaVantageProvider()
+
+    async def _fake_fetch_json(_params: dict[str, object]) -> dict[str, object]:
+        return {
+            "Technical Analysis: RSI": {
+                "2026-02-09": {"RSI": "62.1"},
+                "2026-02-08": {"RSI": "60.8"},
+                "2026-02-07": {"RSI": "58.3"},
+            },
+            "Meta Data": {"1: Symbol": "AAPL"},
+        }
+
+    monkeypatch.setattr(provider, "_fetch_json", _fake_fetch_json)
+
+    data = await provider.get_technical_indicator("AAPL", "RSI", max_points=2)
+
+    assert [point["date"] for point in data["data"]] == ["2026-02-09", "2026-02-08"]
+
+
+@pytest.mark.asyncio
+async def test_get_forex_daily_honors_max_points(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = AlphaVantageProvider()
+
+    async def _fake_fetch_json(_params: dict[str, object]) -> dict[str, object]:
+        return {
+            "Time Series FX (Daily)": {
+                "2026-02-09": {
+                    "1. open": "1.1",
+                    "2. high": "1.2",
+                    "3. low": "1.0",
+                    "4. close": "1.15",
+                },
+                "2026-02-08": {
+                    "1. open": "1.0",
+                    "2. high": "1.1",
+                    "3. low": "0.9",
+                    "4. close": "1.05",
+                },
+                "2026-02-07": {
+                    "1. open": "0.9",
+                    "2. high": "1.0",
+                    "3. low": "0.8",
+                    "4. close": "0.95",
+                },
+            }
+        }
+
+    monkeypatch.setattr(provider, "_fetch_json", _fake_fetch_json)
+
+    points = await provider.get_forex_daily("EUR", "USD", max_points=2)
+
+    assert [point["date"] for point in points] == ["2026-02-09", "2026-02-08"]
+
+
+@pytest.mark.asyncio
+async def test_get_crypto_daily_honors_max_points(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = AlphaVantageProvider()
+
+    async def _fake_fetch_json(_params: dict[str, object]) -> dict[str, object]:
+        return {
+            "Time Series (Digital Currency Daily)": {
+                "2026-02-09": {
+                    "1a. open (USD)": "50000",
+                    "2a. high (USD)": "51000",
+                    "3a. low (USD)": "49500",
+                    "4a. close (USD)": "50500",
+                    "5. volume": "1000",
+                },
+                "2026-02-08": {
+                    "1a. open (USD)": "49000",
+                    "2a. high (USD)": "50000",
+                    "3a. low (USD)": "48500",
+                    "4a. close (USD)": "49500",
+                    "5. volume": "1200",
+                },
+                "2026-02-07": {
+                    "1a. open (USD)": "48000",
+                    "2a. high (USD)": "49000",
+                    "3a. low (USD)": "47500",
+                    "4a. close (USD)": "48500",
+                    "5. volume": "900",
+                },
+            }
+        }
+
+    monkeypatch.setattr(provider, "_fetch_json", _fake_fetch_json)
+
+    points = await provider.get_crypto_daily("BTC", market="USD", max_points=2)
+
+    assert [point["date"] for point in points] == ["2026-02-09", "2026-02-08"]
+
+
 def test_top_time_series_items_fast_path_keeps_head_order() -> None:
     provider = AlphaVantageProvider()
     series = {

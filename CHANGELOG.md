@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.141] - 2026-02-09
+
+### Added
+
+- **Extended Alpha Vantage max-points regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alphavantage_provider.py` and added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alphavantage_extended_routes.py` to validate bounded-window behavior for indicators, forex daily, and crypto daily paths.
+
+### Changed
+
+- **Indicator bounded-history controls**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alphavantage/indicators.py` so indicator endpoints accept `max_points` and partition cache keys by requested window.
+- **Forex/crypto bounded-history controls**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alphavantage/forex.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/alphavantage/crypto.py` so daily-series endpoints support `max_points` and forward limits to provider calls.
+- **Provider bounded-window rollout**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/providers/alphavantage.py` so `get_technical_indicator`, `get_forex_daily`, and `get_crypto_daily` use caller-specified `max_points` instead of fixed 100-point windows.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record the extended Alpha Vantage bounded-window remediation batch.
+
 ## [0.5.140] - 2026-02-09
 
 ### Added

@@ -620,6 +620,7 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 14,
         series_type: str = "close",
+        max_points: int = 100,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generic method for all technical indicators.
@@ -663,7 +664,7 @@ class AlphaVantageProvider(DataProvider):
                 "interval": interval,
                 "data": [
                     {"date": date, **vals}
-                    for date, vals in self._top_time_series_items(values, limit=100)
+                    for date, vals in self._top_time_series_items(values, limit=max_points)
                 ],
                 "meta": data.get("Meta Data", {}),
             }
@@ -681,9 +682,12 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 20,
         series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Simple Moving Average."""
-        return await self.get_technical_indicator(symbol, "SMA", interval, time_period, series_type)
+        return await self.get_technical_indicator(
+            symbol, "SMA", interval, time_period, series_type, max_points=max_points
+        )
 
     async def get_ema(
         self,
@@ -691,9 +695,12 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 20,
         series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Exponential Moving Average."""
-        return await self.get_technical_indicator(symbol, "EMA", interval, time_period, series_type)
+        return await self.get_technical_indicator(
+            symbol, "EMA", interval, time_period, series_type, max_points=max_points
+        )
 
     async def get_rsi(
         self,
@@ -701,15 +708,24 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 14,
         series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Relative Strength Index."""
-        return await self.get_technical_indicator(symbol, "RSI", interval, time_period, series_type)
+        return await self.get_technical_indicator(
+            symbol, "RSI", interval, time_period, series_type, max_points=max_points
+        )
 
     async def get_macd(
-        self, symbol: str, interval: str = "daily", series_type: str = "close"
+        self,
+        symbol: str,
+        interval: str = "daily",
+        series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Moving Average Convergence Divergence."""
-        return await self.get_technical_indicator(symbol, "MACD", interval, series_type=series_type)
+        return await self.get_technical_indicator(
+            symbol, "MACD", interval, series_type=series_type, max_points=max_points
+        )
 
     async def get_bbands(
         self,
@@ -717,37 +733,48 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 20,
         series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Bollinger Bands."""
         return await self.get_technical_indicator(
-            symbol, "BBANDS", interval, time_period, series_type
+            symbol, "BBANDS", interval, time_period, series_type, max_points=max_points
         )
 
-    async def get_stoch(self, symbol: str, interval: str = "daily") -> dict[str, Any]:
+    async def get_stoch(
+        self, symbol: str, interval: str = "daily", max_points: int = 100
+    ) -> dict[str, Any]:
         """Stochastic Oscillator."""
-        return await self.get_technical_indicator(symbol, "STOCH", interval)
+        return await self.get_technical_indicator(symbol, "STOCH", interval, max_points=max_points)
 
     async def get_adx(
-        self, symbol: str, interval: str = "daily", time_period: int = 14
+        self, symbol: str, interval: str = "daily", time_period: int = 14, max_points: int = 100
     ) -> dict[str, Any]:
         """Average Directional Index."""
-        return await self.get_technical_indicator(symbol, "ADX", interval, time_period)
+        return await self.get_technical_indicator(
+            symbol, "ADX", interval, time_period, max_points=max_points
+        )
 
     async def get_cci(
-        self, symbol: str, interval: str = "daily", time_period: int = 20
+        self, symbol: str, interval: str = "daily", time_period: int = 20, max_points: int = 100
     ) -> dict[str, Any]:
         """Commodity Channel Index."""
-        return await self.get_technical_indicator(symbol, "CCI", interval, time_period)
+        return await self.get_technical_indicator(
+            symbol, "CCI", interval, time_period, max_points=max_points
+        )
 
     async def get_atr(
-        self, symbol: str, interval: str = "daily", time_period: int = 14
+        self, symbol: str, interval: str = "daily", time_period: int = 14, max_points: int = 100
     ) -> dict[str, Any]:
         """Average True Range."""
-        return await self.get_technical_indicator(symbol, "ATR", interval, time_period)
+        return await self.get_technical_indicator(
+            symbol, "ATR", interval, time_period, max_points=max_points
+        )
 
-    async def get_obv(self, symbol: str, interval: str = "daily") -> dict[str, Any]:
+    async def get_obv(
+        self, symbol: str, interval: str = "daily", max_points: int = 100
+    ) -> dict[str, Any]:
         """On Balance Volume."""
-        return await self.get_technical_indicator(symbol, "OBV", interval)
+        return await self.get_technical_indicator(symbol, "OBV", interval, max_points=max_points)
 
     # ─────────────────────────────────────────────────────────────────
     # Forex
@@ -778,7 +805,9 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_forex_rate_failed", error=str(e))
             raise
 
-    async def get_forex_daily(self, from_symbol: str, to_symbol: str) -> list[dict[str, Any]]:
+    async def get_forex_daily(
+        self, from_symbol: str, to_symbol: str, max_points: int = 100
+    ) -> list[dict[str, Any]]:
         """Get daily forex time series."""
         try:
             data = await self._fetch_json(
@@ -799,7 +828,7 @@ class AlphaVantageProvider(DataProvider):
                     "low": v.get("3. low"),
                     "close": v.get("4. close"),
                 }
-                for date, v in self._top_time_series_items(ts, limit=100)
+                for date, v in self._top_time_series_items(ts, limit=max_points)
             ]
 
         except Exception as e:
@@ -827,7 +856,9 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_crypto_rating_failed", symbol=symbol, error=str(e))
             raise
 
-    async def get_crypto_daily(self, symbol: str, market: str = "USD") -> list[dict[str, Any]]:
+    async def get_crypto_daily(
+        self, symbol: str, market: str = "USD", max_points: int = 100
+    ) -> list[dict[str, Any]]:
         """Get daily crypto time series."""
         try:
             data = await self._fetch_json(
@@ -849,7 +880,7 @@ class AlphaVantageProvider(DataProvider):
                     "close": v.get(f"4a. close ({market.upper()})"),
                     "volume": v.get("5. volume"),
                 }
-                for date, v in self._top_time_series_items(ts, limit=100)
+                for date, v in self._top_time_series_items(ts, limit=max_points)
             ]
 
         except Exception as e:

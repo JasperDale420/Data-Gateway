@@ -1,6 +1,6 @@
 """Alpha Vantage forex endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
     Client,
@@ -48,19 +48,22 @@ async def get_forex_rate(
 async def get_forex_daily(
     from_symbol: str,
     to_symbol: str,
+    max_points: int = Query(default=100, ge=1, description="Max points to return"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get daily forex time series."""
-    key = cache_key("av:forex-daily", from_symbol.upper(), to_symbol.upper())
+    key = cache_key("av:forex-daily", from_symbol.upper(), to_symbol.upper(), str(max_points))
     try:
         return await execute_av_cached(
             cache=cache,
             cache_key_value=key,
             registry=registry,
             ttl=3600,
-            fetcher=lambda provider: provider.get_forex_daily(from_symbol, to_symbol),
+            fetcher=lambda provider: provider.get_forex_daily(
+                from_symbol, to_symbol, max_points=max_points
+            ),
             cache_transform=lambda data: data,
             miss_meta_builder=lambda data, _cached: {"count": len(data)},
             endpoint="forex_daily",
