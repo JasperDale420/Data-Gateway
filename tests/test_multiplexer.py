@@ -1,6 +1,7 @@
 """Tests for subscription manager."""
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -261,12 +262,70 @@ async def test_stream_multiplexer_reuses_cached_validator(
         on_data=_on_data,
         lazy_connect=True,
     )
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
+        Any,
+        SimpleNamespace(
+            subscriptions=SimpleNamespace(
+                get_clients_for_symbol=lambda _symbol, _data_type: ["client-1"]
+            )
+        ),
+    )
 
     await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "AAPL"})
     await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "MSFT"})
 
     assert get_validator_calls == 1
     assert validation_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_multiplexer_skips_validation_without_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _get_validator():
+        raise AssertionError("validator should not be resolved without an active connection")
+
+    monkeypatch.setattr(stream_module, "get_validator", _get_validator)
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+
+    await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "AAPL"})
+
+
+@pytest.mark.asyncio
+async def test_stream_multiplexer_skips_validation_without_subscribers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _get_validator():
+        raise AssertionError("validator should not be resolved without downstream subscribers")
+
+    monkeypatch.setattr(stream_module, "get_validator", _get_validator)
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
+        Any,
+        SimpleNamespace(
+            subscriptions=SimpleNamespace(get_clients_for_symbol=lambda _symbol, _data_type: [])
+        ),
+    )
+
+    await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "AAPL"})
 
 
 @pytest.mark.asyncio

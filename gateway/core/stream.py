@@ -912,24 +912,6 @@ class StreamMultiplexer:
             # System message, heartbeat, etc.
             return
 
-        if data_type in {"bars", "quotes", "trades"}:
-            validator = self._get_stream_validator()
-            if data_type == "bars":
-                result = validator.validate_bar(message)
-            elif data_type == "quotes":
-                result = validator.validate_quote(message)
-            else:
-                result = validator.validate_trade(message)
-
-            if not result.valid:
-                logger.warning(
-                    "stream_validation_failed",
-                    error_codes=result.error_codes,
-                    data_type=data_type,
-                    symbol=message.get("S"),
-                )
-                return
-
         # Find connection and get subscribed clients
         conn = self._get_connection(stream_type)
         if not conn:
@@ -963,6 +945,25 @@ class StreamMultiplexer:
             clients.update(conn.subscriptions.get_clients_for_symbol(sym, data_type))
         if not clients:
             return
+
+        # Validate only after we know the message has downstream subscribers.
+        if data_type in {"bars", "quotes", "trades"}:
+            validator = self._get_stream_validator()
+            if data_type == "bars":
+                result = validator.validate_bar(message)
+            elif data_type == "quotes":
+                result = validator.validate_quote(message)
+            else:
+                result = validator.validate_trade(message)
+
+            if not result.valid:
+                logger.warning(
+                    "stream_validation_failed",
+                    error_codes=result.error_codes,
+                    data_type=data_type,
+                    symbol=message.get("S"),
+                )
+                return
 
         # Wrap event in EventEnvelope for downstream consumers
         envelope = wrap_event(

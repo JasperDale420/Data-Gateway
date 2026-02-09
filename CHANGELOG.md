@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.142] - 2026-02-09
+
+### Added
+
+- **Stream idle-validation regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` with coverage for skipping validator resolution when there is no active stream connection or no downstream subscribers.
+
+### Changed
+
+- **Stream fanout hot-path short-circuit**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/stream.py` so `_handle_message(...)` resolves connection/subscribers before bar/quote/trade validation, reducing validator overhead on idle/unsubscribed paths.
+- **Validator cache test hardening**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` validator-cache test to use an active fake subscription path, preserving intended validation-call assertions after hot-path ordering changes.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record stream idle-validation skip optimization.
+
 ## [0.5.141] - 2026-02-09
 
 ### Added

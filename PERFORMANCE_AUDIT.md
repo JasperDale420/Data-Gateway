@@ -70,6 +70,10 @@ The fastest, lowest-risk wins are:
 - Impact: Reduces single-message task allocation burst and smooths event-loop pressure at high fanout while preserving delivery semantics. `_iter_client_batches(...)` now yields lazily without precomputing full batch lists, reducing per-message allocation overhead for large subscriber sets. Stream market-data validation now also reuses a cached validator instance (`_get_stream_validator(...)`) and a static message-type map in `gateway/core/stream.py`, removing repeated hot-path resolver/map allocations per validated message. News-symbol fanout lookup now deduplicates repeated symbols before subscription index reads, trimming redundant lookup work on duplicate-symbol payloads.
 - Remaining low-risk follow-up:
   - Calibrate `stream_fanout_max_inflight` and `stream_fanout_batch_size` with telemetry under production-like loads.
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/stream.py` now resolves active connection/subscribers before running bar/quote/trade validation in `_handle_message(...)`.
+    - This removes validator work from idle/no-subscriber fanout paths while preserving validation behavior for messages that actually fan out.
+    - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` for no-connection/no-subscriber skip paths plus existing validator-cache behavior when subscribers exist.
 
 ### P1 (High Value, Low/Medium Risk)
 
