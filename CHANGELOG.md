@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.147] - 2026-02-09
+
+### Added
+
+- **Stream-section cache regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for stream telemetry snapshot cache reuse and forced refresh behavior.
+
+### Changed
+
+- **Stream telemetry cache controls**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `stream_section_cache_ttl_seconds` and `force_stream_section_refresh` for `stream_sink_dispatch` and `stream_fanout` sections.
+- **Stream section cache metadata**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `status_sections` includes `stream_stats_source`, `stream_stats_ttl_seconds`, and `stream_stats_age_seconds`.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record stream-section cache rollout.
+
+## [0.5.146] - 2026-02-09
+
+### Added
+
+- **Endpoint-level rate limiting (PRD 7.5.3)**: `EndpointRateLimiter` in `gateway/core/rate_limiter.py` with sliding window (bulk: 10/hr) and concurrent session (replay: 5 max) limits, configurable via `BULK_RATE_LIMIT_PER_HOUR` and `REPLAY_MAX_CONCURRENT_SESSIONS` env vars
+- **Endpoint rate limiter tests**: 16 tests in `tests/test_endpoint_rate_limiter.py` covering window limits, concurrency, combined limits, and status reporting
+- **FastAPI dependency**: `get_endpoint_rate_limiter()` in `gateway/api/deps.py`
+
+### Changed
+
+- **Bulk endpoints**: All create endpoints (`/bars`, `/options/chains`, `/adjustment-factors`) enforce per-client hourly request limits with 429 responses and `Retry-After` headers
+- **Replay endpoints**: Session creation reserves concurrent slots; deletion and WebSocket cleanup release them
+- **Settings**: Added `bulk_rate_limit_per_hour` (default: 10) and `replay_max_concurrent_sessions` (default: 5) to `gateway/config.py`
+- **Startup**: Endpoint rate limiter configured during app lifespan in `gateway/main.py`
+
 ## [0.5.145] - 2026-02-09
 
 ### Added

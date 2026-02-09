@@ -123,6 +123,11 @@ The fastest, lowest-risk wins are:
   - `/api/v1/status` now supports `force_status_section_refresh=true` to bypass optional-section cache on demand.
   - `status_sections` metadata now includes optional-section cache details (`optional_stats_source`, `optional_stats_ttl_seconds`, `optional_stats_age_seconds`) when metadata is enabled.
   - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates cache reuse and force-refresh behavior.
+- Additional combined optimization batch (2026-02-09):
+  - `/api/v1/status` now supports short-lived caching for stream telemetry snapshots (`stream_sink_dispatch`, `stream_fanout`) via `stream_section_cache_ttl_seconds`.
+  - `/api/v1/status` now supports `force_stream_section_refresh=true` to bypass stream-section cache on demand.
+  - `status_sections` metadata now includes stream-section cache details (`stream_stats_source`, `stream_stats_ttl_seconds`, `stream_stats_age_seconds`) when metadata is enabled.
+  - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates stream-section cache reuse and force-refresh behavior.
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
   - Additional combined optimization batch (2026-02-09):

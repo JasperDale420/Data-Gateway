@@ -10,7 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from gateway.api.deps import get_registry, require_api_key, require_provider_rate_limit
+from gateway.api.deps import (
+    get_endpoint_rate_limiter,
+    get_registry,
+    require_api_key,
+    require_provider_rate_limit,
+)
 from gateway.config import get_settings
 from gateway.core.bulk import (
     BulkAdjustmentFactorsRequest,
@@ -19,6 +24,7 @@ from gateway.core.bulk import (
     BulkOptionsRequest,
     get_bulk_manager,
 )
+from gateway.core.rate_limiter import EndpointRateLimitExceeded
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 from gateway.types.provider_protocols import (
@@ -168,6 +174,19 @@ async def create_bulk_bars_job(
     registry: ProviderRegistry = Depends(get_registry),
 ) -> BulkJobCreatedResponse:
     """Create a bulk bars fetch job."""
+    # Enforce endpoint rate limit (PRD 7.5.3)
+    try:
+        get_endpoint_rate_limiter().acquire("bulk_create", client_id=client.id)
+    except EndpointRateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "GW-E4029",
+                "message": exc.message,
+            },
+            headers={"Retry-After": str(int(exc.retry_after))},
+        )
+
     manager = get_bulk_manager()
     settings = get_settings()
 
@@ -415,6 +434,19 @@ async def create_bulk_options_job(
 
     Fetches option chains for multiple underlyings using the configured provider.
     """
+    # Enforce endpoint rate limit (PRD 7.5.3)
+    try:
+        get_endpoint_rate_limiter().acquire("bulk_create", client_id=client.id)
+    except EndpointRateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "GW-E4029",
+                "message": exc.message,
+            },
+            headers={"Retry-After": str(int(exc.retry_after))},
+        )
+
     manager = get_bulk_manager()
     settings = get_settings()
 
@@ -489,6 +521,19 @@ async def create_bulk_adjustment_factors_job(
     client: Any = Depends(require_api_key),
 ) -> BulkJobCreatedResponse:
     """Create a bulk adjustment factors job."""
+    # Enforce endpoint rate limit (PRD 7.5.3)
+    try:
+        get_endpoint_rate_limiter().acquire("bulk_create", client_id=client.id)
+    except EndpointRateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "GW-E4029",
+                "message": exc.message,
+            },
+            headers={"Retry-After": str(int(exc.retry_after))},
+        )
+
     settings = get_settings()
     if not settings.allow_stub_data:
         raise HTTPException(

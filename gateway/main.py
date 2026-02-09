@@ -259,6 +259,24 @@ async def lifespan(app: FastAPI):
     init_metrics(version=__version__)
     init_uptime()
 
+    # Configure endpoint-level rate limits (PRD 7.5.3)
+    from gateway.core.rate_limiter import EndpointRateLimitConfig, EndpointRateLimiter
+
+    ep_limiter = EndpointRateLimiter.get_instance()
+    ep_limiter.configure(
+        "bulk_create",
+        EndpointRateLimitConfig(
+            requests_per_window=settings.bulk_rate_limit_per_hour,
+            window_seconds=3600,
+        ),
+    )
+    ep_limiter.configure(
+        "replay_session",
+        EndpointRateLimitConfig(
+            max_concurrent=settings.replay_max_concurrent_sessions,
+        ),
+    )
+
     async def _uptime_loop() -> None:
         try:
             while True:

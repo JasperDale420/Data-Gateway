@@ -9,6 +9,7 @@ from gateway.config import get_settings
 from gateway.core.auth import Client, ClientAuthenticator
 from gateway.core.cache import HybridCache, InMemoryCache
 from gateway.core.connections import ConnectionManager
+from gateway.core.rate_limiter import EndpointRateLimiter
 from gateway.core.registry import ProviderRegistry
 
 if TYPE_CHECKING:
@@ -96,6 +97,11 @@ def set_sink_registry(registry: "DataSinkRegistry") -> None:
 def get_sink_registry() -> "DataSinkRegistry | None":
     """Get the data sink registry (may be None if not configured)."""
     return _sink_registry
+
+
+def get_endpoint_rate_limiter() -> EndpointRateLimiter:
+    """Get the endpoint rate limiter singleton."""
+    return EndpointRateLimiter.get_instance()
 
 
 def require_api_key(

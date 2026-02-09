@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     replay_messages_max_in_memory: int = Field(default=50_000, ge=100)
     replay_messages_spool_to_disk: bool = True
 
+    # Endpoint Rate Limits (PRD 7.5.3)
+    bulk_rate_limit_per_hour: int = Field(default=10, ge=1)
+    replay_max_concurrent_sessions: int = Field(default=5, ge=1)
+
 
 @lru_cache
 def get_settings() -> Settings:

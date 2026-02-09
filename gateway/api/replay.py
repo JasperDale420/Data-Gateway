@@ -11,9 +11,10 @@ from typing import Any, Protocol
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from gateway.api.deps import get_authenticator, require_api_key
+from gateway.api.deps import get_authenticator, get_endpoint_rate_limiter, require_api_key
 from gateway.config import get_settings
 from gateway.core.auth import ClientAuthenticator
+from gateway.core.rate_limiter import EndpointRateLimitExceeded
 from gateway.core.replay import (
     ReplayConfig,
     ReplayState,
@@ -123,6 +124,9 @@ async def create_replay_session(
     client: Any = Depends(require_api_key),
 ) -> ReplaySessionResponse:
     """Create a replay session."""
+    # Enforce concurrent session limit (PRD 7.5.3)
+    ep_limiter = get_endpoint_rate_limiter()
+
     manager = get_replay_manager()
     settings = get_settings()
     if not manager.has_data_loader() and not settings.allow_stub_data:
@@ -146,6 +150,20 @@ async def create_replay_session(
         session = await manager.create_session(config, client.id)
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+    # Reserve concurrent slot after successful creation
+    try:
+        ep_limiter.acquire_concurrent("replay_session", session_id=session.session_id)
+    except EndpointRateLimitExceeded as exc:
+        # Clean up the session we just created
+        await manager.delete_session(session.session_id)
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "GW-E4029",
+                "message": exc.message,
+            },
+        )
 
     # Estimate messages (rough: 1 msg/min per symbol per feed)
     market_minutes = (config.end - config.start).total_seconds() / 60
@@ -255,6 +273,9 @@ async def delete_session(
 
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    # Release concurrent slot
+    get_endpoint_rate_limiter().release_concurrent("replay_session", session_id=session_id)
 
     return {"session_id": session_id, "deleted": True}
 
@@ -444,4 +465,6 @@ async def replay_websocket(
             control_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await control_task
+        # Release concurrent slot when session ends
+        get_endpoint_rate_limiter().release_concurrent("replay_session", session_id=session_id)
         await websocket.close()

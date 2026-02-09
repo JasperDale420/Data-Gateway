@@ -34,6 +34,8 @@ _provider_health_payload_cache_detailed: dict[str, dict[str, object]] | None = N
 _provider_health_payload_cache_minimal: dict[str, dict[str, object]] | None = None
 _status_section_stats_cache: dict[str, dict[str, Any]] | None = None
 _status_section_stats_cache_at: datetime | None = None
+_stream_section_stats_cache: dict[str, dict[str, Any]] | None = None
+_stream_section_stats_cache_at: datetime | None = None
 
 
 def _utcnow() -> datetime:
@@ -194,6 +196,63 @@ def _load_optional_status_sections(
     )
 
 
+def _stream_section_cache_is_fresh(now: datetime, *, ttl_seconds: int) -> bool:
+    """Whether stream telemetry section cache is valid for reuse."""
+    if _stream_section_stats_cache is None or _stream_section_stats_cache_at is None:
+        return False
+    return (now - _stream_section_stats_cache_at).total_seconds() <= ttl_seconds
+
+
+def _load_stream_status_sections(
+    *,
+    include_stream_sink_dispatch: bool,
+    include_stream_fanout: bool,
+    stream_section_cache_ttl_seconds: int,
+    force_stream_section_refresh: bool,
+) -> tuple[dict, dict, str, float | None]:
+    """Load optional stream telemetry sections with optional short-lived cache reuse."""
+    global _stream_section_stats_cache, _stream_section_stats_cache_at
+
+    if not (include_stream_sink_dispatch or include_stream_fanout):
+        return {}, {}, "skipped", None
+
+    now = _utcnow()
+    if (
+        stream_section_cache_ttl_seconds > 0
+        and not force_stream_section_refresh
+        and _stream_section_cache_is_fresh(now, ttl_seconds=stream_section_cache_ttl_seconds)
+    ):
+        age_seconds = (
+            (now - _stream_section_stats_cache_at).total_seconds()
+            if _stream_section_stats_cache_at is not None
+            else None
+        )
+        cached = _stream_section_stats_cache or {}
+        return (
+            cached.get("stream_sink_dispatch", {}) if include_stream_sink_dispatch else {},
+            cached.get("stream_fanout", {}) if include_stream_fanout else {},
+            "cache",
+            age_seconds,
+        )
+
+    latest = {
+        "stream_sink_dispatch": (
+            get_stream_sink_dispatch_snapshot() if include_stream_sink_dispatch else {}
+        ),
+        "stream_fanout": get_stream_fanout_snapshot() if include_stream_fanout else {},
+    }
+    if stream_section_cache_ttl_seconds > 0:
+        _stream_section_stats_cache = latest
+        _stream_section_stats_cache_at = now
+
+    return (
+        latest["stream_sink_dispatch"],
+        latest["stream_fanout"],
+        "live",
+        0.0 if stream_section_cache_ttl_seconds > 0 else None,
+    )
+
+
 def log_error(error_code: str, message: str, component: str = "gateway") -> None:
     """Log an error to the in-memory buffer."""
     global _error_counts, _error_counts_reset
@@ -294,6 +353,14 @@ async def get_status(
         bool,
         Query(description="Whether to include stream fanout telemetry"),
     ] = True,
+    stream_section_cache_ttl_seconds: Annotated[
+        int,
+        Query(ge=0, description="TTL seconds for optional stream telemetry section cache"),
+    ] = 0,
+    force_stream_section_refresh: Annotated[
+        bool,
+        Query(description="Bypass optional stream telemetry section cache for this request"),
+    ] = False,
     include_provider_health_cache_metadata: Annotated[
         bool,
         Query(description="Whether to include provider health cache metadata block"),
@@ -336,10 +403,17 @@ async def get_status(
         status_section_cache_ttl_seconds=status_section_cache_ttl_seconds,
         force_status_section_refresh=force_status_section_refresh,
     )
-    stream_sink_dispatch = (
-        get_stream_sink_dispatch_snapshot() if include_stream_sink_dispatch else {}
+    (
+        stream_sink_dispatch,
+        stream_fanout,
+        stream_stats_source,
+        stream_stats_age_seconds,
+    ) = _load_stream_status_sections(
+        include_stream_sink_dispatch=include_stream_sink_dispatch,
+        include_stream_fanout=include_stream_fanout,
+        stream_section_cache_ttl_seconds=stream_section_cache_ttl_seconds,
+        force_stream_section_refresh=force_stream_section_refresh,
     )
-    stream_fanout = get_stream_fanout_snapshot() if include_stream_fanout else {}
 
     data = {
         "providers": provider_status,
@@ -361,6 +435,9 @@ async def get_status(
             "optional_stats_source": optional_stats_source,
             "optional_stats_ttl_seconds": status_section_cache_ttl_seconds,
             "optional_stats_age_seconds": optional_stats_age_seconds,
+            "stream_stats_source": stream_stats_source,
+            "stream_stats_ttl_seconds": stream_section_cache_ttl_seconds,
+            "stream_stats_age_seconds": stream_stats_age_seconds,
         }
 
     return {
