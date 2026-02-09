@@ -158,3 +158,25 @@ def test_stream_fanout_snapshot_includes_derived_calibration_metrics() -> None:
     assert derived["avg_batch_size"] == expected_avg_batch_size
     assert derived["batch_fill_ratio"] == expected_avg_batch_size / 6
     assert derived["error_rate"] == expected_error_rate
+
+
+def test_provider_health_check_snapshot_tracks_updates_and_derivatives() -> None:
+    before = metrics.get_provider_health_check_snapshot()
+    before_ok = before.get("ok", {})
+    before_ok_total = int(before_ok.get("count", 0))
+    before_ok_success = int(before_ok.get("success_count", 0))
+    before_ok_error = int(before_ok.get("error_count", 0))
+
+    metrics.record_provider_health_check("ok", healthy=True, duration=0.2)
+    metrics.record_provider_health_check("ok", healthy=False, duration=0.1)
+
+    after = metrics.get_provider_health_check_snapshot()
+    ok = after["ok"]
+    derived = ok["derived"]
+
+    assert int(ok["count"]) == before_ok_total + 2
+    assert int(ok["success_count"]) == before_ok_success + 1
+    assert int(ok["error_count"]) == before_ok_error + 1
+    assert float(ok["last_duration_seconds"]) == 0.1
+    assert derived["avg_duration_seconds"] == ok["total_duration_seconds"] / ok["count"]
+    assert derived["error_rate"] == ok["error_count"] / ok["count"]

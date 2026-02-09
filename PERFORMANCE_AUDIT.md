@@ -131,6 +131,11 @@ The fastest, lowest-risk wins are:
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
   - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/metrics.py` now maintains provider health-check telemetry snapshots (`count`, `success_count`, `error_count`, `total_duration_seconds`, `last_duration_seconds`) with derived metrics (`avg_duration_seconds`, `error_rate`).
+    - `/api/v1/status` now supports optional provider health-check telemetry section output via `include_provider_health_checks` and reuses existing optional-section cache controls for this section.
+    - `status_sections` metadata now includes `provider_health_checks` inclusion state alongside existing section flags.
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py`.
+  - Additional combined optimization batch (2026-02-09):
     - `gateway/core/registry.py` now records provider health-check duration + status metrics during `health_check_all(...)`, and updates provider health gauges from the same pass.
     - `gateway/core/metrics.py` now includes `gateway_provider_health_check_duration_seconds{provider,status}` for calibration of slow provider checks.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_registry.py` for health-metrics emission on both success and failure paths.

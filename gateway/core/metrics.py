@@ -197,6 +197,8 @@ _STREAM_FANOUT_SNAPSHOT: dict[str, Any] = {
     "batches": {"count": 0, "total_clients": 0, "max_batch_size": 0},
 }
 
+_PROVIDER_HEALTH_CHECK_SNAPSHOT: dict[str, dict[str, Any]] = {}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SLI Metrics (PRD 11.1.2-4)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -379,6 +381,40 @@ def record_provider_health_check(provider: str, healthy: bool, duration: float) 
     """Record provider health check duration."""
     status = "success" if healthy else "error"
     PROVIDER_HEALTH_CHECK_DURATION.labels(provider=provider, status=status).observe(duration)
+
+    snapshot = _PROVIDER_HEALTH_CHECK_SNAPSHOT.setdefault(
+        provider,
+        {
+            "count": 0,
+            "success_count": 0,
+            "error_count": 0,
+            "total_duration_seconds": 0.0,
+            "last_duration_seconds": 0.0,
+        },
+    )
+    snapshot["count"] = int(snapshot.get("count", 0)) + 1
+    if healthy:
+        snapshot["success_count"] = int(snapshot.get("success_count", 0)) + 1
+    else:
+        snapshot["error_count"] = int(snapshot.get("error_count", 0)) + 1
+    snapshot["total_duration_seconds"] = float(snapshot.get("total_duration_seconds", 0.0)) + max(
+        0.0, duration
+    )
+    snapshot["last_duration_seconds"] = max(0.0, duration)
+
+
+def get_provider_health_check_snapshot() -> dict[str, dict[str, Any]]:
+    """Get provider health-check telemetry snapshot for admin status surfaces."""
+    snapshot = deepcopy(_PROVIDER_HEALTH_CHECK_SNAPSHOT)
+    for provider_data in snapshot.values():
+        count = float(int(provider_data.get("count", 0)))
+        error_count = float(int(provider_data.get("error_count", 0)))
+        total_duration = float(provider_data.get("total_duration_seconds", 0.0))
+        provider_data["derived"] = {
+            "avg_duration_seconds": _safe_ratio(total_duration, count),
+            "error_rate": _safe_ratio(error_count, count),
+        }
+    return snapshot
 
 
 def record_provider_sync_call_wait(provider: str, duration: float) -> None:

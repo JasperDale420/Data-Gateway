@@ -78,8 +78,25 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
         fanout_calls["count"] += 1
         return fanout_snapshot
 
+    provider_health_checks_snapshot = {
+        "finnhub": {
+            "count": 3,
+            "success_count": 3,
+            "error_count": 0,
+            "derived": {"error_rate": 0.0},
+        }
+    }
+    provider_health_checks_calls = {"count": 0}
+
+    def _get_provider_health_checks_snapshot() -> dict[str, Any]:
+        provider_health_checks_calls["count"] += 1
+        return provider_health_checks_snapshot
+
     monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", _get_sink_snapshot)
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", _get_fanout_snapshot)
+    monkeypatch.setattr(
+        admin, "get_provider_health_check_snapshot", _get_provider_health_checks_snapshot
+    )
 
     registry = _FakeRegistry()
     cache = _FakeCache()
@@ -95,11 +112,13 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
     assert response["success"] is True
     assert response["data"]["stream_sink_dispatch"] == snapshot
     assert response["data"]["stream_fanout"] == fanout_snapshot
+    assert response["data"]["provider_health_checks"] == provider_health_checks_snapshot
     assert response["data"]["status_sections"]["cache"] is True
     assert response["data"]["status_sections"]["connections"] is True
     assert response["data"]["status_sections"]["registry"] is True
     assert response["data"]["status_sections"]["stream_sink_dispatch"] is True
     assert response["data"]["status_sections"]["stream_fanout"] is True
+    assert response["data"]["status_sections"]["provider_health_checks"] is True
     assert response["data"]["provider_health_cache"]["source"] == "live"
     assert registry.health_check_calls == 1
     assert registry.get_stats_calls == 1
@@ -107,6 +126,7 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
     assert connections.get_stats_calls == 1
     assert sink_calls["count"] == 1
     assert fanout_calls["count"] == 1
+    assert provider_health_checks_calls["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -425,6 +445,41 @@ async def test_get_status_can_skip_stream_telemetry_sections(
 
 
 @pytest.mark.asyncio
+async def test_get_status_can_skip_provider_health_checks_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_health_checks_calls = {"count": 0}
+
+    def _get_provider_health_checks_snapshot() -> dict[str, Any]:
+        provider_health_checks_calls["count"] += 1
+        return {"finnhub": {"count": 1}}
+
+    monkeypatch.setattr(
+        admin, "get_provider_health_check_snapshot", _get_provider_health_checks_snapshot
+    )
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(admin, "_status_section_stats_cache", None)
+    monkeypatch.setattr(admin, "_status_section_stats_cache_at", None)
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_provider_health_checks=False,
+    )
+
+    assert response["success"] is True
+    assert response["data"]["provider_health_checks"] == {}
+    assert response["data"]["status_sections"]["provider_health_checks"] is False
+    assert provider_health_checks_calls["count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_get_status_can_return_minimal_provider_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -531,6 +586,15 @@ async def test_get_status_reuses_optional_section_stats_within_cache_ttl(
     fanout_snapshot = {"limits": {}, "events": {}, "batches": {}, "derived": {}}
     monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: sink_snapshot)
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+    provider_health_checks_calls = {"count": 0}
+
+    def _get_provider_health_checks_snapshot() -> dict[str, Any]:
+        provider_health_checks_calls["count"] += 1
+        return {"finnhub": {"count": provider_health_checks_calls["count"]}}
+
+    monkeypatch.setattr(
+        admin, "get_provider_health_check_snapshot", _get_provider_health_checks_snapshot
+    )
     monkeypatch.setattr(admin, "_provider_health_cache", None)
     monkeypatch.setattr(admin, "_provider_health_cache_at", None)
     monkeypatch.setattr(admin, "_status_section_stats_cache", None)
@@ -567,6 +631,7 @@ async def test_get_status_reuses_optional_section_stats_within_cache_ttl(
     assert registry.get_stats_calls == 1
     assert cache.get_stats_calls == 1
     assert connections.get_stats_calls == 1
+    assert provider_health_checks_calls["count"] == 1
 
 
 @pytest.mark.asyncio

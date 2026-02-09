@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.148] - 2026-02-09
+
+### Added
+
+- **Provider health snapshot regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` with coverage for provider health-check snapshot accumulation and derived metrics.
+- **Admin provider-health-section regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for provider-health-check section inclusion/skip behavior and optional-section cache reuse.
+
+### Changed
+
+- **Provider health telemetry snapshot API**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` with in-memory provider health-check snapshot tracking plus `get_provider_health_check_snapshot()` for admin/status calibration views.
+- **Admin status provider-health section control**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `include_provider_health_checks` and includes this section in optional status-section cache handling.
+- **Status section metadata expansion**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `status_sections` reports `provider_health_checks` inclusion state.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record provider health-check snapshot rollout.
+
 ## [0.5.147] - 2026-02-09
 
 ### Added
