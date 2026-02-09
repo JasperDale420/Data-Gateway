@@ -2,12 +2,14 @@
 
 import asyncio
 import importlib
+import time
 from pathlib import Path
 from typing import Any
 
 import structlog
 import yaml
 
+from gateway.core.metrics import record_provider_health_check, set_provider_health
 from gateway.core.provider import DataProvider, HealthStatus
 
 logger = structlog.get_logger()
@@ -128,10 +130,20 @@ class ProviderRegistry:
         """Health check all providers."""
 
         async def _check_provider(name: str, provider: DataProvider) -> tuple[str, HealthStatus]:
+            start = time.perf_counter()
             try:
-                return name, await provider.health_check()
+                status = await provider.health_check()
             except Exception as e:
-                return name, HealthStatus(healthy=False, error=str(e))
+                status = HealthStatus(healthy=False, error=str(e))
+
+            healthy = bool(status.healthy)
+            set_provider_health(name, healthy)
+            record_provider_health_check(
+                provider=name,
+                healthy=healthy,
+                duration=max(0.0, time.perf_counter() - start),
+            )
+            return name, status
 
         results: dict[str, HealthStatus] = {}
         checks = await asyncio.gather(

@@ -88,6 +88,13 @@ PROVIDER_HEALTH = Gauge(
     ["provider"],
 )
 
+PROVIDER_HEALTH_CHECK_DURATION = Histogram(
+    "gateway_provider_health_check_duration_seconds",
+    "Provider health check duration in seconds",
+    ["provider", "status"],  # status: success, error
+    buckets=(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
 PROVIDER_SYNC_CALL_WAIT = Histogram(
     "gateway_provider_sync_call_wait_seconds",
     "Wait time before provider sync call execution",
@@ -366,6 +373,12 @@ def record_provider_request(provider: str, success: bool, duration: float) -> No
 def set_provider_health(provider: str, healthy: bool) -> None:
     """Set provider health status."""
     PROVIDER_HEALTH.labels(provider=provider).set(1 if healthy else 0)
+
+
+def record_provider_health_check(provider: str, healthy: bool, duration: float) -> None:
+    """Record provider health check duration."""
+    status = "success" if healthy else "error"
+    PROVIDER_HEALTH_CHECK_DURATION.labels(provider=provider, status=status).observe(duration)
 
 
 def record_provider_sync_call_wait(provider: str, duration: float) -> None:

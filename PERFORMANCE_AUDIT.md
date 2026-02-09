@@ -117,6 +117,10 @@ The fastest, lowest-risk wins are:
   - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates cache reuse and force-refresh behavior.
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/registry.py` now records provider health-check duration + status metrics during `health_check_all(...)`, and updates provider health gauges from the same pass.
+    - `gateway/core/metrics.py` now includes `gateway_provider_health_check_duration_seconds{provider,status}` for calibration of slow provider checks.
+    - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_registry.py` for health-metrics emission on both success and failure paths.
 
 1. Provider multi-quote fan-out serialization (remediated 2026-02-07).
 

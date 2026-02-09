@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.143] - 2026-02-09
+
+### Added
+
+- **Provider health-metrics regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_registry.py` with coverage verifying health-check metric emission and provider-health gauge updates for both successful and failing providers.
+
+### Changed
+
+- **Provider health-check telemetry**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/registry.py` so `health_check_all()` records per-provider health-check durations and health states while preserving concurrent check behavior.
+- **New health-check duration histogram**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` with `gateway_provider_health_check_duration_seconds{provider,status}` and a helper used by the provider registry.
+- **Trading client throughput config**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/config/clients.yaml` to raise `trading_system` `max_symbols` from `100` to `1000`.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record provider health-check telemetry rollout.
+
 ## [0.5.142] - 2026-02-09
 
 ### Added
