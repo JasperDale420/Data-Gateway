@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.165] - 2026-02-09
+
+### Added
+
+- **Multi-snapshot stream calibration**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` to aggregate multiple status snapshots from repeated `--status-file` inputs or repeated `--status-url` polling (`--samples`, `--interval-seconds`) for production-like tuning runs.
+- **Calibration sample metadata**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` output to include `sample_count` and `sample_level_counts` for confidence/consistency checks during tuning.
+- **Expanded aggregation tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_stream_tuning_report.py` with coverage for multi-file aggregation and repeated URL sampling behavior.
+
+### Changed
+
+- **Conservative aggregate env suggestions**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` to merge recommendations and choose max suggested env values across samples, reducing under-provision risk from single-snapshot outliers.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record multi-sample stream calibration tooling rollout.
+
 ## [0.5.164] - 2026-02-09
 
 ### Added

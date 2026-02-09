@@ -94,6 +94,10 @@ The fastest, lowest-risk wins are:
     - `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` now supports `--env-file` upserts and emits update metadata (`env_file_updated`, `env_keys_changed`) to streamline controlled config rollout.
     - Expanded regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_stream_tuning_report.py` for URL loading and dotenv writeback behavior.
   - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` now aggregates multi-snapshot calibration runs from repeated `--status-file` inputs and repeated live `--status-url` polling (`--samples`, `--interval-seconds`).
+    - Aggregated output now includes `sample_count` and `sample_level_counts`, and merges suggested env targets conservatively (max by key) across samples to support safer high-watermark tuning decisions.
+    - Expanded regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_stream_tuning_report.py` for multi-file aggregation and repeated URL sampling behavior.
+  - Additional combined optimization batch (2026-02-09):
     - `gateway/core/stream.py` now resolves active connection/subscribers before running bar/quote/trade validation in `_handle_message(...)`.
     - This removes validator work from idle/no-subscriber fanout paths while preserving validation behavior for messages that actually fan out.
     - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_multiplexer.py` for no-connection/no-subscriber skip paths plus existing validator-cache behavior when subscribers exist.
