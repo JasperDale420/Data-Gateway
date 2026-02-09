@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.158] - 2026-02-09
+
+### Added
+
+- **Multi-overflow cache eviction regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for retaining newest optional/stream cache shapes when overflow exceeds one entry.
+
+### Changed
+
+- **Eviction path efficiency**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to use heap-based oldest-key selection for optional/stream cache eviction, reducing overhead versus full sorting during limit enforcement.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record efficient multi-overflow cache eviction rollout.
+
 ## [0.5.157] - 2026-02-09
 
 ### Added

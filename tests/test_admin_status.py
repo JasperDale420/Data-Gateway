@@ -1364,3 +1364,147 @@ async def test_get_status_can_override_cache_entry_limits_per_request(
     assert second["data"]["status_sections"]["optional_cache_max_entries"] == 1
     assert len(admin._status_section_stats_cache or {}) == 1
     assert (True, False, False, False, False) not in (admin._status_section_stats_cache or {})
+
+
+@pytest.mark.asyncio
+async def test_get_status_optional_cache_evicts_oldest_shapes_when_overflow_is_multiple(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(admin, "_status_section_stats_cache", {})
+    monkeypatch.setattr(admin, "_status_section_stats_cache_at", {})
+    monkeypatch.setattr(admin, "_STATUS_SECTION_CACHE_MAX_ENTRIES", 2)
+
+    now = datetime(2026, 2, 10, 0, 50, tzinfo=UTC)
+    time_ref = {"now": now}
+    monkeypatch.setattr(admin, "_utcnow", lambda: time_ref["now"])
+
+    await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_cache_stats=True,
+        include_connection_stats=False,
+        include_registry_stats=False,
+        include_provider_health_checks=False,
+        include_provider_quote_batches=False,
+        status_section_cache_ttl_seconds=60,
+    )
+    time_ref["now"] = now + timedelta(seconds=1)
+    await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_cache_stats=False,
+        include_connection_stats=True,
+        include_registry_stats=False,
+        include_provider_health_checks=False,
+        include_provider_quote_batches=False,
+        status_section_cache_ttl_seconds=60,
+    )
+    time_ref["now"] = now + timedelta(seconds=2)
+    await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_cache_stats=False,
+        include_connection_stats=False,
+        include_registry_stats=True,
+        include_provider_health_checks=False,
+        include_provider_quote_batches=False,
+        status_section_cache_ttl_seconds=60,
+    )
+    time_ref["now"] = now + timedelta(seconds=3)
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_cache_stats=False,
+        include_connection_stats=False,
+        include_registry_stats=False,
+        include_provider_health_checks=True,
+        include_provider_quote_batches=False,
+        status_section_cache_ttl_seconds=60,
+    )
+
+    assert response["data"]["status_sections"]["optional_cache_entries"] == 2
+    assert len(admin._status_section_stats_cache or {}) == 2
+    assert (False, False, True, False, False) in (admin._status_section_stats_cache or {})
+    assert (False, False, False, True, False) in (admin._status_section_stats_cache or {})
+
+
+@pytest.mark.asyncio
+async def test_get_status_stream_cache_evicts_oldest_shapes_when_overflow_is_multiple(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(admin, "_stream_section_stats_cache", {})
+    monkeypatch.setattr(admin, "_stream_section_stats_cache_at", {})
+    monkeypatch.setattr(admin, "_STREAM_SECTION_CACHE_MAX_ENTRIES", 2)
+
+    now = datetime(2026, 2, 10, 1, 0, tzinfo=UTC)
+    time_ref = {"now": now}
+    monkeypatch.setattr(admin, "_utcnow", lambda: time_ref["now"])
+
+    await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_stream_sink_dispatch=True,
+        include_stream_fanout=False,
+        stream_section_cache_ttl_seconds=60,
+    )
+    time_ref["now"] = now + timedelta(seconds=1)
+    await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_stream_sink_dispatch=False,
+        include_stream_fanout=True,
+        stream_section_cache_ttl_seconds=60,
+    )
+    time_ref["now"] = now + timedelta(seconds=2)
+    await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_stream_sink_dispatch=True,
+        include_stream_fanout=True,
+        stream_section_cache_ttl_seconds=60,
+    )
+    time_ref["now"] = now + timedelta(seconds=3)
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_stream_sink_dispatch=False,
+        include_stream_fanout=False,
+        stream_section_cache_ttl_seconds=60,
+    )
+
+    assert response["data"]["status_sections"]["stream_cache_entries"] == 2
+    assert len(admin._stream_section_stats_cache or {}) == 2
+    assert (False, True) in (admin._stream_section_stats_cache or {})
+    assert (True, True) in (admin._stream_section_stats_cache or {})

@@ -3,6 +3,7 @@
 import logging
 from collections import deque
 from datetime import UTC, datetime, timedelta
+from heapq import nsmallest
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
@@ -187,9 +188,9 @@ def _enforce_status_section_cache_limit(*, max_entries: int) -> None:
     overflow = len(_status_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
         return
-    oldest_keys = sorted(_status_section_stats_cache_at, key=_status_section_stats_cache_at.get)[
-        :overflow
-    ]
+    oldest_keys = nsmallest(
+        overflow, _status_section_stats_cache_at, key=_status_section_stats_cache_at.get
+    )
     for key in oldest_keys:
         _status_section_stats_cache.pop(key, None)
         _status_section_stats_cache_at.pop(key, None)
@@ -331,9 +332,9 @@ def _enforce_stream_section_cache_limit(*, max_entries: int) -> None:
     overflow = len(_stream_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
         return
-    oldest_keys = sorted(_stream_section_stats_cache_at, key=_stream_section_stats_cache_at.get)[
-        :overflow
-    ]
+    oldest_keys = nsmallest(
+        overflow, _stream_section_stats_cache_at, key=_stream_section_stats_cache_at.get
+    )
     for key in oldest_keys:
         _stream_section_stats_cache.pop(key, None)
         _stream_section_stats_cache_at.pop(key, None)
