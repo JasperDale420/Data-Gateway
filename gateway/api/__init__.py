@@ -3,6 +3,7 @@
 from gateway.api.admin import router as admin_router
 from gateway.api.alpaca import router as alpaca_router
 from gateway.api.alphavantage import router as alphavantage_router
+from gateway.api.backfill import router as backfill_router
 from gateway.api.bulk import router as bulk_router
 from gateway.api.calendar import router as calendar_router
 from gateway.api.catalog import router as catalog_router
@@ -32,6 +33,7 @@ __all__ = [
     "sec_router",
     "finnhub_router",
     "alphavantage_router",
+    "backfill_router",
     "bulk_router",
     "replay_router",
     "calendar_router",
