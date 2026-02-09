@@ -203,6 +203,17 @@ def test_provider_quote_batch_snapshot_tracks_updates_and_derivatives() -> None:
     assert derived["avg_batch_size"] == alpaca["total_symbols"] / alpaca["count"]
 
 
+def test_provider_quote_batch_snapshot_includes_calibration_guidance() -> None:
+    metrics.record_provider_quote_batch_size("finnhub", 100)
+    metrics.record_provider_quote_batch_size("finnhub", 120)
+
+    snapshot = metrics.get_provider_quote_batch_snapshot()
+    derived = snapshot["finnhub"]["derived"]
+
+    assert derived["batch_level"] in {"warning", "critical"}
+    assert any("max_symbols" in hint for hint in derived["recommendations"])
+
+
 def test_stream_sink_dispatch_snapshot_includes_calibration_guidance() -> None:
     before = metrics.get_stream_sink_dispatch_snapshot()
     before_scheduled = int(before["events"].get("scheduled", 0))

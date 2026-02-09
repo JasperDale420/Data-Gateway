@@ -399,7 +399,27 @@ def get_provider_quote_batch_snapshot() -> dict[str, dict[str, Any]]:
     for provider_data in snapshot.values():
         count = float(int(provider_data.get("count", 0)))
         total_symbols = float(int(provider_data.get("total_symbols", 0)))
-        provider_data["derived"] = {"avg_batch_size": _safe_ratio(total_symbols, count)}
+        max_batch_size = float(int(provider_data.get("max_batch_size", 0)))
+        avg_batch_size = _safe_ratio(total_symbols, count)
+        batch_level = max(
+            _threshold_level(avg_batch_size, warning_at=50, critical_at=100),
+            _threshold_level(max_batch_size, warning_at=100, critical_at=250),
+            key=lambda level: {"healthy": 0, "warning": 1, "critical": 2}[level],
+        )
+        recommendations: list[str] = []
+        if avg_batch_size >= 50:
+            recommendations.append(
+                "Consider lowering client max_symbols or splitting large quote requests."
+            )
+        if max_batch_size >= 100:
+            recommendations.append(
+                "Review provider max_symbols_per_request and tune per-provider quote batching."
+            )
+        provider_data["derived"] = {
+            "avg_batch_size": avg_batch_size,
+            "batch_level": batch_level,
+            "recommendations": recommendations,
+        }
     return snapshot
 
 

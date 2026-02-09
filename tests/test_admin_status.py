@@ -733,6 +733,110 @@ async def test_get_status_force_refresh_bypasses_optional_section_stats_cache(
 
 
 @pytest.mark.asyncio
+async def test_get_status_reuses_provider_quote_batches_within_optional_cache_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(admin, "_status_section_stats_cache", None)
+    monkeypatch.setattr(admin, "_status_section_stats_cache_at", None)
+
+    quote_batch_calls = {"count": 0}
+
+    def _get_provider_quote_batches_snapshot() -> dict[str, Any]:
+        quote_batch_calls["count"] += 1
+        return {"alphavantage": {"count": quote_batch_calls["count"]}}
+
+    monkeypatch.setattr(
+        admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot
+    )
+
+    now = datetime(2026, 2, 9, 21, 0, tzinfo=UTC)
+    time_ref = {"now": now}
+    monkeypatch.setattr(admin, "_utcnow", lambda: time_ref["now"])
+
+    first = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_provider_health_checks=False,
+        include_provider_quote_batches=True,
+        status_section_cache_ttl_seconds=5,
+    )
+    time_ref["now"] = now + timedelta(seconds=1)
+    second = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_provider_health_checks=False,
+        include_provider_quote_batches=True,
+        status_section_cache_ttl_seconds=5,
+    )
+
+    assert first["data"]["status_sections"]["optional_stats_source"] == "live"
+    assert second["data"]["status_sections"]["optional_stats_source"] == "cache"
+    assert quote_batch_calls["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_status_force_refresh_bypasses_provider_quote_batches_optional_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+    monkeypatch.setattr(admin, "_status_section_stats_cache", None)
+    monkeypatch.setattr(admin, "_status_section_stats_cache_at", None)
+
+    quote_batch_calls = {"count": 0}
+
+    def _get_provider_quote_batches_snapshot() -> dict[str, Any]:
+        quote_batch_calls["count"] += 1
+        return {"alphavantage": {"count": quote_batch_calls["count"]}}
+
+    monkeypatch.setattr(
+        admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot
+    )
+
+    now = datetime(2026, 2, 9, 22, 0, tzinfo=UTC)
+    time_ref = {"now": now}
+    monkeypatch.setattr(admin, "_utcnow", lambda: time_ref["now"])
+
+    await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_provider_health_checks=False,
+        include_provider_quote_batches=True,
+        status_section_cache_ttl_seconds=5,
+    )
+    time_ref["now"] = now + timedelta(seconds=1)
+    second = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_provider_health_checks=False,
+        include_provider_quote_batches=True,
+        status_section_cache_ttl_seconds=5,
+        force_status_section_refresh=True,
+    )
+
+    assert second["data"]["status_sections"]["optional_stats_source"] == "live"
+    assert quote_batch_calls["count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_get_status_reuses_stream_section_stats_within_cache_ttl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

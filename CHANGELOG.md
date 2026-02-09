@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.152] - 2026-02-09
+
+### Added
+
+- **Quote-batch guidance regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` with coverage for `batch_level` and recommendation output from provider quote-batch snapshots.
+- **Provider-quote-batch optional-cache regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for optional-section cache reuse and forced refresh behavior specific to `provider_quote_batches`.
+
+### Changed
+
+- **Quote-batch calibration guidance**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/metrics.py` so `get_provider_quote_batch_snapshot()` now includes `batch_level` and actionable `recommendations` derived from average and peak quote batch sizes.
+- **Admin quote-batch cache validation hardening**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` to verify quote-batch snapshot call behavior under optional-section cache TTL reuse and refresh bypass paths.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record quote-batch calibration guidance and optional-cache validation rollout.
+
 ## [0.5.151] - 2026-02-09
 
 ### Added

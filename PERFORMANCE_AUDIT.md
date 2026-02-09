@@ -166,6 +166,9 @@ The fastest, lowest-risk wins are:
     - `/api/v1/status` now supports optional provider quote-batch telemetry section output via `include_provider_quote_batches` and reuses existing optional-section cache controls for this section.
     - `status_sections` metadata now includes `provider_quote_batches` inclusion state alongside existing section flags.
     - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py`, `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py`, and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_alpaca_provider.py`.
+  - Additional combined optimization batch (2026-02-09):
+    - `gateway/core/metrics.py` now adds quote-batch calibration guidance in `get_provider_quote_batch_snapshot()` with `batch_level` and actionable `recommendations` derived from average and max observed quote batch sizes.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` now includes explicit optional-section cache reuse and force-refresh assertions for `provider_quote_batches`, hardening validation of low-overhead polling behavior.
 
 1. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 
