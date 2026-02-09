@@ -3,7 +3,7 @@
 import logging
 from collections import deque
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -32,6 +32,8 @@ _provider_health_cache: dict | None = None
 _provider_health_cache_at: datetime | None = None
 _provider_health_payload_cache_detailed: dict[str, dict[str, object]] | None = None
 _provider_health_payload_cache_minimal: dict[str, dict[str, object]] | None = None
+_status_section_stats_cache: dict[str, dict[str, Any]] | None = None
+_status_section_stats_cache_at: datetime | None = None
 
 
 def _utcnow() -> datetime:
@@ -128,6 +130,68 @@ async def _load_provider_health_status(
         "age_seconds": 0.0,
         "payload_shape": payload_shape,
     }
+
+
+def _status_section_cache_is_fresh(now: datetime, *, ttl_seconds: int) -> bool:
+    """Whether optional status section stats cache is valid for reuse."""
+    if _status_section_stats_cache is None or _status_section_stats_cache_at is None:
+        return False
+    return (now - _status_section_stats_cache_at).total_seconds() <= ttl_seconds
+
+
+def _load_optional_status_sections(
+    *,
+    registry: ProviderRegistry,
+    cache: InMemoryCache,
+    connections: ConnectionManager,
+    include_cache_stats: bool,
+    include_connection_stats: bool,
+    include_registry_stats: bool,
+    status_section_cache_ttl_seconds: int,
+    force_status_section_refresh: bool,
+) -> tuple[dict, dict, dict, str, float | None]:
+    """Load optional status sections with optional short-lived cache reuse."""
+    global _status_section_stats_cache, _status_section_stats_cache_at
+
+    if not (include_cache_stats or include_connection_stats or include_registry_stats):
+        return {}, {}, {}, "skipped", None
+
+    now = _utcnow()
+    if (
+        status_section_cache_ttl_seconds > 0
+        and not force_status_section_refresh
+        and _status_section_cache_is_fresh(now, ttl_seconds=status_section_cache_ttl_seconds)
+    ):
+        age_seconds = (
+            (now - _status_section_stats_cache_at).total_seconds()
+            if _status_section_stats_cache_at is not None
+            else None
+        )
+        cached = _status_section_stats_cache or {}
+        return (
+            cached.get("cache", {}) if include_cache_stats else {},
+            cached.get("connections", {}) if include_connection_stats else {},
+            cached.get("registry", {}) if include_registry_stats else {},
+            "cache",
+            age_seconds,
+        )
+
+    latest = {
+        "cache": cache.get_stats_dict(),
+        "connections": connections.get_stats(),
+        "registry": registry.get_stats(),
+    }
+    if status_section_cache_ttl_seconds > 0:
+        _status_section_stats_cache = latest
+        _status_section_stats_cache_at = now
+
+    return (
+        latest["cache"] if include_cache_stats else {},
+        latest["connections"] if include_connection_stats else {},
+        latest["registry"] if include_registry_stats else {},
+        "live",
+        0.0 if status_section_cache_ttl_seconds > 0 else None,
+    )
 
 
 def log_error(error_code: str, message: str, component: str = "gateway") -> None:
@@ -238,6 +302,14 @@ async def get_status(
         bool,
         Query(description="Whether to include status section inclusion metadata"),
     ] = True,
+    status_section_cache_ttl_seconds: Annotated[
+        int,
+        Query(ge=0, description="TTL seconds for optional status section stats cache"),
+    ] = 0,
+    force_status_section_refresh: Annotated[
+        bool,
+        Query(description="Bypass optional status section stats cache for this request"),
+    ] = False,
 ):
     """Get full system status including clients, providers, and subscriptions."""
     provider_status, provider_health_cache = await _load_provider_health_status(
@@ -248,9 +320,22 @@ async def get_status(
         provider_health_cache_ttl_seconds=provider_health_cache_ttl_seconds,
     )
 
-    cache_stats = cache.get_stats_dict() if include_cache_stats else {}
-    connection_stats = connections.get_stats() if include_connection_stats else {}
-    registry_stats = registry.get_stats() if include_registry_stats else {}
+    (
+        cache_stats,
+        connection_stats,
+        registry_stats,
+        optional_stats_source,
+        optional_stats_age_seconds,
+    ) = _load_optional_status_sections(
+        registry=registry,
+        cache=cache,
+        connections=connections,
+        include_cache_stats=include_cache_stats,
+        include_connection_stats=include_connection_stats,
+        include_registry_stats=include_registry_stats,
+        status_section_cache_ttl_seconds=status_section_cache_ttl_seconds,
+        force_status_section_refresh=force_status_section_refresh,
+    )
     stream_sink_dispatch = (
         get_stream_sink_dispatch_snapshot() if include_stream_sink_dispatch else {}
     )
@@ -273,6 +358,9 @@ async def get_status(
             "registry": include_registry_stats,
             "stream_sink_dispatch": include_stream_sink_dispatch,
             "stream_fanout": include_stream_fanout,
+            "optional_stats_source": optional_stats_source,
+            "optional_stats_ttl_seconds": status_section_cache_ttl_seconds,
+            "optional_stats_age_seconds": optional_stats_age_seconds,
         }
 
     return {

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.139] - 2026-02-09
+
+### Added
+
+- **Optional section-stats cache regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for optional section stats cache reuse and forced refresh behavior.
+
+### Changed
+
+- **Optional section stats cache controls**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `status_section_cache_ttl_seconds` and `force_status_section_refresh` for cache/connections/registry status sections.
+- **Status section cache metadata**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to include `optional_stats_source`, `optional_stats_ttl_seconds`, and `optional_stats_age_seconds` in `status_sections` metadata.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record optional-section cache rollout.
+
 ## [0.5.138] - 2026-02-09
 
 ### Added

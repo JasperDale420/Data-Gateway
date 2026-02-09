@@ -106,6 +106,11 @@ The fastest, lowest-risk wins are:
 - Additional combined optimization batch (2026-02-09):
   - `/api/v1/status` now supports `include_provider_health_cache_metadata` and `include_status_sections` toggles, allowing low-overhead polling clients to omit status metadata blocks when not needed.
   - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates metadata omission behavior while preserving default metadata inclusion.
+- Additional combined optimization batch (2026-02-09):
+  - `/api/v1/status` now supports short-lived caching for optional section stats (`cache`, `connections`, `registry`) via `status_section_cache_ttl_seconds`, reducing repeated stats calls during high-frequency polling.
+  - `/api/v1/status` now supports `force_status_section_refresh=true` to bypass optional-section cache on demand.
+  - `status_sections` metadata now includes optional-section cache details (`optional_stats_source`, `optional_stats_ttl_seconds`, `optional_stats_age_seconds`) when metadata is enabled.
+  - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates cache reuse and force-refresh behavior.
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
 
