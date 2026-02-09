@@ -169,6 +169,10 @@ The fastest, lowest-risk wins are:
   - Additional combined optimization batch (2026-02-09):
     - `gateway/core/metrics.py` now adds quote-batch calibration guidance in `get_provider_quote_batch_snapshot()` with `batch_level` and actionable `recommendations` derived from average and max observed quote batch sizes.
     - `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` now includes explicit optional-section cache reuse and force-refresh assertions for `provider_quote_batches`, hardening validation of low-overhead polling behavior.
+  - Additional combined optimization batch (2026-02-09):
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now keys optional-section cache entries by inclusion-shape flags, preventing cross-request cache-shape reuse when status clients toggle section flags.
+    - `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` now keys stream-section cache entries by stream inclusion-shape flags, preventing incompatible stream cache reuse when `include_stream_sink_dispatch`/`include_stream_fanout` differ across requests.
+    - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with shape-aware cache behavior tests for both optional and stream section caches.
 
 1. Bulk job result materialization creates high peak memory (partially remediated 2026-02-07).
 

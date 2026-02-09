@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.153] - 2026-02-09
+
+### Added
+
+- **Shape-aware status-cache regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage ensuring optional and stream status caches are keyed by section-inclusion shape and do not reuse incompatible cached payloads.
+
+### Changed
+
+- **Optional status cache keying fix**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so optional section cache entries are keyed by inclusion flags (`cache`, `connections`, `registry`, `provider_health_checks`, `provider_quote_batches`) instead of one global payload.
+- **Stream status cache keying fix**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so stream section cache entries are keyed by inclusion flags (`stream_sink_dispatch`, `stream_fanout`) instead of one global payload.
+- **Quote-batch guidance rollout validation**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` with additional calibration-guidance assertions for provider quote-batch snapshots.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record shape-aware status cache keying rollout.
+
 ## [0.5.152] - 2026-02-09
 
 ### Added

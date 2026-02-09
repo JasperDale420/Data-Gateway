@@ -37,10 +37,12 @@ _provider_health_cache: dict | None = None
 _provider_health_cache_at: datetime | None = None
 _provider_health_payload_cache_detailed: dict[str, dict[str, object]] | None = None
 _provider_health_payload_cache_minimal: dict[str, dict[str, object]] | None = None
-_status_section_stats_cache: dict[str, dict[str, Any]] | None = None
-_status_section_stats_cache_at: datetime | None = None
-_stream_section_stats_cache: dict[str, dict[str, Any]] | None = None
-_stream_section_stats_cache_at: datetime | None = None
+_status_section_stats_cache: (
+    dict[tuple[bool, bool, bool, bool, bool], dict[str, dict[str, Any]]] | None
+) = None
+_status_section_stats_cache_at: dict[tuple[bool, bool, bool, bool, bool], datetime] | None = None
+_stream_section_stats_cache: dict[tuple[bool, bool], dict[str, dict[str, Any]]] | None = None
+_stream_section_stats_cache_at: dict[tuple[bool, bool], datetime] | None = None
 
 
 def _utcnow() -> datetime:
@@ -139,11 +141,21 @@ async def _load_provider_health_status(
     }
 
 
-def _status_section_cache_is_fresh(now: datetime, *, ttl_seconds: int) -> bool:
+def _status_section_cache_is_fresh(
+    now: datetime,
+    *,
+    cache_key: tuple[bool, bool, bool, bool, bool],
+    ttl_seconds: int,
+) -> bool:
     """Whether optional status section stats cache is valid for reuse."""
-    if _status_section_stats_cache is None or _status_section_stats_cache_at is None:
+    if (
+        _status_section_stats_cache is None
+        or _status_section_stats_cache_at is None
+        or cache_key not in _status_section_stats_cache
+        or cache_key not in _status_section_stats_cache_at
+    ):
         return False
-    return (now - _status_section_stats_cache_at).total_seconds() <= ttl_seconds
+    return (now - _status_section_stats_cache_at[cache_key]).total_seconds() <= ttl_seconds
 
 
 def _load_optional_status_sections(
@@ -171,18 +183,30 @@ def _load_optional_status_sections(
     ):
         return {}, {}, {}, {}, {}, "skipped", None
 
+    cache_key = (
+        include_cache_stats,
+        include_connection_stats,
+        include_registry_stats,
+        include_provider_health_checks,
+        include_provider_quote_batches,
+    )
     now = _utcnow()
     if (
         status_section_cache_ttl_seconds > 0
         and not force_status_section_refresh
-        and _status_section_cache_is_fresh(now, ttl_seconds=status_section_cache_ttl_seconds)
+        and _status_section_cache_is_fresh(
+            now,
+            cache_key=cache_key,
+            ttl_seconds=status_section_cache_ttl_seconds,
+        )
     ):
         age_seconds = (
-            (now - _status_section_stats_cache_at).total_seconds()
+            (now - _status_section_stats_cache_at[cache_key]).total_seconds()
             if _status_section_stats_cache_at is not None
+            and cache_key in _status_section_stats_cache_at
             else None
         )
-        cached = _status_section_stats_cache or {}
+        cached = (_status_section_stats_cache or {}).get(cache_key, {})
         return (
             cached.get("cache", {}) if include_cache_stats else {},
             cached.get("connections", {}) if include_connection_stats else {},
@@ -205,8 +229,12 @@ def _load_optional_status_sections(
         ),
     }
     if status_section_cache_ttl_seconds > 0:
-        _status_section_stats_cache = latest
-        _status_section_stats_cache_at = now
+        if _status_section_stats_cache is None:
+            _status_section_stats_cache = {}
+        if _status_section_stats_cache_at is None:
+            _status_section_stats_cache_at = {}
+        _status_section_stats_cache[cache_key] = latest
+        _status_section_stats_cache_at[cache_key] = now
 
     return (
         latest["cache"] if include_cache_stats else {},
@@ -219,11 +247,21 @@ def _load_optional_status_sections(
     )
 
 
-def _stream_section_cache_is_fresh(now: datetime, *, ttl_seconds: int) -> bool:
+def _stream_section_cache_is_fresh(
+    now: datetime,
+    *,
+    cache_key: tuple[bool, bool],
+    ttl_seconds: int,
+) -> bool:
     """Whether stream telemetry section cache is valid for reuse."""
-    if _stream_section_stats_cache is None or _stream_section_stats_cache_at is None:
+    if (
+        _stream_section_stats_cache is None
+        or _stream_section_stats_cache_at is None
+        or cache_key not in _stream_section_stats_cache
+        or cache_key not in _stream_section_stats_cache_at
+    ):
         return False
-    return (now - _stream_section_stats_cache_at).total_seconds() <= ttl_seconds
+    return (now - _stream_section_stats_cache_at[cache_key]).total_seconds() <= ttl_seconds
 
 
 def _load_stream_status_sections(
@@ -239,18 +277,24 @@ def _load_stream_status_sections(
     if not (include_stream_sink_dispatch or include_stream_fanout):
         return {}, {}, "skipped", None
 
+    cache_key = (include_stream_sink_dispatch, include_stream_fanout)
     now = _utcnow()
     if (
         stream_section_cache_ttl_seconds > 0
         and not force_stream_section_refresh
-        and _stream_section_cache_is_fresh(now, ttl_seconds=stream_section_cache_ttl_seconds)
+        and _stream_section_cache_is_fresh(
+            now,
+            cache_key=cache_key,
+            ttl_seconds=stream_section_cache_ttl_seconds,
+        )
     ):
         age_seconds = (
-            (now - _stream_section_stats_cache_at).total_seconds()
+            (now - _stream_section_stats_cache_at[cache_key]).total_seconds()
             if _stream_section_stats_cache_at is not None
+            and cache_key in _stream_section_stats_cache_at
             else None
         )
-        cached = _stream_section_stats_cache or {}
+        cached = (_stream_section_stats_cache or {}).get(cache_key, {})
         return (
             cached.get("stream_sink_dispatch", {}) if include_stream_sink_dispatch else {},
             cached.get("stream_fanout", {}) if include_stream_fanout else {},
@@ -265,8 +309,12 @@ def _load_stream_status_sections(
         "stream_fanout": get_stream_fanout_snapshot() if include_stream_fanout else {},
     }
     if stream_section_cache_ttl_seconds > 0:
-        _stream_section_stats_cache = latest
-        _stream_section_stats_cache_at = now
+        if _stream_section_stats_cache is None:
+            _stream_section_stats_cache = {}
+        if _stream_section_stats_cache_at is None:
+            _stream_section_stats_cache_at = {}
+        _stream_section_stats_cache[cache_key] = latest
+        _stream_section_stats_cache_at[cache_key] = now
 
     return (
         latest["stream_sink_dispatch"],
