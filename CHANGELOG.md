@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.164] - 2026-02-09
+
+### Added
+
+- **Status URL stream tuning support**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` with `--status-url`, optional `--api-key`, and timeout controls so operators can generate calibration reports directly from live `/api/v1/status` responses.
+- **.env writeback mode**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` with `--env-file` support to upsert suggested `GATEWAY_...` stream tuning keys into dotenv files.
+- **Expanded stream tuning report tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_stream_tuning_report.py` with coverage for URL loading and `.env` upsert behavior.
+
+### Changed
+
+- **Calibration report output metadata**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/scripts/stream_tuning_report.py` to include env update metadata (`env_file_updated`, `env_keys_changed`) in both text and JSON output modes.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record live status URL + dotenv writeback calibration tooling rollout.
+
 ## [0.5.163] - 2026-02-09
 
 ### Added

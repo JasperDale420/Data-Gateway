@@ -2,6 +2,7 @@
 
 Usage:
     python scripts/stream_tuning_report.py --status-file /path/to/status.json
+    python scripts/stream_tuning_report.py --status-url http://localhost:8000/api/v1/status --api-key gw_...
     python scripts/stream_tuning_report.py --status-file /path/to/status.json --format json
 """
 
@@ -12,11 +13,26 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.request import Request, urlopen
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--status-file", required=True, help="Path to status response JSON")
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--status-file", help="Path to status response JSON")
+    source_group.add_argument("--status-url", help="Status endpoint URL")
+    parser.add_argument("--api-key", default=None, help="Optional gateway API key for status URL")
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=10.0,
+        help="Network timeout in seconds for --status-url fetches",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help="Optional .env file path to update with suggested env values",
+    )
     parser.add_argument(
         "--format",
         choices=("text", "json"),
@@ -38,6 +54,22 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _load_json_url(url: str, *, api_key: str | None, timeout_seconds: float) -> dict[str, Any]:
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["X-Gateway-Key"] = api_key
+    request = Request(url, headers=headers, method="GET")
+    with urlopen(request, timeout=max(0.1, timeout_seconds)) as response:
+        raw = response.read().decode("utf-8")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid json from '{url}': {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"invalid json from '{url}': expected top-level object")
+    return payload
+
+
 def _extract_stream_tuning_summary(payload: dict[str, Any]) -> dict[str, Any]:
     data = payload.get("data")
     if isinstance(data, dict):
@@ -48,6 +80,43 @@ def _extract_stream_tuning_summary(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(summary, dict):
         return summary
     raise ValueError("stream_tuning_summary not found in status payload")
+
+
+def _write_env_file(path: Path, suggested_env: dict[str, Any]) -> int:
+    """Upsert suggested env keys in dotenv format and return number of changed keys."""
+    if not suggested_env:
+        return 0
+
+    existing_lines = path.read_text().splitlines() if path.exists() else []
+    output_lines: list[str] = []
+    seen_keys: set[str] = set()
+    changed = 0
+
+    for line in existing_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            output_lines.append(line)
+            continue
+        key, _, value = line.partition("=")
+        env_key = key.strip()
+        if env_key in suggested_env:
+            next_value = str(suggested_env[env_key])
+            if value != next_value:
+                changed += 1
+            output_lines.append(f"{env_key}={next_value}")
+            seen_keys.add(env_key)
+        else:
+            output_lines.append(line)
+
+    for key in sorted(suggested_env):
+        if key in seen_keys:
+            continue
+        output_lines.append(f"{key}={suggested_env[key]}")
+        changed += 1
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(output_lines) + "\n")
+    return changed
 
 
 def _render_text(summary: dict[str, Any]) -> str:
@@ -78,16 +147,39 @@ def _render_text(summary: dict[str, Any]) -> str:
 def main() -> int:
     args = _parse_args()
     try:
-        payload = _load_json(Path(args.status_file))
+        payload = (
+            _load_json(Path(args.status_file))
+            if args.status_file
+            else _load_json_url(
+                args.status_url,
+                api_key=args.api_key,
+                timeout_seconds=float(args.timeout_seconds),
+            )
+        )
         summary = _extract_stream_tuning_summary(payload)
     except (FileNotFoundError, ValueError) as exc:
         print(f"stream_tuning_report_failed: {exc}", file=sys.stderr)
         return 1
 
+    suggested_env = summary.get("suggested_env", {})
+    env_changed = 0
+    if args.env_file:
+        env_changed = _write_env_file(Path(args.env_file), suggested_env)
+
     if args.format == "json":
-        print(json.dumps(summary, sort_keys=True))
+        rendered = dict(summary)
+        rendered["env_file_updated"] = bool(args.env_file)
+        rendered["env_keys_changed"] = env_changed
+        print(json.dumps(rendered, sort_keys=True))
     else:
-        print(_render_text(summary), end="")
+        output = _render_text(summary)
+        if args.env_file:
+            output += (
+                f"\nenv_file={args.env_file}\n"
+                f"env_file_updated=yes\n"
+                f"env_keys_changed={env_changed}\n"
+            )
+        print(output, end="")
     return 0
 
 
