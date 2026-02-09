@@ -90,6 +90,10 @@ The fastest, lowest-risk wins are:
   - `/api/v1/status` now returns `provider_health_cache` metadata (`source`, `ttl_seconds`, `age_seconds`) so operators can confirm whether health status came from live probe, cache reuse, or skip path.
   - `/api/v1/status` now supports `provider_health_cache_ttl_seconds` for per-request cache TTL tuning during calibration.
   - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates metadata and TTL override behavior.
+- Additional combined optimization batch (2026-02-09):
+  - `/api/v1/status` now supports `include_cache_stats`, `include_connection_stats`, and `include_registry_stats` toggles, enabling low-overhead polling that omits optional section work.
+  - `/api/v1/status` now returns `status_sections` metadata to explicitly report which optional sections were included.
+  - Extended regression coverage in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` validates both default inclusion and skip behavior.
 - Follow-up:
   - Optional: expose per-provider health-check latency histograms in admin views for calibration.
 

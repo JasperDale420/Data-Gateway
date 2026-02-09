@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.135] - 2026-02-09
+
+### Added
+
+- **Optional status-section toggle regression tests**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_admin_status.py` with coverage for skipping cache/connection/registry sections and asserting default inclusion call paths.
+
+### Changed
+
+- **Low-overhead status section toggles**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` so `/api/v1/status` supports `include_cache_stats`, `include_connection_stats`, and `include_registry_stats` flags to avoid optional section work during frequent polling.
+- **Status section visibility metadata**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/admin.py` to include `data.status_sections` in `/api/v1/status` responses, explicitly indicating which optional sections were included.
+- **Audit tracker update**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/PERFORMANCE_AUDIT.md` to record section-toggle and section-visibility improvements for admin status polling.
+
 ## [0.5.134] - 2026-02-09
 
 ### Added

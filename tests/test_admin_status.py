@@ -17,6 +17,7 @@ from gateway.core.registry import ProviderRegistry
 class _FakeRegistry:
     def __init__(self) -> None:
         self.health_check_calls = 0
+        self.get_stats_calls = 0
 
     async def health_check_all(self) -> dict[str, HealthStatus]:
         self.health_check_calls += 1
@@ -30,16 +31,25 @@ class _FakeRegistry:
         }
 
     def get_stats(self) -> dict[str, Any]:
+        self.get_stats_calls += 1
         return {"total_providers": 1, "providers": ["finnhub"], "routes": []}
 
 
 class _FakeCache:
+    def __init__(self) -> None:
+        self.get_stats_calls = 0
+
     def get_stats_dict(self) -> dict[str, Any]:
+        self.get_stats_calls += 1
         return {"backend": "memory", "size": 1}
 
 
 class _FakeConnections:
+    def __init__(self) -> None:
+        self.get_stats_calls = 0
+
     def get_stats(self) -> dict[str, Any]:
+        self.get_stats_calls += 1
         return {"active_connections": 0}
 
 
@@ -61,18 +71,26 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
 
     registry = _FakeRegistry()
+    cache = _FakeCache()
+    connections = _FakeConnections()
 
     response = await admin.get_status(
         client=cast(Client, SimpleNamespace(id="test-client")),
         registry=cast(ProviderRegistry, registry),
-        cache=cast(InMemoryCache, _FakeCache()),
-        connections=cast(ConnectionManager, _FakeConnections()),
+        cache=cast(InMemoryCache, cache),
+        connections=cast(ConnectionManager, connections),
     )
 
     assert response["success"] is True
     assert response["data"]["stream_sink_dispatch"] == snapshot
     assert response["data"]["stream_fanout"] == fanout_snapshot
+    assert response["data"]["status_sections"]["cache"] is True
+    assert response["data"]["status_sections"]["connections"] is True
+    assert response["data"]["status_sections"]["registry"] is True
     assert registry.health_check_calls == 1
+    assert registry.get_stats_calls == 1
+    assert cache.get_stats_calls == 1
+    assert connections.get_stats_calls == 1
 
 
 @pytest.mark.asyncio
@@ -301,3 +319,52 @@ async def test_get_status_provider_health_ttl_override_controls_cache_reuse(
     assert first["data"]["provider_health_cache"]["ttl_seconds"] == 0
     assert second["data"]["provider_health_cache"]["ttl_seconds"] == 0
     assert registry.health_check_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_get_status_can_skip_cache_connection_and_registry_sections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = {
+        "limits": {"max_inflight_publish": 32, "max_pending_tasks": 512},
+        "pending_tasks": 1,
+        "events": {"scheduled": 4, "completed": 4},
+        "derived": {"pending_utilization": 0.0, "completion_rate": 1.0, "drop_rate": 0.0},
+    }
+    fanout_snapshot = {
+        "limits": {"max_inflight": 100, "batch_size": 32},
+        "events": {"delivered": 100, "error": 0},
+        "batches": {"count": 4, "total_clients": 64, "max_batch_size": 16},
+        "derived": {"avg_batch_size": 16.0, "batch_fill_ratio": 0.5, "error_rate": 0.0},
+    }
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: snapshot)
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: fanout_snapshot)
+    monkeypatch.setattr(admin, "_provider_health_cache", None)
+    monkeypatch.setattr(admin, "_provider_health_cache_at", None)
+
+    registry = _FakeRegistry()
+    cache = _FakeCache()
+    connections = _FakeConnections()
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, registry),
+        cache=cast(InMemoryCache, cache),
+        connections=cast(ConnectionManager, connections),
+        include_provider_health=False,
+        include_cache_stats=False,
+        include_connection_stats=False,
+        include_registry_stats=False,
+    )
+
+    assert response["success"] is True
+    assert response["data"]["providers"] == {}
+    assert response["data"]["cache"] == {}
+    assert response["data"]["connections"] == {}
+    assert response["data"]["registry"] == {}
+    assert response["data"]["status_sections"]["cache"] is False
+    assert response["data"]["status_sections"]["connections"] is False
+    assert response["data"]["status_sections"]["registry"] is False
+    assert registry.health_check_calls == 0
+    assert registry.get_stats_calls == 0
+    assert cache.get_stats_calls == 0
+    assert connections.get_stats_calls == 0

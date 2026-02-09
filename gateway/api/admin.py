@@ -159,6 +159,18 @@ async def get_status(
         int | None,
         Query(ge=0, description="Optional override for provider-health cache TTL seconds"),
     ] = None,
+    include_cache_stats: Annotated[
+        bool,
+        Query(description="Whether to include cache stats in status response"),
+    ] = True,
+    include_connection_stats: Annotated[
+        bool,
+        Query(description="Whether to include connection stats in status response"),
+    ] = True,
+    include_registry_stats: Annotated[
+        bool,
+        Query(description="Whether to include registry stats in status response"),
+    ] = True,
 ):
     """Get full system status including clients, providers, and subscriptions."""
     provider_status, provider_health_cache = await _load_provider_health_status(
@@ -168,11 +180,9 @@ async def get_status(
         provider_health_cache_ttl_seconds=provider_health_cache_ttl_seconds,
     )
 
-    # Cache stats
-    cache_stats = cache.get_stats_dict()
-
-    # Connection stats
-    connection_stats = connections.get_stats()
+    cache_stats = cache.get_stats_dict() if include_cache_stats else {}
+    connection_stats = connections.get_stats() if include_connection_stats else {}
+    registry_stats = registry.get_stats() if include_registry_stats else {}
     stream_sink_dispatch = get_stream_sink_dispatch_snapshot()
     stream_fanout = get_stream_fanout_snapshot()
 
@@ -189,8 +199,13 @@ async def get_status(
             },
             "cache": cache_stats,
             "connections": connection_stats,
-            "registry": registry.get_stats(),
+            "registry": registry_stats,
             "provider_health_cache": provider_health_cache,
+            "status_sections": {
+                "cache": include_cache_stats,
+                "connections": include_connection_stats,
+                "registry": include_registry_stats,
+            },
             "stream_sink_dispatch": stream_sink_dispatch,
             "stream_fanout": stream_fanout,
         },
