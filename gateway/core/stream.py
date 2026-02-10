@@ -35,6 +35,36 @@ MESSAGE_TYPE_TO_DATA_TYPE = {
 }
 
 
+class SequenceTracker:
+    """Per-symbol, per-feed sequence counter for gap detection (PRD §Sequence Numbers).
+
+    Clients see monotonically increasing integers starting at 1.
+    A gap (new_seq != last_seq + 1) signals missed messages.
+    All counters reset on gateway restart.
+    """
+
+    def __init__(self) -> None:
+        self._counters: dict[tuple[str, str], int] = {}
+
+    def next_seq(self, symbol: str, feed: str) -> int:
+        """Return the next sequence number for (symbol, feed)."""
+        key = (symbol, feed)
+        seq = self._counters.get(key, 0) + 1
+        self._counters[key] = seq
+        return seq
+
+    def reset(self) -> None:
+        """Clear all counters (called on gateway restart)."""
+        self._counters.clear()
+
+    def get_status(self) -> dict:
+        """Diagnostic snapshot of tracked keys and total messages."""
+        return {
+            "tracked_keys": len(self._counters),
+            "total_messages": sum(self._counters.values()),
+        }
+
+
 class AlpacaStreamType(Enum):
     """Alpaca WebSocket stream types per PRD."""
 
@@ -716,6 +746,7 @@ class StreamMultiplexer:
         self._tasks: list[asyncio.Task] = []
         self._fanout_semaphore = asyncio.Semaphore(self._fanout_max_inflight)
         self._validator: Any | None = None
+        self._seq_tracker = SequenceTracker()
 
     def _get_stream_validator(self) -> Any:
         """Lazily resolve and cache the shared market-data validator."""
@@ -980,6 +1011,11 @@ class StreamMultiplexer:
             source="websocket",
             stream_type=stream_type.value if stream_type else None,
         )
+
+        # Inject per-symbol, per-feed sequence number for gap detection (PRD §Sequence Numbers)
+        seq = self._seq_tracker.next_seq(symbol_for_log, data_type)
+        envelope["seq"] = seq
+        envelope["lineage"]["seq"] = seq
 
         # Fan out envelope to each subscribed client with bounded concurrency
         async def _send(client_id: str) -> None:

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.169] - 2026-02-10
+
+### Added
+
+- **WebSocket sequence numbers for gap detection**: `SequenceTracker` class in `gateway/core/stream.py` provides per-symbol, per-feed monotonic counters injected into every outbound envelope (`seq` top-level field + `lineage.seq`). Clients detect gaps via `new_seq != last_seq + 1`. Counters reset on gateway restart per PRD §Sequence Numbers.
+- **SequenceTracker unit & integration tests**: 14 tests in `tests/test_sequence_tracker.py` covering counter increments, per-symbol/feed independence, reset, status reporting, and multiplexer envelope injection.
+
 ## [0.5.168] - 2026-02-09
 
 ### Added
