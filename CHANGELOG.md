@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - **Security IP blocklist**: `GET/POST /admin/security/blocklist` for managing blocked IPs.
 - **Defense-in-depth role checks**: All admin endpoints enforce `_require_admin()` inline, independent of the `require_api_key` dependency.
 - **17 new tests** in `tests/test_admin_operations.py` covering all endpoints and role-based access control.
+- **Documentation updates**: Added `docs/AUDIT_LOGGING.md` and updated `API_REFERENCE.md` with Admin Operations.
 
 ## [0.5.173] - 2026-02-10
 

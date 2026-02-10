@@ -382,6 +382,26 @@ Notes:
 
 ---
 
+---
+
+## Admin Operations
+
+Administrative endpoints for managing the gateway. These endpoints require a client role of `admin` or `super_admin`.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/admin/cache/stats` | `GET` | Get cache statistics |
+| `/admin/cache/clear` | `POST` | Clear the cache |
+| `/admin/circuits` | `GET` | Get circuit breaker states |
+| `/admin/circuits/reset` | `POST` | Reset all circuit breakers |
+| `/admin/circuits/{name}/reset` | `POST` | Reset a specific circuit breaker |
+| `/admin/providers/{name}/reload` | `POST` | Reload a provider configuration |
+| `/admin/shutdown` | `POST` | Initiate graceful shutdown (super_admin only) |
+| `/admin/security/blocklist` | `GET` | Get blocked IPs |
+| `/admin/security/blocklist` | `POST` | Add IP to blocklist |
+
+---
+
 ## Error Codes
 
 | Code | Description |

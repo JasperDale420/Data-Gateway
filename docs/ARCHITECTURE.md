@@ -92,6 +92,9 @@ API key authentication with role-based access control. All requests (REST and We
 | `core/auth.py` | Key validation, client lookup, permissions |
 | `core/security.py` | DDoS protection, IP blocking, security headers |
 | `core/validator.py` | Input validation, symbol format checking |
+| `core/audit.py` | Structured audit logging for security events |
+
+For details on the audit system, see [docs/AUDIT_LOGGING.md](AUDIT_LOGGING.md).
 
 ### Caching
 

@@ -54,7 +54,7 @@ graph LR
     MUX & CACHE & POLL --> NORM --> SINK --> REDIS
 ```
 
-For a deep dive into each subsystem, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+For a deep dive into each subsystem, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/AUDIT_LOGGING.md](docs/AUDIT_LOGGING.md) for security auditing details.
 
 | Provider | Data Types | API Key | Status |
 |---|---|---|---|
@@ -130,6 +130,7 @@ curl http://localhost:8080/health
 | `/api/v1/symbology/*` | Symbol Resolution | OCC ↔ human format |
 | `/api/v1/bulk/*` | Bulk Jobs | historical batch retrieval |
 | `/api/v1/replay/*` | Historical Replay | backtesting sessions |
+| `/admin/*` | Admin Ops | cache, circuits, shutdown |
 | `/health/*` | Health | liveness, readiness, status |
 | `/ws` | WebSocket | real-time streaming |
 
