@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.177] - 2026-02-10
+
+### Fixed
+
+- **Test data isolation**: Override `get_sink_registry` with `None` in `conftest.py` to prevent test events from leaking to production `heber:events` Redis stream.
+
 ## [0.5.176] - 2026-02-10
 
 ### Added
