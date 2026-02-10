@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.174] - 2026-02-10
+
+### Added
+
+- **Admin cache management**: `POST /admin/cache/clear` and `GET /admin/cache/stats` endpoints for cache inspection and clearing.
+- **Admin circuit breaker management**: `GET /admin/circuits`, `POST /admin/circuits/reset`, and `POST /admin/circuits/{name}/reset` for viewing and resetting circuit breaker states.
+- **Admin provider reload**: `POST /admin/providers/{name}/reload` for hot-reloading provider configuration.
+- **Admin shutdown trigger**: `POST /admin/shutdown` (super_admin only) to initiate PRD 8-step graceful shutdown.
+- **Security IP blocklist**: `GET/POST /admin/security/blocklist` for managing blocked IPs.
+- **Defense-in-depth role checks**: All admin endpoints enforce `_require_admin()` inline, independent of the `require_api_key` dependency.
+- **17 new tests** in `tests/test_admin_operations.py` covering all endpoints and role-based access control.
+
 ## [0.5.173] - 2026-02-10
 
 ### Added

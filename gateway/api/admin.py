@@ -6,7 +6,8 @@ from datetime import UTC, datetime, timedelta
 from heapq import nsmallest
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+import structlog
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from gateway.api.deps import (
     get_cache,
@@ -27,6 +28,7 @@ from gateway.core.metrics import (
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
+logger = structlog.get_logger()
 router = APIRouter(tags=["admin"])
 
 # In-memory error log buffer
@@ -984,3 +986,218 @@ async def disable_provider(
         "data": {"provider": name, "enabled": False},
         "meta": {"timestamp": datetime.now(UTC).isoformat()},
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tier 2 — Admin Operations (PRD §Security Architecture)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# In-memory IP blocklist
+_ip_blocklist: dict[str, dict] = {}
+
+
+def _require_super_admin(client: Client) -> None:
+    """Raise 403 unless client has super_admin role."""
+    if client.role != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "GW-E2010", "message": "Super admin access required"},
+        )
+
+
+def _require_admin(client: Client) -> None:
+    """Raise 403 unless client has admin or super_admin role."""
+    if client.role not in ("admin", "super_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "GW-E2005", "message": "Admin access required"},
+        )
+
+
+# ── Cache Management ────────────────────────────────────────────────────────
+
+
+@router.post("/api/v1/admin/cache/clear", response_model=SuccessResponse)
+async def admin_cache_clear(
+    client: Client = Depends(require_api_key),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Clear all entries from the application cache."""
+    _require_admin(client)
+    count = cache.get_stats_dict().get("size", 0)
+    cache.clear()
+    logger.info("admin_cache_cleared", entries=count, actor=client.id, code="GW-I2001")
+    return {
+        "success": True,
+        "data": {"entries_cleared": count},
+        "meta": {"timestamp": datetime.now(UTC).isoformat(), "actor": client.id},
+    }
+
+
+@router.get("/api/v1/admin/cache/stats", response_model=SuccessResponse)
+async def admin_cache_stats(
+    client: Client = Depends(require_api_key),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Return cache hit/miss/size statistics."""
+    _require_admin(client)
+    return {
+        "success": True,
+        "data": cache.get_stats_dict(),
+        "meta": {"timestamp": datetime.now(UTC).isoformat()},
+    }
+
+
+# ── Circuit Breaker Management ──────────────────────────────────────────────
+
+
+@router.get("/api/v1/admin/circuits", response_model=SuccessResponse)
+async def admin_list_circuits(
+    client: Client = Depends(require_api_key),
+):
+    """List all circuit breakers and their current states."""
+    _require_admin(client)
+    from gateway.core.circuit_breaker import get_circuit_registry
+
+    registry = get_circuit_registry()
+    return {
+        "success": True,
+        "data": {"circuits": registry.get_all_status()},
+        "meta": {"timestamp": datetime.now(UTC).isoformat()},
+    }
+
+
+@router.post("/api/v1/admin/circuits/reset", response_model=SuccessResponse)
+async def admin_reset_all_circuits(
+    client: Client = Depends(require_api_key),
+):
+    """Reset all circuit breakers to closed state."""
+    _require_admin(client)
+    from gateway.core.circuit_breaker import get_circuit_registry
+
+    registry = get_circuit_registry()
+    count = await registry.reset_all()
+    logger.info("admin_circuits_reset_all", count=count, actor=client.id, code="GW-I2002")
+    return {
+        "success": True,
+        "data": {"reset_count": count},
+        "meta": {"timestamp": datetime.now(UTC).isoformat(), "actor": client.id},
+    }
+
+
+@router.post("/api/v1/admin/circuits/{name}/reset", response_model=SuccessResponse)
+async def admin_reset_circuit(
+    name: str,
+    client: Client = Depends(require_api_key),
+):
+    """Reset a specific circuit breaker to closed state."""
+    _require_admin(client)
+    from gateway.core.circuit_breaker import get_circuit_registry
+
+    registry = get_circuit_registry()
+    reset = await registry.reset(name)
+    if not reset:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "GW-E4005", "message": f"Circuit breaker '{name}' not found"},
+        )
+    logger.info("admin_circuit_reset", circuit=name, actor=client.id, code="GW-I2003")
+    return {
+        "success": True,
+        "data": {"name": name, "reset": True},
+        "meta": {"timestamp": datetime.now(UTC).isoformat(), "actor": client.id},
+    }
+
+
+# ── Provider Reload ─────────────────────────────────────────────────────────
+
+
+@router.post("/api/v1/admin/providers/{name}/reload", response_model=SuccessResponse)
+async def admin_reload_provider(
+    name: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Hot-reload a provider's configuration."""
+    _require_admin(client)
+    try:
+        registry.reload_provider(name)
+    except (KeyError, AttributeError):
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "GW-E4004", "message": f"Provider '{name}' not found"},
+        )
+    logger.info("admin_provider_reloaded", provider=name, actor=client.id, code="GW-I2004")
+    return {
+        "success": True,
+        "data": {"provider": name, "reloaded": True},
+        "meta": {"timestamp": datetime.now(UTC).isoformat(), "actor": client.id},
+    }
+
+
+# ── Admin Shutdown (super_admin only) ────────────────────────────────────────
+
+
+@router.post("/api/v1/admin/shutdown", response_model=SuccessResponse)
+async def admin_shutdown(
+    client: Client = Depends(require_api_key),
+):
+    """Trigger graceful shutdown (super_admin only).
+
+    Initiates the PRD-specified 8-step graceful shutdown sequence.
+    """
+    _require_super_admin(client)
+
+    from gateway.core.shutdown import ShutdownCoordinator
+
+    coordinator = ShutdownCoordinator.get_instance()
+    coordinator.start_shutdown()
+
+    logger.warning("admin_shutdown_triggered", actor=client.id, code="GW-W2001")
+    return {
+        "success": True,
+        "data": {"shutting_down": True},
+        "meta": {"timestamp": datetime.now(UTC).isoformat(), "actor": client.id},
+    }
+
+
+# ── Security Blocklist ──────────────────────────────────────────────────────
+
+
+@router.get("/api/v1/admin/security/blocklist", response_model=SuccessResponse)
+async def admin_list_blocklist(
+    client: Client = Depends(require_api_key),
+):
+    """List all blocked IPs."""
+    _require_admin(client)
+    return {
+        "success": True,
+        "data": {"blocked": list(_ip_blocklist.values())},
+        "meta": {"timestamp": datetime.now(UTC).isoformat(), "total": len(_ip_blocklist)},
+    }
+
+
+@router.post("/api/v1/admin/security/blocklist", response_model=SuccessResponse)
+async def admin_add_to_blocklist(
+    client: Client = Depends(require_api_key),
+    ip: str = Body(..., embed=True),
+    reason: str = Body("", embed=True),
+    duration_hours: int = Body(24, embed=True),
+):
+    """Add an IP to the security blocklist."""
+    _require_admin(client)
+    entry = {
+        "ip": ip,
+        "reason": reason,
+        "duration_hours": duration_hours,
+        "blocked_at": datetime.now(UTC).isoformat(),
+        "blocked_by": client.id,
+    }
+    _ip_blocklist[ip] = entry
+    logger.info("admin_ip_blocked", ip=ip, reason=reason, actor=client.id, code="GW-I2005")
+    return {
+        "success": True,
+        "data": {"blocked": True, "entry": entry},
+        "meta": {"timestamp": datetime.now(UTC).isoformat(), "actor": client.id},
+    }
+
