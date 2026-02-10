@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.170] - 2026-02-10
+
+### Added
+
+- **Structured audit logging**: `AuditLogger` class in `gateway/core/audit.py` per PRD §Audit Logging — 11 typed event methods (auth_success, auth_failure, auth_timeout, key_created, key_rotated, key_revoked, admin_action, config_changed, rate_limited, ip_blocked, permission_denied) with thread-safe ring buffer and dedicated structlog logger.
+- **Audit integration at auth**: `ClientAuthenticator.authenticate()` emits audit events on every success/failure with actor context (IP, user-agent).
+- **Audit integration at rate limiters**: `RateLimitMiddleware` and `GlobalRateLimitMiddleware` emit `rate_limited` audit events on 429 responses.
+- **Audit dependency**: `get_audit_logger()` in `gateway/api/deps.py` for DI access.
+- **29 audit logger tests**: Unit tests for all event types, ring buffer, filtering, stats, and auth integration.
+
 ## [0.5.169] - 2026-02-10
 
 ### Added

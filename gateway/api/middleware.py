@@ -11,6 +11,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from gateway.core.audit import get_audit_logger
 from gateway.core.envelope import wrap_event
 from gateway.core.metrics import (
     record_cache_hit,
@@ -143,6 +144,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 limit=bucket.limit,
             )
             record_rate_limit_exceeded(client_id)
+            client_ip = request.client.host if request.client else "unknown"
+            get_audit_logger().rate_limited(
+                client_id=client_id,
+                ip=client_ip,
+                metadata={"limit_type": "per_client", "limit": bucket.limit},
+            )
             return Response(
                 content='{"error": {"code": "GW-E4001", "message": "Rate limit exceeded"}}',
                 status_code=429,
@@ -946,6 +953,11 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         if self._global_requests >= self.global_limit:
             logger.warning("global_rate_limit_exceeded", current=self._global_requests)
             record_rate_limit_exceeded("global")
+            client_ip = self._get_client_ip(request)
+            get_audit_logger().rate_limited(
+                ip=client_ip,
+                metadata={"limit_type": "global", "limit": self.global_limit},
+            )
             return Response(
                 content=json.dumps(
                     {
@@ -964,6 +976,10 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         client_ip = self._get_client_ip(request)
         if not self._check_ip_limit(client_ip):
             record_rate_limit_exceeded(f"ip:{client_ip}")
+            get_audit_logger().rate_limited(
+                ip=client_ip,
+                metadata={"limit_type": "per_ip", "limit": self.per_ip_limit},
+            )
             return Response(
                 content=json.dumps(
                     {

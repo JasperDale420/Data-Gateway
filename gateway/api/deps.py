@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from fastapi import Depends, Header, HTTPException, Request
 
 from gateway.config import get_settings
+from gateway.core.audit import AuditLogger
 from gateway.core.auth import Client, ClientAuthenticator
 from gateway.core.cache import HybridCache, InMemoryCache
 from gateway.core.connections import ConnectionManager
@@ -104,6 +105,11 @@ def get_endpoint_rate_limiter() -> EndpointRateLimiter:
     return EndpointRateLimiter.get_instance()
 
 
+def get_audit_logger() -> AuditLogger:
+    """Get the audit logger singleton."""
+    return AuditLogger.get_instance()
+
+
 def require_api_key(
     request: Request,
     x_gateway_key: str | None = Header(None, alias="X-Gateway-Key"),
@@ -120,7 +126,15 @@ def require_api_key(
             detail={"code": "GW-E2001", "message": "Missing X-Gateway-Key header"},
         )
 
-    client = authenticator.authenticate(x_gateway_key)
+    # Extract actor context for audit logging
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent")
+
+    client = authenticator.authenticate(
+        x_gateway_key,
+        ip=client_ip,
+        user_agent=user_agent,
+    )
 
     if not client:
         raise HTTPException(
