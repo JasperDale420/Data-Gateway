@@ -116,21 +116,33 @@ module = ["tests.*"]
 disable_error_code = ["var-annotated"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-v --tb=short --strict-markers -m 'not perf'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["tests"]
-addopts = "-v --tb=short -m 'not perf'"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
 markers = [
-    "perf: benchmark/performance tests excluded from default pytest runs",
+    "unit: Fast, isolated unit tests (no I/O, no network)",
+    "integration: Tests with real DB, file I/O, or component interactions",
+    "e2e: End-to-end full system flow tests",
+    "slow: Tests that take >1s (opt-in, excluded by default)",
+    "perf: Benchmark/performance tests (excluded by default)",
 ]
 
 [tool.coverage.run]
-source = ["gateway"]
 branch = true
+source = ["gateway"]
+omit = ["tests/*", "scripts/*", "*/__init__.py"]
 
 [tool.coverage.report]
+show_missing = true
 exclude_lines = [
     "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
