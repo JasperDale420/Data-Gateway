@@ -36,6 +36,7 @@ from gateway.api import (
     legacy_adjustments_router,
     legacy_corporate_router,
     legacy_symbology_router,
+    market_router,
     news_router,
     quality_router,
     replay_router,
@@ -490,6 +491,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(websocket_router)
     app.include_router(alpaca_router)
+    app.include_router(market_router)
     app.include_router(admin_router)
     app.include_router(uw_router)
     app.include_router(news_router)

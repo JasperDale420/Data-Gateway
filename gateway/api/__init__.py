@@ -12,6 +12,7 @@ from gateway.api.corporate import legacy_router as legacy_corporate_router
 from gateway.api.corporate import router as corporate_router
 from gateway.api.finnhub import router as finnhub_router
 from gateway.api.health import router as health_router
+from gateway.api.market import router as market_router
 from gateway.api.news import router as news_router
 from gateway.api.quality import router as quality_router
 from gateway.api.replay import router as replay_router
@@ -27,6 +28,7 @@ __all__ = [
     "websocket_router",
     "alpaca_router",
     "admin_router",
+    "market_router",
     "uw_router",
     "news_router",
     "yf_router",

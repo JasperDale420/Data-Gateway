@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.176] - 2026-02-10
+
+### Added
+
+- **Unified market router wiring**: Registered `market_router` in `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/__init__.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/main.py` so `/api/v1/market/*` routes are included in the running app.
+- **Provider priority selection helper**: Added `get_ordered_providers(capability)` in `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/registry.py` to filter enabled providers by capability and return them in descending priority order.
+- **Regression tests for failover plumbing**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_execution.py` and `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_registry_ordering.py` to cover failover behavior and registry provider ordering.
+- **Route dependency debug helper**: Added `/Users/jacobmcmillan/Empire/Data-Gateway/debug_deps.py` for inspecting market route dependency bindings during local debugging.
+
 ## [0.5.175] - 2026-02-10
 
 ### Added
