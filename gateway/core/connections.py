@@ -145,3 +145,37 @@ class ConnectionManager:
             *(_send(connection) for connection in self._connections.values())
         )
         return sum(1 for sent in results if sent)
+
+    async def broadcast_shutdown(self, timeout_seconds: int = 30) -> int:
+        """Send shutdown warning to all authenticated clients (PRD §Graceful Shutdown step 2).
+
+        Returns:
+            Number of clients notified.
+        """
+        message = {
+            "type": "system",
+            "event": "shutdown",
+            "timeout_seconds": timeout_seconds,
+        }
+        return await self.broadcast(message)
+
+    async def close_all(self, code: int = 1001, reason: str = "Going Away") -> None:
+        """Close all WebSocket connections (PRD §Graceful Shutdown step 5).
+
+        Args:
+            code: WebSocket close code (1001 = Going Away).
+            reason: Human-readable close reason.
+        """
+        async with self._lock:
+            connection_ids = list(self._connections.keys())
+
+        for cid in connection_ids:
+            conn = self._connections.get(cid)
+            if not conn:
+                continue
+            try:
+                await conn.websocket.close(code=code, reason=reason)
+            except Exception as e:
+                logger.warning("close_connection_failed", connection_id=cid, error=str(e))
+
+        logger.info("all_connections_closed", count=len(connection_ids), code=code)

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.172] - 2026-02-10
+
+### Added
+
+- **Graceful shutdown coordinator**: New `gateway/core/shutdown.py` with `ShutdownCoordinator` singleton tracking shutdown state and drain timing (PRD §Graceful Shutdown).
+- **Client shutdown notification**: `ConnectionManager.broadcast_shutdown()` sends `{"type": "system", "event": "shutdown"}` to all authenticated WebSocket clients before drain.
+- **Client connection close**: `ConnectionManager.close_all()` closes all connections with code 1001 (Going Away) after drain.
+- **Health 503 during shutdown**: `/health` and `/health/ready` return 503 with `shutting_down` status and `drain_remaining_seconds` during graceful shutdown.
+- **8-step shutdown sequence**: Reordered `lifespan()` shutdown to match PRD: coordinator start → client notify → drain → multiplexer stop → close clients → flush sinks → stop services → exit.
+- **Shutdown tests**: 13 tests in `tests/test_graceful_shutdown.py` covering coordinator state, broadcast, close-all, and health 503.
+
 ## [0.5.171] - 2026-02-10
 
 ### Fixed

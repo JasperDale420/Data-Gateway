@@ -6,12 +6,13 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 
 from gateway import __version__
 from gateway.api.deps import get_cache, get_connection_manager, get_sink_registry
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
-from gateway.schemas import HealthResponse
+from gateway.core.shutdown import ShutdownCoordinator
 
 logger = structlog.get_logger()
 
@@ -25,18 +26,36 @@ def _should_log(last_log: float, interval_seconds: float = 60.0) -> bool:
     return (time.time() - last_log) >= interval_seconds
 
 
-@router.get("", response_model=HealthResponse)
-async def liveness() -> dict[str, str]:
-    """Liveness probe - always returns ok if server is running."""
+@router.get("")
+async def liveness():
+    """Liveness probe - returns 503 during graceful shutdown (PRD §Graceful Shutdown)."""
+    coord = ShutdownCoordinator.get_instance()
+    if coord.is_shutting_down:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "shutting_down",
+                "drain_remaining_seconds": round(coord.drain_remaining(), 1),
+            },
+        )
     return {"status": "ok"}
 
 
-@router.get("/ready")
+@router.get("/ready", response_model=None)
 async def readiness(
     cache: InMemoryCache = Depends(get_cache),
     connections: ConnectionManager = Depends(get_connection_manager),
-) -> dict[str, Any]:
-    """Readiness probe - checks if dependencies are ready."""
+):
+    """Readiness probe - returns 503 during shutdown, otherwise checks dependencies."""
+    coord = ShutdownCoordinator.get_instance()
+    if coord.is_shutting_down:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "shutting_down",
+                "drain_remaining_seconds": round(coord.drain_remaining(), 1),
+            },
+        )
     checks = {
         "cache": "ok",
         "connections": "ok",

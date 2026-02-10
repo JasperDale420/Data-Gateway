@@ -390,12 +390,26 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown with graceful drain (PRD 6.5, 11.3.4)
+    # ── PRD §Graceful Shutdown: 8-step sequence ────────────────────────────
+
+    # Step 1: Mark as shutting down (health endpoints → 503)
+    from gateway.core.shutdown import ShutdownCoordinator
+
+    coordinator = ShutdownCoordinator.get_instance()
     drain_seconds = settings.shutdown_drain_seconds
+    coordinator.start_shutdown(drain_seconds=drain_seconds)
     logger.info("shutdown_starting", drain_seconds=drain_seconds)
 
-    # PRIORITY: Stop multiplexer FIRST to release Alpaca WebSocket connections immediately
-    # This prevents "connection limit exceeded" errors on restart
+    # Step 2: Notify connected clients
+    connections = get_connection_manager()
+    notified = await connections.broadcast_shutdown(timeout_seconds=drain_seconds)
+    logger.info("shutdown_clients_notified", count=notified)
+
+    # Step 3: Drain period — continue delivering queued messages
+    if drain_seconds > 0:
+        await asyncio.sleep(drain_seconds)
+
+    # Step 4: Unsubscribe upstream / stop multiplexer
     if multiplexer:
         logger.info("multiplexer_shutdown_starting")
         try:
@@ -406,35 +420,30 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("multiplexer_shutdown_error", error=str(e))
 
-    # Stop accepting new connections
-    connections = get_connection_manager()
-    logger.info("shutdown_connections", active=connections.active_count)
+    # Step 5: Close client connections with 1001 Going Away
+    await connections.close_all(code=1001, reason="Going Away")
 
-    # Wait for drain period (allow in-flight requests to complete)
-    if drain_seconds > 0:
-        await asyncio.sleep(drain_seconds)
-
-    # Flush scheduled stream-to-sink publish tasks before sink shutdown.
+    # Step 6: Flush stream-to-sink publish tasks
     await _drain_stream_sink_publish_tasks()
 
-    # Shutdown UW poller
+    # Step 7: Shutdown remaining services
     if uw_poller:
         from gateway.core.uw_poller import stop_uw_poller
 
         await stop_uw_poller()
 
-    # Shutdown backfill engine
     from gateway.core.backfill import get_backfill_engine
 
     await get_backfill_engine().shutdown()
-
-    # Shutdown remaining components
     await registry.shutdown()
     uptime_task.cancel()
     with suppress(asyncio.CancelledError):
         await uptime_task
+
+    # Step 8: Exit
     logger.info("gateway_shutdown_complete")
     _set_stream_sink_registry(None)
+    ShutdownCoordinator.reset()
 
 
 def create_app() -> FastAPI:
