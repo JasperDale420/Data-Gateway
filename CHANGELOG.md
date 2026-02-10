@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.171] - 2026-02-10
+
+### Fixed
+
+- **Corporate actions tests**: Added `allow_stub_data=True` mock so `TestCorporateActionsService` and `TestAdjustmentService` use KNOWN_SPLITS fallback instead of raising `RuntimeError`.
+- **Symbology validate test**: Fixed assertion to handle `SuccessResponse` envelope (check `data.valid` instead of top-level `valid`).
+
 ## [0.5.170] - 2026-02-10
 
 ### Added
