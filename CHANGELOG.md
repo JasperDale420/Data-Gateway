@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.173] - 2026-02-10
+
+### Added
+
+- **Darkpool feed contract test**: Added `tests/test_uw_poller.py::test_poll_darkpool_emits_canonical_darkpool_feed` to lock UW poller envelope feed naming to canonical `darkpool`.
+
 ## [0.5.172] - 2026-02-10
 
 ### Added

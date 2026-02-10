@@ -92,6 +92,38 @@ async def test_publish_envelopes_respects_max_inflight_limit() -> None:
     assert sink.max_inflight <= 2
 
 
+@pytest.mark.asyncio
+async def test_poll_darkpool_emits_canonical_darkpool_feed(monkeypatch: pytest.MonkeyPatch) -> None:
+    poller = UWPoller()
+
+    class _FakeProvider:
+        async def get_darkpool_recent(self, limit: int = 200):  # noqa: ARG002
+            return [
+                SimpleNamespace(
+                    model_dump=lambda: {
+                        "event_id": "dp-1",
+                        "symbol": "AAPL",
+                        "ts_event": "2026-02-10T14:30:00Z",
+                    }
+                )
+            ]
+
+    captured: dict[str, Any] = {}
+
+    async def _capture_publish(**kwargs):
+        captured["envelopes"] = kwargs["envelopes"]
+        return len(kwargs["envelopes"]), 0
+
+    poller._provider = _FakeProvider()
+    monkeypatch.setattr(poller, "_publish_envelopes", _capture_publish)
+
+    await poller._poll_darkpool(sink_registry=_FakeSinkRegistry(), limit=1)
+
+    envelopes = captured["envelopes"]
+    assert len(envelopes) == 1
+    assert envelopes[0]["feed"] == "darkpool"
+
+
 def test_uw_poller_publish_limit_reads_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         uw_poller_module,
