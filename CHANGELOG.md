@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.175] - 2026-02-10
+
+### Added
+
+- **Unified Market Data API** (`/api/v1/market/*`): Provider-agnostic endpoints for bars, quotes, trades, and news with automatic failover.
+- **Generic execution layer** (`gateway/core/execution.py`): `execute_provider_failover` with timeout enforcement and circuit breaker integration.
+- **Provider registry ordering**: `get_ordered_providers(capability)` filters and sorts by config priority.
+- **12 tests** covering execution failover, registry ordering, and unified market API endpoints.
+
+### Fixed
+
+- `test_api_market.py`: Corrected `gateway.models` → `gateway.schemas` import, added required `provider` field to mock models, cleared circuit breaker state between test modules, used `pytest.approx` for float comparisons.
+
 ## [0.5.174] - 2026-02-10
 
 ### Added
