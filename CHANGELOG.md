@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.180] - 2026-02-11
+
+### Removed
+
+- **Dead code**: Deleted `gateway/api/_legacy/` (4,013-line pre-refactor UW monolith, zero imports), `gateway/core/redis_cache.py` (deprecated compatibility shim, zero imports), `debug_deps.py` (debug script), empty `unusualwhales_sdk/` directory.
+- **Stale root configs**: Untracked root-level `providers.yaml` and `clients.yaml` from git (duplicates of `config/` versions). Added to `.gitignore`.
+- **Perf/coverage artifacts**: Cleaned `perf-*.json`, `perf-*.xml`, `perf-output.txt`, `coverage.json` from disk.
+
+### Changed
+
+- **Audit docs relocated**: Moved 7 audit/report markdown files from repo root to `docs/audits/` for cleaner structure.
+- **`execution.py` refactored**: Removed dead `processed_count` variable (was always 0), replaced with `len(errors)`. Merged nested if statements and simplified exception classification to reduce cognitive complexity.
+
 ## [0.5.179] - 2026-02-11
 
 ### Fixed

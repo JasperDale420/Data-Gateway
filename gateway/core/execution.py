@@ -48,7 +48,6 @@ async def execute_provider_failover(
         )
 
     circuit_registry = get_circuit_registry()
-    processed_count = 0
     errors: list[str] = []
 
     # 2. Iterate through candidates
@@ -67,33 +66,18 @@ async def execute_provider_failover(
             return await breaker.call(_timed_execution)
 
         except Exception as e:
-            # Check for CircuitOpenError (from breaker) or TimeoutError (from wait_for)
-            # or other provider errors
-
-            # If CircuitOpenError, it means the breaker prevented execution
+            # Circuit breaker prevented execution — skip to next provider
             if type(e).__name__ == "CircuitOpenError":
                 errors.append(f"{provider.name}:circuit_open")
                 continue
 
-            # Check for non-failover HTTP exceptions (optional refinement)
-            if isinstance(e, HTTPException):
-                if e.status_code == 404:
-                    # Log 404 but don't strictly failover?
-                    # For now, we treat *everything* as a failure to find data
-                    # in this failover loop, so we continue to the next provider.
-                    pass
-
-            msg = f"{provider.name}:{type(e).__name__}:{str(e)}"
-
-            if isinstance(e, asyncio.TimeoutError):
-                logger.warning("provider_execution_timeout", provider=provider.name, capability=capability)
-            else:
-                logger.warning("provider_execution_failed", provider=provider.name, error=str(e))
-
+            msg = f"{provider.name}:{type(e).__name__}:{e!s}"
+            event = "provider_execution_timeout" if isinstance(e, asyncio.TimeoutError) else "provider_execution_failed"
+            logger.warning(event, provider=provider.name, capability=capability, error=str(e))
             errors.append(msg)
 
     # 3. All failed
-    logger.error("all_providers_failed", capability=capability, attempts=processed_count, errors=errors)
+    logger.error("all_providers_failed", capability=capability, attempts=len(errors), errors=errors)
     raise HTTPException(
         status_code=503,
         detail={

@@ -62,6 +62,8 @@ cover/
 # Project specific
 data_lake/
 clients.yaml
+providers.yaml
+debug_deps.py
 
 # Code quality tools
 .mypy_cache/
