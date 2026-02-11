@@ -45,8 +45,17 @@ async def test_message_loop_uses_provided_max_size_without_settings_lookup(monke
     assert fake_ws.sent[0]["error_code"] == "GW-E8005"
 
 
-def test_websocket_subscribe_with_feeds(client: TestClient, test_api_key: str):
+def test_websocket_subscribe_with_feeds(client: TestClient, test_api_key: str, monkeypatch):
     """Subscribe using feeds list (preferred schema)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    # Mock the multiplexer to avoid real Alpaca WS connections
+    mock_multiplexer = MagicMock()
+    mock_multiplexer.client_subscribe = AsyncMock(
+        return_value={"status": "ok", "subscribed": ["AAPL"], "failed": []}
+    )
+    monkeypatch.setattr("gateway.api.deps.get_multiplexer", lambda: mock_multiplexer)
+
     with client.websocket_connect("/ws") as websocket:
         websocket.send_json({"action": "auth", "key": test_api_key})
         auth = websocket.receive_json()

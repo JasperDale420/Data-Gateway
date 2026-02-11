@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.178] - 2026-02-11
+
+### Fixed
+
+- **test_no_providers_available**: Added `X-Gateway-Cache: bypass` header to prevent `CacheMiddleware` from serving stale cached 200 responses from prior tests, which bypassed DI overrides entirely.
+- **test_websocket_subscribe_with_feeds**: Mocked `get_multiplexer` at `gateway.api.deps` to prevent real Alpaca WebSocket connections during tests, which caused authentication errors.
+
 ## [0.5.177] - 2026-02-10
 
 ### Fixed

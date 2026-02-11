@@ -157,10 +157,14 @@ def test_get_news(client):
 
 
 def test_no_providers_available(client, mock_registry):
+    """Verify 503 when no providers are available for a capability."""
     mock_registry.get_ordered_providers.return_value = []
-    # Re-apply override to ensure it overrides the conftest autouse fixture
     app.dependency_overrides[get_registry] = lambda: mock_registry
 
-    response = client.get("/api/v1/market/stocks/AAPL/bars")
+    # Bypass cache middleware to ensure the endpoint actually runs
+    response = client.get(
+        "/api/v1/market/stocks/AAPL/bars",
+        headers={"X-Gateway-Cache": "bypass"},
+    )
     assert response.status_code == 503
     assert response.json()["detail"] == "No providers configured for stock_bars"
