@@ -392,7 +392,14 @@ class UpstreamConnection:
         return self._subscriptions
 
     async def connect(self) -> None:
-        """Establish WebSocket connection."""
+        """Establish WebSocket connection.
+
+        Closes any existing connection first to avoid leaking connection slots
+        on Alpaca's side (each endpoint allows only 1 concurrent connection).
+        """
+        # Close existing connection to release Alpaca's connection slot
+        await self._close_ws()
+
         endpoint = self.stream_type.endpoint
         logger.info("connecting_upstream", stream=self.stream_type.value, endpoint=endpoint)
 
@@ -553,34 +560,45 @@ class UpstreamConnection:
             except asyncio.CancelledError:
                 logger.debug("receive_task_cancelled", stream=self.stream_type.value)
 
-        # Aggressively close WebSocket connection
-        if self._ws:
+        # Close the WebSocket connection
+        await self._close_ws()
+
+    async def _close_ws(self) -> None:
+        """Close the current WebSocket connection and release Alpaca's connection slot.
+
+        Safe to call even if no connection exists. This must be called before opening
+        a new connection to the same endpoint, since Alpaca only allows 1 concurrent
+        connection per endpoint.
+        """
+        if not self._ws:
+            return
+
+        ws = self._ws
+        self._ws = None
+        self._authenticated = False
+
+        try:
+            await asyncio.wait_for(
+                ws.close(code=1000, reason="Gateway reconnecting"),
+                timeout=3.0,
+            )
+            logger.debug("websocket_closed", stream=self.stream_type.value)
+        except TimeoutError:
+            logger.warning(
+                "websocket_close_timeout",
+                stream=self.stream_type.value,
+                action="forcing_close",
+            )
             try:
-                # Send explicit close frame with normal closure code
-                await asyncio.wait_for(
-                    self._ws.close(code=1000, reason="Gateway shutdown"),
-                    timeout=3.0,
-                )
-                logger.info("websocket_closed_gracefully", stream=self.stream_type.value)
-            except TimeoutError:
-                logger.warning(
-                    "websocket_close_timeout",
-                    stream=self.stream_type.value,
-                    action="forcing_close",
-                )
-                # Force close the underlying socket
-                try:
-                    self._ws.transport.abort()
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.warning(
-                    "websocket_close_error",
-                    stream=self.stream_type.value,
-                    error=str(e),
-                )
-            finally:
-                self._ws = None
+                ws.transport.abort()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(
+                "websocket_close_error",
+                stream=self.stream_type.value,
+                error=str(e),
+            )
 
     async def _connect_and_run(self) -> None:
         """Main connection loop with reconnection."""
@@ -608,7 +626,8 @@ class UpstreamConnection:
                 logger.exception("connection_error", stream=self.stream_type.value)
 
             self._authenticated = False
-            self._ws = None
+            # Close the WebSocket to release Alpaca's connection slot before reconnecting
+            await self._close_ws()
 
             if self._running:
                 await self._reconnect_with_backoff()

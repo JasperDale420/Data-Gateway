@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - **UW darkpool `SingleTradeSettlement` enum**: Added `SELLER = "seller"` to the vendored SDK enum to handle the new value returned by the Unusual Whales API, fixing `uw_darkpool_recent_failed` errors.
 - **`pyproject.toml` dependencies placement**: Moved `dependencies` list from `[tool.hatch.build.targets.wheel]` table back into `[project]` table — TOML was parsing it under the wrong section, causing built wheels to declare zero runtime dependencies.
 - **Dockerfile layer caching**: Fixed pip install ordering so dependencies install first (cached layer using a stub package), then source is copied and only the gateway package is reinstalled with `--no-deps`.
+- **WebSocket connection leak (root cause of connection limit errors)**: `connect()` and `_connect_and_run` now properly close the old WebSocket before opening a new one, releasing Alpaca's connection slot. Previously, the old connection was orphaned during reconnection, leaving a stale session on Alpaca's side and triggering error 406.
 
 ## [0.5.178] - 2026-02-11
 
