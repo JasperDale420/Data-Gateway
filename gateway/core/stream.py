@@ -612,6 +612,14 @@ class UpstreamConnection:
 
             if self._running:
                 await self._reconnect_with_backoff()
+                if not self._running:
+                    # Reconnect gave up (max retries or non-recoverable error)
+                    logger.info(
+                        "stream_dormant",
+                        stream=self.stream_type.value,
+                        hint="Will restart on next client subscription",
+                    )
+                    return
 
     async def _receive_loop(self) -> None:
         """Receive and dispatch messages.
@@ -635,8 +643,15 @@ class UpstreamConnection:
             except Exception as e:
                 logger.error("message_parse_error", error=str(e))
 
+    # Auth error messages that indicate account-level issues, not transient failures
+    _NON_RECOVERABLE_ERRORS = ("connection limit exceeded",)
+
     async def _reconnect_with_backoff(self) -> None:
-        """Reconnect with exponential backoff per PRD."""
+        """Reconnect with exponential backoff per PRD.
+
+        Sets self._running = False if retries are exhausted or a non-recoverable
+        error is detected, signaling the outer loop to stop.
+        """
         for attempt in range(self.max_retries):
             delay = min(self.base_delay * (2**attempt), self.max_delay)
             jitter = delay * 0.2 * (random.random() * 2 - 1)  # ±20%
@@ -665,14 +680,27 @@ class UpstreamConnection:
                 return
 
             except Exception as e:
+                error_msg = str(e)
+                # Detect non-recoverable auth errors — stop immediately
+                if any(msg in error_msg for msg in self._NON_RECOVERABLE_ERRORS):
+                    logger.error(
+                        "non_recoverable_error",
+                        stream=self.stream_type.value,
+                        error=error_msg,
+                        hint="Check for stale connections or competing applications using the same Alpaca credentials.",
+                    )
+                    self._running = False
+                    return
+
                 logger.warning(
                     "reconnect_failed",
                     stream=self.stream_type.value,
                     attempt=attempt + 1,
-                    error=str(e),
+                    error=error_msg,
                 )
 
         logger.error("max_retries_exceeded", stream=self.stream_type.value)
+        self._running = False
 
 
 class StreamMultiplexer:
@@ -815,14 +843,22 @@ class StreamMultiplexer:
         """Ensure connection is established for lazy connect mode.
 
         Returns True if connection is ready, False if failed.
+        Can restart a dormant stream that previously gave up after max retries.
         """
         conn = self._get_connection(stream_type)
         if not conn:
             return False
 
-        # Already connected or connecting
-        if conn.is_connected or conn._running:
+        # Already connected
+        if conn.is_connected:
             return True
+
+        # Connection task is actively running (connecting or retrying)
+        if conn._running:
+            return True
+
+        # Stream is dormant (gave up after max retries) — restart it
+        logger.info("restarting_dormant_stream", stream=stream_type.value)
 
         # Start connection for this stream
         logger.info("lazy_connect_starting", stream=stream_type.value)

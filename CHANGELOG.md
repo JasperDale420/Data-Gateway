@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.179] - 2026-02-11
+
+### Fixed
+
+- **Alpaca stream infinite retry loop**: `_connect_and_run` outer loop now exits after `_reconnect_with_backoff` exhausts retries or detects a non-recoverable error, preventing infinite reconnect cycles that flooded logs with 1,000+ warnings.
+- **Non-recoverable error detection**: `_reconnect_with_backoff` detects `connection limit exceeded` auth errors and fails fast instead of retrying — these are account-level constraints that retrying won't resolve.
+- **Dormant stream restart**: `_ensure_connected` can now restart a stream that previously gave up after max retries, allowing new client subscriptions to trigger a fresh connection attempt.
+- **UW darkpool `SingleTradeSettlement` enum**: Added `SELLER = "seller"` to the vendored SDK enum to handle the new value returned by the Unusual Whales API, fixing `uw_darkpool_recent_failed` errors.
+
 ## [0.5.178] - 2026-02-11
 
 ### Fixed
