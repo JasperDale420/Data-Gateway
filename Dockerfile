@@ -13,12 +13,16 @@ RUN pip install --no-cache-dir /tmp/unusualwhales_sdk/ && rm -rf /tmp/unusualwha
 # Copy pyproject.toml first to cache dependency installation
 COPY pyproject.toml README.md ./
 
-# Install dependencies from pyproject.toml (single source of truth)
-RUN pip install --no-cache-dir --no-deps .
+# Install only dependencies (cached until pyproject.toml changes)
+# Create a minimal package stub so pip can parse pyproject.toml dependencies
+RUN mkdir -p gateway && \
+    echo '"""Stub for dependency resolution."""' > gateway/__init__.py && \
+    pip install --no-cache-dir . && \
+    rm -rf gateway
 
-# Copy gateway source and reinstall package (deps already cached)
+# Copy gateway source and reinstall package only (deps already installed above)
 COPY gateway/ gateway/
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 # Copy config files
 COPY config/ config/

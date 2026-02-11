@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
 - **Non-recoverable error detection**: `_reconnect_with_backoff` detects `connection limit exceeded` auth errors and fails fast instead of retrying — these are account-level constraints that retrying won't resolve.
 - **Dormant stream restart**: `_ensure_connected` can now restart a stream that previously gave up after max retries, allowing new client subscriptions to trigger a fresh connection attempt.
 - **UW darkpool `SingleTradeSettlement` enum**: Added `SELLER = "seller"` to the vendored SDK enum to handle the new value returned by the Unusual Whales API, fixing `uw_darkpool_recent_failed` errors.
+- **`pyproject.toml` dependencies placement**: Moved `dependencies` list from `[tool.hatch.build.targets.wheel]` table back into `[project]` table — TOML was parsing it under the wrong section, causing built wheels to declare zero runtime dependencies.
+- **Dockerfile layer caching**: Fixed pip install ordering so dependencies install first (cached layer using a stub package), then source is copied and only the gateway package is reinstalled with `--no-deps`.
 
 ## [0.5.178] - 2026-02-11
 
