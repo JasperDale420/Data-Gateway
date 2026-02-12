@@ -571,6 +571,30 @@ FEED_MAPPING = {
     "cash_flow": "stock_fundamentals",
 }
 
+# Cerberus-critical routes that need canonical sink feed names.
+CANONICAL_ROUTE_FEEDS = [
+    (
+        re.compile(r"^/api/v1/alpaca/stocks/[^/]+/bars$"),
+        "alpaca",
+        "bars",
+    ),
+    (
+        re.compile(r"^/api/v1/alpaca/stocks/[^/]+/trades$"),
+        "alpaca",
+        "trades",
+    ),
+    (
+        re.compile(r"^/api/v1/uw/flow/[^/]+$"),
+        "unusual_whales",
+        "flow_alerts",
+    ),
+    (
+        re.compile(r"^/api/v1/uw/gex/[^/]+$"),
+        "unusual_whales",
+        "greek_exposure",
+    ),
+]
+
 # Paths to skip envelope wrapping (health, metrics, admin, etc)
 SKIP_PATHS = {
     "/health",
@@ -690,14 +714,24 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
             from gateway.api.deps import get_sink_registry
 
             sink_registry = get_sink_registry()
-            if sink_registry:
+            should_publish_to_sink = self._is_sink_publish_eligible(
+                path=path,
+                payload=payload,
+                feed=feed,
+            )
+            if sink_registry and should_publish_to_sink:
                 import asyncio
 
-                # Publish ALL REST envelopes into Heber's ingest stream so nothing is missed.
-                # (We keep `feed` inside the envelope metadata for downstream routing.)
+                # Publish compatible REST envelopes into Heber's ingest stream.
                 topic = "heber:events"
                 # Fire-and-forget publish (DataSinkRegistry handles task lifecycle)
                 asyncio.create_task(sink_registry.publish_all(topic, envelope))
+            elif sink_registry and not should_publish_to_sink:
+                logger.debug(
+                    "rest_envelope_sink_publish_skipped",
+                    path=path,
+                    feed=feed,
+                )
 
             logger.debug(
                 "rest_envelope_wrapped",
@@ -781,6 +815,10 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
 
     def _extract_route_info(self, path: str) -> tuple[str, str]:
         """Extract provider and feed from request path."""
+        for pattern, provider, feed in CANONICAL_ROUTE_FEEDS:
+            if pattern.match(path):
+                return provider, feed
+
         for pattern in ROUTE_PATTERNS:
             match = pattern.match(path)
             if match:
@@ -801,6 +839,26 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 return provider, feed
 
         return "unknown", "data"
+
+    def _is_sink_publish_eligible(self, path: str, payload: object, feed: str) -> bool:
+        """Allow sink publishing only for routes with known ingest-safe payload shapes."""
+        # Skip known aggregate-only bundles in phase 1 to avoid malformed ingest events.
+        if path.startswith("/api/v1/alpaca/screener/"):
+            return False
+
+        if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/bars"):
+            return isinstance(payload, dict) and isinstance(payload.get("bars"), list)
+
+        if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/trades"):
+            return isinstance(payload, dict) and isinstance(payload.get("trades"), list)
+
+        if path.startswith("/api/v1/uw/flow/") and feed == "flow_alerts":
+            return isinstance(payload, list)
+
+        if path.startswith("/api/v1/uw/gex/") and feed == "greek_exposure":
+            return isinstance(payload, list)
+
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

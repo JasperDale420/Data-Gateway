@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.181] - 2026-02-12
+
+### Changed
+
+- **Cerberus-critical REST sink feed canonicalization**:
+  - Updated `gateway/api/middleware.py` route extraction so these paths now emit canonical envelope feeds:
+    - `/api/v1/alpaca/stocks/{symbol}/bars` -> `bars`
+    - `/api/v1/alpaca/stocks/{symbol}/trades` -> `trades`
+    - `/api/v1/uw/flow/{symbol}` -> `flow_alerts`
+    - `/api/v1/uw/gex/{symbol}` -> `greek_exposure`
+- **REST sink publish guardrails (phase 1)**:
+  - Added route+payload eligibility checks before publishing REST envelopes to `heber:events`.
+  - Added explicit skip for aggregate screener endpoints to avoid malformed Silver-candidate sink events.
+  - Preserved client-facing envelope behavior (`X-Gateway-Envelope` response contract unchanged).
+- **Middleware regression coverage**:
+  - Expanded `tests/test_middleware_streaming.py` with:
+    - canonical feed mapping assertions for the 4 Cerberus-critical routes
+    - sink publish eligibility assertions for compatible payloads
+    - aggregate screener sink-skip assertion
+
 ## [0.5.180] - 2026-02-11
 
 ### Removed

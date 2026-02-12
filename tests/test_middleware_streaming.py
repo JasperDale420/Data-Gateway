@@ -136,9 +136,7 @@ def test_envelope_middleware_short_circuits_prewrapped_payload(
 async def test_envelope_middleware_prefers_prebuffered_body_state() -> None:
     app = FastAPI()
     middleware = EventEnvelopeMiddleware(app, max_body_bytes=4096)
-    request = Request(
-        {"type": "http", "method": "GET", "path": "/api/v1/alpaca/bars", "headers": []}
-    )
+    request = Request({"type": "http", "method": "GET", "path": "/api/v1/alpaca/bars", "headers": []})
     request.state._gateway_cached_response_body = b'{"success":true,"data":{"symbol":"AAPL"}}'
     response = StreamingResponse(_raising_stream(), media_type="application/json")
 
@@ -151,9 +149,7 @@ async def test_envelope_middleware_prefers_prebuffered_body_state() -> None:
 async def test_envelope_middleware_prefers_response_body_attribute() -> None:
     app = FastAPI()
     middleware = EventEnvelopeMiddleware(app, max_body_bytes=4096)
-    request = Request(
-        {"type": "http", "method": "GET", "path": "/api/v1/alpaca/bars", "headers": []}
-    )
+    request = Request({"type": "http", "method": "GET", "path": "/api/v1/alpaca/bars", "headers": []})
     payload = b'{"success":true,"data":{"symbol":"AAPL"}}'
     response = Response(content=payload, media_type="application/json")
     response.body_iterator = _raising_stream()
@@ -168,9 +164,7 @@ async def test_envelope_middleware_prefers_response_body_attribute() -> None:
 async def test_envelope_middleware_buffers_when_state_missing() -> None:
     app = FastAPI()
     middleware = EventEnvelopeMiddleware(app, max_body_bytes=4096)
-    request = Request(
-        {"type": "http", "method": "GET", "path": "/api/v1/alpaca/bars", "headers": []}
-    )
+    request = Request({"type": "http", "method": "GET", "path": "/api/v1/alpaca/bars", "headers": []})
     payload = b'{"success":true,"data":{"symbol":"AAPL"}}'
     response = StreamingResponse(_json_stream(payload), media_type="application/json")
 
@@ -204,3 +198,59 @@ def test_cache_and_envelope_work_together_on_hit_and_miss(test_api_key: str) -> 
     assert hit_response.headers["X-Gateway-Envelope"] == "true"
     assert miss_response.json()["data"]["symbol"] == "AAPL"
     assert hit_response.json()["data"]["symbol"] == "AAPL"
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_provider", "expected_feed"),
+    [
+        ("/api/v1/alpaca/stocks/AAPL/bars", "alpaca", "bars"),
+        ("/api/v1/alpaca/stocks/AAPL/trades", "alpaca", "trades"),
+        ("/api/v1/uw/flow/AAPL", "unusual_whales", "flow_alerts"),
+        ("/api/v1/uw/gex/AAPL", "unusual_whales", "greek_exposure"),
+    ],
+)
+def test_extract_route_info_maps_cerberus_critical_paths(
+    path: str,
+    expected_provider: str,
+    expected_feed: str,
+) -> None:
+    middleware = EventEnvelopeMiddleware(FastAPI(), max_body_bytes=4096)
+    provider, feed = middleware._extract_route_info(path)
+    assert provider == expected_provider
+    assert feed == expected_feed
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/api/v1/alpaca/stocks/AAPL/bars",
+            {"symbol": "AAPL", "bars": [{"timestamp": "2026-02-12T14:31:00Z"}]},
+        ),
+        (
+            "/api/v1/alpaca/stocks/AAPL/trades",
+            {"symbol": "AAPL", "trades": [{"timestamp": "2026-02-12T14:31:00Z"}]},
+        ),
+        (
+            "/api/v1/uw/flow/AAPL",
+            [{"symbol": "AAPL", "premium": 10000}],
+        ),
+        (
+            "/api/v1/uw/gex/AAPL",
+            [{"strike": 200, "net_gex": 1234.5}],
+        ),
+    ],
+)
+def test_sink_publish_eligibility_accepts_cerberus_critical_paths(path: str, payload: object) -> None:
+    middleware = EventEnvelopeMiddleware(FastAPI(), max_body_bytes=4096)
+    provider, feed = middleware._extract_route_info(path)
+    assert middleware._is_sink_publish_eligible(path=path, payload=payload, feed=feed) is True
+    assert provider in {"alpaca", "unusual_whales"}
+
+
+def test_sink_publish_eligibility_rejects_screener_aggregate_payloads() -> None:
+    middleware = EventEnvelopeMiddleware(FastAPI(), max_body_bytes=4096)
+    path = "/api/v1/alpaca/screener/most-actives"
+    payload = {"most_actives": [{"symbol": "AAPL"}, {"symbol": "MSFT"}]}
+    _, feed = middleware._extract_route_info(path)
+    assert middleware._is_sink_publish_eligible(path=path, payload=payload, feed=feed) is False
