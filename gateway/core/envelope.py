@@ -243,7 +243,7 @@ def _infer_instrument_type(feed: str, symbol: str, payload: dict) -> str:
     """Infer instrument type from feed and payload."""
 
     # Options indicators
-    if feed == "flow" or payload.get("strike") or payload.get("expiry"):
+    if feed in {"flow", "flow_alerts"} or payload.get("strike") or payload.get("expiry"):
         return "option"
 
     # Crypto indicators
@@ -283,7 +283,7 @@ def wrap_event(
         payload = dict(event)
 
     # Extract symbol - handle various field names
-    symbol = payload.get("symbol") or payload.get("S") or payload.get("underlying") or ""
+    symbol = payload.get("symbol") or payload.get("S") or payload.get("underlying") or payload.get("ticker") or ""
 
     # Market-wide feeds may not include a symbol; set a stable placeholder
     if not symbol and feed in {"market_tide", "sector_tide", "etf_tide", "market_tide_by_etf"}:
