@@ -849,12 +849,12 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
             return False
 
         if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/bars"):
-            return isinstance(payload, dict) and isinstance(payload.get("bars"), list) and len(payload.get("bars")) > 0
+            bars_items = payload.get("bars") if isinstance(payload, dict) else None
+            return isinstance(bars_items, list) and len(bars_items) > 0
 
         if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/trades"):
-            return (
-                isinstance(payload, dict) and isinstance(payload.get("trades"), list) and len(payload.get("trades")) > 0
-            )
+            trades_items = payload.get("trades") if isinstance(payload, dict) else None
+            return isinstance(trades_items, list) and len(trades_items) > 0
 
         if path.startswith("/api/v1/uw/flow/") and feed == "flow_alerts":
             return isinstance(payload, list) and len(payload) > 0
