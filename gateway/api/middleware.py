@@ -525,19 +525,19 @@ FEED_MAPPING = {
     "trades": "trades",
     "trade": "trades",
     # Options & flow
-    "flow": "flow",
+    "flow": "flow_alerts",
     "darkpool": "darkpool",
-    "options": "options",
-    "chain": "options",
-    "greeks": "greeks",
-    "gex": "greeks",
+    "options": "option_contract",
+    "chain": "option_contract",
+    "greeks": "greek_exposure",
+    "gex": "greek_exposure",
     # Fundamentals & news
     "news": "news",
     "articles": "news",
-    "profile": "fundamentals",
-    "overview": "fundamentals",
-    "earnings": "fundamentals",
-    "financials": "fundamentals",
+    "profile": "stock_fundamentals",
+    "overview": "stock_fundamentals",
+    "earnings": "earnings",
+    "financials": "stock_fundamentals",
     "filings": "filings",
     "facts": "filings",
     # UW market sentiment
@@ -545,30 +545,30 @@ FEED_MAPPING = {
     "market_tide": "market_tide",
     "sector_tide": "sector_tide",
     # UW alternative data
-    "etf": "etf",
-    "holdings": "etf",
-    "flows": "etf",
-    "shorts": "shorts",
-    "short_interest": "shorts",
-    "ftd": "shorts",
-    "screener": "screener",
+    "etf": "etf_metadata",
+    "holdings": "etf_holding",
+    "flows": "etf_flow",
+    "shorts": "short_data",
+    "short_interest": "short_data",
+    "ftd": "ftd",
+    "screener": "screener_result",
     # UW political/institutional
-    "insiders": "insiders",
-    "institutions": "institutions",
-    "politicians": "politicians",
+    "insiders": "insider_trades",
+    "institutions": "institution_holdings",
+    "politicians": "politician_trades",
     # Analytics
-    "volatility": "analytics",
-    "iv_rank": "analytics",
-    "seasonality": "analytics",
-    "max_pain": "analytics",
+    "volatility": "volatility_stats",
+    "iv_rank": "iv_rank",
+    "seasonality": "seasonality",
+    "max_pain": "max_pain",
     # Forex
     "forex": "forex",
     "rates": "forex",
     # Company fundamentals
-    "company_overview": "fundamentals",
-    "income_statement": "fundamentals",
-    "balance_sheet": "fundamentals",
-    "cash_flow": "fundamentals",
+    "company_overview": "stock_fundamentals",
+    "income_statement": "stock_fundamentals",
+    "balance_sheet": "stock_fundamentals",
+    "cash_flow": "stock_fundamentals",
 }
 
 # Paths to skip envelope wrapping (health, metrics, admin, etc)
@@ -922,9 +922,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         # Get or create tracker
         tracker = self._ip_trackers.get(ip)
         if not tracker or now - tracker.first_request >= self.window_seconds:
-            self._ip_trackers[ip] = IPConnectionTracker(
-                requests=1, first_request=now, last_seen=now
-            )
+            self._ip_trackers[ip] = IPConnectionTracker(requests=1, first_request=now, last_seen=now)
             return True
 
         # Check limit
