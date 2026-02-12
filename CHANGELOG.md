@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.57] - 2026-02-12
+
+### Added
+
+- **Alpha Vantage provider error payload regression coverage**: Added tests in `tests/test_alphavantage_provider.py` to ensure `_fetch_json(...)` fails fast when Alpha Vantage returns `Information` / `Error Message` payloads (including mixed rate-limit + premium wording).
+- **Timeseries HTTP status propagation regression coverage**: Added `tests/test_alphavantage_timeseries.py::test_timeseries_routes_preserve_http_exception_status_codes` to lock `429` passthrough behavior for intraday/daily/weekly/monthly/search endpoints.
+
+### Fixed
+
+- **Silent empty-success Alpha Vantage responses**: Updated `gateway/providers/alphavantage.py` `_fetch_json(...)` to detect and raise on provider-side error payloads (`Note`, `Information`, `Error Message`) instead of returning empty success data.
+- **Alpha Vantage rate-limit status remapping bug**: Updated `gateway/api/alphavantage/timeseries.py` handlers to re-raise `HTTPException` so provider limiter `429` responses are preserved and no longer converted into `502`.
+
 ## [0.5.56] - 2026-02-12
 
 ### Fixed

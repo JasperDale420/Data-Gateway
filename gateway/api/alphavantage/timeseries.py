@@ -88,6 +88,8 @@ async def get_intraday(
             endpoint="intraday",
             cache_mode=normalized_outputsize,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -127,6 +129,8 @@ async def get_daily(
             endpoint="daily",
             cache_mode=normalized_outputsize,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -162,6 +166,8 @@ async def get_weekly(
             endpoint="weekly",
             cache_mode="default",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -193,6 +199,8 @@ async def get_monthly(
             endpoint="monthly",
             cache_mode="default",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
 
@@ -219,5 +227,7 @@ async def search_symbols(
             endpoint="search",
             cache_mode="query",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")

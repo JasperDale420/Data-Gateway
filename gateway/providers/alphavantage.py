@@ -148,13 +148,32 @@ class AlphaVantageProvider(DataProvider):
         response.raise_for_status()
         data = response.json()
 
-        if isinstance(data, dict) and "Note" in data:
-            logger.warning(
-                "alphavantage_rate_limit",
-                function=request_params.get("function"),
-                message=data["Note"],
-            )
-            raise RuntimeError("Rate limit exceeded")
+        if isinstance(data, dict):
+            for key in ("Note", "Information", "Error Message"):
+                raw_message = data.get(key)
+                if not isinstance(raw_message, str) or not raw_message.strip():
+                    continue
+                message = raw_message.strip()
+                normalized_message = message.lower()
+                logger.warning(
+                    "alphavantage_provider_error_payload",
+                    function=request_params.get("function"),
+                    error_key=key,
+                    message=message,
+                )
+
+                if key == "Note":
+                    raise RuntimeError("Rate limit exceeded")
+                if (
+                    "consider spreading out your free api requests" in normalized_message
+                    or "calls per minute" in normalized_message
+                    or "requests per second" in normalized_message
+                    or "rate limit" in normalized_message
+                ):
+                    raise RuntimeError("Rate limit exceeded")
+                if "premium endpoint" in normalized_message or "premium" in normalized_message:
+                    raise RuntimeError("Premium endpoint requires Alpha Vantage subscription")
+                raise RuntimeError(f"Alpha Vantage error: {message}")
 
         if not isinstance(data, dict):
             return {}

@@ -114,6 +114,55 @@ async def test_fetch_json_raises_on_rate_limit_note() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected_error"),
+    [
+        (
+            {
+                "Information": (
+                    "Thank you for using Alpha Vantage! This is a premium endpoint. Please subscribe to unlock."
+                )
+            },
+            "Premium endpoint",
+        ),
+        (
+            {
+                "Information": (
+                    "Thank you for using Alpha Vantage! Please consider spreading out your free API requests "
+                    "more sparingly (1 request per second)."
+                )
+            },
+            "Rate limit exceeded",
+        ),
+        (
+            {
+                "Information": (
+                    "Thank you for using Alpha Vantage! Please consider spreading out your free API requests "
+                    "more sparingly (1 request per second). You may subscribe to premium plans to lift limits."
+                )
+            },
+            "Rate limit exceeded",
+        ),
+        (
+            {
+                "Error Message": "Invalid API call. Please retry or visit the documentation.",
+            },
+            "Alpha Vantage error",
+        ),
+    ],
+)
+async def test_fetch_json_raises_on_information_and_error_payloads(
+    payload: dict[str, str], expected_error: str
+) -> None:
+    provider = AlphaVantageProvider()
+    provider._api_key = "demo"  # pragma: allowlist secret
+    provider._client = cast(Any, _FakeHTTPClient(payload))
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        await provider._fetch_json({"function": "TIME_SERIES_DAILY_ADJUSTED", "symbol": "AAPL"})
+
+
+@pytest.mark.asyncio
 async def test_get_daily_respects_max_points_window(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = AlphaVantageProvider()
 
