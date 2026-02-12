@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from gateway.api import deps as deps_module
 from gateway.api.middleware import CacheMiddleware, EventEnvelopeMiddleware
 
 
@@ -59,6 +60,37 @@ def test_envelope_middleware_wraps_small_json() -> None:
     assert data["success"] is True
     assert "envelope" in data
     assert data["data"]["symbol"] == "AAPL"
+
+
+def test_envelope_middleware_wraps_uw_list_payload_with_sink_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.add_middleware(EventEnvelopeMiddleware, max_body_bytes=4096)
+
+    class _SinkRegistry:
+        async def publish_all(self, topic: str, envelope: dict) -> None:
+            _ = (topic, envelope)
+
+    monkeypatch.setattr(deps_module, "get_sink_registry", lambda: _SinkRegistry())
+
+    @app.get("/api/v1/uw/flow/AAPL")
+    async def uw_flow_endpoint():
+        return JSONResponse(
+            {
+                "success": True,
+                "data": [{"symbol": "AAPL", "premium": 125000}],
+            }
+        )
+
+    client = TestClient(app)
+    response = client.get("/api/v1/uw/flow/AAPL")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert response.headers["X-Gateway-Envelope"] == "true"
+    assert payload["envelope"]["provider"] == "unusual_whales"
+    assert payload["data"][0]["symbol"] == "AAPL"
 
 
 def test_envelope_middleware_bypasses_streaming_json() -> None:

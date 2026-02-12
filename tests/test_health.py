@@ -1,5 +1,11 @@
 """Tests for health endpoints."""
 
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from gateway.api import health as health_module
+
 
 def test_liveness_returns_ok(client):
     """GET /health returns status ok."""
@@ -47,3 +53,20 @@ def test_root_endpoint(client):
     assert data["name"] == "Data Gateway"
     assert "version" in data
     assert data["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_readiness_awaits_async_cache_delete(monkeypatch: pytest.MonkeyPatch):
+    """Readiness should await async cache delete implementations (HybridCache)."""
+    cache = MagicMock()
+    cache.set = AsyncMock(return_value=None)
+    cache.get = AsyncMock(return_value=True)
+    cache.delete = AsyncMock(return_value=True)
+    connections = MagicMock()
+
+    monkeypatch.setattr(health_module, "get_sink_registry", lambda: None)
+
+    response = await health_module.readiness(cache=cache, connections=connections)
+
+    assert response["status"] == "ready"
+    cache.delete.assert_awaited_once_with("__health_check__")

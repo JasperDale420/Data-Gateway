@@ -1,5 +1,6 @@
 """API middleware for rate limiting, cache headers, and envelope wrapping."""
 
+import asyncio
 import json
 import re
 import time
@@ -720,12 +721,34 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 feed=feed,
             )
             if sink_registry and should_publish_to_sink:
-                import asyncio
-
-                # Publish compatible REST envelopes into Heber's ingest stream.
                 topic = "heber:events"
-                # Fire-and-forget publish (DataSinkRegistry handles task lifecycle)
-                asyncio.create_task(sink_registry.publish_all(topic, envelope))
+
+                if isinstance(payload, list):
+                    # EXPLODE LIST: Publish each item individually so Heber receives valid events
+                    tasks = []
+                    for item in payload:
+                        # Wrap individual item
+                        try:
+                            item_envelope = wrap_event(
+                                event=item,
+                                provider=provider,
+                                feed=feed,
+                                source="rest",
+                            )
+                            tasks.append(sink_registry.publish_all(topic, item_envelope))
+                        except Exception as e:
+                            logger.warning(
+                                "rest_envelope_explode_failed",
+                                path=path,
+                                error=str(e),
+                            )
+
+                    if tasks:
+                        # Fire and forget the batch of publishes.
+                        asyncio.create_task(self._publish_sink_batch(tasks, path=path))
+                else:
+                    # SINGLE ITEM: Publish the already-wrapped envelope
+                    asyncio.create_task(sink_registry.publish_all(topic, envelope))
             elif sink_registry and not should_publish_to_sink:
                 logger.debug(
                     "rest_envelope_sink_publish_skipped",
@@ -764,6 +787,17 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 status_code=response.status_code,
                 media_type=response.media_type,
                 headers=dict(response.headers),
+            )
+
+    async def _publish_sink_batch(self, tasks: list, path: str) -> None:
+        """Publish a batch of sink writes without raising into request flow."""
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            logger.warning(
+                "rest_envelope_sink_publish_batch_failed",
+                path=path,
+                failed=len(failures),
             )
 
     async def _get_response_body(self, request: Request, response: Response) -> bytes:

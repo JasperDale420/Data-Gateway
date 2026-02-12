@@ -1,5 +1,6 @@
 """Health check endpoints."""
 
+import inspect
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -66,7 +67,9 @@ async def readiness(
         await cache.set("__health_check__", True)
         if not await cache.get("__health_check__"):
             checks["cache"] = "error"
-        cache.delete("__health_check__")
+        delete_result = cache.delete("__health_check__")
+        if inspect.isawaitable(delete_result):
+            await delete_result
     except Exception:
         checks["cache"] = "error"
         global _LAST_CACHE_ERROR_LOG

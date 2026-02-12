@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.183] - 2026-02-12
+
+### Fixed
+
+- **Event envelope async scheduling**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/middleware.py` to schedule sink batch publishes via a coroutine helper instead of `create_task(asyncio.gather(...))`, eliminating `envelope_middleware_error` warnings (`a coroutine was expected, got <_GatheringFuture pending>`) on UW flow/GEX list responses.
+- **Readiness cache cleanup await handling**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/health.py` so `/health/ready` now awaits async cache deletes when needed (HybridCache) while still supporting sync cache deletes (InMemoryCache), removing `RuntimeWarning: coroutine ... was never awaited`.
+- **Regression coverage for both bugs**:
+  - Added `test_envelope_middleware_wraps_uw_list_payload_with_sink_registry` in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_middleware_streaming.py`.
+  - Added `test_readiness_awaits_async_cache_delete` in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_health.py`.
+
 ## [0.5.182] - 2026-02-12
 
 ### Fixed
