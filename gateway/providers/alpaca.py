@@ -1,6 +1,7 @@
 """Alpaca Markets data provider."""
 
 import os
+import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -479,37 +480,37 @@ class AlpacaProvider(DataProvider):
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         request_limit = max(1, min(limit, 1000)) if limit is not None else 1000
-        params: dict[str, Any] = {
-            "underlying_symbols": underlying.upper(),
-            "feed": "indicative",
-            "limit": request_limit,
-        }
-
-        if expiration_date:
-            params["expiration_date"] = expiration_date
-        if expiration_gte:
-            params["expiration_date_gte"] = expiration_gte
-        if expiration_lte:
-            params["expiration_date_lte"] = expiration_lte
-        if strike_gte:
-            params["strike_price_gte"] = strike_gte
-        if strike_lte:
-            params["strike_price_lte"] = strike_lte
-        if option_type:
-            params["type"] = option_type
+        params: dict[str, Any] = {"feed": "indicative", "limit": request_limit}
 
         results: list[NormalizedOptionContract] = []
 
         try:
             response = await self._client.get(
-                "/v1beta1/options/snapshots",
+                f"/v1beta1/options/snapshots/{underlying.upper()}",
                 params=params,
             )
             response.raise_for_status()
             data = response.json()
 
             for contract_symbol, snapshot in data.get("snapshots", {}).items():
-                contract = self._normalize_option_contract(contract_symbol, snapshot)
+                parsed_contract = self._parse_occ_contract(contract_symbol)
+                if parsed_contract is None:
+                    continue
+                if not self._matches_option_chain_filters(
+                    parsed_contract,
+                    expiration_date=expiration_date,
+                    expiration_gte=expiration_gte,
+                    expiration_lte=expiration_lte,
+                    strike_gte=strike_gte,
+                    strike_lte=strike_lte,
+                    option_type=option_type,
+                ):
+                    continue
+                contract = self._normalize_option_contract(
+                    contract_symbol,
+                    snapshot,
+                    parsed_contract=parsed_contract,
+                )
                 if contract:
                     results.append(contract)
 
@@ -702,7 +703,63 @@ class AlpacaProvider(DataProvider):
             logger.error("alpaca_option_snapshots_error", status=e.response.status_code)
             raise
 
-    def _normalize_option_contract(self, contract_symbol: str, snapshot: dict[str, Any]):
+    @staticmethod
+    def _parse_occ_contract(contract_symbol: str) -> dict[str, Any] | None:
+        """Parse OCC option contract symbol into components."""
+        match = re.match(r"^([A-Z]{1,6})(\d{6})([CP])(\d{8})$", contract_symbol.upper())
+        if not match:
+            return None
+
+        underlying, expiry_yy_mm_dd, cp_flag, strike_digits = match.groups()
+        try:
+            expiry = datetime.strptime(expiry_yy_mm_dd, "%y%m%d").date().isoformat()
+            strike = Decimal(int(strike_digits)) / Decimal(1000)
+        except (ValueError, ArithmeticError):
+            return None
+
+        return {
+            "underlying": underlying,
+            "expiration": expiry,
+            "option_type": "call" if cp_flag == "C" else "put",
+            "strike": strike,
+        }
+
+    @staticmethod
+    def _matches_option_chain_filters(
+        parsed_contract: dict[str, Any],
+        *,
+        expiration_date: str | None,
+        expiration_gte: str | None,
+        expiration_lte: str | None,
+        strike_gte: float | None,
+        strike_lte: float | None,
+        option_type: str | None,
+    ) -> bool:
+        """Apply API-level filters to parsed OCC contract metadata."""
+        expiration = str(parsed_contract["expiration"])
+        strike = Decimal(parsed_contract["strike"])
+        contract_option_type = str(parsed_contract["option_type"])
+
+        if expiration_date and expiration != expiration_date:
+            return False
+        if expiration_gte and expiration < expiration_gte:
+            return False
+        if expiration_lte and expiration > expiration_lte:
+            return False
+        if strike_gte is not None and strike < Decimal(str(strike_gte)):
+            return False
+        if strike_lte is not None and strike > Decimal(str(strike_lte)):
+            return False
+        if option_type and contract_option_type != option_type.lower():
+            return False
+        return True
+
+    def _normalize_option_contract(
+        self,
+        contract_symbol: str,
+        snapshot: dict[str, Any],
+        parsed_contract: dict[str, Any] | None = None,
+    ):
         """Normalize option snapshot to NormalizedOptionContract."""
         from gateway.schemas import NormalizedOptionContract
 
@@ -710,19 +767,25 @@ class AlpacaProvider(DataProvider):
             quote = snapshot.get("latestQuote", {})
             trade = snapshot.get("latestTrade", {})
             greeks = snapshot.get("greeks", {})
+            parsed = parsed_contract or self._parse_occ_contract(contract_symbol)
+            if parsed is None:
+                logger.warning(
+                    "alpaca_option_contract_parse_failed",
+                    contract=contract_symbol,
+                )
+                return None
 
-            # Parse contract symbol for underlying/expiry/strike/type
-            # OCC format: AAPL250117C00200000
-            underlying = contract_symbol[:4].rstrip("0123456789")
-            if not underlying:
-                underlying = contract_symbol[:3]
+            underlying = str(parsed["underlying"])
+            expiration = str(parsed["expiration"])
+            strike = Decimal(parsed["strike"])
+            option_type = str(parsed["option_type"])
 
             return NormalizedOptionContract(
                 contract_symbol=contract_symbol,
                 underlying=underlying,
-                expiration=snapshot.get("expiration_date", ""),
-                strike=Decimal(str(snapshot.get("strike_price", 0))),
-                option_type=snapshot.get("type", "call"),
+                expiration=expiration,
+                strike=strike,
+                option_type=option_type,
                 bid=Decimal(str(quote.get("bp", 0))),
                 ask=Decimal(str(quote.get("ap", 0))),
                 last=Decimal(str(trade.get("p", 0))),
@@ -2101,6 +2164,17 @@ class AlpacaProvider(DataProvider):
 
     def _normalize_quote(self, symbol: str, raw: dict[str, Any]) -> NormalizedQuote:
         """Convert Alpaca quote to normalized format."""
+        raw_conditions = raw.get("c")
+        if isinstance(raw_conditions, list):
+            conditions = raw_conditions
+        elif isinstance(raw_conditions, str):
+            stripped = raw_conditions.strip()
+            conditions = [item for item in stripped.split(",") if item] if stripped else []
+        elif raw_conditions is None:
+            conditions = []
+        else:
+            conditions = [str(raw_conditions)]
+
         return NormalizedQuote(
             symbol=symbol,
             timestamp=self._parse_timestamp(raw["t"]),
@@ -2110,7 +2184,7 @@ class AlpacaProvider(DataProvider):
             ask_size=int(raw["as"]),
             bid_exchange=raw.get("bx"),
             ask_exchange=raw.get("ax"),
-            conditions=raw.get("c", []),
+            conditions=conditions,
             tape=raw.get("z"),
             provider="alpaca",
         )

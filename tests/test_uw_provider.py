@@ -124,10 +124,7 @@ async def test_get_flow_alerts_falls_back_to_local_offset_slicing(monkeypatch):
             raise TypeError("unsupported pagination parameter")
         limit = kwargs["limit"]
         return _FakeResponse(
-            [
-                {"ticker": "AAPL", "strike": 100, "expiry": "2026-01-01", "total_premium": idx}
-                for idx in range(limit)
-            ]
+            [{"ticker": "AAPL", "strike": 100, "expiry": "2026-01-01", "total_premium": idx} for idx in range(limit)]
         )
 
     monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
@@ -141,3 +138,63 @@ async def test_get_flow_alerts_falls_back_to_local_offset_slicing(monkeypatch):
     assert calls[2]["limit"] == 5
     assert len(results) == 3
     assert results[0]["total_premium"] == 2
+
+
+class _FakeHTTPResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self):
+        return self._payload
+
+
+class _FakeHTTPClient:
+    def __init__(self, response: _FakeHTTPResponse) -> None:
+        self._response = response
+        self.calls: list[tuple[str, dict[str, str] | None]] = []
+
+    def get(self, path: str, params: dict[str, str] | None = None):
+        self.calls.append((path, params))
+        return self._response
+
+
+class _FakeUWClient:
+    def __init__(self, http_client: _FakeHTTPClient) -> None:
+        self._http_client = http_client
+
+    def get_httpx_client(self) -> _FakeHTTPClient:
+        return self._http_client
+
+
+@pytest.mark.asyncio
+async def test_get_iv_rank_parses_raw_http_payload_when_sdk_shape_is_incompatible(
+    monkeypatch,
+):
+    """IV-rank should parse raw API payloads instead of relying on SDK response parsing."""
+    provider = UnusualWhalesProvider()
+    http_response = _FakeHTTPResponse(
+        {
+            "data": [
+                {"date": "2026-02-11", "volatility": "0.1478", "iv_rank_1y": "11.6152"},
+                {"date": "2026-02-12", "volatility": "0.1756", "iv_rank_1y": "20.2449"},
+            ]
+        }
+    )
+    http_client = _FakeHTTPClient(http_response)
+    provider._client = _FakeUWClient(http_client)
+
+    async def _fake_call_sync(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    result = await provider.get_iv_rank("SPY", date_str="2026-02-12")
+
+    assert result is not None
+    assert result.symbol == "SPY"
+    assert str(result.iv_rank) == "20.2449"
+    assert str(result.current_iv) == "0.1756"
+    assert http_client.calls == [("/api/stock/SPY/iv-rank", {"date": "2026-02-12"})]

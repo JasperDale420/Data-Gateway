@@ -59,9 +59,9 @@ class TestEndpointDiscovery:
                 )
 
         # Print for debugging
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Total routes: {len(routes)}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for r in sorted(routes, key=lambda x: x["path"]):
             methods = ", ".join(r["methods"])
             print(f"{methods:8} {r['path']}")
@@ -173,9 +173,7 @@ class TestCalendarEndpointsValidation:
 
     def test_calendar_market_hours(self, client: TestClient, auth_headers: dict):
         """GET /api/v1/calendar/market-hours returns valid response."""
-        response = client.get(
-            "/api/v1/calendar/market-hours", params={"date": "2024-01-15"}, headers=auth_headers
-        )
+        response = client.get("/api/v1/calendar/market-hours", params={"date": "2024-01-15"}, headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
         # Check it's a valid dict response
@@ -262,6 +260,13 @@ class TestUWEndpointsValidation:
         response = client.get("/api/v1/uw/AAPL/iv-rank", headers=auth_headers)
         # 404 is valid (no data), 500 is not
         assert response.status_code != 500, f"Got 500: {response.text}"
+
+    def test_uw_iv_rank_options_alias(self, client: TestClient, auth_headers: dict, mock_uw_provider):
+        """GET /api/v1/uw/options/{symbol}/iv-rank resolves to the IV rank handler."""
+        mock_uw_provider.get_iv_rank = AsyncMock(return_value={"symbol": "AAPL", "iv_rank": 42.0})
+        response = client.get("/api/v1/uw/options/AAPL/iv-rank", headers=auth_headers)
+        assert response.status_code != 404, f"Got {response.status_code}: {response.text}"
+        assert response.status_code in (200, 403), f"Got {response.status_code}: {response.text}"
 
     def test_uw_stock_info(self, client: TestClient, auth_headers: dict, mock_uw_provider):
         """GET /api/v1/uw/stock/{symbol}/info returns valid response."""

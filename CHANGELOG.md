@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.64] - 2026-02-12
+
+### Added
+
+- **Alpaca/UW regression coverage**:
+  - Added Alpaca option quote normalization tests for scalar/string/null `conditions`.
+  - Added UW IV-rank endpoint contract tests for passthrough and fallback payload shapes.
+  - Added router contract coverage to lock `block=True` limiter behavior on high-volume Alpaca options routes.
+
+### Fixed
+
+- **Alpaca option quote schema mismatch (502s)**: Updated Alpaca quote normalization to coerce `conditions` into a list shape accepted by `OptionQuote`.
+- **UW iv-rank route failures (404/parse errors)**: Updated UW provider `get_iv_rank(...)` to parse iv-rank from raw HTTP payload with robust field fallback mapping.
+- **Burst rate-limit amplification on hot options routes**: Updated Alpaca options routers to call provider limiter with `block=True` for chain/quote endpoints so requests queue instead of failing immediately under load.
+
 ## [0.5.63] - 2026-02-12
 
 ### Changed
