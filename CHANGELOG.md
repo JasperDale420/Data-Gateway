@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.47] - 2026-02-12
+
+### Changed
+
+- **Startup crash recovery for gateway boot path**: Restored stream-to-sink dispatch helpers in `gateway/main.py` (`_configure_stream_sink_dispatch_limits`, `_set_stream_sink_registry`, `_schedule_stream_sink_publish`, `_drain_stream_sink_publish_tasks`) and reconnected metric hooks so app startup no longer fails with missing-name errors.
+- **Metrics regression repair after merge drift**: Restored missing telemetry primitives in `gateway/core/metrics.py`, including `ROUTE_CACHE_EVENTS`, provider health check timing/snapshots, stream sink/fanout scheduler event helpers, and derived snapshot calculations used by admin status surfaces.
+- **Stream fanout telemetry wiring**: Updated `gateway/core/stream.py` imports to include `record_stream_fanout_dispatch_event` and `record_stream_fanout_batch_size` so runtime fanout metrics calls resolve correctly.
+- **Provider quote batch metric wiring**: Added `record_provider_quote_batch_size` imports in `gateway/providers/alpaca.py` and `gateway/providers/finnhub.py` to prevent quote-path NameErrors.
+- **Metrics endpoint import fix**: Added `update_memory_metrics_if_due` import in `gateway/api/metrics.py` so `/metrics` scrape path executes without unresolved-name failures.
+- **Registry capability compatibility hardening**: Updated `gateway/core/registry.py` capability checks to support both legacy list-style capabilities and `ProviderCapabilities` objects, preventing provider ordering regressions.
+
 ## [0.5.46] - 2026-02-07
 
 ### Added

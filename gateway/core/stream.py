@@ -16,6 +16,11 @@ import websockets
 from websockets.client import WebSocketClientProtocol
 
 from gateway.core.envelope import wrap_event
+from gateway.core.metrics import (
+    record_stream_fanout_batch_size,
+    record_stream_fanout_dispatch_event,
+    set_stream_fanout_limits_metrics,
+)
 from gateway.core.validator import get_validator
 
 logger = structlog.get_logger()

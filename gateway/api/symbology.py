@@ -4,9 +4,10 @@ Symbol resolution and format conversion as specified in PRD (lines 459-523).
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gateway.api.deps import require_api_key
+from gateway.core.metrics import record_symbology_batch_size
 from gateway.core.symbology import get_symbol_resolver
 from gateway.schemas import SuccessResponse
 

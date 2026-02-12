@@ -172,7 +172,11 @@ class ProviderRegistry:
         """Get provider capabilities."""
         provider = self._providers.get(name)
         if provider and hasattr(provider, "capabilities"):
-            return provider.capabilities
+            capabilities = provider.capabilities
+            if isinstance(capabilities, list):
+                return capabilities
+            if isinstance(capabilities, tuple | set):
+                return list(capabilities)
         return []
 
     def set_provider_enabled(self, name: str, enabled: bool) -> None:
@@ -185,10 +189,23 @@ class ProviderRegistry:
 
     def get_ordered_providers(self, capability: str) -> list[DataProvider]:
         """Get providers with a capability, ordered by priority (descending)."""
+        cap_map = {
+            "stock_bars": "supports_bars",
+            "stock_quotes": "supports_quotes",
+            "stock_trades": "supports_trades",
+            "news": "supports_news",
+        }
+        attr_name = cap_map.get(capability, capability)
+
+        def _supports_capability(provider_obj: DataProvider) -> bool:
+            capabilities = provider_obj.capabilities
+            if isinstance(capabilities, list | tuple | set):
+                return capability in capabilities or attr_name in capabilities
+            return bool(getattr(capabilities, attr_name, False))
+
         candidates = []
         for name, provider in self._providers.items():
-            # Check capability
-            if capability not in provider.capabilities:
+            if not _supports_capability(provider):
                 continue
 
             # Check enabled/priority schema
