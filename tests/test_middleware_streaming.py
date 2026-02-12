@@ -123,3 +123,74 @@ def test_envelope_middleware_wraps_uw_flow_list_with_sink_enabled() -> None:
     assert response.headers["X-Gateway-Envelope"] == "true"
     assert "envelope" in data
     assert len(data["data"]) == 2
+
+
+def test_sink_envelopes_explode_alpaca_bars_dict_payload() -> None:
+    middleware = EventEnvelopeMiddleware(FastAPI())
+
+    payload = {
+        "symbol": "AAPL",
+        "timeframe": "1Min",
+        "bars": [
+            {"timestamp": "2026-02-12T14:30:00Z", "open": "100.0", "high": "101.0", "low": "99.5", "close": "100.5"},
+            {"timestamp": "2026-02-12T14:31:00Z", "open": "100.5", "high": "101.5", "low": "100.0", "close": "101.0"},
+        ],
+    }
+
+    envelopes = middleware._build_sink_envelopes(  # noqa: SLF001
+        path="/api/v1/alpaca/stocks/AAPL/bars",
+        provider="alpaca",
+        feed="bars",
+        payload=payload,
+    )
+
+    assert len(envelopes) == 2
+    assert all(env["feed"] == "bars" for env in envelopes)
+    assert all(env["symbol"] == "AAPL" for env in envelopes)
+    assert envelopes[0]["payload"]["open"] == "100.0"
+    assert envelopes[1]["payload"]["close"] == "101.0"
+
+
+def test_sink_envelopes_explode_alpaca_trades_dict_payload() -> None:
+    middleware = EventEnvelopeMiddleware(FastAPI())
+
+    payload = {
+        "symbol": "SPY",
+        "trades": [
+            {"timestamp": "2026-02-12T14:30:00Z", "price": "501.25", "size": 100, "trade_id": "t1"},
+            {"timestamp": "2026-02-12T14:30:01Z", "price": "501.30", "size": 50, "trade_id": "t2"},
+        ],
+    }
+
+    envelopes = middleware._build_sink_envelopes(  # noqa: SLF001
+        path="/api/v1/alpaca/stocks/SPY/trades",
+        provider="alpaca",
+        feed="trades",
+        payload=payload,
+    )
+
+    assert len(envelopes) == 2
+    assert all(env["feed"] == "trades" for env in envelopes)
+    assert all(env["symbol"] == "SPY" for env in envelopes)
+    assert envelopes[0]["payload"]["price"] == "501.25"
+    assert envelopes[1]["payload"]["size"] == 50
+
+
+def test_sink_envelopes_skip_empty_alpaca_lists() -> None:
+    middleware = EventEnvelopeMiddleware(FastAPI())
+
+    empty_bars = middleware._build_sink_envelopes(  # noqa: SLF001
+        path="/api/v1/alpaca/stocks/AAPL/bars",
+        provider="alpaca",
+        feed="bars",
+        payload={"symbol": "AAPL", "bars": []},
+    )
+    empty_trades = middleware._build_sink_envelopes(  # noqa: SLF001
+        path="/api/v1/alpaca/stocks/AAPL/trades",
+        provider="alpaca",
+        feed="trades",
+        payload={"symbol": "AAPL", "trades": []},
+    )
+
+    assert empty_bars == []
+    assert empty_trades == []

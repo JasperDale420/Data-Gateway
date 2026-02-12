@@ -715,33 +715,22 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
             )
             if sink_registry and should_publish_to_sink:
                 topic = "heber:events"
-
-                if isinstance(payload, list):
-                    # EXPLODE LIST: Publish each item individually so Heber receives valid events
-                    tasks = []
-                    for item in payload:
-                        # Wrap individual item
-                        try:
-                            item_envelope = wrap_event(
-                                event=item,
-                                provider=provider,
-                                feed=feed,
-                                source="rest",
-                            )
-                            tasks.append(sink_registry.publish_all(topic, item_envelope))
-                        except Exception as e:
-                            logger.warning(
-                                "rest_envelope_explode_failed",
-                                path=path,
-                                error=str(e),
-                            )
-
-                    if tasks:
-                        # Fire and forget the batch of publishes.
-                        asyncio.create_task(self._publish_sink_batch(tasks, path=path))
+                sink_envelopes = self._build_sink_envelopes(
+                    path=path,
+                    provider=provider,
+                    feed=feed,
+                    payload=payload,
+                )
+                if sink_envelopes:
+                    tasks = [sink_registry.publish_all(topic, sink_envelope) for sink_envelope in sink_envelopes]
+                    # Fire and forget the batch of publishes.
+                    asyncio.create_task(self._publish_sink_batch(tasks, path=path))
                 else:
-                    # SINGLE ITEM: Publish the already-wrapped envelope
-                    asyncio.create_task(sink_registry.publish_all(topic, envelope))
+                    logger.debug(
+                        "rest_envelope_sink_publish_empty",
+                        path=path,
+                        feed=feed,
+                    )
             elif sink_registry and not should_publish_to_sink:
                 logger.debug(
                     "rest_envelope_sink_publish_skipped",
@@ -850,18 +839,122 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
             return False
 
         if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/bars"):
-            return isinstance(payload, dict) and isinstance(payload.get("bars"), list)
+            return isinstance(payload, dict) and isinstance(payload.get("bars"), list) and len(payload.get("bars")) > 0
 
         if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/trades"):
-            return isinstance(payload, dict) and isinstance(payload.get("trades"), list)
+            return (
+                isinstance(payload, dict) and isinstance(payload.get("trades"), list) and len(payload.get("trades")) > 0
+            )
 
         if path.startswith("/api/v1/uw/flow/") and feed == "flow_alerts":
-            return isinstance(payload, list)
+            return isinstance(payload, list) and len(payload) > 0
 
         if path.startswith("/api/v1/uw/gex/") and feed == "greek_exposure":
-            return isinstance(payload, list)
+            return isinstance(payload, list) and len(payload) > 0
 
         return False
+
+    def _build_sink_envelopes(
+        self,
+        *,
+        path: str,
+        provider: str,
+        feed: str,
+        payload: object,
+    ) -> list[dict]:
+        """Build one or more sink envelopes from route payload shape."""
+        if isinstance(payload, list):
+            return self._wrap_list_payload(provider=provider, feed=feed, items=payload, path=path)
+
+        if isinstance(payload, dict):
+            if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/bars"):
+                return self._explode_nested_items(
+                    provider=provider,
+                    feed=feed,
+                    payload=payload,
+                    list_key="bars",
+                    context_keys=("symbol", "timeframe"),
+                    path=path,
+                )
+            if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/trades"):
+                return self._explode_nested_items(
+                    provider=provider,
+                    feed=feed,
+                    payload=payload,
+                    list_key="trades",
+                    context_keys=("symbol",),
+                    path=path,
+                )
+            return [wrap_event(event=payload, provider=provider, feed=feed, source="rest")]
+
+        return []
+
+    def _wrap_list_payload(
+        self,
+        *,
+        provider: str,
+        feed: str,
+        items: list,
+        path: str,
+    ) -> list[dict]:
+        envelopes: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                logger.warning(
+                    "rest_envelope_explode_failed",
+                    path=path,
+                    error="non_dict_item",
+                )
+                continue
+            envelopes.append(
+                wrap_event(
+                    event=item,
+                    provider=provider,
+                    feed=feed,
+                    source="rest",
+                )
+            )
+        return envelopes
+
+    def _explode_nested_items(
+        self,
+        *,
+        provider: str,
+        feed: str,
+        payload: dict,
+        list_key: str,
+        context_keys: tuple[str, ...],
+        path: str,
+    ) -> list[dict]:
+        raw_items = payload.get(list_key)
+        if not isinstance(raw_items, list):
+            return []
+
+        envelopes: list[dict] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                logger.warning(
+                    "rest_envelope_explode_failed",
+                    path=path,
+                    error="non_dict_item",
+                    list_key=list_key,
+                )
+                continue
+            event = dict(item)
+            for key in context_keys:
+                context_value = payload.get(key)
+                if context_value is not None and key not in event:
+                    event[key] = context_value
+            envelopes.append(
+                wrap_event(
+                    event=event,
+                    provider=provider,
+                    feed=feed,
+                    source="rest",
+                )
+            )
+
+        return envelopes
 
 
 # ─────────────────────────────────────────────────────────────────────────────
