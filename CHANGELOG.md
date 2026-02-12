@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 - **Regression coverage for both bugs**:
   - Added `test_envelope_middleware_wraps_uw_list_payload_with_sink_registry` in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_middleware_streaming.py`.
   - Added `test_readiness_awaits_async_cache_delete` in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_health.py`.
+- **Invalid flow_alerts key**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/api/middleware.py` to explode list payloads into individual events, ensuring valid `instrument_key` generation for `flow_alerts`.
+- **Symbol extraction fallback**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/envelope.py` to support `ticker` field for symbol extraction.
 
 ## [0.5.182] - 2026-02-12
 
