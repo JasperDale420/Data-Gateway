@@ -59,7 +59,7 @@ async def get_stock_bars(
         "data": {
             "symbol": symbol.upper(),
             "timeframe": timeframe,
-            "bars": [bar.model_dump(mode="json") for bar in bars],
+            "bars": [bar.model_dump() for bar in bars],
         },
         "meta": {
             "count": len(bars),
@@ -86,7 +86,7 @@ async def get_stock_quotes(
 
     return {
         "success": True,
-        "data": quotes[0].model_dump(mode="json"),
+        "data": quotes[0].model_dump(),
         "meta": {"provider": "alpaca"},
     }
 
@@ -121,7 +121,7 @@ async def get_stock_trades(
         "success": True,
         "data": {
             "symbol": symbol.upper(),
-            "trades": [t.model_dump(mode="json") for t in trades],
+            "trades": [t.model_dump() for t in trades],
         },
         "meta": {
             "count": len(trades),
@@ -161,8 +161,8 @@ async def get_stock_snapshot(
         "success": True,
         "data": {
             "symbol": symbol.upper(),
-            "quote": quotes[0].model_dump(mode="json") if quotes else None,
-            "latest_bar": bars[0].model_dump(mode="json") if bars else None,
+            "quote": quotes[0].model_dump() if quotes else None,
+            "latest_bar": bars[0].model_dump() if bars else None,
         },
         "meta": {"provider": "alpaca"},
     }
@@ -183,7 +183,7 @@ async def get_latest_bars(
     )
     return {
         "success": True,
-        "data": [b.model_dump(mode="json") for b in bars],
+        "data": [b.model_dump() for b in bars],
         "meta": {"count": len(bars), "provider": "alpaca"},
     }
 
@@ -203,7 +203,7 @@ async def get_latest_trades(
     )
     return {
         "success": True,
-        "data": [t.model_dump(mode="json") for t in trades],
+        "data": [t.model_dump() for t in trades],
         "meta": {"count": len(trades), "provider": "alpaca"},
     }
 
@@ -222,13 +222,11 @@ async def get_historical_quotes(
     quotes = await execute_alpaca_provider_call(
         registry=registry,
         block=True,
-        provider_call=lambda provider: provider.get_historical_quotes(
-            symbols_list, start, end, limit
-        ),
+        provider_call=lambda provider: provider.get_historical_quotes(symbols_list, start, end, limit),
     )
     return {
         "success": True,
-        "data": [q.model_dump(mode="json") for q in quotes],
+        "data": [q.model_dump() for q in quotes],
         "meta": {"count": len(quotes), "provider": "alpaca"},
     }
 
