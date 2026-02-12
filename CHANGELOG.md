@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.61] - 2026-02-12
+
+### Fixed
+
+- **Flow alerts dedup collision**: Added `flow_alerts` entry to `FEED_UNIQUE_FIELDS` in `envelope.py` — poller wraps flow events with feed `flow_alerts` but only `flow` was mapped, causing zero unique fields in event_id and collisions between different alerts on the same ticker at the same second.
+- **Darkpool dedup collision**: Replaced options-specific fields (expiry/strike/put_call) in `FEED_UNIQUE_FIELDS["darkpool"]` with actual darkpool trade fields (`tracking_id`, `price`, `size`, `notional`) — the old fields don't exist on darkpool payloads, so all trades on the same ticker at the same second produced identical event_ids.
+
 ## [0.5.60] - 2026-02-12
 
 ### Added

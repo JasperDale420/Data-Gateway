@@ -165,12 +165,18 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
         ("premium", None, 0),
         ("volume", None, 0),
     ],
-    "darkpool": [
+    "flow_alerts": [
         ("expiry", None, ""),
         ("strike", None, 0),
         ("put_call", None, ""),
         ("premium", None, 0),
         ("volume", None, 0),
+    ],
+    "darkpool": [
+        ("tracking_id", None, ""),
+        ("price", None, 0),
+        ("size", None, 0),
+        ("notional", None, 0),
     ],
     "news": [("article_id", "id", "")],
     "etf": [("etf_symbol", None, ""), ("holding_symbol", "symbol", ""), ("date", None, "")],
@@ -291,10 +297,7 @@ def wrap_event(
 
     # Extract event timestamp
     ts_event_raw = (
-        payload.get("timestamp")
-        or payload.get("t")
-        or payload.get("published_at")
-        or payload.get("datetime")
+        payload.get("timestamp") or payload.get("t") or payload.get("published_at") or payload.get("datetime")
     )
 
     if isinstance(ts_event_raw, datetime):
