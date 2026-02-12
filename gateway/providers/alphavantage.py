@@ -185,6 +185,11 @@ class AlphaVantageProvider(DataProvider):
         normalized_error = str(error).lower()
         return "premium endpoint" in normalized_error and "subscription" in normalized_error
 
+    @staticmethod
+    def _is_rate_limit_error(error: Exception) -> bool:
+        """Return True when provider error indicates rate limiting."""
+        return "rate limit exceeded" in str(error).lower()
+
     async def _fetch_with_premium_fallback(
         self,
         *,
@@ -394,7 +399,10 @@ class AlphaVantageProvider(DataProvider):
             return bars
 
         except Exception as e:
-            logger.error("alphavantage_daily_failed", symbol=symbol, error=str(e))
+            if self._is_rate_limit_error(e):
+                logger.warning("alphavantage_daily_rate_limited", symbol=symbol, error=str(e))
+            else:
+                logger.error("alphavantage_daily_failed", symbol=symbol, error=str(e))
             raise
 
     async def get_weekly(
@@ -441,7 +449,10 @@ class AlphaVantageProvider(DataProvider):
             return bars
 
         except Exception as e:
-            logger.error("alphavantage_weekly_failed", symbol=symbol, error=str(e))
+            if self._is_rate_limit_error(e):
+                logger.warning("alphavantage_weekly_rate_limited", symbol=symbol, error=str(e))
+            else:
+                logger.error("alphavantage_weekly_failed", symbol=symbol, error=str(e))
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -643,7 +654,10 @@ class AlphaVantageProvider(DataProvider):
             return bars
 
         except Exception as e:
-            logger.error("alphavantage_monthly_failed", symbol=symbol, error=str(e))
+            if self._is_rate_limit_error(e):
+                logger.warning("alphavantage_monthly_rate_limited", symbol=symbol, error=str(e))
+            else:
+                logger.error("alphavantage_monthly_failed", symbol=symbol, error=str(e))
             raise
 
     async def search_symbols(self, keywords: str) -> list[dict[str, Any]]:

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.60] - 2026-02-12
+
+### Added
+
+- **Alpha Vantage rate-limit mapping regression coverage**: Added tests in `tests/test_alphavantage_common.py` to ensure provider runtime rate-limit errors map to HTTP `429` while unrelated runtime errors still bubble for normal error handling.
+
+### Fixed
+
+- **Alpha Vantage free-tier throttle status mapping**: Updated `gateway/api/alphavantage/common.py` to translate provider-side `"Rate limit exceeded"` runtime failures into explicit HTTP `429` responses (`Provider rate limit exceeded: alphavantage`) instead of generic `502`.
+- **Alpha Vantage throttle log severity**: Updated `gateway/providers/alphavantage.py` daily/weekly/monthly handlers to log provider rate-limit failures at warning level (`*_rate_limited`) instead of error level, reducing false-positive error noise in operational logs.
+
 ## [0.5.59] - 2026-02-12
 
 ### Added

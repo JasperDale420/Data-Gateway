@@ -198,3 +198,60 @@ async def test_execute_av_cached_emits_cache_and_payload_metrics(
     assert payload_events[0][0] == "search"
     assert payload_events[0][1] == "query"
     assert payload_events[0][2] > 0
+
+
+@pytest.mark.asyncio
+async def test_execute_av_cached_maps_provider_rate_limit_to_http_429(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _FakeCache()
+    provider = object()
+    registry = _FakeRegistry(provider=provider)
+
+    async def _fake_rate_limit(provider_name: str) -> None:
+        assert provider_name == "alphavantage"
+
+    async def _fetcher(_provider: Any) -> dict[str, str]:
+        raise RuntimeError("Rate limit exceeded")
+
+    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await common.execute_av_cached(
+            cache=cache,  # type: ignore[arg-type]
+            cache_key_value="av:rate-limit",
+            registry=registry,  # type: ignore[arg-type]
+            ttl=120,
+            fetcher=_fetcher,
+            cache_transform=lambda value: value,
+        )
+
+    assert exc_info.value.status_code == 429
+    assert "Provider rate limit exceeded" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_execute_av_cached_preserves_unmapped_runtime_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _FakeCache()
+    provider = object()
+    registry = _FakeRegistry(provider=provider)
+
+    async def _fake_rate_limit(provider_name: str) -> None:
+        assert provider_name == "alphavantage"
+
+    async def _fetcher(_provider: Any) -> dict[str, str]:
+        raise RuntimeError("Unexpected provider payload")
+
+    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+
+    with pytest.raises(RuntimeError, match="Unexpected provider payload"):
+        await common.execute_av_cached(
+            cache=cache,  # type: ignore[arg-type]
+            cache_key_value="av:unexpected",
+            registry=registry,  # type: ignore[arg-type]
+            ttl=120,
+            fetcher=_fetcher,
+            cache_transform=lambda value: value,
+        )
