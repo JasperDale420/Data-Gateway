@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from gateway.api.deps import require_api_key
 from gateway.config import get_settings
-from gateway.core.quality import QualityIssue, get_quality_analyzer
+from gateway.core.quality import get_quality_analyzer
 from gateway.schemas import SuccessResponse
 
 router = APIRouter(

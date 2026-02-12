@@ -21,8 +21,6 @@ from dotenv import load_dotenv
 from gateway.core.provider import DataProvider, HealthStatus
 from gateway.core.registry import ProviderRegistry
 
-SMOKE_MAX_CONCURRENCY = 3
-
 
 @dataclass
 class SmokeResult:
@@ -83,57 +81,7 @@ async def _run_sample_call(provider_name: str, provider: DataProvider) -> tuple[
         return False, "error", message
 
 
-async def _run_provider_smoke_check(
-    provider_name: str,
-    provider: DataProvider | None,
-    credential_env: str | None,
-    credential_present: bool,
-    semaphore: asyncio.Semaphore,
-) -> SmokeResult:
-    if not provider:
-        return SmokeResult(
-            provider=provider_name,
-            credential_env=credential_env,
-            credential_present=credential_present,
-            loaded=False,
-            health_ok=False,
-            health_error="provider not loaded",
-            sample_ok=False,
-            sample_status="skipped",
-            sample_detail="provider not loaded",
-        )
-
-    async with semaphore:
-        try:
-            health: HealthStatus = await provider.health_check()
-        except Exception as exc:  # noqa: BLE001
-            return SmokeResult(
-                provider=provider_name,
-                credential_env=credential_env,
-                credential_present=credential_present,
-                loaded=True,
-                health_ok=False,
-                health_error=str(exc),
-                sample_ok=False,
-                sample_status="skipped",
-                sample_detail="health_check failed",
-            )
-
-        sample_ok, sample_status, sample_detail = await _run_sample_call(provider_name, provider)
-        return SmokeResult(
-            provider=provider_name,
-            credential_env=credential_env,
-            credential_present=credential_present,
-            loaded=True,
-            health_ok=health.healthy,
-            health_error=health.error,
-            sample_ok=sample_ok,
-            sample_status=sample_status,
-            sample_detail=sample_detail,
-        )
-
-
-async def run_smoke(max_concurrency: int = SMOKE_MAX_CONCURRENCY) -> list[SmokeResult]:
+async def run_smoke() -> list[SmokeResult]:
     load_dotenv(override=False)
 
     registry = ProviderRegistry()
@@ -147,27 +95,47 @@ async def run_smoke(max_concurrency: int = SMOKE_MAX_CONCURRENCY) -> list[SmokeR
         "sec": "SEC_USER_AGENT",
     }
     providers = ["alpaca", "finnhub", "alphavantage", "unusual_whales", "sec"]
+    results: list[SmokeResult] = []
 
     try:
-        semaphore = asyncio.Semaphore(max(1, max_concurrency))
-        tasks: list[asyncio.Task[SmokeResult]] = []
         for name in providers:
             provider = registry.get(name)
             env_name = env_map.get(name)
             env_val = os.environ.get(env_name, "") if env_name else ""
             credential_present = bool(env_val)
-            tasks.append(
-                asyncio.create_task(
-                    _run_provider_smoke_check(
-                        provider_name=name,
-                        provider=provider,
+
+            if not provider:
+                results.append(
+                    SmokeResult(
+                        provider=name,
                         credential_env=env_name,
                         credential_present=credential_present,
-                        semaphore=semaphore,
+                        loaded=False,
+                        health_ok=False,
+                        health_error="provider not loaded",
+                        sample_ok=False,
+                        sample_status="skipped",
+                        sample_detail="provider not loaded",
                     )
                 )
+                continue
+
+            health: HealthStatus = await provider.health_check()
+            sample_ok, sample_status, sample_detail = await _run_sample_call(name, provider)
+
+            results.append(
+                SmokeResult(
+                    provider=name,
+                    credential_env=env_name,
+                    credential_present=credential_present,
+                    loaded=True,
+                    health_ok=health.healthy,
+                    health_error=health.error,
+                    sample_ok=sample_ok,
+                    sample_status=sample_status,
+                    sample_detail=sample_detail,
+                )
             )
-        results = await asyncio.gather(*tasks)
     finally:
         await registry.shutdown()
 

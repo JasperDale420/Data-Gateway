@@ -35,7 +35,7 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
-from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
+from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
@@ -732,11 +732,7 @@ class AlpacaProvider(DataProvider):
                 gamma=Decimal(str(greeks.get("gamma", 0))) if greeks.get("gamma") else None,
                 theta=Decimal(str(greeks.get("theta", 0))) if greeks.get("theta") else None,
                 vega=Decimal(str(greeks.get("vega", 0))) if greeks.get("vega") else None,
-                iv=(
-                    Decimal(str(snapshot.get("impliedVolatility", 0)))
-                    if snapshot.get("impliedVolatility")
-                    else None
-                ),
+                iv=(Decimal(str(snapshot.get("impliedVolatility", 0))) if snapshot.get("impliedVolatility") else None),
                 provider="alpaca",
                 timestamp=datetime.now(UTC),
             )
@@ -777,9 +773,7 @@ class AlpacaProvider(DataProvider):
 
         try:
             # Crypto endpoint uses v1beta3
-            response = await self._client.get(
-                "/v1beta3/crypto/us/bars", params={"symbols": pair, **params}
-            )
+            response = await self._client.get("/v1beta3/crypto/us/bars", params={"symbols": pair, **params})
             response.raise_for_status()
             data = response.json()
 
@@ -845,9 +839,7 @@ class AlpacaProvider(DataProvider):
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         try:
-            response = await self._client.get(
-                "/v1beta3/crypto/us/latest/quotes", params={"symbols": pair}
-            )
+            response = await self._client.get("/v1beta3/crypto/us/latest/quotes", params={"symbols": pair})
             response.raise_for_status()
             data = response.json()
 
@@ -871,9 +863,7 @@ class AlpacaProvider(DataProvider):
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         try:
-            response = await self._client.get(
-                "/v1beta3/crypto/us/snapshots", params={"symbols": pair}
-            )
+            response = await self._client.get("/v1beta3/crypto/us/snapshots", params={"symbols": pair})
             response.raise_for_status()
             data = response.json()
 
@@ -953,9 +943,7 @@ class AlpacaProvider(DataProvider):
 
         try:
             pairs_param = ",".join(pairs)
-            response = await self._client.get(
-                "/v1beta1/forex/rates/latest", params={"currency_pairs": pairs_param}
-            )
+            response = await self._client.get("/v1beta1/forex/rates/latest", params={"currency_pairs": pairs_param})
             response.raise_for_status()
             data = response.json()
 
@@ -1113,9 +1101,7 @@ class AlpacaProvider(DataProvider):
         }
 
         try:
-            response = await self._client.get(
-                "/v1beta1/screener/stocks/most-actives", params=params
-            )
+            response = await self._client.get("/v1beta1/screener/stocks/most-actives", params=params)
             response.raise_for_status()
             data = response.json()
 
@@ -1157,9 +1143,7 @@ class AlpacaProvider(DataProvider):
         }
 
         try:
-            response = await self._client.get(
-                f"/v1beta1/screener/{market_type}/movers", params=params
-            )
+            response = await self._client.get(f"/v1beta1/screener/{market_type}/movers", params=params)
             response.raise_for_status()
             data = response.json()
 
@@ -1248,11 +1232,7 @@ class AlpacaProvider(DataProvider):
                             ex_date=action.get("ex_date", ""),
                             record_date=action.get("record_date"),
                             payable_date=action.get("payable_date"),
-                            amount=(
-                                Decimal(str(action.get("cash_amount", 0)))
-                                if action.get("cash_amount")
-                                else None
-                            ),
+                            amount=(Decimal(str(action.get("cash_amount", 0))) if action.get("cash_amount") else None),
                             ratio=action.get("new_rate") or action.get("ratio"),
                             provider="alpaca",
                         )
@@ -1359,9 +1339,7 @@ class AlpacaProvider(DataProvider):
             ]
 
             timestamp_str = ob_data.get("t")
-            timestamp = (
-                self._parse_timestamp(str(timestamp_str)) if timestamp_str else datetime.now(UTC)
-            )
+            timestamp = self._parse_timestamp(str(timestamp_str)) if timestamp_str else datetime.now(UTC)
 
             result = NormalizedOrderbook(
                 symbol=pair.upper(),
@@ -1556,9 +1534,7 @@ class AlpacaProvider(DataProvider):
         tif = tif_map.get(time_in_force.lower(), TimeInForce.DAY)
 
         try:
-            request: (
-                MarketOrderRequest | LimitOrderRequest | StopOrderRequest | StopLimitOrderRequest
-            )
+            request: MarketOrderRequest | LimitOrderRequest | StopOrderRequest | StopLimitOrderRequest
             if order_type.lower() == "market":
                 request = MarketOrderRequest(
                     symbol=symbol.upper(),
@@ -1964,9 +1940,7 @@ class AlpacaProvider(DataProvider):
 
         try:
             activities = self._trading_client.get_account_activities(
-                activity_types=(
-                    [ActivityType(t) for t in activity_types] if activity_types else None
-                ),
+                activity_types=([ActivityType(t) for t in activity_types] if activity_types else None),
             )
             return [self._model_to_dict(a) for a in activities]
         except APIError as e:
@@ -2054,9 +2028,7 @@ class AlpacaProvider(DataProvider):
             watchlist = self._trading_client.add_asset_to_watchlist_by_id(watchlist_id, symbol)
             return self._model_to_dict(watchlist)
         except APIError:
-            logger.error(
-                "alpaca_watchlist_add_asset_error", watchlist_id=watchlist_id, symbol=symbol
-            )
+            logger.error("alpaca_watchlist_add_asset_error", watchlist_id=watchlist_id, symbol=symbol)
             raise
 
     def remove_asset_from_watchlist(self, watchlist_id: str, symbol: str) -> dict[str, Any]:
@@ -2068,9 +2040,7 @@ class AlpacaProvider(DataProvider):
             watchlist = self._trading_client.remove_asset_from_watchlist_by_id(watchlist_id, symbol)
             return self._model_to_dict(watchlist)
         except APIError:
-            logger.error(
-                "alpaca_watchlist_remove_asset_error", watchlist_id=watchlist_id, symbol=symbol
-            )
+            logger.error("alpaca_watchlist_remove_asset_error", watchlist_id=watchlist_id, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────

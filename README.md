@@ -105,9 +105,7 @@ python scripts/perf_gate.py \
 ```
 
 Perf promotion/release runbook:
-
 - `PERF_RELEASE_READINESS.md`
-- `runbook.md` — Operations reference (startup, config, troubleshooting, monitoring)
 
 ### Docker
 
@@ -130,7 +128,6 @@ curl http://localhost:8080/health
 | `/api/v1/symbology/*` | Symbol Resolution | OCC ↔ human format |
 | `/api/v1/bulk/*` | Bulk Jobs | historical batch retrieval |
 | `/api/v1/replay/*` | Historical Replay | backtesting sessions |
-| `/admin/*` | Admin Ops | cache, circuits, shutdown |
 | `/health/*` | Health | liveness, readiness, status |
 | `/ws` | WebSocket | real-time streaming |
 
@@ -205,7 +202,6 @@ ws://localhost:8080/ws
 ```
 
 **Permissions:**
-
 - Client permissions in `config/clients.yaml` are enforced for REST and WebSocket access.
 - Provider access is restricted by `permissions.providers`.
 - Feed access is restricted by `permissions.feeds`.
@@ -214,11 +210,9 @@ ws://localhost:8080/ws
 - Alpaca trading/account endpoints require a client `role` of `trader`, `admin`, or `super_admin`.
 
 **Connection lifecycle:**
-
 - On WebSocket disconnect, upstream Alpaca subscriptions are cleaned up automatically.
 
 **Bulk and replay access control:**
-
 - Bulk jobs and replay sessions are scoped to the client that created them.
 - Replay WebSocket connections require `X-Gateway-Key` in the handshake and are restricted to the owning client.
 

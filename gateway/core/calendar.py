@@ -325,6 +325,10 @@ class TradingCalendar:
             # Move to next day
             current += timedelta(days=1)
 
+            # Safety limit
+            if len(trading_days) > 1000:
+                break
+
         return trading_days, holidays, early_closes
 
     def is_trading_day(self, query_date: date) -> bool:
@@ -380,9 +384,7 @@ class EarningsCalendar:
     def __init__(self) -> None:
         # In production, this would fetch from Alpaca or other provider
         self._cache: dict[str, list[EarningsEvent]] = {}
-        self._fetch_earnings_func: (
-            Callable[[list[str], date, date], Awaitable[list[EarningsEvent]]] | None
-        ) = None
+        self._fetch_earnings_func: Callable[[list[str], date, date], Awaitable[list[EarningsEvent]]] | None = None
 
     def set_fetcher(
         self,

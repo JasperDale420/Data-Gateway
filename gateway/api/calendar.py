@@ -4,7 +4,6 @@ Implements market hours, trading days, and earnings calendar as specified in PRD
 """
 
 import asyncio
-import time as time_module
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, cast
 
@@ -81,6 +80,17 @@ def _mark_calendar_provider_success(route_key: str) -> None:
     _CALENDAR_PROVIDER_LAST_LOG_AT.pop(route_key, None)
 
 
+def _parse_alpaca_time(value: str | None) -> time | None:
+    if not value:
+        return None
+    for fmt in ("%H:%M", "%H:%M:%S"):
+        try:
+            return datetime.strptime(value, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Response Models
 # ─────────────────────────────────────────────────────────────────────────────
@@ -145,8 +155,7 @@ async def get_market_hours(
     calendar = get_trading_calendar()
     provider = cast(SupportsAlpacaCalendar | None, registry.get("alpaca"))
 
-    route_key = "market_hours"
-    if provider and not _calendar_provider_is_degraded(route_key):
+    if provider:
         try:
             await require_provider_rate_limit("alpaca")
             entries = await asyncio.to_thread(provider.get_calendar, query_date, query_date)
@@ -157,9 +166,7 @@ async def get_market_hours(
                 is_early = bool(close_time and close_time < calendar.REGULAR_END)
                 regular_start = open_time or calendar.REGULAR_START
                 regular_end = close_time or calendar.REGULAR_END
-                afterhours_start = (
-                    calendar.REGULAR_EARLY_END if is_early else calendar.AFTERHOURS_START
-                )
+                afterhours_start = calendar.REGULAR_EARLY_END if is_early else calendar.AFTERHOURS_START
 
                 hours = MarketHours(
                     date=query_date,
@@ -172,7 +179,6 @@ async def get_market_hours(
                     is_holiday=False,
                     is_early_close=is_early,
                 )
-                _mark_calendar_provider_success(route_key)
                 return MarketHoursResponse(**hours.to_dict())
 
             # No trading day returned by provider
@@ -189,11 +195,10 @@ async def get_market_hours(
                 is_early_close=False,
                 holiday_name=None,
             )
-            _mark_calendar_provider_success(route_key)
             return MarketHoursResponse(**hours.to_dict())
-        except Exception as e:
-            # Fall back to static calendar and briefly suppress repeated upstream retries.
-            _mark_calendar_provider_failure(route_key, e)
+        except Exception:
+            # Fall back to static calendar
+            pass
 
     hours = calendar.get_market_hours(query_date)
     return MarketHoursResponse(**hours.to_dict())
@@ -239,8 +244,7 @@ async def get_trading_days(
     calendar = get_trading_calendar()
     provider = cast(SupportsAlpacaCalendar | None, registry.get("alpaca"))
 
-    route_key = "trading_days"
-    if provider and not _calendar_provider_is_degraded(route_key):
+    if provider:
         try:
             await require_provider_rate_limit("alpaca")
             entries = await asyncio.to_thread(provider.get_calendar, start_date, end_date)
@@ -278,14 +282,13 @@ async def get_trading_days(
                     holidays.append(Holiday(date=current, name="Market Holiday"))
                 current += timedelta(days=1)
 
-            _mark_calendar_provider_success(route_key)
             return TradingDaysResponse(
                 trading_days=[d.isoformat() for d in trading_days],
                 holidays=[h.to_dict() for h in holidays],
                 early_closes=[e.to_dict() for e in early_closes],
             )
-        except Exception as e:
-            _mark_calendar_provider_failure(route_key, e)
+        except Exception:
+            pass
 
     trading_days, holidays, early_closes = calendar.get_trading_days(start_date, end_date)
     return TradingDaysResponse(
@@ -340,51 +343,50 @@ async def get_earnings(
     earnings_calendar = get_earnings_calendar()
     provider = cast(SupportsFinnhubEarningsCalendar | None, registry.get("finnhub"))
     if provider:
-        if not earnings_calendar.has_fetcher():
 
-            async def _fetch_earnings(
-                symbols: list[str],
-                start_date: date,
-                end_date: date,
-            ) -> list[EarningsEvent]:
-                await require_provider_rate_limit("finnhub")
-                start_dt = datetime.combine(start_date, time.min, tzinfo=UTC)
-                end_dt = datetime.combine(end_date, time.max, tzinfo=UTC)
-                raw_events = await provider.get_earnings_calendar(start=start_dt, end=end_dt)
+        async def _fetch_earnings(
+            symbols: list[str],
+            start_date: date,
+            end_date: date,
+        ) -> list[EarningsEvent]:
+            await require_provider_rate_limit("finnhub")
+            start_dt = datetime.combine(start_date, time.min, tzinfo=UTC)
+            end_dt = datetime.combine(end_date, time.max, tzinfo=UTC)
+            raw_events = await provider.get_earnings_calendar(start=start_dt, end=end_dt)
 
-                symbol_set = {s.upper() for s in symbols}
-                hour_map = {
-                    "bmo": EarningsTime.BEFORE_OPEN,
-                    "amc": EarningsTime.AFTER_CLOSE,
-                    "dmh": EarningsTime.DURING_MARKET,
-                }
-                mapped: list[EarningsEvent] = []
+            symbol_set = {s.upper() for s in symbols}
+            hour_map = {
+                "bmo": EarningsTime.BEFORE_OPEN,
+                "amc": EarningsTime.AFTER_CLOSE,
+                "dmh": EarningsTime.DURING_MARKET,
+            }
+            mapped: list[EarningsEvent] = []
 
-                for item in raw_events:
-                    symbol = str(item.get("symbol", "")).upper()
-                    if symbol_set and symbol not in symbol_set:
-                        continue
-                    date_str = item.get("date")
-                    if not date_str:
-                        continue
-                    try:
-                        event_date = date.fromisoformat(date_str)
-                    except ValueError:
-                        continue
-                    hour = str(item.get("hour", "")).lower()
-                    mapped.append(
-                        EarningsEvent(
-                            symbol=symbol,
-                            date=event_date,
-                            time=hour_map.get(hour, EarningsTime.UNKNOWN),
-                            eps_estimate=item.get("eps_estimate"),
-                            revenue_estimate=item.get("revenue_estimate"),
-                        )
+            for item in raw_events:
+                symbol = str(item.get("symbol", "")).upper()
+                if symbol_set and symbol not in symbol_set:
+                    continue
+                date_str = item.get("date")
+                if not date_str:
+                    continue
+                try:
+                    event_date = date.fromisoformat(date_str)
+                except ValueError:
+                    continue
+                hour = str(item.get("hour", "")).lower()
+                mapped.append(
+                    EarningsEvent(
+                        symbol=symbol,
+                        date=event_date,
+                        time=hour_map.get(hour, EarningsTime.UNKNOWN),
+                        eps_estimate=item.get("eps_estimate"),
+                        revenue_estimate=item.get("revenue_estimate"),
                     )
+                )
 
-                return mapped
+            return mapped
 
-            earnings_calendar.set_fetcher(_fetch_earnings)
+        earnings_calendar.set_fetcher(_fetch_earnings)
     elif not settings.allow_stub_data:
         raise HTTPException(status_code=503, detail="Finnhub provider not available")
 

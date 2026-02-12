@@ -8,7 +8,6 @@ load_dotenv()
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
-from typing import Any, cast
 
 # Configure stdlib logging for structlog integration
 logging.basicConfig(
@@ -36,7 +35,6 @@ from gateway.api import (
     legacy_adjustments_router,
     legacy_corporate_router,
     legacy_symbology_router,
-    market_router,
     news_router,
     quality_router,
     replay_router,
@@ -47,11 +45,7 @@ from gateway.api import (
     yf_router,
 )
 from gateway.api.admin import attach_error_buffer_handler
-from gateway.api.deps import (
-    get_connection_manager,
-    set_multiplexer,
-    set_registry,
-)
+from gateway.api.deps import get_connection_manager, set_multiplexer, set_registry
 from gateway.api.errors import gateway_http_exception_handler
 from gateway.api.metrics import router as metrics_router
 from gateway.api.middleware import (
@@ -64,14 +58,7 @@ from gateway.api.middleware import (
     SecurityHeadersMiddleware,
 )
 from gateway.config import get_settings
-from gateway.core.metrics import (
-    init_metrics,
-    init_uptime,
-    record_stream_sink_dispatch_event,
-    set_stream_sink_dispatch_limits_metrics,
-    set_stream_sink_pending_tasks,
-    update_uptime,
-)
+from gateway.core.metrics import init_metrics, init_uptime, update_uptime
 from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import StreamMultiplexer
 
@@ -94,108 +81,6 @@ structlog.configure(
 
 logger = structlog.get_logger()
 attach_error_buffer_handler()
-
-STREAM_SINK_TOPIC = "heber:events"
-DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH = 32
-DEFAULT_STREAM_SINK_MAX_PENDING_TASKS = 512
-
-_stream_sink_max_inflight_publish = DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH
-_stream_sink_max_pending_tasks = DEFAULT_STREAM_SINK_MAX_PENDING_TASKS
-
-_stream_sink_publish_semaphore: asyncio.Semaphore | None = None
-_stream_sink_publish_tasks: set[asyncio.Task[None]] = set()
-_stream_sink_registry = None
-
-
-def _configure_stream_sink_dispatch_limits(
-    *,
-    max_inflight_publish: int,
-    max_pending_tasks: int,
-) -> None:
-    """Configure stream-to-sink dispatch limits for this process."""
-    global _stream_sink_max_inflight_publish
-    global _stream_sink_max_pending_tasks
-    global _stream_sink_publish_semaphore
-
-    _stream_sink_max_inflight_publish = max(1, int(max_inflight_publish))
-    _stream_sink_max_pending_tasks = max(1, int(max_pending_tasks))
-    _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
-    set_stream_sink_dispatch_limits_metrics(
-        max_inflight_publish=_stream_sink_max_inflight_publish,
-        max_pending_tasks=_stream_sink_max_pending_tasks,
-    )
-    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
-
-
-def _set_stream_sink_registry(sink_registry) -> None:
-    global _stream_sink_registry
-    _stream_sink_registry = sink_registry
-
-
-def _get_stream_sink_publish_semaphore() -> asyncio.Semaphore:
-    global _stream_sink_publish_semaphore
-    if _stream_sink_publish_semaphore is None:
-        _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
-    return _stream_sink_publish_semaphore
-
-
-def _on_stream_sink_publish_done(task: asyncio.Task[None]) -> None:
-    _stream_sink_publish_tasks.discard(task)
-    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
-    if task.cancelled():
-        record_stream_sink_dispatch_event("cancelled")
-        return
-    exc = task.exception()
-    if exc:
-        record_stream_sink_dispatch_event("failed")
-        logger.warning("stream_sink_publish_task_failed", error=str(exc))
-        return
-    record_stream_sink_dispatch_event("completed")
-
-
-async def _publish_stream_event(sink_registry, envelope: dict) -> None:
-    semaphore = _get_stream_sink_publish_semaphore()
-    async with semaphore:
-        await sink_registry.publish_all(STREAM_SINK_TOPIC, envelope)
-
-
-def _schedule_stream_sink_publish(sink_registry, envelope: dict) -> None:
-    if len(_stream_sink_publish_tasks) >= _stream_sink_max_pending_tasks:
-        record_stream_sink_dispatch_event("dropped_backpressure")
-        logger.warning(
-            "stream_sink_publish_backpressure_drop",
-            pending_tasks=len(_stream_sink_publish_tasks),
-            max_pending_tasks=_stream_sink_max_pending_tasks,
-            event_id=envelope.get("event_id", "unknown"),
-        )
-        return
-
-    task = asyncio.create_task(_publish_stream_event(sink_registry, envelope))
-    _stream_sink_publish_tasks.add(task)
-    record_stream_sink_dispatch_event("scheduled")
-    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
-    task.add_done_callback(_on_stream_sink_publish_done)
-
-
-async def _drain_stream_sink_publish_tasks(timeout_seconds: float = 2.0) -> None:
-    if not _stream_sink_publish_tasks:
-        return
-
-    pending = list(_stream_sink_publish_tasks)
-    try:
-        await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout_seconds)
-    except TimeoutError:
-        logger.warning(
-            "stream_sink_publish_drain_timeout",
-            timeout_seconds=timeout_seconds,
-            pending_tasks=len(_stream_sink_publish_tasks),
-        )
-    finally:
-        for task in pending:
-            if not task.done():
-                task.cancel()
-        _stream_sink_publish_tasks.clear()
-        set_stream_sink_pending_tasks(0)
 
 
 async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> None:
@@ -259,24 +144,6 @@ async def lifespan(app: FastAPI):
     # Initialize metrics
     init_metrics(version=__version__)
     init_uptime()
-
-    # Configure endpoint-level rate limits (PRD 7.5.3)
-    from gateway.core.rate_limiter import EndpointRateLimitConfig, EndpointRateLimiter
-
-    ep_limiter = EndpointRateLimiter.get_instance()
-    ep_limiter.configure(
-        "bulk_create",
-        EndpointRateLimitConfig(
-            requests_per_window=settings.bulk_rate_limit_per_hour,
-            window_seconds=3600,
-        ),
-    )
-    ep_limiter.configure(
-        "replay_session",
-        EndpointRateLimitConfig(
-            max_concurrent=settings.replay_max_concurrent_sessions,
-        ),
-    )
 
     async def _uptime_loop() -> None:
         try:
@@ -440,8 +307,6 @@ async def lifespan(app: FastAPI):
     uptime_task.cancel()
     with suppress(asyncio.CancelledError):
         await uptime_task
-
-    # Step 8: Exit
     logger.info("gateway_shutdown_complete")
     _set_stream_sink_registry(None)
     ShutdownCoordinator.reset()
@@ -459,7 +324,7 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
     )
-    app.add_exception_handler(HTTPException, cast(Any, gateway_http_exception_handler))
+    app.add_exception_handler(HTTPException, gateway_http_exception_handler)
 
     # Middleware (order matters: first added = outermost)
     # Security headers should be outermost (applied last, seen first by client)

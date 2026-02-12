@@ -54,16 +54,14 @@ async def get_forex_daily(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get daily forex time series."""
-    key = cache_key("av:forex-daily", from_symbol.upper(), to_symbol.upper(), str(max_points))
+    key = cache_key("av:forex-daily", from_symbol.upper(), to_symbol.upper())
     try:
         return await execute_av_cached(
             cache=cache,
             cache_key_value=key,
             registry=registry,
             ttl=3600,
-            fetcher=lambda provider: provider.get_forex_daily(
-                from_symbol, to_symbol, max_points=max_points
-            ),
+            fetcher=lambda provider: provider.get_forex_daily(from_symbol, to_symbol),
             cache_transform=lambda data: data,
             miss_meta_builder=lambda data, _cached: {"count": len(data)},
             endpoint="forex_daily",

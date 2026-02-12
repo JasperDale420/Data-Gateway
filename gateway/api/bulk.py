@@ -10,12 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from gateway.api.deps import (
-    get_endpoint_rate_limiter,
-    get_registry,
-    require_api_key,
-    require_provider_rate_limit,
-)
+from gateway.api.deps import get_registry, require_api_key, require_provider_rate_limit
 from gateway.config import get_settings
 from gateway.core.bulk import (
     BulkAdjustmentFactorsRequest,
@@ -24,7 +19,6 @@ from gateway.core.bulk import (
     BulkOptionsRequest,
     get_bulk_manager,
 )
-from gateway.core.rate_limiter import EndpointRateLimitExceeded
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 from gateway.types.provider_protocols import (
@@ -198,29 +192,28 @@ async def create_bulk_bars_job(
 
     provider = cast(SupportsAlpacaBars | None, registry.get("alpaca"))
     if provider:
-        if not manager.has_bars_fetcher():
 
-            async def _fetch_bars(
-                *,
-                symbol: str,
-                start: str,
-                end: str,
-                timeframe: str,
-                adjusted: bool,
-            ):
-                await require_provider_rate_limit("alpaca")
-                start_dt = _parse_datetime(start, end_of_day=False)
-                end_dt = _parse_datetime(end, end_of_day=True)
-                bars = await provider.get_bars(
-                    symbols=[symbol],
-                    timeframe=timeframe,
-                    start=start_dt,
-                    end=end_dt,
-                    adjustment="all" if adjusted else "raw",
-                )
-                return [bar.model_dump(mode="json") for bar in bars]
+        async def _fetch_bars(
+            *,
+            symbol: str,
+            start: str,
+            end: str,
+            timeframe: str,
+            adjusted: bool,
+        ):
+            await require_provider_rate_limit("alpaca")
+            start_dt = _parse_datetime(start, end_of_day=False)
+            end_dt = _parse_datetime(end, end_of_day=True)
+            bars = await provider.get_bars(
+                symbols=[symbol],
+                timeframe=timeframe,
+                start=start_dt,
+                end=end_dt,
+                adjustment="all" if adjusted else "raw",
+            )
+            return [bar.model_dump(mode="json") for bar in bars]
 
-            manager.set_bars_fetcher(_fetch_bars)
+        manager.set_bars_fetcher(_fetch_bars)
     elif not settings.allow_stub_data:
         raise HTTPException(status_code=503, detail="Alpaca provider not available")
 
@@ -303,8 +296,7 @@ async def get_job_status(
 @router.get(
     "/jobs/{job_id}/download",
     summary="Download job results",
-    description="Download results of a completed bulk job. "
-    "Supports JSONL (default) and JSON formats.",
+    description="Download results of a completed bulk job. Supports JSONL (default) and JSON formats.",
 )
 async def download_job_results(
     job_id: str,
@@ -464,12 +456,11 @@ async def list_jobs(
 ) -> dict[str, Any]:
     """List all bulk jobs."""
     manager = get_bulk_manager()
-    jobs, total, has_more, next_offset = await manager.list_jobs_page(
-        client_id=client.id,
-        status=status,
-        limit=limit,
-        offset=offset,
-    )
+    jobs = await manager.list_jobs(client.id)
+
+    # Filter by status if provided
+    if status:
+        jobs = [j for j in jobs if j.status.value == status]
 
     return {
         "jobs": [j.to_dict() for j in jobs],
@@ -502,19 +493,6 @@ async def create_bulk_options_job(
 
     Fetches option chains for multiple underlyings using the configured provider.
     """
-    # Enforce endpoint rate limit (PRD 7.5.3)
-    try:
-        get_endpoint_rate_limiter().acquire("bulk_create", client_id=client.id)
-    except EndpointRateLimitExceeded as exc:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "code": "GW-E4029",
-                "message": exc.message,
-            },
-            headers={"Retry-After": str(int(exc.retry_after))},
-        )
-
     manager = get_bulk_manager()
     settings = get_settings()
 
@@ -531,22 +509,20 @@ async def create_bulk_options_job(
             )
         raise HTTPException(status_code=503, detail="Alpaca provider not available")
 
-    if not manager.has_options_fetcher():
+    async def _fetch_chain(
+        *,
+        underlying: str,
+        expiration_gte: str | None = None,
+        expiration_lte: str | None = None,
+    ):
+        await require_provider_rate_limit("alpaca")
+        return await provider.get_option_chain(
+            underlying=underlying,
+            expiration_gte=expiration_gte,
+            expiration_lte=expiration_lte,
+        )
 
-        async def _fetch_chain(
-            *,
-            underlying: str,
-            expiration_gte: str | None = None,
-            expiration_lte: str | None = None,
-        ):
-            await require_provider_rate_limit("alpaca")
-            return await provider.get_option_chain(
-                underlying=underlying,
-                expiration_gte=expiration_gte,
-                expiration_lte=expiration_lte,
-            )
-
-        manager.set_options_fetcher(_fetch_chain)
+    manager.set_options_fetcher(_fetch_chain)
 
     bulk_request = BulkOptionsRequest(
         underlyings=[u.upper() for u in request.underlyings],
@@ -589,19 +565,6 @@ async def create_bulk_adjustment_factors_job(
     client: Any = Depends(require_api_key),
 ) -> BulkJobCreatedResponse:
     """Create a bulk adjustment factors job."""
-    # Enforce endpoint rate limit (PRD 7.5.3)
-    try:
-        get_endpoint_rate_limiter().acquire("bulk_create", client_id=client.id)
-    except EndpointRateLimitExceeded as exc:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "code": "GW-E4029",
-                "message": exc.message,
-            },
-            headers={"Retry-After": str(int(exc.retry_after))},
-        )
-
     settings = get_settings()
     if not settings.allow_stub_data:
         raise HTTPException(

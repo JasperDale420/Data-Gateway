@@ -292,37 +292,6 @@ class ReplaySessionManager:
             return sessions
         return [session for session in sessions if session.client_id == client_id]
 
-    async def list_sessions_page(
-        self,
-        *,
-        client_id: str | None = None,
-        state: str | None = None,
-        limit: int | None = None,
-        offset: int = 0,
-    ) -> tuple[list[ReplaySession], int, bool, int | None]:
-        """List replay sessions with offset/limit pagination metadata.
-
-        Returns:
-            (paged_sessions, total_matches, has_more, next_offset)
-        """
-        sessions = await self.list_sessions(client_id=client_id)
-        if state:
-            sessions = [session for session in sessions if session.state.value == state]
-
-        total_matches = len(sessions)
-        page_offset = max(0, offset)
-        page_limit = None if limit is None else max(1, limit)
-
-        if page_offset:
-            sessions = sessions[page_offset:]
-        if page_limit is not None:
-            sessions = sessions[:page_limit]
-
-        consumed = page_offset + len(sessions)
-        has_more = consumed < total_matches
-        next_offset = consumed if has_more else None
-        return sessions, total_matches, has_more, next_offset
-
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
         session = self._sessions.get(session_id)
@@ -446,9 +415,7 @@ class ReplaySessionManager:
             return self._iter_async_iterable(loaded)  # type: ignore[arg-type]
         return self._iter_sync_iterable(loaded)
 
-    async def _iter_list_messages(
-        self, messages: list[ReplayMessage]
-    ) -> AsyncIterator[ReplayMessage]:
+    async def _iter_list_messages(self, messages: list[ReplayMessage]) -> AsyncIterator[ReplayMessage]:
         """Iterate list-backed messages, sorting only when required."""
         if not self._is_sorted_by_market_timestamp(messages):
             messages = sorted(messages, key=lambda msg: msg.market_timestamp)

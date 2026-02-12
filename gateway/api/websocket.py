@@ -89,9 +89,7 @@ async def websocket_endpoint(
             # Multiplexer not initialized
             pass
         except Exception as e:
-            logger.warning(
-                "multiplexer_disconnect_error", connection_id=connection_id, error=str(e)
-            )
+            logger.warning("multiplexer_disconnect_error", connection_id=connection_id, error=str(e))
 
         await connections.disconnect(connection_id)
 
@@ -211,15 +209,14 @@ async def _message_loop(
     max_message_size: int | None = None,
 ) -> None:
     """Handle messages after authentication."""
-    resolved_max_size = (
-        max_message_size if max_message_size is not None else get_settings().ws_max_message_size
-    )
+    resolved_max_size = max_message_size if max_message_size is not None else get_settings().ws_max_message_size
     max_bytes = max(1, int(resolved_max_size))
     while True:
         try:
             raw = await websocket.receive()
             if raw.get("text") is not None:
                 raw_text = raw["text"]
+                max_bytes = get_settings().ws_max_message_size
                 if len(raw_text.encode("utf-8")) > max_bytes:
                     await websocket.send_json(
                         {
@@ -232,6 +229,7 @@ async def _message_loop(
                 message = json.loads(raw_text)
             elif raw.get("bytes") is not None:
                 raw_bytes = raw["bytes"]
+                max_bytes = get_settings().ws_max_message_size
                 if len(raw_bytes) > max_bytes:
                     await websocket.send_json(
                         {
@@ -351,10 +349,7 @@ async def _handle_message(
             return {
                 "type": "error",
                 "error_code": "GW-E8002",
-                "message": (
-                    f"Maximum {connection.client.permissions.ws_subscriptions_max} "
-                    "subscriptions allowed"
-                ),
+                "message": (f"Maximum {connection.client.permissions.ws_subscriptions_max} subscriptions allowed"),
             }
 
         # Try to use multiplexer if available

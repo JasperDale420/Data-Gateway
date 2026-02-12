@@ -15,7 +15,6 @@ from gateway.api.deps import (
 )
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
-from gateway.core.metrics import record_route_cache
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
@@ -44,14 +43,6 @@ def _serialize_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _serialize_value(item) for key, item in value.items()}
     return value
-
-
-def _cache_metric_route(cache_key: str) -> str:
-    """Derive a low-cardinality route label from a UW cache key."""
-    parts = cache_key.split(":", 2)
-    if len(parts) >= 2 and parts[0] == "uw" and parts[1]:
-        return f"uw:{parts[1]}"
-    return "uw:unknown"
 
 
 def serialize_list(values: list[Any]) -> list[Any]:
@@ -209,13 +200,10 @@ async def execute_uw_cached(
     build_response: Callable[[Any], dict],
 ) -> dict:
     """Execute a UW route fetch with shared cache and rate-limit flow."""
-    route_label = _cache_metric_route(cache_key)
     cached = await cache.get(cache_key)
     if cached:
-        record_route_cache(route_label, "hit", "uw")
         return cached
 
-    record_route_cache(route_label, "miss", "uw")
     provider = get_uw_provider(registry)
     await require_provider_rate_limit("unusual_whales")
     result = await fetcher(provider)

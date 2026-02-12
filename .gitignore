@@ -75,6 +75,3 @@ perf-junit.xml
 perf-output.txt
 perf-summary.json
 perf-history-report.json
-coverage.json
-.scannerwork/
-.jules/

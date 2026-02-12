@@ -54,7 +54,6 @@ async def get_technical_indicator(
                 interval,
                 time_period,
                 series_type,
-                max_points=max_points,
             ),
             cache_transform=lambda data: data,
             endpoint="indicator",
@@ -129,9 +128,7 @@ async def get_macd(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Moving Average Convergence Divergence."""
-    return await get_technical_indicator(
-        "MACD", symbol, interval, 14, series_type, max_points, client, registry, cache
-    )
+    return await get_technical_indicator("MACD", symbol, interval, 14, series_type, max_points, client, registry, cache)
 
 
 @router.get("/indicator/bbands/{symbol}", response_model=SuccessResponse)
@@ -161,9 +158,7 @@ async def get_stoch(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Stochastic Oscillator."""
-    return await get_technical_indicator(
-        "STOCH", symbol, interval, 14, "close", max_points, client, registry, cache
-    )
+    return await get_technical_indicator("STOCH", symbol, interval, 14, "close", max_points, client, registry, cache)
 
 
 @router.get("/indicator/adx/{symbol}", response_model=SuccessResponse)
@@ -224,6 +219,4 @@ async def get_obv(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """On Balance Volume."""
-    return await get_technical_indicator(
-        "OBV", symbol, interval, 14, "close", max_points, client, registry, cache
-    )
+    return await get_technical_indicator("OBV", symbol, interval, 14, "close", max_points, client, registry, cache)

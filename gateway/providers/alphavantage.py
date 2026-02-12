@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import structlog
 
-from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
+from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
 
@@ -56,9 +56,7 @@ class AlphaVantageProvider(DataProvider):
         """Initialize Alpha Vantage client."""
         api_key_env = config.get("api_key_env", "ALPHAVANTAGE_API_KEY")
         self._api_key = os.environ.get(api_key_env, "")
-        raw_quotes_concurrency = config.get(
-            "quotes_max_concurrency", DEFAULT_QUOTES_MAX_CONCURRENCY
-        )
+        raw_quotes_concurrency = config.get("quotes_max_concurrency", DEFAULT_QUOTES_MAX_CONCURRENCY)
         try:
             self._quotes_max_concurrency = min(5, max(1, int(raw_quotes_concurrency)))
         except (TypeError, ValueError):
@@ -162,26 +160,14 @@ class AlphaVantageProvider(DataProvider):
             return {}
         return data
 
-    def _top_time_series_items(
-        self, series: dict[str, Any], limit: int = 100
-    ) -> list[tuple[str, Any]]:
+    def _top_time_series_items(self, series: dict[str, Any], limit: int = 100) -> list[tuple[str, Any]]:
         """Return newest-first head items without full-sort when provider order is already descending."""
         head_items = list(islice(series.items(), limit))
         if len(head_items) <= 1:
             return head_items
-        if all(
-            left[0] >= right[0] for left, right in zip(head_items, head_items[1:], strict=False)
-        ):
+        if all(left[0] >= right[0] for left, right in zip(head_items, head_items[1:], strict=False)):
             return head_items
         return sorted(series.items(), reverse=True)[:limit]
-
-    def _iter_time_series_items(
-        self, series: dict[str, Any], max_points: int | None
-    ) -> Iterable[tuple[str, Any]]:
-        """Return time-series items, optionally limited to newest points only."""
-        if max_points is None:
-            return series.items()
-        return self._top_time_series_items(series, limit=max_points)
 
     # ─────────────────────────────────────────────────────────────────
     # Quote Methods
@@ -220,7 +206,6 @@ class AlphaVantageProvider(DataProvider):
 
     async def get_quotes(self, symbols: list[str]) -> list[NormalizedQuote]:
         """Get quotes for multiple symbols."""
-        record_provider_quote_batch_size(self.name, len(symbols))
         semaphore = asyncio.Semaphore(self._quotes_max_concurrency)
 
         async def _fetch_quote(symbol: str) -> NormalizedQuote | None:
@@ -571,9 +556,7 @@ class AlphaVantageProvider(DataProvider):
                         high=Decimal(values.get("2. high", "0")),
                         low=Decimal(values.get("3. low", "0")),
                         close=Decimal(
-                            values.get("4. close", "0")
-                            if not adjusted
-                            else values.get("5. adjusted close", "0")
+                            values.get("4. close", "0") if not adjusted else values.get("5. adjusted close", "0")
                         ),
                         volume=int(values.get("6. volume" if adjusted else "5. volume", 0)),
                         timeframe="1Month",
@@ -663,17 +646,12 @@ class AlphaVantageProvider(DataProvider):
                 "symbol": symbol.upper(),
                 "indicator": indicator.upper(),
                 "interval": interval,
-                "data": [
-                    {"date": date, **vals}
-                    for date, vals in self._top_time_series_items(values, limit=max_points)
-                ],
+                "data": [{"date": date, **vals} for date, vals in self._top_time_series_items(values, limit=100)],
                 "meta": data.get("Meta Data", {}),
             }
 
         except Exception as e:
-            logger.error(
-                "alphavantage_indicator_failed", symbol=symbol, indicator=indicator, error=str(e)
-            )
+            logger.error("alphavantage_indicator_failed", symbol=symbol, indicator=indicator, error=str(e))
             raise
 
     # Convenience methods for common indicators
@@ -741,9 +719,7 @@ class AlphaVantageProvider(DataProvider):
             symbol, "BBANDS", interval, time_period, series_type, max_points=max_points
         )
 
-    async def get_stoch(
-        self, symbol: str, interval: str = "daily", max_points: int = 100
-    ) -> dict[str, Any]:
+    async def get_stoch(self, symbol: str, interval: str = "daily", max_points: int = 100) -> dict[str, Any]:
         """Stochastic Oscillator."""
         return await self.get_technical_indicator(symbol, "STOCH", interval, max_points=max_points)
 
@@ -751,29 +727,21 @@ class AlphaVantageProvider(DataProvider):
         self, symbol: str, interval: str = "daily", time_period: int = 14, max_points: int = 100
     ) -> dict[str, Any]:
         """Average Directional Index."""
-        return await self.get_technical_indicator(
-            symbol, "ADX", interval, time_period, max_points=max_points
-        )
+        return await self.get_technical_indicator(symbol, "ADX", interval, time_period, max_points=max_points)
 
     async def get_cci(
         self, symbol: str, interval: str = "daily", time_period: int = 20, max_points: int = 100
     ) -> dict[str, Any]:
         """Commodity Channel Index."""
-        return await self.get_technical_indicator(
-            symbol, "CCI", interval, time_period, max_points=max_points
-        )
+        return await self.get_technical_indicator(symbol, "CCI", interval, time_period, max_points=max_points)
 
     async def get_atr(
         self, symbol: str, interval: str = "daily", time_period: int = 14, max_points: int = 100
     ) -> dict[str, Any]:
         """Average True Range."""
-        return await self.get_technical_indicator(
-            symbol, "ATR", interval, time_period, max_points=max_points
-        )
+        return await self.get_technical_indicator(symbol, "ATR", interval, time_period, max_points=max_points)
 
-    async def get_obv(
-        self, symbol: str, interval: str = "daily", max_points: int = 100
-    ) -> dict[str, Any]:
+    async def get_obv(self, symbol: str, interval: str = "daily", max_points: int = 100) -> dict[str, Any]:
         """On Balance Volume."""
         return await self.get_technical_indicator(symbol, "OBV", interval, max_points=max_points)
 
@@ -806,9 +774,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_forex_rate_failed", error=str(e))
             raise
 
-    async def get_forex_daily(
-        self, from_symbol: str, to_symbol: str, max_points: int = 100
-    ) -> list[dict[str, Any]]:
+    async def get_forex_daily(self, from_symbol: str, to_symbol: str, max_points: int = 100) -> list[dict[str, Any]]:
         """Get daily forex time series."""
         try:
             data = await self._fetch_json(
@@ -829,7 +795,7 @@ class AlphaVantageProvider(DataProvider):
                     "low": v.get("3. low"),
                     "close": v.get("4. close"),
                 }
-                for date, v in self._top_time_series_items(ts, limit=max_points)
+                for date, v in self._top_time_series_items(ts, limit=100)
             ]
 
         except Exception as e:
@@ -857,9 +823,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_crypto_rating_failed", symbol=symbol, error=str(e))
             raise
 
-    async def get_crypto_daily(
-        self, symbol: str, market: str = "USD", max_points: int = 100
-    ) -> list[dict[str, Any]]:
+    async def get_crypto_daily(self, symbol: str, market: str = "USD", max_points: int = 100) -> list[dict[str, Any]]:
         """Get daily crypto time series."""
         try:
             data = await self._fetch_json(
@@ -881,7 +845,7 @@ class AlphaVantageProvider(DataProvider):
                     "close": v.get(f"4a. close ({market.upper()})"),
                     "volume": v.get("5. volume"),
                 }
-                for date, v in self._top_time_series_items(ts, limit=max_points)
+                for date, v in self._top_time_series_items(ts, limit=100)
             ]
 
         except Exception as e:
@@ -892,9 +856,7 @@ class AlphaVantageProvider(DataProvider):
     # Economic Indicators
     # ─────────────────────────────────────────────────────────────────
 
-    async def get_economic_indicator(
-        self, indicator: str, interval: str = "annual"
-    ) -> dict[str, Any]:
+    async def get_economic_indicator(self, indicator: str, interval: str = "annual") -> dict[str, Any]:
         """Get economic indicator data.
 
         Supports: REAL_GDP, REAL_GDP_PER_CAPITA, TREASURY_YIELD, FEDERAL_FUNDS_RATE,
@@ -933,9 +895,7 @@ class AlphaVantageProvider(DataProvider):
             return []
         return [dict(row) for row in rows]
 
-    async def get_earnings_calendar(
-        self, symbol: str | None = None, horizon: str = "3month"
-    ) -> list[dict[str, Any]]:
+    async def get_earnings_calendar(self, symbol: str | None = None, horizon: str = "3month") -> list[dict[str, Any]]:
         """Get earnings calendar.
 
         Args:
@@ -977,9 +937,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_ipo_calendar_failed", error=str(e))
             raise
 
-    async def get_listing_status(
-        self, state: str = "active", date: str | None = None
-    ) -> list[dict[str, Any]]:
+    async def get_listing_status(self, state: str = "active", date: str | None = None) -> list[dict[str, Any]]:
         """Get listing status (active or delisted).
 
         Args:

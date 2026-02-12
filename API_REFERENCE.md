@@ -52,7 +52,6 @@ Send an auth message immediately after connecting:
 ```
 
 **Access control notes:**
-
 - Provider access is enforced via `permissions.providers` in `config/clients.yaml`.
 - Feed access is enforced via `permissions.feeds`.
 - Admin endpoints require a client role of `admin` or `super_admin`.
@@ -120,7 +119,6 @@ Provider endpoint contracts are generated from live routes in `PROVIDER_ENDPOINT
 Bulk data requests are asynchronous jobs. Create a job and poll for status or download results.
 
 **Endpoints:**
-
 - `POST /api/v1/bulk/bars`
 - `POST /api/v1/bulk/options/chains`
 - `POST /api/v1/bulk/adjustment-factors`
@@ -130,17 +128,14 @@ Bulk data requests are asynchronous jobs. Create a job and poll for status or do
 - `GET /api/v1/bulk/jobs`
 
 **Bulk options notes:**
-
 - Uses Alpaca options snapshots when the Alpaca provider is configured.
 - `expiration_range`: `{"min_dte": 0, "max_dte": 45}` (days to expiration).
 - `moneyness_range`: `{"min_delta": 0.2, "max_delta": 0.6}` (absolute delta).
 
 **Bulk adjustment factors notes:**
-
 - Uses the adjustment factors service (currently stubbed unless `GATEWAY_ALLOW_STUB_DATA=true`).
 
 **Bulk bars notes:**
-
 - Uses Alpaca historical bars when the Alpaca provider is configured.
 
 ### Alpaca Markets (`/alpaca`)
@@ -216,7 +211,6 @@ Provider: NewsAPI.org.
 | Sentiment | `/sentiment/{symbol}` |
 
 Notes:
-
 - NewsAPI.org does not expose a get-by-id endpoint. `/articles/{article_id}` is not supported and will return `501`.
 
 ---
@@ -234,7 +228,6 @@ Market hours, trading days, and earnings calendar.
 | `/api/v1/calendar/next-trading-day` | Next trading day |
 
 Notes:
-
 - Market hours/trading days use Alpaca when configured; otherwise fall back to static calendar logic.
 - Earnings calendar uses Finnhub when configured; otherwise returns 501 unless `GATEWAY_ALLOW_STUB_DATA=true`.
 
@@ -253,154 +246,7 @@ Corporate actions history and adjustment factors for backtesting.
 | `/api/v1/adjustment-factors/adjust-prices` | Adjust prices using factors |
 
 Notes:
-
 - Corporate actions use Alpaca when configured; otherwise return 501 unless `GATEWAY_ALLOW_STUB_DATA=true`.
-
----
-
-### Historical Replay (`/api/v1/replay`)
-
-Create, control, and stream historical replay sessions for backtesting.
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/replay/sessions` | `POST` | Create a replay session |
-| `/api/v1/replay/sessions` | `GET` | List all sessions (supports `limit` + `offset`) |
-| `/api/v1/replay/sessions/{session_id}` | `GET` | Get session status and progress |
-| `/api/v1/replay/sessions/{session_id}/control` | `POST` | Control: `pause`, `resume`, `seek`, `stop` |
-| `/api/v1/replay/sessions/{session_id}` | `DELETE` | Delete a session |
-| `ws://host:8080/api/v1/replay/sessions/{session_id}/ws` | WebSocket | Stream replayed data |
-
-**Create session request:**
-
-```json
-{
-  "name": "My backtest",
-  "symbols": ["AAPL", "MSFT"],
-  "feeds": ["bars", "trades"],
-  "start": "2024-01-15T09:30:00",
-  "end": "2024-01-15T16:00:00",
-  "speed": 10.0,
-  "include_premarket": false
-}
-```
-
-**WebSocket control actions** (send JSON over the replay WS):
-
-- `{"action": "pause"}` — pause playback
-- `{"action": "resume", "speed": 5.0}` — resume at new speed
-- `{"action": "seek", "timestamp": "2024-01-15T12:00:00"}` — jump to timestamp
-- `{"action": "stop"}` — end session
-
-Notes:
-
-- Sessions are scoped to the client that created them.
-- Replay WebSocket connections require `X-Gateway-Key` in the handshake.
-- Speed range: `0 < speed ≤ 100` (1.0 = real-time).
-
----
-
-### Symbology (`/api/v1/symbology`)
-
-Symbol resolution, validation, and cross-provider format conversion.
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/symbology/resolve` | `GET` | Resolve symbol to normalized components |
-| `/api/v1/symbology/validate` | `GET` | Validate symbol format |
-| `/api/v1/symbology/batch` | `POST` | Batch resolve up to 500 symbols |
-| `/api/v1/symbology/convert` | `GET` | Convert symbol to provider-specific format |
-
-**Supported formats:**
-
-| Type | Example | Resolved Fields |
-|------|---------|-----------------|
-| Stock | `AAPL` | symbol, type=`equity` |
-| OCC option | `AAPL250117C00200000` | underlying, expiration, strike, option_type |
-| Human option | `AAPL 2025-01-17 $200 C` | Same as OCC |
-| Crypto | `BTC/USD` | symbol, type=`crypto` |
-| Forex | `EUR/USD` | symbol, type=`forex` |
-
-**Batch request:**
-
-```json
-{
-  "symbols": ["AAPL", "BTC/USD", "AAPL250117C00200000"]
-}
-```
-
-Notes:
-
-- Legacy alias at `/symbology/*` (excluded from OpenAPI schema).
-- Provider conversion targets: `alpaca`, `uw`, `yfinance`.
-
----
-
-### Data Quality (`/quality`)
-
-Per-symbol data quality analysis and monitoring.
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/quality/symbol/{symbol}` | `GET` | Quality metrics for a symbol on a date |
-| `/quality/summary` | `GET` | Aggregate quality across symbols |
-| `/quality/analyze` | `POST` | Analyze raw bar/quote/trade data |
-
-**Quality issue codes:**
-
-| Code | Description |
-|------|-------------|
-| `Q001` | Missing bars in sequence |
-| `Q002` | Crossed quote (bid > ask) |
-| `Q003` | Stale quote (>60s unchanged) |
-| `Q004` | Zero volume bar during market hours |
-| `Q005` | Price outside normal range (>20% move) |
-| `Q006` | Timestamp out of sequence |
-
-Notes:
-
-- Quality endpoints return `501` unless `GATEWAY_ALLOW_STUB_DATA=true` (symbol/summary endpoints use stub data).
-- The `/quality/analyze` endpoint accepts raw data and returns real analysis.
-
----
-
-### API Catalog (`/catalog`)
-
-Runtime API discovery — returns the full endpoint catalog, available streams, providers, and feed types.
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/catalog/` | `GET` | Full API summary (providers + streams + feeds) |
-| `/catalog/streams` | `GET` | WebSocket streams and channels |
-| `/catalog/providers` | `GET` | REST providers with categorized endpoints |
-| `/catalog/feeds` | `GET` | Available feed types for subscriptions |
-
-Notes:
-
-- All catalog endpoints require authentication (`X-Gateway-Key`).
-- The provider catalog is static (compiled from route definitions), not fetched live from upstream.
-
----
-
----
-
-## Admin Operations
-
-Administrative endpoints for managing the gateway. These endpoints require a client role of `admin` or `super_admin`.
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/admin/cache/stats` | `GET` | Get cache statistics |
-| `/admin/cache/clear` | `POST` | Clear the cache |
-| `/admin/circuits` | `GET` | Get circuit breaker states |
-| `/admin/circuits/reset` | `POST` | Reset all circuit breakers |
-| `/admin/circuits/{name}/reset` | `POST` | Reset a specific circuit breaker |
-| `/admin/providers/{name}/reload` | `POST` | Reload a provider configuration |
-| `/admin/shutdown` | `POST` | Initiate graceful shutdown (super_admin only) |
-| `/admin/security/blocklist` | `GET` | Get blocked IPs |
-| `/admin/security/blocklist` | `POST` | Add IP to blocklist |
-
----
 
 ## Error Codes
 

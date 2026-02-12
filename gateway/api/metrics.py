@@ -5,7 +5,6 @@ from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from gateway.api.deps import require_api_key
-from gateway.core.metrics import update_memory_metrics_if_due
 
 router = APIRouter(
     tags=["metrics"],

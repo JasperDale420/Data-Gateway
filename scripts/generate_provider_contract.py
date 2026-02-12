@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import re
-from bisect import bisect_right
 from collections import defaultdict
 from pathlib import Path
 
@@ -25,12 +24,6 @@ PROVIDER_SOURCES = {
     "yfinance": Path("gateway/api/yf.py"),
 }
 
-ROUTE_PATTERN = re.compile(
-    r"@(?:base_)?router\.(get|post|put|patch|delete)\(\s*[\"']([^\"']+)[\"']",
-    re.MULTILINE,
-)
-FUNC_PATTERN = re.compile(r"(?:async\s+def|def)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
-
 
 def _iter_provider_files(provider: str) -> list[Path]:
     source = PROVIDER_SOURCES[provider]
@@ -39,45 +32,27 @@ def _iter_provider_files(provider: str) -> list[Path]:
     return sorted(path for path in source.glob("*.py") if path.name != "__init__.py")
 
 
-def _index_function_defs(text: str) -> tuple[list[int], list[str]]:
-    positions: list[int] = []
-    names: list[str] = []
-    for match in FUNC_PATTERN.finditer(text):
-        positions.append(match.start())
-        names.append(match.group(1))
-    return positions, names
-
-
-def _resolve_handler_name(
-    route_end_offset: int,
-    function_positions: list[int],
-    function_names: list[str],
-) -> str:
-    idx = bisect_right(function_positions, route_end_offset)
-    if idx >= len(function_names):
-        return "unknown_handler"
-    return function_names[idx]
-
-
 def _collect_routes() -> dict[str, list[tuple[str, str, str]]]:
     routes: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+
+    route_pattern = re.compile(
+        r"@(?:base_)?router\.(get|post|put|patch|delete)\(\s*[\"']([^\"']+)[\"']",
+        re.MULTILINE,
+    )
+    func_pattern = re.compile(r"(?:async\s+def|def)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
 
     for provider, prefix in PROVIDER_PREFIXES.items():
         for file_path in _iter_provider_files(provider):
             text = file_path.read_text()
-            function_positions, function_names = _index_function_defs(text)
-            for match in ROUTE_PATTERN.finditer(text):
+            for match in route_pattern.finditer(text):
                 method = match.group(1).upper()
                 subpath = match.group(2)
                 if subpath.startswith("/api/v1/"):
                     full_path = subpath
                 else:
                     full_path = f"{prefix}{subpath}"
-                handler_name = _resolve_handler_name(
-                    route_end_offset=match.end(),
-                    function_positions=function_positions,
-                    function_names=function_names,
-                )
+                func_match = func_pattern.search(text, match.end())
+                handler_name = func_match.group(1) if func_match else "unknown_handler"
                 handler_ref = f"{file_path.as_posix()}:{handler_name}"
                 routes[provider].append((method, full_path, handler_ref))
 

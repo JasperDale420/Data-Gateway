@@ -117,20 +117,12 @@ module = ["tests.*"]
 disable_error_code = ["var-annotated"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = "test_*.py"
-addopts = "-v --tb=short --strict-markers -m 'not perf'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
+testpaths = ["tests"]
+addopts = "-v --tb=short -m 'not perf'"
 markers = [
-    "unit: Fast, isolated unit tests (no I/O, no network)",
-    "integration: Tests with real DB, file I/O, or component interactions",
-    "e2e: End-to-end full system flow tests",
-    "slow: Tests that take >1s (opt-in, excluded by default)",
-    "perf: Benchmark/performance tests (excluded by default)",
+    "perf: benchmark/performance tests excluded from default pytest runs",
 ]
 
 [tool.coverage.run]

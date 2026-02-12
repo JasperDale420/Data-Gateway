@@ -136,11 +136,7 @@ class BulkOptionsRequest:
                 errors.append("moneyness_range.min_delta must be between 0 and 1")
             if max_delta is not None and not (0 <= float(max_delta) <= 1):
                 errors.append("moneyness_range.max_delta must be between 0 and 1")
-            if (
-                min_delta is not None
-                and max_delta is not None
-                and float(min_delta) > float(max_delta)
-            ):
+            if min_delta is not None and max_delta is not None and float(min_delta) > float(max_delta):
                 errors.append("moneyness_range.min_delta must be <= max_delta")
 
         return errors
@@ -432,37 +428,6 @@ class BulkJobManager:
             return jobs
         return [job for job in jobs if job.client_id == client_id]
 
-    async def list_jobs_page(
-        self,
-        *,
-        client_id: str | None = None,
-        status: str | None = None,
-        limit: int | None = None,
-        offset: int = 0,
-    ) -> tuple[list[BulkJob], int, bool, int | None]:
-        """List jobs with offset/limit pagination metadata.
-
-        Returns:
-            (paged_jobs, total_matches, has_more, next_offset)
-        """
-        jobs = await self.list_jobs(client_id=client_id)
-        if status:
-            jobs = [job for job in jobs if job.status.value == status]
-
-        total_matches = len(jobs)
-        page_offset = max(0, offset)
-        page_limit = None if limit is None else max(1, limit)
-
-        if page_offset:
-            jobs = jobs[page_offset:]
-        if page_limit is not None:
-            jobs = jobs[:page_limit]
-
-        consumed = page_offset + len(jobs)
-        has_more = consumed < total_matches
-        next_offset = consumed if has_more else None
-        return jobs, total_matches, has_more, next_offset
-
     async def cancel_job(self, job_id: str) -> bool:
         """Cancel a job if it's still running."""
         job = self._jobs.get(job_id)
@@ -658,10 +623,7 @@ class BulkJobManager:
             job.results.extend(records)
             return
 
-        if (
-            job.results_spool_path is None
-            and (len(job.results) + len(records)) > self._max_results_in_memory
-        ):
+        if job.results_spool_path is None and (len(job.results) + len(records)) > self._max_results_in_memory:
             with tempfile.NamedTemporaryFile(
                 mode="w",
                 encoding="utf-8",
@@ -846,10 +808,7 @@ class BulkJobManager:
             async def _fetch_underlying_with_key(underlying: str) -> tuple[str, list[Any] | None]:
                 return underlying, await _fetch_underlying(underlying)
 
-            tasks = [
-                asyncio.create_task(_fetch_underlying_with_key(underlying))
-                for underlying in request.underlyings
-            ]
+            tasks = [asyncio.create_task(_fetch_underlying_with_key(underlying)) for underlying in request.underlyings]
             for task in asyncio.as_completed(tasks):
                 try:
                     underlying, contracts = await task
@@ -870,7 +829,7 @@ class BulkJobManager:
                         min_delta=min_delta,
                         max_delta=max_delta,
                     )
-                    self._append_job_results(job, filtered)
+                    job.results.extend(filtered)
                     job.records_fetched += len(filtered)
 
                 job.symbols_complete += 1
@@ -1016,9 +975,7 @@ class BulkJobManager:
             ) -> tuple[str, list[dict[str, Any]] | None]:
                 return symbol, await _fetch_symbol(symbol)
 
-            tasks = [
-                asyncio.create_task(_fetch_symbol_with_key(symbol)) for symbol in request.symbols
-            ]
+            tasks = [asyncio.create_task(_fetch_symbol_with_key(symbol)) for symbol in request.symbols]
             for task in asyncio.as_completed(tasks):
                 try:
                     symbol, factors = await task
@@ -1032,7 +989,7 @@ class BulkJobManager:
                     factors = None
 
                 if factors:
-                    self._append_job_results(job, factors)
+                    job.results.extend(factors)
                     job.records_fetched += len(factors)
 
                 job.symbols_complete += 1

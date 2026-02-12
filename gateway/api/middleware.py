@@ -12,7 +12,6 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from gateway.core.audit import get_audit_logger
 from gateway.core.envelope import wrap_event
 from gateway.core.metrics import (
     record_cache_hit,
@@ -20,7 +19,6 @@ from gateway.core.metrics import (
     record_rate_limit_exceeded,
     record_request,
 )
-from gateway.core.security import get_input_validator
 
 logger = structlog.get_logger()
 
@@ -54,6 +52,8 @@ class InputValidationMiddleware(BaseHTTPMiddleware):
         content_length = request.headers.get("content-length")
         if content_length:
             try:
+                from gateway.core.security import get_input_validator
+
                 validator = get_input_validator()
                 error = validator.validate_request_size(int(content_length), endpoint_type="rest")
                 if error:
@@ -145,12 +145,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 limit=bucket.limit,
             )
             record_rate_limit_exceeded(client_id)
-            client_ip = request.client.host if request.client else "unknown"
-            get_audit_logger().rate_limited(
-                client_id=client_id,
-                ip=client_ip,
-                metadata={"limit_type": "per_client", "limit": bucket.limit},
-            )
             return Response(
                 content='{"error": {"code": "GW-E4001", "message": "Rate limit exceeded"}}',
                 status_code=429,
@@ -339,7 +333,6 @@ class CacheMiddleware(BaseHTTPMiddleware):
             if cached_data:
                 entry = CacheEntry.from_dict(cached_data)
                 if not entry.is_expired():
-                    request.state._gateway_cached_response_body = entry.content
                     record_cache_hit(cache_type)
                     headers = dict(entry.headers or {})
                     headers.update(
@@ -643,12 +636,12 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
         if not self._should_wrap_response(response):
             return response
 
-        # Cache-hit responses that are already wrapped do not need parse/dump work.
-        if response.headers.get("X-Gateway-Envelope", "").lower() == "true":
-            return response
-
         try:
-            body = await self._get_response_body(request, response)
+            # Read response body
+            body_chunks: list[bytes] = []
+            async for chunk in response.body_iterator:
+                body_chunks.append(chunk)
+            body = b"".join(body_chunks)
             if len(body) > self.max_body_bytes:
                 return Response(
                     content=body,
@@ -788,41 +781,6 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 media_type=response.media_type,
                 headers=dict(response.headers),
             )
-
-    async def _publish_sink_batch(self, tasks: list, path: str) -> None:
-        """Publish a batch of sink writes without raising into request flow."""
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        failures = [result for result in results if isinstance(result, Exception)]
-        if failures:
-            logger.warning(
-                "rest_envelope_sink_publish_batch_failed",
-                path=path,
-                failed=len(failures),
-            )
-
-    async def _get_response_body(self, request: Request, response: Response) -> bytes:
-        """Reuse pre-buffered body bytes from cache middleware when available."""
-        cached_body = getattr(request.state, "_gateway_cached_response_body", None)
-        if isinstance(cached_body, bytes):
-            return cached_body
-        if isinstance(cached_body, bytearray):
-            return bytes(cached_body)
-
-        response_body = getattr(response, "body", None)
-        if isinstance(response_body, bytes):
-            request.state._gateway_cached_response_body = response_body
-            return response_body
-        if isinstance(response_body, bytearray):
-            body = bytes(response_body)
-            request.state._gateway_cached_response_body = body
-            return body
-
-        body_chunks: list[bytes] = []
-        async for chunk in response.body_iterator:
-            body_chunks.append(chunk)
-        body = b"".join(body_chunks)
-        request.state._gateway_cached_response_body = body
-        return body
 
     def _should_wrap_response(self, response: Response) -> bool:
         """Only wrap small JSON responses with explicit length.
@@ -1043,11 +1001,6 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         if self._global_requests >= self.global_limit:
             logger.warning("global_rate_limit_exceeded", current=self._global_requests)
             record_rate_limit_exceeded("global")
-            client_ip = self._get_client_ip(request)
-            get_audit_logger().rate_limited(
-                ip=client_ip,
-                metadata={"limit_type": "global", "limit": self.global_limit},
-            )
             return Response(
                 content=json.dumps(
                     {
@@ -1066,10 +1019,6 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         client_ip = self._get_client_ip(request)
         if not self._check_ip_limit(client_ip):
             record_rate_limit_exceeded(f"ip:{client_ip}")
-            get_audit_logger().rate_limited(
-                ip=client_ip,
-                metadata={"limit_type": "per_ip", "limit": self.per_ip_limit},
-            )
             return Response(
                 content=json.dumps(
                     {

@@ -6,7 +6,7 @@ crypto, news) and fans out received data to subscribed downstream clients.
 
 import asyncio
 import random
-from collections.abc import Awaitable, Callable, Collection, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -16,11 +16,6 @@ import websockets
 from websockets.client import WebSocketClientProtocol
 
 from gateway.core.envelope import wrap_event
-from gateway.core.metrics import (
-    record_stream_fanout_batch_size,
-    record_stream_fanout_dispatch_event,
-    set_stream_fanout_limits_metrics,
-)
 from gateway.core.validator import get_validator
 
 logger = structlog.get_logger()
@@ -321,13 +316,6 @@ class SubscriptionManager:
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
         """Get all clients subscribed to a symbol for a data type."""
         return list(self._index.get(data_type, {}).get(symbol, ()))
-
-    def get_clients_for_symbol_view(self, symbol: str, data_type: str) -> Collection[str]:
-        """Get a zero-copy view of clients subscribed to a symbol for a data type."""
-        clients = self._index.get(data_type, {}).get(symbol)
-        if clients is None:
-            return ()
-        return clients
 
     def _aggregate(self) -> tuple[set[str], set[str], set[str], set[str]]:
         """Compute union of all client subscriptions."""
@@ -818,9 +806,7 @@ class StreamMultiplexer:
                 self._tasks.append(task)
                 logger.info("stream_started", stream=stream_type.value)
         else:
-            logger.info(
-                "lazy_connect_enabled", message="Streams will connect on first subscription"
-            )
+            logger.info("lazy_connect_enabled", message="Streams will connect on first subscription")
 
     async def stop(self) -> None:
         """Stop all upstream connections with aggressive cleanup.
@@ -929,9 +915,7 @@ class StreamMultiplexer:
                 }
 
         # Track client subscription
-        new_bars, new_quotes, new_trades, new_news = conn.subscriptions.subscribe(
-            client_id, bars, quotes, trades, news
-        )
+        new_bars, new_quotes, new_trades, new_news = conn.subscriptions.subscribe(client_id, bars, quotes, trades, news)
 
         # Subscribe upstream only for new symbols
         if new_bars or new_quotes or new_trades or new_news:
@@ -977,9 +961,7 @@ class StreamMultiplexer:
     async def client_disconnect(self, client_id: str) -> None:
         """Remove all subscriptions for a disconnecting client."""
         for conn in self._connections.values():
-            removed_bars, removed_quotes, removed_trades, removed_news = (
-                conn.subscriptions.remove_client(client_id)
-            )
+            removed_bars, removed_quotes, removed_trades, removed_news = conn.subscriptions.remove_client(client_id)
             if removed_bars or removed_quotes or removed_trades or removed_news:
                 await conn.unsubscribe(removed_bars, removed_quotes, removed_trades, removed_news)
 
@@ -1000,10 +982,62 @@ class StreamMultiplexer:
         """Route incoming message to subscribed clients."""
         msg_type = message.get("T", "")
 
-        data_type = MESSAGE_TYPE_TO_DATA_TYPE.get(msg_type)
+        # Map Alpaca message types to our data types
+        data_type_map = {
+            "b": "bars",
+            "q": "quotes",
+            "t": "trades",
+            "n": "news",
+        }
+
+        data_type = data_type_map.get(msg_type)
         if not data_type:
             # System message, heartbeat, etc.
             return
+
+        if data_type in {"bars", "quotes", "trades"}:
+            validator = get_validator()
+            if data_type == "bars":
+                result = validator.validate_bar(
+                    {
+                        "symbol": message.get("S"),
+                        "timestamp": message.get("t"),
+                        "open": message.get("o"),
+                        "high": message.get("h"),
+                        "low": message.get("l"),
+                        "close": message.get("c"),
+                        "volume": message.get("v"),
+                    }
+                )
+            elif data_type == "quotes":
+                result = validator.validate_quote(
+                    {
+                        "symbol": message.get("S"),
+                        "timestamp": message.get("t"),
+                        "bid_price": message.get("bp"),
+                        "ask_price": message.get("ap"),
+                        "bid_size": message.get("bs"),
+                        "ask_size": message.get("as"),
+                    }
+                )
+            else:
+                result = validator.validate_trade(
+                    {
+                        "symbol": message.get("S"),
+                        "timestamp": message.get("t"),
+                        "price": message.get("p"),
+                        "size": message.get("s"),
+                    }
+                )
+
+            if not result.valid:
+                logger.warning(
+                    "stream_validation_failed",
+                    error_codes=result.error_codes,
+                    data_type=data_type,
+                    symbol=message.get("S"),
+                )
+                return
 
         # Find connection and get subscribed clients
         conn = self._get_connection(stream_type)
@@ -1022,41 +1056,20 @@ class StreamMultiplexer:
             if not symbols:
                 symbols = ["*"]
             symbol_for_log = symbols[0] if symbols else "*"
-            unique_symbols: list[str] = list(dict.fromkeys(symbols))
         else:
             symbol = message.get("S", "")
             if not symbol:
                 return
             symbols = [symbol]
             symbol_for_log = symbol
-            unique_symbols = symbols
 
         clients: set[str] = set()
         if data_type == "news":
-            clients.update(conn.subscriptions.get_clients_for_symbol_view("*", data_type))
-        for sym in unique_symbols:
-            clients.update(conn.subscriptions.get_clients_for_symbol_view(sym, data_type))
+            clients.update(conn.subscriptions.get_clients_for_symbol("*", data_type))
+        for sym in symbols:
+            clients.update(conn.subscriptions.get_clients_for_symbol(sym, data_type))
         if not clients:
             return
-
-        # Validate only after we know the message has downstream subscribers.
-        if data_type in {"bars", "quotes", "trades"}:
-            validator = self._get_stream_validator()
-            if data_type == "bars":
-                result = validator.validate_bar(message)
-            elif data_type == "quotes":
-                result = validator.validate_quote(message)
-            else:
-                result = validator.validate_trade(message)
-
-            if not result.valid:
-                logger.warning(
-                    "stream_validation_failed",
-                    error_codes=result.error_codes,
-                    data_type=data_type,
-                    symbol=message.get("S"),
-                )
-                return
 
         # Wrap event in EventEnvelope for downstream consumers
         envelope = wrap_event(

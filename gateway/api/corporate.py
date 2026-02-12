@@ -87,7 +87,7 @@ def _configure_corporate_fetcher(
 ) -> None:
     service = get_corporate_actions_service()
     provider = cast(SupportsAlpacaCorporateActions | None, registry.get("alpaca"))
-    if provider and not service.has_fetcher():
+    if provider:
         type_map = {
             ActionType.DIVIDEND: "dividends",
             ActionType.SPLIT: "splits",
@@ -151,8 +151,6 @@ def _configure_corporate_fetcher(
             return actions
 
         service.set_fetcher(_fetch)
-
-    if provider:
         return
 
     settings = get_settings()

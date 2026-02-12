@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import structlog
 
-from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
+from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
 
@@ -367,9 +367,7 @@ class FinnhubProvider(DataProvider):
                         "url": article.get("url", ""),
                         "source": article.get("source", ""),
                         "image_url": article.get("image"),
-                        "published_at": datetime.fromtimestamp(
-                            article.get("datetime", 0), tz=UTC
-                        ).isoformat(),
+                        "published_at": datetime.fromtimestamp(article.get("datetime", 0), tz=UTC).isoformat(),
                         "symbols": [symbol.upper()],
                         "category": article.get("category"),
                         "provider": "finnhub",
@@ -409,9 +407,7 @@ class FinnhubProvider(DataProvider):
                         "url": article.get("url", ""),
                         "source": article.get("source", ""),
                         "image_url": article.get("image"),
-                        "published_at": datetime.fromtimestamp(
-                            article.get("datetime", 0), tz=UTC
-                        ).isoformat(),
+                        "published_at": datetime.fromtimestamp(article.get("datetime", 0), tz=UTC).isoformat(),
                         "category": article.get("category"),
                         "provider": "finnhub",
                     }
