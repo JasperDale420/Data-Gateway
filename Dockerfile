@@ -4,7 +4,10 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Create non-root user
-RUN groupadd -r gateway && useradd -r -g gateway gateway
+RUN groupadd -r gateway && \
+    useradd -r -g gateway -m -d /home/gateway gateway && \
+    mkdir -p /home/gateway/.cache/py-yfinance && \
+    chown -R gateway:gateway /home/gateway
 
 # Copy and install patched Unusual Whales SDK v5.1 first
 COPY vendor/unusualwhales_sdk/ /tmp/unusualwhales_sdk/

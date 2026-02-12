@@ -8,7 +8,7 @@ clients:
     key: gw_cerberus_dev_key_12345
     role: trader
     permissions:
-      providers: ["alpaca", "uw", "yfinance"]
+      providers: ["alpaca", "uw", "yfinance", "finnhub", "alphavantage", "sec"]
       feeds: ["bars", "quotes", "trades", "flow"]
       max_symbols: 1000
       rate_limit: 600  # requests per minute

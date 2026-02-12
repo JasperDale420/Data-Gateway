@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.54] - 2026-02-12
+
+### Fixed
+
+- **Cerberus provider access alignment**: Expanded `config/clients.yaml` `cerberus.permissions.providers` to include `finnhub`, `alphavantage`, and `sec` in addition to existing providers, eliminating gateway `403 Provider access denied` responses for those requested endpoints.
+
+## [0.5.53] - 2026-02-12
+
+### Fixed
+
+- **Docker yfinance cache directory permissions**: Updated `Dockerfile` to create a real `/home/gateway` home directory for the non-root `gateway` user, pre-create `/home/gateway/.cache/py-yfinance`, and assign ownership to `gateway:gateway` so yfinance cache initialization no longer fails with permission-denied warnings.
+
 ## [0.5.52] - 2026-02-12
 
 ### Added
