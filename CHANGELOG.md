@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.58] - 2026-02-12
+
+### Fixed
+
+- **Mypy plugin import failure**: Updated `pyproject.toml` mypy plugin path from `numpy.typing.mypy` to `numpy.typing.mypy_plugin`, fixing type-check startup failure (`No module named 'numpy.typing.mypy'`).
+
 ## [0.5.57] - 2026-02-12
 
 ### Added

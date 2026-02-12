@@ -89,7 +89,7 @@ warn_return_any = false
 warn_unused_ignores = true
 ignore_missing_imports = true
 check_untyped_defs = true
-plugins = ["pydantic.mypy", "numpy.typing.mypy"]
+plugins = ["pydantic.mypy", "numpy.typing.mypy_plugin"]
 # Provider routers access methods not in base DataProvider class
 # These are implemented in concrete providers
 [[tool.mypy.overrides]]
