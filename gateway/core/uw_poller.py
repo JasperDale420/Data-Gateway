@@ -134,9 +134,7 @@ class UWPoller:
         now_et = datetime.now(ET)
         current_time = now_et.time()
         # Extended hours: 4:00 AM - 8:00 PM ET on trading days
-        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(
-            now_et.date()
-        )
+        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(now_et.date())
 
     def _is_morning_rush(self) -> bool:
         """Check if we're in high-volume morning period (first hour of trading)."""
@@ -176,18 +174,12 @@ class UWPoller:
     def _cleanup_cache(self) -> None:
         """Remove expired entries from dedup cache."""
         now = datetime.now(UTC)
-        expired = [
-            eid
-            for eid, ts in self._seen_ids.items()
-            if (now - ts).total_seconds() > self._cache_ttl_seconds
-        ]
+        expired = [eid for eid, ts in self._seen_ids.items() if (now - ts).total_seconds() > self._cache_ttl_seconds]
         for eid in expired:
             del self._seen_ids[eid]
 
         if expired:
-            logger.debug(
-                "uw_poller_cache_cleanup", removed=len(expired), remaining=len(self._seen_ids)
-            )
+            logger.debug("uw_poller_cache_cleanup", removed=len(expired), remaining=len(self._seen_ids))
 
     async def _load_redis_duplicate_ids(
         self,
@@ -245,9 +237,7 @@ class UWPoller:
         redis_duplicates = await self._load_redis_duplicate_ids(dedupe_items)
         if redis_duplicates:
             duplicates += len(redis_duplicates)
-            to_publish = [
-                item for item in to_publish if not item[1] or item[1] not in redis_duplicates
-            ]
+            to_publish = [item for item in to_publish if not item[1] or item[1] not in redis_duplicates]
 
         publish_sem = asyncio.Semaphore(max(1, self._publish_max_inflight))
 
@@ -280,9 +270,7 @@ class UWPoller:
             if event_id:
                 self._mark_seen(event_id)
                 if self._redis_dedupe is not None and cache_key:
-                    redis_sets.append(
-                        self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
-                    )
+                    redis_sets.append(self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds))
 
         if redis_sets:
             set_results = await asyncio.gather(*redis_sets, return_exceptions=True)
@@ -464,6 +452,11 @@ class UWPoller:
             envelopes: list[dict[str, Any]] = []
 
             for alert in alerts:
+                if not envelopes and alerts:
+                    logger.info(
+                        "uw_poller_debug_first_alert", alert_type=type(alerts[0]), alert_dump=alerts[0].model_dump()
+                    )
+
                 envelope = wrap_event(
                     event=alert.model_dump(),
                     provider="unusual_whales",

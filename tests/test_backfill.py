@@ -180,6 +180,23 @@ def test_submit_validates_date_range() -> None:
         engine.submit(req)
 
 
+def test_submit_rejects_wildcard_symbol() -> None:
+    engine = _make_engine()
+    req = BackfillRequest(
+        provider="alpaca",
+        feed="bars",
+        symbols=["*"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
+    )
+    fake_task = MagicMock()
+    with (
+        patch("gateway.core.backfill.asyncio.create_task", return_value=fake_task),
+        pytest.raises(ValueError, match="Wildcard symbol"),
+    ):
+        engine.submit(req)
+
+
 @pytest.mark.asyncio
 async def test_submit_creates_job_with_correct_structure() -> None:
     engine = _make_engine()

@@ -88,9 +88,7 @@ class BackfillJob(BaseModel):
 
     @property
     def symbols_complete(self) -> int:
-        return sum(
-            1 for sp in self.symbols_progress.values() if sp.status in ("complete", "failed")
-        )
+        return sum(1 for sp in self.symbols_progress.values() if sp.status in ("complete", "failed"))
 
     @property
     def symbols_total(self) -> int:
@@ -268,13 +266,42 @@ class BackfillEngine:
         if dispatch_key not in BACKFILL_DISPATCH:
             supported = [f for (p, f) in BACKFILL_DISPATCH if p == request.provider]
             raise ValueError(
-                f"Unsupported feed '{request.feed}' for provider '{request.provider}'. "
-                f"Supported: {supported}"
+                f"Unsupported feed '{request.feed}' for provider '{request.provider}'. Supported: {supported}"
             )
 
         # Validate date range
         if request.start > request.end:
             raise ValueError("start must be <= end")
+
+        # Validate and normalize symbols
+        normalized_symbols: list[str] = []
+        invalid_symbols: list[str] = []
+
+        for raw_symbol in request.symbols:
+            symbol = raw_symbol.strip().upper()
+            if not symbol:
+                invalid_symbols.append(raw_symbol)
+                continue
+            if "*" in symbol:
+                invalid_symbols.append(raw_symbol)
+                continue
+            normalized_symbols.append(symbol)
+
+        if invalid_symbols:
+            logger.warning(
+                "backfill_invalid_symbols",
+                provider=request.provider,
+                feed=request.feed,
+                invalid_symbols=invalid_symbols,
+            )
+            raise ValueError(
+                "Wildcard symbol '*' is not supported for backfill. Provide explicit symbols like ['AAPL', 'MSFT']."
+            )
+
+        if not normalized_symbols:
+            raise ValueError("symbols must include at least one valid symbol")
+
+        request.symbols = normalized_symbols
 
         # Build job
         chunks = _date_chunks(request.start, request.end, request.chunk_days)
@@ -359,9 +386,7 @@ class BackfillEngine:
                 return
 
             # Determine final status
-            failed_symbols = [
-                sp.symbol for sp in job.symbols_progress.values() if sp.status == "failed"
-            ]
+            failed_symbols = [sp.symbol for sp in job.symbols_progress.values() if sp.status == "failed"]
 
             if failed_symbols:
                 if len(failed_symbols) == len(job.symbols_progress):
@@ -396,7 +421,13 @@ class BackfillEngine:
             if job.status == BackfillStatus.CANCELLED:
                 break
             await self._process_symbol(
-                job, sym, chunks, dispatch_fn, provider_instance, rate_limiter, delay_ms,
+                job,
+                sym,
+                chunks,
+                dispatch_fn,
+                provider_instance,
+                rate_limiter,
+                delay_ms,
             )
 
     async def _process_symbol(
@@ -417,8 +448,14 @@ class BackfillEngine:
             if job.status == BackfillStatus.CANCELLED:
                 break
             await self._process_chunk(
-                job, sp, sym, chunk_start, chunk_end,
-                dispatch_fn, provider_instance, rate_limiter,
+                job,
+                sp,
+                sym,
+                chunk_start,
+                chunk_end,
+                dispatch_fn,
+                provider_instance,
+                rate_limiter,
             )
             await asyncio.sleep(delay_ms / 1000)
 
@@ -439,7 +476,10 @@ class BackfillEngine:
         try:
             await rate_limiter.acquire(job.request.provider, block=True)
             results = await dispatch_fn(
-                provider_instance, sym, chunk_start, chunk_end,
+                provider_instance,
+                sym,
+                chunk_start,
+                chunk_end,
                 timeframe=job.request.timeframe,
             )
             if not results:

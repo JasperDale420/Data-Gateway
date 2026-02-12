@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.182] - 2026-02-12
+
+### Fixed
+
+- **Backfill wildcard rejection**: Updated `/Users/jacobmcmillan/Empire/Data-Gateway/gateway/core/backfill.py` so `BackfillEngine.submit()` now rejects wildcard symbols like `*` before job execution, preventing repeated Alpaca `400 Bad Request` failures and chunk-level error storms.
+- **Backfill symbol validation and normalization**: Added symbol normalization (`strip` + uppercase) plus explicit invalid-symbol logging (`backfill_invalid_symbols`) so malformed requests fail fast with a clear message.
+- **Regression test for wildcard inputs**: Expanded `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_backfill.py` with `test_submit_rejects_wildcard_symbol` to lock in this behavior.
+
 ## [0.5.181] - 2026-02-12
 
 ### Changed
