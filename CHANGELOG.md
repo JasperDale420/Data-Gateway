@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.59] - 2026-02-12
+
+### Added
+
+- **Redis sink regression coverage**: Added `tests/test_redis_sink.py` to lock reconnect/reset behavior after Redis LOADING failures and enforce bounded publish/health-check timeout behavior.
+- **Readiness degradation/warm-up coverage**: Expanded `tests/test_health.py` with sink-degraded readiness behavior and Redis LOADING cache warm-up classification checks.
+- **Alpha Vantage premium fallback coverage**: Expanded `tests/test_alphavantage_provider.py` with daily/weekly/monthly adjusted-endpoint fallback tests when premium endpoints are unavailable.
+
+### Fixed
+
+- **Alpha Vantage adjusted time-series premium fallback**: Updated `gateway/providers/alphavantage.py` so adjusted daily/weekly/monthly requests automatically retry their non-adjusted endpoints when Alpha Vantage returns premium-only errors.
+- **Monthly fallback parsing correctness**: Updated monthly time-series parsing to safely map close/volume fields when fallback responses come from non-adjusted payload shapes.
+- **Redis sink recovery under LOADING/timeouts**: Updated `gateway/core/redis_sink.py` to enforce bounded Redis operation timeouts and reset connection state on publish/health-check failures so reconnect can happen on the next attempt.
+- **Readiness behavior during transient sink/cache startup states**: Updated `gateway/api/health.py` so sink failures report `degraded` (without flipping global readiness), and Redis dataset-loading cache failures are reported as `warming_up`.
+
+### Changed
+
+- **Redis Docker health-check startup tolerance**: Updated `docker-compose.yml` Redis health check with a command that requires `PONG`, increased retries, and a `300s` start period to reduce false unhealthy states during large AOF/RDB load windows.
+
 ## [0.5.58] - 2026-02-12
 
 ### Fixed

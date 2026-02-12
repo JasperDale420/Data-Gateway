@@ -45,10 +45,11 @@ services:
     command: redis-server --appendonly yes
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 30
+      start_period: 300s
 
 volumes:
   redis_data:

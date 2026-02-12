@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 from typing import Any, cast
 
 import pytest
@@ -193,6 +194,106 @@ async def test_get_daily_respects_max_points_window(monkeypatch: pytest.MonkeyPa
     assert len(bars) == 1
     assert bars[0].symbol == "AAPL"
     assert bars[0].timestamp.isoformat() == "2026-02-03T00:00:00"
+
+
+@pytest.mark.asyncio
+async def test_get_daily_falls_back_to_unadjusted_on_premium_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = AlphaVantageProvider()
+    calls: list[str] = []
+
+    async def _fake_fetch_json(params: dict[str, object]) -> dict[str, object]:
+        function = str(params["function"])
+        calls.append(function)
+        if function == "TIME_SERIES_DAILY_ADJUSTED":
+            raise RuntimeError("Premium endpoint requires Alpha Vantage subscription")
+        return {
+            "Time Series (Daily)": {
+                "2026-02-03": {
+                    "1. open": "100",
+                    "2. high": "101",
+                    "3. low": "99",
+                    "4. close": "100.5",
+                    "5. volume": "10",
+                },
+            }
+        }
+
+    monkeypatch.setattr(provider, "_fetch_json", _fake_fetch_json)
+
+    bars = await provider.get_daily("AAPL", adjusted=True, max_points=1)
+
+    assert calls == ["TIME_SERIES_DAILY_ADJUSTED", "TIME_SERIES_DAILY"]
+    assert len(bars) == 1
+    assert bars[0].close == Decimal("100.5")
+
+
+@pytest.mark.asyncio
+async def test_get_weekly_falls_back_to_unadjusted_on_premium_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = AlphaVantageProvider()
+    calls: list[str] = []
+
+    async def _fake_fetch_json(params: dict[str, object]) -> dict[str, object]:
+        function = str(params["function"])
+        calls.append(function)
+        if function == "TIME_SERIES_WEEKLY_ADJUSTED":
+            raise RuntimeError("Premium endpoint requires Alpha Vantage subscription")
+        return {
+            "Weekly Time Series": {
+                "2026-02-06": {
+                    "1. open": "100",
+                    "2. high": "101",
+                    "3. low": "99",
+                    "4. close": "100.5",
+                    "5. volume": "10",
+                },
+            }
+        }
+
+    monkeypatch.setattr(provider, "_fetch_json", _fake_fetch_json)
+
+    bars = await provider.get_weekly("AAPL", adjusted=True, max_points=1)
+
+    assert calls == ["TIME_SERIES_WEEKLY_ADJUSTED", "TIME_SERIES_WEEKLY"]
+    assert len(bars) == 1
+    assert bars[0].close == Decimal("100.5")
+
+
+@pytest.mark.asyncio
+async def test_get_monthly_falls_back_to_unadjusted_on_premium_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = AlphaVantageProvider()
+    calls: list[str] = []
+
+    async def _fake_fetch_json(params: dict[str, object]) -> dict[str, object]:
+        function = str(params["function"])
+        calls.append(function)
+        if function == "TIME_SERIES_MONTHLY_ADJUSTED":
+            raise RuntimeError("Premium endpoint requires Alpha Vantage subscription")
+        return {
+            "Monthly Time Series": {
+                "2026-02-01": {
+                    "1. open": "100",
+                    "2. high": "101",
+                    "3. low": "99",
+                    "4. close": "100.5",
+                    "5. volume": "10",
+                },
+            }
+        }
+
+    monkeypatch.setattr(provider, "_fetch_json", _fake_fetch_json)
+
+    bars = await provider.get_monthly("AAPL", adjusted=True, max_points=1)
+
+    assert calls == ["TIME_SERIES_MONTHLY_ADJUSTED", "TIME_SERIES_MONTHLY"]
+    assert len(bars) == 1
+    assert bars[0].close == Decimal("100.5")
+    assert bars[0].volume == 10
 
 
 def test_top_time_series_items_fast_path_keeps_head_order() -> None:

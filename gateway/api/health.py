@@ -27,6 +27,10 @@ def _should_log(last_log: float, interval_seconds: float = 60.0) -> bool:
     return (time.time() - last_log) >= interval_seconds
 
 
+def _is_redis_loading_error(error: Exception) -> bool:
+    return "loading the dataset in memory" in str(error).lower()
+
+
 @router.get("")
 async def liveness():
     """Liveness probe - returns 503 during graceful shutdown (PRD §Graceful Shutdown)."""
@@ -70,12 +74,15 @@ async def readiness(
         delete_result = cache.delete("__health_check__")
         if inspect.isawaitable(delete_result):
             await delete_result
-    except Exception:
-        checks["cache"] = "error"
+    except Exception as e:
+        checks["cache"] = "warming_up" if _is_redis_loading_error(e) else "error"
         global _LAST_CACHE_ERROR_LOG
         if _should_log(_LAST_CACHE_ERROR_LOG):
             _LAST_CACHE_ERROR_LOG = time.time()
-            logger.exception("readiness_cache_check_failed")
+            if _is_redis_loading_error(e):
+                logger.warning("readiness_cache_warming_up", error=str(e))
+            else:
+                logger.exception("readiness_cache_check_failed")
 
     # Verify sink health (including circuit breaker state)
     sink_registry = get_sink_registry()
@@ -84,16 +91,16 @@ async def readiness(
         try:
             sink_results = await sink_registry.health_check_all()
             if not all(sink_results.values()):
-                checks["sinks"] = "error"
+                checks["sinks"] = "degraded"
         except Exception:
-            checks["sinks"] = "error"
+            checks["sinks"] = "degraded"
             global _LAST_SINK_ERROR_LOG
             if _should_log(_LAST_SINK_ERROR_LOG):
                 _LAST_SINK_ERROR_LOG = time.time()
                 logger.exception("readiness_sink_check_failed")
 
-    # All checks passed?
-    all_ok = all(v == "ok" for v in checks.values())
+    # Cache + connection readiness gate request serving; sink failures are reported as degraded.
+    all_ok = checks["cache"] == "ok" and checks["connections"] == "ok"
 
     return {
         "status": "ready" if all_ok else "not_ready",

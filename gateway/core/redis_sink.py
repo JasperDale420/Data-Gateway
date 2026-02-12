@@ -4,6 +4,7 @@ This sink publishes Gateway data to Redis Streams, which Heber ingestors
 can consume for storage in the Bronze layer.
 """
 
+import asyncio
 import json
 from typing import Any
 
@@ -12,6 +13,8 @@ import structlog
 from gateway.core.data_sink import DataSink
 
 logger = structlog.get_logger()
+
+DEFAULT_OPERATION_TIMEOUT_SECONDS = 1.0
 
 
 class RedisStreamsSink(DataSink):
@@ -26,6 +29,7 @@ class RedisStreamsSink(DataSink):
         redis_url: str,
         max_len: int = 100_000,
         approximate_trim: bool = True,
+        operation_timeout_seconds: float = DEFAULT_OPERATION_TIMEOUT_SECONDS,
     ) -> None:
         """Initialize Redis Streams sink.
 
@@ -37,6 +41,7 @@ class RedisStreamsSink(DataSink):
         self._redis_url = redis_url
         self._max_len = max_len
         self._approximate = approximate_trim
+        self._operation_timeout_seconds = max(0.1, float(operation_timeout_seconds))
         self._redis: Any = None
         self._connected = False
 
@@ -52,17 +57,32 @@ class RedisStreamsSink(DataSink):
         """Lazy connection to Redis."""
         if self._redis is None:
             try:
-                import redis.asyncio as aioredis
-
-                self._redis = aioredis.from_url(
-                    self._redis_url,
-                    decode_responses=True,
-                )
+                self._redis = self._create_client()
                 self._connected = True
                 logger.info("redis_sink_connected", url=self._redis_url[:20] + "...")
             except ImportError:
                 logger.error("redis_sink_import_error", msg="redis package not installed")
                 raise
+
+    def _create_client(self) -> Any:
+        import redis.asyncio as aioredis
+
+        return aioredis.from_url(
+            self._redis_url,
+            decode_responses=True,
+            socket_connect_timeout=self._operation_timeout_seconds,
+            socket_timeout=self._operation_timeout_seconds,
+        )
+
+    def _reset_connection(self, operation: str, error: Exception) -> None:
+        """Force reconnect on the next call after a transport/protocol failure."""
+        self._redis = None
+        self._connected = False
+        logger.warning(
+            "redis_sink_connection_reset",
+            operation=operation,
+            error=str(error),
+        )
 
     async def publish(self, topic: str, data: dict[str, Any]) -> bool:
         """Publish data to a Redis Stream.
@@ -81,11 +101,14 @@ class RedisStreamsSink(DataSink):
             payload = {"data": json.dumps(data, default=str)}
 
             # Add to stream with automatic trimming
-            message_id = await self._redis.xadd(
-                topic,
-                payload,
-                maxlen=self._max_len,
-                approximate=self._approximate,
+            message_id = await asyncio.wait_for(
+                self._redis.xadd(
+                    topic,
+                    payload,
+                    maxlen=self._max_len,
+                    approximate=self._approximate,
+                ),
+                timeout=self._operation_timeout_seconds,
             )
 
             # Log successful publish at debug level for tracing
@@ -107,6 +130,7 @@ class RedisStreamsSink(DataSink):
             return True
 
         except Exception as e:
+            self._reset_connection(operation="publish", error=e)
             logger.warning("redis_sink_publish_error", topic=topic, error=str(e))
             # Record error metrics
             try:
@@ -121,9 +145,10 @@ class RedisStreamsSink(DataSink):
         """Check Redis connection health."""
         try:
             await self._ensure_connected()
-            await self._redis.ping()
+            await asyncio.wait_for(self._redis.ping(), timeout=self._operation_timeout_seconds)
             return True
-        except Exception:
+        except Exception as e:
+            self._reset_connection(operation="health_check", error=e)
             return False
 
     async def close(self) -> None:

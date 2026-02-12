@@ -70,3 +70,43 @@ async def test_readiness_awaits_async_cache_delete(monkeypatch: pytest.MonkeyPat
 
     assert response["status"] == "ready"
     cache.delete.assert_awaited_once_with("__health_check__")
+
+
+@pytest.mark.asyncio
+async def test_readiness_treats_sink_failures_as_degraded_not_not_ready(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cache = MagicMock()
+    cache.set = AsyncMock(return_value=None)
+    cache.get = AsyncMock(return_value=True)
+    cache.delete = AsyncMock(return_value=True)
+    connections = MagicMock()
+
+    class _UnhealthySinkRegistry:
+        async def health_check_all(self) -> dict[str, bool]:
+            return {"redis_streams": False}
+
+    monkeypatch.setattr(health_module, "get_sink_registry", lambda: _UnhealthySinkRegistry())
+
+    response = await health_module.readiness(cache=cache, connections=connections)
+
+    assert response["status"] == "ready"
+    assert response["checks"]["sinks"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_readiness_marks_cache_as_warming_up_when_redis_is_loading(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cache = MagicMock()
+    cache.set = AsyncMock(side_effect=RuntimeError("Redis is loading the dataset in memory"))
+    cache.get = AsyncMock(return_value=None)
+    cache.delete = AsyncMock(return_value=False)
+    connections = MagicMock()
+
+    monkeypatch.setattr(health_module, "get_sink_registry", lambda: None)
+
+    response = await health_module.readiness(cache=cache, connections=connections)
+
+    assert response["status"] == "not_ready"
+    assert response["checks"]["cache"] == "warming_up"

@@ -179,6 +179,38 @@ class AlphaVantageProvider(DataProvider):
             return {}
         return data
 
+    @staticmethod
+    def _is_premium_endpoint_error(error: Exception) -> bool:
+        """Return True when provider error indicates premium-only endpoint access."""
+        normalized_error = str(error).lower()
+        return "premium endpoint" in normalized_error and "subscription" in normalized_error
+
+    async def _fetch_with_premium_fallback(
+        self,
+        *,
+        symbol: str,
+        params: dict[str, Any],
+        adjusted: bool,
+        fallback_function: str | None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Fetch time-series data and retry with non-adjusted function when premium-gated."""
+        try:
+            return await self._fetch_json(params), adjusted
+        except RuntimeError as e:
+            if not adjusted or not fallback_function or not self._is_premium_endpoint_error(e):
+                raise
+
+            fallback_params = dict(params)
+            fallback_params["function"] = fallback_function
+            logger.warning(
+                "alphavantage_adjusted_fallback",
+                symbol=symbol,
+                original_function=params.get("function"),
+                fallback_function=fallback_function,
+                reason=str(e),
+            )
+            return await self._fetch_json(fallback_params), False
+
     def _top_time_series_items(self, series: dict[str, Any], limit: int = 100) -> list[tuple[str, Any]]:
         """Return newest-first head items without full-sort when provider order is already descending."""
         head_items = list(islice(series.items(), limit))
@@ -322,15 +354,19 @@ class AlphaVantageProvider(DataProvider):
         Outputsize: compact (100 days) or full (20+ years)
         """
         function = "TIME_SERIES_DAILY_ADJUSTED" if adjusted else "TIME_SERIES_DAILY"
+        fallback_function = "TIME_SERIES_DAILY" if adjusted else None
 
         try:
-            data = await self._fetch_json(
-                {
+            data, _ = await self._fetch_with_premium_fallback(
+                symbol=symbol,
+                params={
                     "function": function,
                     "symbol": symbol.upper(),
                     "outputsize": outputsize,
                     "apikey": self._api_key,
                 },
+                adjusted=adjusted,
+                fallback_function=fallback_function,
             )
 
             time_series_key = "Time Series (Daily)"
@@ -366,17 +402,21 @@ class AlphaVantageProvider(DataProvider):
     ) -> list[NormalizedBar]:
         """Get weekly time series data."""
         function = "TIME_SERIES_WEEKLY_ADJUSTED" if adjusted else "TIME_SERIES_WEEKLY"
+        fallback_function = "TIME_SERIES_WEEKLY" if adjusted else None
 
         try:
-            data = await self._fetch_json(
-                {
+            data, effective_adjusted = await self._fetch_with_premium_fallback(
+                symbol=symbol,
+                params={
                     "function": function,
                     "symbol": symbol.upper(),
                     "apikey": self._api_key,
                 },
+                adjusted=adjusted,
+                fallback_function=fallback_function,
             )
 
-            time_series_key = "Weekly Adjusted Time Series" if adjusted else "Weekly Time Series"
+            time_series_key = "Weekly Adjusted Time Series" if effective_adjusted else "Weekly Time Series"
             time_series = data.get(time_series_key, {})
 
             bars = []
@@ -557,13 +597,17 @@ class AlphaVantageProvider(DataProvider):
     ) -> list[NormalizedBar]:
         """Get monthly time series data."""
         function = "TIME_SERIES_MONTHLY_ADJUSTED" if adjusted else "TIME_SERIES_MONTHLY"
-        ts_key = "Monthly Adjusted Time Series" if adjusted else "Monthly Time Series"
+        fallback_function = "TIME_SERIES_MONTHLY" if adjusted else None
 
         try:
-            data = await self._fetch_json(
-                {"function": function, "symbol": symbol.upper(), "apikey": self._api_key},
+            data, effective_adjusted = await self._fetch_with_premium_fallback(
+                symbol=symbol,
+                params={"function": function, "symbol": symbol.upper(), "apikey": self._api_key},
+                adjusted=adjusted,
+                fallback_function=fallback_function,
             )
 
+            ts_key = "Monthly Adjusted Time Series" if effective_adjusted else "Monthly Time Series"
             time_series = data.get(ts_key, {})
             if max_points is None:
                 items: Iterable[tuple[str, Any]] = time_series.items()
@@ -581,9 +625,15 @@ class AlphaVantageProvider(DataProvider):
                         high=Decimal(values.get("2. high", "0")),
                         low=Decimal(values.get("3. low", "0")),
                         close=Decimal(
-                            values.get("4. close", "0") if not adjusted else values.get("5. adjusted close", "0")
+                            values.get("4. close", "0")
+                            if not effective_adjusted
+                            else values.get("5. adjusted close", values.get("4. close", "0"))
                         ),
-                        volume=int(values.get("6. volume" if adjusted else "5. volume", 0)),
+                        volume=int(
+                            values.get("6. volume", values.get("5. volume", 0))
+                            if effective_adjusted
+                            else values.get("5. volume", 0)
+                        ),
                         timeframe="1Month",
                         provider="alphavantage",
                     )
