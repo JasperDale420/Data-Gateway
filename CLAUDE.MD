@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Data Gateway is a unified financial data gateway for the Empire Trading Framework. It provides WebSocket multiplexing and REST proxy caching over multiple financial data providers (Alpaca, Unusual Whales, Finnhub, Alpha Vantage, yfinance, SEC EDGAR) via FastAPI.
+Data Gateway is a unified financial data gateway for the Empire Trading Framework. It provides WebSocket multiplexing and REST proxy caching over multiple financial data providers (Alpaca, Unusual Whales, Finnhub, Alpha Vantage, yfinance, SEC EDGAR, NewsAPI.org) via FastAPI.
 
 ## Commands
 
@@ -48,6 +48,7 @@ docker-compose up --build
 `gateway/core/uw_poller.py` runs a background polling loop that fetches Unusual Whales data and publishes events to a Redis stream (`heber:events`) via `gateway/core/data_sink.py`. Events are wrapped in `EventEnvelope` format (`gateway/core/envelope.py`).
 
 **Three independent pollers** with their own intervals:
+
 - **Flow alerts**: every 5 min, market hours only
 - **Darkpool trades**: every 1 min, extended hours (4 AM–8 PM ET)
 - **Market/sector tides**: every 1 hour, market hours only

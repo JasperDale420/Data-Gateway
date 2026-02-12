@@ -13,26 +13,14 @@ RUN pip install --no-cache-dir /tmp/unusualwhales_sdk/ && rm -rf /tmp/unusualwha
 # Copy pyproject.toml first to cache dependency installation
 COPY pyproject.toml README.md ./
 
-# Install dependencies explicitly
-RUN pip install --no-cache-dir \
-    "fastapi[standard]>=0.115.0" \
-    "uvicorn[standard]>=0.32.0" \
-    "websockets>=13.0" \
-    "pydantic>=2.5" \
-    "pydantic-settings>=2.0" \
-    "cachetools>=5.3" \
-    "httpx>=0.27" \
-    "structlog>=24.0" \
-    "python-dotenv>=1.0" \
-    "pyyaml>=6.0" \
-    "redis>=5.0" \
-    "prometheus-client>=0.20" \
-    "psutil>=5.9" \
-    "yfinance>=0.2" \
-    "alpaca-py>=0.28" \
-    "msgpack>=1.0"
+# Install only dependencies (cached until pyproject.toml changes)
+# Create a minimal package stub so pip can parse pyproject.toml dependencies
+RUN mkdir -p gateway && \
+    echo '"""Stub for dependency resolution."""' > gateway/__init__.py && \
+    pip install --no-cache-dir . && \
+    rm -rf gateway
 
-# Copy gateway source and install as package
+# Copy gateway source and reinstall package only (deps already installed above)
 COPY gateway/ gateway/
 RUN pip install --no-cache-dir --no-deps .
 

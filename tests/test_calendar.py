@@ -99,6 +99,24 @@ class TestTradingCalendar:
         assert "New Year's Day" in holiday_names
         assert "Martin Luther King Jr. Day" in holiday_names
 
+    def test_trading_days_range_guardrail(self, calendar):
+        """Very large ranges should fail fast with a clear error."""
+        with pytest.raises(ValueError, match="cannot exceed"):
+            calendar.get_trading_days(
+                date(2020, 1, 1),
+                date(2035, 1, 1),
+            )
+
+    def test_trading_days_start_after_end_returns_empty(self, calendar):
+        """Inverted ranges should return empty collections."""
+        trading_days, holidays, early_closes = calendar.get_trading_days(
+            date(2024, 1, 31),
+            date(2024, 1, 1),
+        )
+        assert trading_days == []
+        assert holidays == []
+        assert early_closes == []
+
     def test_is_trading_day(self, calendar):
         """is_trading_day should work correctly."""
         # Regular day

@@ -109,6 +109,14 @@ class TestQualityAnalyzer:
         quality = self.analyzer.analyze_quotes(quotes)
         assert quality.avg_spread_bps > 0
 
+    def test_analyze_quotes_stale_detection(self):
+        quotes = [
+            {"timestamp": "2024-01-15T10:00:00Z", "bid_price": 100.00, "ask_price": 100.10},
+            {"timestamp": "2024-01-15T10:01:05Z", "bid_price": 100.00, "ask_price": 100.10},
+        ]
+        quality = self.analyzer.analyze_quotes(quotes)
+        assert quality.stale == 1
+
     # Analyze trades
     def test_analyze_trades(self):
         trades = [
@@ -146,6 +154,37 @@ class TestQualityAnalyzer:
         issues = self.analyzer.detect_issues(quotes=quotes)
         crossed_issues = [i for i in issues if i.code == QualityCode.CROSSED_QUOTE]
         assert len(crossed_issues) == 1
+
+    def test_analyze_bars_collects_issues_when_requested(self):
+        bars = [
+            {"timestamp": "2024-01-15T10:00:00Z", "close": 100, "volume": 0},
+            {"timestamp": "2024-01-15T10:01:00Z", "close": 150, "volume": 1000},
+        ]
+        issues: list[QualityIssue] = []
+        self.analyzer.analyze_bars(bars, expected_count=2, issues_out=issues)
+        codes = [issue.code for issue in issues]
+        assert QualityCode.ZERO_VOLUME in codes
+        assert QualityCode.PRICE_ANOMALY in codes
+
+    def test_analyze_quotes_collects_crossed_quote_issue_when_requested(self):
+        quotes = [
+            {"timestamp": "2024-01-15T10:00:00Z", "bid_price": 105, "ask_price": 100},
+        ]
+        issues: list[QualityIssue] = []
+        quality = self.analyzer.analyze_quotes(quotes, issues_out=issues)
+        assert quality.crossed == 1
+        assert len(issues) == 1
+        assert issues[0].code == QualityCode.CROSSED_QUOTE
+
+    def test_analyze_bars_detects_gaps_for_unsorted_input(self):
+        bars = [
+            {"timestamp": "2024-01-15T10:06:00Z", "close": 106},
+            {"timestamp": "2024-01-15T10:00:00Z", "close": 100},
+            {"timestamp": "2024-01-15T10:01:00Z", "close": 101},
+            {"timestamp": "2024-01-15T10:05:00Z", "close": 105},
+        ]
+        quality = self.analyzer.analyze_bars(bars, expected_count=10, timeframe="1Min")
+        assert len(quality.gaps) >= 1
 
     # Quality issue to_dict
     def test_quality_issue_to_dict(self):

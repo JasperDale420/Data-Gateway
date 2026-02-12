@@ -8,10 +8,6 @@ license = {text = "MIT"}
 authors = [
     {name = "Empire Trading", email = "dev@empire.trading"}
 ]
-
-[tool.hatch.build.targets.wheel]
-packages = ["gateway"]
-
 dependencies = [
     "fastapi[standard]>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -31,6 +27,9 @@ dependencies = [
     "msgpack>=1.0",
     # unusualwhales SDK is installed separately in Docker via copied local package
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gateway"]
 
 [project.optional-dependencies]
 dev = [
@@ -58,8 +57,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.ruff]
+extend = "../ruff-base.toml"
 target-version = "py312"
-line-length = 100
+line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
@@ -79,10 +79,6 @@ ignore = [
     "SIM118", # Use key in dict instead of dict.keys()
 ]
 
-[tool.black]
-line-length = 100
-target-version = ["py312"]
-
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
@@ -92,6 +88,8 @@ python_version = "3.12"
 warn_return_any = false
 warn_unused_ignores = true
 ignore_missing_imports = true
+check_untyped_defs = true
+plugins = ["pydantic.mypy", "numpy.typing.mypy"]
 # Provider routers access methods not in base DataProvider class
 # These are implemented in concrete providers
 [[tool.mypy.overrides]]
@@ -128,12 +126,16 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["gateway"]
 branch = true
+source = ["gateway"]
+omit = ["tests/*", "scripts/*", "*/__init__.py"]
 
 [tool.coverage.report]
+show_missing = true
 exclude_lines = [
     "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]

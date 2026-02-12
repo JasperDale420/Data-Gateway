@@ -1,6 +1,6 @@
 """Alpha Vantage forex endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
     Client,
@@ -48,6 +48,7 @@ async def get_forex_rate(
 async def get_forex_daily(
     from_symbol: str,
     to_symbol: str,
+    max_points: int = Query(default=100, ge=1, description="Max points to return"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),

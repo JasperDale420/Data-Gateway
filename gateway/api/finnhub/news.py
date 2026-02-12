@@ -14,6 +14,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -36,6 +37,7 @@ async def get_company_news(
     key = cache_key("finnhub:news", symbol.upper(), start, end)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_company_news", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -50,6 +52,7 @@ async def get_company_news(
         articles = await provider.get_news(symbol, start=start_dt, end=end_dt)
         data = {"symbol": symbol.upper(), "articles": articles}
         await cache.set(key, data, ttl=300)
+        record_route_cache("finnhub_company_news", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -74,6 +77,7 @@ async def get_market_news(
     key = cache_key("finnhub:market-news", category)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_market_news", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -85,6 +89,7 @@ async def get_market_news(
         articles = await provider.get_market_news(category=category)
         data = {"category": category, "articles": articles}
         await cache.set(key, data, ttl=300)
+        record_route_cache("finnhub_market_news", "miss", "finnhub")
         return {
             "success": True,
             "data": data,

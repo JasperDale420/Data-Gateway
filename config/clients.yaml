@@ -6,6 +6,7 @@ clients:
   # Cerberus trading system
   - id: cerberus
     key: gw_cerberus_dev_key_12345
+    role: trader
     permissions:
       providers: ["alpaca", "uw", "yfinance"]
       feeds: ["bars", "quotes", "trades", "flow"]
@@ -16,16 +17,18 @@ clients:
   # 3Roses daytrading system
   - id: 3roses
     key: gw_3roses_trading_key_98765
+    role: trader
     permissions:
       providers: ["alpaca"]
       feeds: ["bars", "quotes", "trades", "news"]
-      max_symbols: 100
+      max_symbols: 1000
       rate_limit: 300
     enabled: true
 
   # Orion trading system
   - id: orion
     key: gw_orion_trading_key_55555
+    role: trader
     permissions:
       providers: ["alpaca", "uw", "yfinance", "finnhub"]
       feeds: ["bars", "quotes", "trades", "flow", "news", "options"]

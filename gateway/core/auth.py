@@ -7,6 +7,8 @@ from pathlib import Path
 import structlog
 import yaml
 
+from gateway.core.audit import get_audit_logger
+
 logger = structlog.get_logger()
 
 
@@ -92,12 +94,19 @@ class ClientAuthenticator:
             hashed_keys=len(self._hashed_keys),
         )
 
-    def authenticate(self, api_key: str) -> Client | None:
+    def authenticate(
+        self,
+        api_key: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> Client | None:
         """Authenticate a client by API key.
 
         Returns Client if valid, None if invalid.
         Checks plaintext keys first, then hashed keys.
         """
+        audit = get_audit_logger()
+
         # Check plaintext keys (dev mode)
         client_id = self._plaintext_keys.get(api_key)
 
@@ -109,18 +118,38 @@ class ClientAuthenticator:
         if not client_id:
             key_preview = api_key[:10] + "..." if len(api_key) > 10 else api_key
             logger.warning("auth_failed_invalid_key", key_prefix=key_preview)
+            audit.auth_failure(
+                ip=ip or "unknown",
+                user_agent=user_agent,
+                metadata={"reason": "invalid_key", "key_prefix": key_preview},
+            )
             return None
 
         client = self._clients.get(client_id)
         if not client:
             logger.warning("auth_failed_client_not_found", client_id=client_id)
+            audit.auth_failure(
+                ip=ip or "unknown",
+                client_id=client_id,
+                metadata={"reason": "client_not_found"},
+            )
             return None
 
         if not client.enabled:
             logger.warning("auth_failed_client_disabled", client_id=client_id)
+            audit.auth_failure(
+                ip=ip or "unknown",
+                client_id=client_id,
+                metadata={"reason": "client_disabled"},
+            )
             return None
 
-        logger.info("auth_success", client_id=client_id)
+        logger.debug("auth_success", client_id=client_id)
+        audit.auth_success(
+            client_id=client_id,
+            ip=ip or "unknown",
+            user_agent=user_agent,
+        )
         return client
 
     def get_client(self, client_id: str) -> Client | None:

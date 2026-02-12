@@ -11,6 +11,8 @@ from gateway.api.deps import (
     get_cache,
     get_connection_manager,
     get_registry,
+    get_sink_registry,
+    set_sink_registry,
 )
 from gateway.config import Settings, get_settings
 from gateway.core.auth import ClientAuthenticator
@@ -124,14 +126,17 @@ def test_registry():
 
 # Override dependencies in app
 @pytest.fixture(autouse=True)
-def override_deps(
-    test_settings, test_authenticator, test_cache, test_connection_manager, test_registry
-):
+def override_deps(test_settings, test_authenticator, test_cache, test_connection_manager, test_registry):
     """Override FastAPI dependencies with test instances."""
     # Clear LRU caches so require_api_key picks up the test authenticator
     get_authenticator.cache_clear()
     get_cache.cache_clear()
     get_connection_manager.cache_clear()
+
+    # Prevent test data from leaking to production Redis stream
+    _original_sink = get_sink_registry()
+    set_sink_registry(None)
+    app.dependency_overrides[get_sink_registry] = lambda: None
 
     app.dependency_overrides[get_settings] = lambda: test_settings
     app.dependency_overrides[get_authenticator] = lambda: test_authenticator
@@ -142,7 +147,8 @@ def override_deps(
     yield
 
     app.dependency_overrides.clear()
-    # Clear caches again after test to clean up
+    # Restore original sink registry and clear caches
+    set_sink_registry(_original_sink)
     get_authenticator.cache_clear()
     get_cache.cache_clear()
     get_connection_manager.cache_clear()

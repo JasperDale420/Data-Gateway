@@ -38,11 +38,14 @@ class _CustomCacheEntry:
 class InMemoryCache:
     """In-memory cache with TTL and statistics."""
 
+    CUSTOM_PRUNE_SET_INTERVAL = 64
+
     def __init__(self, max_size: int = 10000, default_ttl: int = 300):
         self.max_size = max_size
         self.default_ttl = default_ttl
         self._cache: TTLCache = TTLCache(maxsize=max_size, ttl=default_ttl)
         self._custom_cache: OrderedDict[str, _CustomCacheEntry] = OrderedDict()
+        self._custom_sets_since_prune = 0
         self._stats = CacheStats(max_size=max_size)
 
     async def get(self, key: str) -> Any | None:
@@ -77,7 +80,13 @@ class InMemoryCache:
                 del self._cache[key]
 
             self._stats.sets += 1
-            self._prune_custom_expired()
+            self._custom_sets_since_prune += 1
+            if (
+                self._custom_sets_since_prune >= self.CUSTOM_PRUNE_SET_INTERVAL
+                or len(self._custom_cache) > self.max_size
+            ):
+                self._prune_custom_expired()
+                self._custom_sets_since_prune = 0
             self._enforce_max_size()
             self._stats.size = len(self._cache) + len(self._custom_cache)
             return
@@ -115,6 +124,7 @@ class InMemoryCache:
         """Clear all cache entries."""
         self._cache.clear()
         self._custom_cache.clear()
+        self._custom_sets_since_prune = 0
         self._stats.size = 0
         logger.info("cache_cleared")
 
@@ -158,16 +168,27 @@ class InMemoryCache:
 
     def _enforce_max_size(self) -> None:
         """Enforce total max size across default and custom caches."""
-        while len(self._cache) + len(self._custom_cache) > self.max_size:
-            if self._custom_cache:
-                self._custom_cache.popitem(last=False)
-                self._stats.evictions += 1
-                continue
+        overflow = len(self._cache) + len(self._custom_cache) - self.max_size
+        if overflow <= 0:
+            return
+
+        custom_evictions = min(overflow, len(self._custom_cache))
+        for _ in range(custom_evictions):
+            self._custom_cache.popitem(last=False)
+        self._stats.evictions += custom_evictions
+        overflow -= custom_evictions
+
+        if overflow <= 0:
+            return
+
+        default_evictions = 0
+        for _ in range(overflow):
             try:
                 self._cache.popitem()
-                self._stats.evictions += 1
+                default_evictions += 1
             except KeyError:
                 break
+        self._stats.evictions += default_evictions
 
 
 class RedisCache:

@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import os
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from decimal import Decimal
 from itertools import islice
@@ -55,9 +56,7 @@ class AlphaVantageProvider(DataProvider):
         """Initialize Alpha Vantage client."""
         api_key_env = config.get("api_key_env", "ALPHAVANTAGE_API_KEY")
         self._api_key = os.environ.get(api_key_env, "")
-        raw_quotes_concurrency = config.get(
-            "quotes_max_concurrency", DEFAULT_QUOTES_MAX_CONCURRENCY
-        )
+        raw_quotes_concurrency = config.get("quotes_max_concurrency", DEFAULT_QUOTES_MAX_CONCURRENCY)
         try:
             self._quotes_max_concurrency = min(5, max(1, int(raw_quotes_concurrency)))
         except (TypeError, ValueError):
@@ -161,16 +160,12 @@ class AlphaVantageProvider(DataProvider):
             return {}
         return data
 
-    def _top_time_series_items(
-        self, series: dict[str, Any], limit: int = 100
-    ) -> list[tuple[str, Any]]:
+    def _top_time_series_items(self, series: dict[str, Any], limit: int = 100) -> list[tuple[str, Any]]:
         """Return newest-first head items without full-sort when provider order is already descending."""
         head_items = list(islice(series.items(), limit))
         if len(head_items) <= 1:
             return head_items
-        if all(
-            left[0] >= right[0] for left, right in zip(head_items, head_items[1:], strict=False)
-        ):
+        if all(left[0] >= right[0] for left, right in zip(head_items, head_items[1:], strict=False)):
             return head_items
         return sorted(series.items(), reverse=True)[:limit]
 
@@ -233,6 +228,7 @@ class AlphaVantageProvider(DataProvider):
         symbol: str,
         interval: str = "5min",
         outputsize: str = "compact",
+        max_points: int | None = None,
     ) -> list[NormalizedBar]:
         """Get intraday time series data.
 
@@ -264,7 +260,7 @@ class AlphaVantageProvider(DataProvider):
             timeframe = interval_map.get(interval, "5Min")
 
             bars = []
-            for timestamp_str, ohlcv in time_series.items():
+            for timestamp_str, ohlcv in self._iter_time_series_items(time_series, max_points):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
@@ -279,8 +275,9 @@ class AlphaVantageProvider(DataProvider):
                     )
                 )
 
-            # Sort by timestamp descending (most recent first)
-            bars.sort(key=lambda x: x.timestamp, reverse=True)
+            # Sort only when full-series mode is requested.
+            if max_points is None:
+                bars.sort(key=lambda x: x.timestamp, reverse=True)
             logger.info("alphavantage_intraday_fetched", symbol=symbol, count=len(bars))
             return bars
 
@@ -293,6 +290,7 @@ class AlphaVantageProvider(DataProvider):
         symbol: str,
         outputsize: str = "compact",
         adjusted: bool = True,
+        max_points: int | None = None,
     ) -> list[NormalizedBar]:
         """Get daily time series data.
 
@@ -314,7 +312,7 @@ class AlphaVantageProvider(DataProvider):
             time_series = data.get(time_series_key, {})
 
             bars = []
-            for date_str, ohlcv in time_series.items():
+            for date_str, ohlcv in self._iter_time_series_items(time_series, max_points):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
@@ -329,7 +327,8 @@ class AlphaVantageProvider(DataProvider):
                     )
                 )
 
-            bars.sort(key=lambda x: x.timestamp, reverse=True)
+            if max_points is None:
+                bars.sort(key=lambda x: x.timestamp, reverse=True)
             logger.info("alphavantage_daily_fetched", symbol=symbol, count=len(bars))
             return bars
 
@@ -337,7 +336,9 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_daily_failed", symbol=symbol, error=str(e))
             raise
 
-    async def get_weekly(self, symbol: str, adjusted: bool = True) -> list[NormalizedBar]:
+    async def get_weekly(
+        self, symbol: str, adjusted: bool = True, max_points: int | None = None
+    ) -> list[NormalizedBar]:
         """Get weekly time series data."""
         function = "TIME_SERIES_WEEKLY_ADJUSTED" if adjusted else "TIME_SERIES_WEEKLY"
 
@@ -354,7 +355,7 @@ class AlphaVantageProvider(DataProvider):
             time_series = data.get(time_series_key, {})
 
             bars = []
-            for date_str, ohlcv in time_series.items():
+            for date_str, ohlcv in self._iter_time_series_items(time_series, max_points):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
@@ -369,7 +370,8 @@ class AlphaVantageProvider(DataProvider):
                     )
                 )
 
-            bars.sort(key=lambda x: x.timestamp, reverse=True)
+            if max_points is None:
+                bars.sort(key=lambda x: x.timestamp, reverse=True)
             logger.info("alphavantage_weekly_fetched", symbol=symbol, count=len(bars))
             return bars
 
@@ -525,7 +527,9 @@ class AlphaVantageProvider(DataProvider):
     # Time Series Extended
     # ─────────────────────────────────────────────────────────────────
 
-    async def get_monthly(self, symbol: str, adjusted: bool = True) -> list[NormalizedBar]:
+    async def get_monthly(
+        self, symbol: str, adjusted: bool = True, max_points: int | None = None
+    ) -> list[NormalizedBar]:
         """Get monthly time series data."""
         function = "TIME_SERIES_MONTHLY_ADJUSTED" if adjusted else "TIME_SERIES_MONTHLY"
         ts_key = "Monthly Adjusted Time Series" if adjusted else "Monthly Time Series"
@@ -536,8 +540,14 @@ class AlphaVantageProvider(DataProvider):
             )
 
             time_series = data.get(ts_key, {})
+            if max_points is None:
+                items: Iterable[tuple[str, Any]] = time_series.items()
+            else:
+                # Keep monthly output in ascending order while limiting to the newest window.
+                items = reversed(self._top_time_series_items(time_series, limit=max_points))
+
             bars = []
-            for date_str, values in time_series.items():
+            for date_str, values in items:
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
@@ -546,16 +556,16 @@ class AlphaVantageProvider(DataProvider):
                         high=Decimal(values.get("2. high", "0")),
                         low=Decimal(values.get("3. low", "0")),
                         close=Decimal(
-                            values.get("4. close", "0")
-                            if not adjusted
-                            else values.get("5. adjusted close", "0")
+                            values.get("4. close", "0") if not adjusted else values.get("5. adjusted close", "0")
                         ),
                         volume=int(values.get("6. volume" if adjusted else "5. volume", 0)),
                         timeframe="1Month",
                         provider="alphavantage",
                     )
                 )
-            return sorted(bars, key=lambda x: x.timestamp)
+            if max_points is None:
+                return sorted(bars, key=lambda x: x.timestamp)
+            return bars
 
         except Exception as e:
             logger.error("alphavantage_monthly_failed", symbol=symbol, error=str(e))
@@ -594,6 +604,7 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 14,
         series_type: str = "close",
+        max_points: int = 100,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generic method for all technical indicators.
@@ -635,17 +646,12 @@ class AlphaVantageProvider(DataProvider):
                 "symbol": symbol.upper(),
                 "indicator": indicator.upper(),
                 "interval": interval,
-                "data": [
-                    {"date": date, **vals}
-                    for date, vals in self._top_time_series_items(values, limit=100)
-                ],
+                "data": [{"date": date, **vals} for date, vals in self._top_time_series_items(values, limit=100)],
                 "meta": data.get("Meta Data", {}),
             }
 
         except Exception as e:
-            logger.error(
-                "alphavantage_indicator_failed", symbol=symbol, indicator=indicator, error=str(e)
-            )
+            logger.error("alphavantage_indicator_failed", symbol=symbol, indicator=indicator, error=str(e))
             raise
 
     # Convenience methods for common indicators
@@ -655,9 +661,12 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 20,
         series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Simple Moving Average."""
-        return await self.get_technical_indicator(symbol, "SMA", interval, time_period, series_type)
+        return await self.get_technical_indicator(
+            symbol, "SMA", interval, time_period, series_type, max_points=max_points
+        )
 
     async def get_ema(
         self,
@@ -665,9 +674,12 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 20,
         series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Exponential Moving Average."""
-        return await self.get_technical_indicator(symbol, "EMA", interval, time_period, series_type)
+        return await self.get_technical_indicator(
+            symbol, "EMA", interval, time_period, series_type, max_points=max_points
+        )
 
     async def get_rsi(
         self,
@@ -675,15 +687,24 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 14,
         series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Relative Strength Index."""
-        return await self.get_technical_indicator(symbol, "RSI", interval, time_period, series_type)
+        return await self.get_technical_indicator(
+            symbol, "RSI", interval, time_period, series_type, max_points=max_points
+        )
 
     async def get_macd(
-        self, symbol: str, interval: str = "daily", series_type: str = "close"
+        self,
+        symbol: str,
+        interval: str = "daily",
+        series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Moving Average Convergence Divergence."""
-        return await self.get_technical_indicator(symbol, "MACD", interval, series_type=series_type)
+        return await self.get_technical_indicator(
+            symbol, "MACD", interval, series_type=series_type, max_points=max_points
+        )
 
     async def get_bbands(
         self,
@@ -691,37 +712,38 @@ class AlphaVantageProvider(DataProvider):
         interval: str = "daily",
         time_period: int = 20,
         series_type: str = "close",
+        max_points: int = 100,
     ) -> dict[str, Any]:
         """Bollinger Bands."""
         return await self.get_technical_indicator(
-            symbol, "BBANDS", interval, time_period, series_type
+            symbol, "BBANDS", interval, time_period, series_type, max_points=max_points
         )
 
-    async def get_stoch(self, symbol: str, interval: str = "daily") -> dict[str, Any]:
+    async def get_stoch(self, symbol: str, interval: str = "daily", max_points: int = 100) -> dict[str, Any]:
         """Stochastic Oscillator."""
-        return await self.get_technical_indicator(symbol, "STOCH", interval)
+        return await self.get_technical_indicator(symbol, "STOCH", interval, max_points=max_points)
 
     async def get_adx(
-        self, symbol: str, interval: str = "daily", time_period: int = 14
+        self, symbol: str, interval: str = "daily", time_period: int = 14, max_points: int = 100
     ) -> dict[str, Any]:
         """Average Directional Index."""
-        return await self.get_technical_indicator(symbol, "ADX", interval, time_period)
+        return await self.get_technical_indicator(symbol, "ADX", interval, time_period, max_points=max_points)
 
     async def get_cci(
-        self, symbol: str, interval: str = "daily", time_period: int = 20
+        self, symbol: str, interval: str = "daily", time_period: int = 20, max_points: int = 100
     ) -> dict[str, Any]:
         """Commodity Channel Index."""
-        return await self.get_technical_indicator(symbol, "CCI", interval, time_period)
+        return await self.get_technical_indicator(symbol, "CCI", interval, time_period, max_points=max_points)
 
     async def get_atr(
-        self, symbol: str, interval: str = "daily", time_period: int = 14
+        self, symbol: str, interval: str = "daily", time_period: int = 14, max_points: int = 100
     ) -> dict[str, Any]:
         """Average True Range."""
-        return await self.get_technical_indicator(symbol, "ATR", interval, time_period)
+        return await self.get_technical_indicator(symbol, "ATR", interval, time_period, max_points=max_points)
 
-    async def get_obv(self, symbol: str, interval: str = "daily") -> dict[str, Any]:
+    async def get_obv(self, symbol: str, interval: str = "daily", max_points: int = 100) -> dict[str, Any]:
         """On Balance Volume."""
-        return await self.get_technical_indicator(symbol, "OBV", interval)
+        return await self.get_technical_indicator(symbol, "OBV", interval, max_points=max_points)
 
     # ─────────────────────────────────────────────────────────────────
     # Forex
@@ -752,7 +774,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_forex_rate_failed", error=str(e))
             raise
 
-    async def get_forex_daily(self, from_symbol: str, to_symbol: str) -> list[dict[str, Any]]:
+    async def get_forex_daily(self, from_symbol: str, to_symbol: str, max_points: int = 100) -> list[dict[str, Any]]:
         """Get daily forex time series."""
         try:
             data = await self._fetch_json(
@@ -801,7 +823,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_crypto_rating_failed", symbol=symbol, error=str(e))
             raise
 
-    async def get_crypto_daily(self, symbol: str, market: str = "USD") -> list[dict[str, Any]]:
+    async def get_crypto_daily(self, symbol: str, market: str = "USD", max_points: int = 100) -> list[dict[str, Any]]:
         """Get daily crypto time series."""
         try:
             data = await self._fetch_json(
@@ -834,9 +856,7 @@ class AlphaVantageProvider(DataProvider):
     # Economic Indicators
     # ─────────────────────────────────────────────────────────────────
 
-    async def get_economic_indicator(
-        self, indicator: str, interval: str = "annual"
-    ) -> dict[str, Any]:
+    async def get_economic_indicator(self, indicator: str, interval: str = "annual") -> dict[str, Any]:
         """Get economic indicator data.
 
         Supports: REAL_GDP, REAL_GDP_PER_CAPITA, TREASURY_YIELD, FEDERAL_FUNDS_RATE,
@@ -875,9 +895,7 @@ class AlphaVantageProvider(DataProvider):
             return []
         return [dict(row) for row in rows]
 
-    async def get_earnings_calendar(
-        self, symbol: str | None = None, horizon: str = "3month"
-    ) -> list[dict[str, Any]]:
+    async def get_earnings_calendar(self, symbol: str | None = None, horizon: str = "3month") -> list[dict[str, Any]]:
         """Get earnings calendar.
 
         Args:
@@ -919,9 +937,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_ipo_calendar_failed", error=str(e))
             raise
 
-    async def get_listing_status(
-        self, state: str = "active", date: str | None = None
-    ) -> list[dict[str, Any]]:
+    async def get_listing_status(self, state: str = "active", date: str | None = None) -> list[dict[str, Any]]:
         """Get listing status (active or delisted).
 
         Args:

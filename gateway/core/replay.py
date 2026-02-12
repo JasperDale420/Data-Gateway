@@ -4,8 +4,12 @@ Simulates real-time data arrival for strategy backtesting as specified in PRD.
 """
 
 import asyncio
+import contextlib
+import json
+import os
+import tempfile
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -228,9 +232,12 @@ class ReplaySessionManager:
     MAX_SESSIONS = 10
 
     def __init__(self) -> None:
+        settings = get_settings()
         self._sessions: dict[str, ReplaySession] = {}
         self._lock = asyncio.Lock()
         self._data_loader: Callable[..., Any] | None = None
+        self._spool_lists_to_disk = settings.replay_messages_spool_to_disk
+        self._spool_list_threshold = max(1, settings.replay_messages_max_in_memory)
 
     def set_data_loader(self, loader: Callable[..., Any]) -> None:
         """Set the function used to load historical data."""
@@ -328,26 +335,27 @@ class ReplaySessionManager:
         """Run the replay loop."""
         try:
             # Load historical data
-            messages = await self._load_data(session)
+            loaded_messages = await self._load_data(session)
+            total_messages = len(loaded_messages) if isinstance(loaded_messages, list) else None
+            messages = self._iter_loaded_messages(loaded_messages)
 
-            if not messages:
+            first_message = await anext(messages, None)
+            if first_message is None:
                 logger.warning("replay_no_data", session_id=session.session_id)
                 session.state = ReplayState.COMPLETED
                 session.ended_at = datetime.now(UTC)
                 return
 
-            logger.info(
-                "replay_starting",
-                session_id=session.session_id,
-                total_messages=len(messages),
-            )
+            logger_payload: dict[str, Any] = {"session_id": session.session_id}
+            if total_messages is not None:
+                logger_payload["total_messages"] = total_messages
+            else:
+                logger_payload["total_messages"] = "streaming"
+            logger.info("replay_starting", **logger_payload)
 
-            # Sort by market timestamp
-            messages.sort(key=lambda m: m.market_timestamp)
+            prev_timestamp = first_message.market_timestamp
 
-            prev_timestamp = messages[0].market_timestamp
-
-            for msg in messages:
+            async for msg in self._yield_with_first(first_message, messages):
                 # Check for stop/pause
                 if not await session.wait_if_paused():
                     break
@@ -392,7 +400,112 @@ class ReplaySessionManager:
                 error=str(e),
             )
 
-    async def _load_data(self, session: ReplaySession) -> list[ReplayMessage]:
+    def _iter_loaded_messages(
+        self,
+        loaded: list[ReplayMessage] | AsyncIterable[ReplayMessage] | Iterable[ReplayMessage],
+    ) -> AsyncIterator[ReplayMessage]:
+        """Normalize loaded replay data to an async iterator.
+
+        List inputs keep existing compatibility behavior. Async/sync iterables enable
+        streaming loaders that avoid full materialization in replay startup paths.
+        """
+        if isinstance(loaded, list):
+            return self._iter_list_messages(loaded)
+        if hasattr(loaded, "__aiter__"):
+            return self._iter_async_iterable(loaded)  # type: ignore[arg-type]
+        return self._iter_sync_iterable(loaded)
+
+    async def _iter_list_messages(self, messages: list[ReplayMessage]) -> AsyncIterator[ReplayMessage]:
+        """Iterate list-backed messages, sorting only when required."""
+        if not self._is_sorted_by_market_timestamp(messages):
+            messages = sorted(messages, key=lambda msg: msg.market_timestamp)
+        if self._spool_lists_to_disk and len(messages) > self._spool_list_threshold:
+            spool_path = self._spool_messages_to_tempfile(messages)
+            messages.clear()
+            try:
+                async for msg in self._iter_spooled_messages(spool_path):
+                    yield msg
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(spool_path)
+            return
+
+        for msg in messages:
+            yield msg
+
+    async def _iter_async_iterable(
+        self,
+        messages: AsyncIterable[ReplayMessage],
+    ) -> AsyncIterator[ReplayMessage]:
+        async for msg in messages:
+            yield msg
+
+    async def _iter_sync_iterable(
+        self,
+        messages: Iterable[ReplayMessage],
+    ) -> AsyncIterator[ReplayMessage]:
+        for msg in messages:
+            yield msg
+
+    def _is_sorted_by_market_timestamp(self, messages: list[ReplayMessage]) -> bool:
+        if len(messages) < 2:
+            return True
+        return all(
+            previous.market_timestamp <= current.market_timestamp
+            for previous, current in zip(messages, messages[1:], strict=False)
+        )
+
+    def _spool_messages_to_tempfile(self, messages: list[ReplayMessage]) -> str:
+        """Persist replay messages to a temp JSONL file and return path."""
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix="replay-messages-",
+            suffix=".jsonl",
+            delete=False,
+        ) as spool_file:
+            for msg in messages:
+                spool_file.write(
+                    json.dumps(
+                        {
+                            "feed": msg.feed,
+                            "symbol": msg.symbol,
+                            "data": msg.data,
+                            "market_timestamp": msg.market_timestamp.isoformat(),
+                        }
+                    )
+                )
+                spool_file.write("\n")
+            return spool_file.name
+
+    async def _iter_spooled_messages(self, spool_path: str) -> AsyncIterator[ReplayMessage]:
+        """Iterate replay messages from a temp JSONL spool file."""
+        with open(spool_path, encoding="utf-8") as spool_file:
+            for line in spool_file:
+                payload = json.loads(line)
+                ts = datetime.fromisoformat(payload["market_timestamp"])
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                yield ReplayMessage(
+                    feed=payload["feed"],
+                    symbol=payload["symbol"],
+                    data=payload["data"],
+                    market_timestamp=ts,
+                )
+
+    async def _yield_with_first(
+        self,
+        first: ReplayMessage,
+        messages: AsyncIterator[ReplayMessage],
+    ) -> AsyncIterator[ReplayMessage]:
+        yield first
+        async for msg in messages:
+            yield msg
+
+    async def _load_data(
+        self,
+        session: ReplaySession,
+    ) -> list[ReplayMessage] | AsyncIterable[ReplayMessage] | Iterable[ReplayMessage]:
         """Load historical data for replay.
 
         Override or set data_loader for production use.

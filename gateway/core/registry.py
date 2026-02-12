@@ -134,9 +134,7 @@ class ProviderRegistry:
                 return name, HealthStatus(healthy=False, error=str(e))
 
         results: dict[str, HealthStatus] = {}
-        checks = await asyncio.gather(
-            *(_check_provider(name, provider) for name, provider in self._providers.items())
-        )
+        checks = await asyncio.gather(*(_check_provider(name, provider) for name, provider in self._providers.items()))
         for name, status in checks:
             results[name] = status
         return results
@@ -184,3 +182,26 @@ class ProviderRegistry:
             providers_config[name]["enabled"] = enabled
             # Note: This is in-memory only; persisting requires writing to YAML
             logger.info("provider_enabled_changed", provider=name, enabled=enabled)
+
+    def get_ordered_providers(self, capability: str) -> list[DataProvider]:
+        """Get providers with a capability, ordered by priority (descending)."""
+        candidates = []
+        for name, provider in self._providers.items():
+            # Check capability
+            if capability not in provider.capabilities:
+                continue
+
+            # Check enabled/priority schema
+            # We use the internal _config dict which holds the loaded yaml
+            # Structure: providers -> {name} -> {enabled: bool, priority: int}
+            p_config = self._config.get("providers", {}).get(name, {})
+
+            if not p_config.get("enabled", True):
+                continue
+
+            priority = p_config.get("priority", 50)
+            candidates.append((priority, provider))
+
+        # Sort by priority descending (higher number = higher priority)
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return [p for _, p in candidates]

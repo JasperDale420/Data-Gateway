@@ -178,18 +178,17 @@ async def analyze_data(
     analyzer = get_quality_analyzer()
 
     result: dict = {}
+    issues: list[QualityIssue] = []
 
     if bars:
-        result["bars"] = analyzer.analyze_bars(bars).to_dict()
+        result["bars"] = analyzer.analyze_bars(bars, issues_out=issues).to_dict()
 
     if quotes:
-        result["quotes"] = analyzer.analyze_quotes(quotes).to_dict()
+        result["quotes"] = analyzer.analyze_quotes(quotes, issues_out=issues).to_dict()
 
     if trades:
         result["trades"] = analyzer.analyze_trades(trades).to_dict()
 
-    # Detect issues
-    issues = analyzer.detect_issues(bars, quotes, trades)
     result["issues"] = [i.to_dict() for i in issues]
 
     return result

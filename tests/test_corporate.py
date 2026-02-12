@@ -2,6 +2,7 @@
 
 from datetime import date
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -51,6 +52,19 @@ class TestCorporateAction:
 
 class TestCorporateActionsService:
     """Test CorporateActionsService."""
+
+    @pytest.fixture(autouse=True)
+    def _enable_stub_data(self):
+        """Enable stub data so KNOWN_SPLITS fallback is used."""
+        from types import SimpleNamespace
+
+        from gateway.config import get_settings
+
+        real = get_settings()
+        stub = SimpleNamespace(**real.model_dump())
+        stub.allow_stub_data = True
+        with patch("gateway.core.corporate_actions.get_settings", return_value=stub):
+            yield
 
     @pytest.mark.asyncio
     async def test_get_actions_aapl(self):
@@ -112,6 +126,19 @@ class TestAdjustmentFactor:
 
 class TestAdjustmentService:
     """Test AdjustmentService."""
+
+    @pytest.fixture(autouse=True)
+    def _enable_stub_data(self):
+        """Enable stub data so KNOWN_SPLITS fallback is used."""
+        from types import SimpleNamespace
+
+        from gateway.config import get_settings
+
+        real = get_settings()
+        stub = SimpleNamespace(**real.model_dump())
+        stub.allow_stub_data = True
+        with patch("gateway.core.corporate_actions.get_settings", return_value=stub):
+            yield
 
     @pytest.mark.asyncio
     async def test_get_factors(self):

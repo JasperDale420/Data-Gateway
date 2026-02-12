@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
+from pydantic import BaseModel
 
 from gateway.core.envelope import (
     SCHEMA_VERSION,
@@ -208,6 +209,48 @@ class TestWrapEvent:
         envelope2 = wrap_event(bar, provider="alpaca", feed="bars", source="websocket")
 
         assert envelope1["event_id"] == envelope2["event_id"]
+
+    def test_fast_path_envelope_fields_and_iso_timestamps(self):
+        """Fast-path assembly should preserve schema fields and JSON-ready timestamps."""
+        ingest_ts = datetime(2026, 1, 15, 12, 0, 5, tzinfo=UTC)
+        quote = {
+            "S": "AAPL",
+            "t": datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
+            "bp": 150.25,
+            "ap": 150.26,
+            "x": 123,
+        }
+
+        envelope = wrap_event(
+            quote,
+            provider="alpaca",
+            feed="quotes",
+            source="websocket",
+            stream_type="stock",
+            ts_ingest=ingest_ts,
+        )
+
+        assert envelope["schema_version"] == SCHEMA_VERSION
+        assert isinstance(envelope["ts_event"], str)
+        assert isinstance(envelope["ts_ingest"], str)
+        assert envelope["ts_event"] == "2026-01-15T12:00:00+00:00"
+        assert envelope["ts_ingest"] == "2026-01-15T12:00:05+00:00"
+        assert envelope["lineage"]["stream_type"] == "stock"
+        assert envelope["lineage"]["sequence"] == "123"
+
+    def test_wrap_event_accepts_pydantic_event_models(self):
+        """Pydantic event payloads should still be converted to dict payloads."""
+
+        class _EventModel(BaseModel):
+            S: str
+            t: str
+            value: int
+
+        event = _EventModel(S="MSFT", t="2026-01-15T12:00:00Z", value=42)
+        envelope = wrap_event(event, provider="alpaca", feed="bars")
+
+        assert envelope["symbol"] == "MSFT"
+        assert envelope["payload"]["value"] == 42
 
 
 class TestEventEnvelopeModel:

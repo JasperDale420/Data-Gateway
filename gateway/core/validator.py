@@ -103,13 +103,17 @@ class DataValidator:
         result = ValidationResult(valid=True, data=bar)
 
         # Extract fields with defaults
-        symbol = bar.get("symbol", "")
-        timestamp = bar.get("timestamp")
-        open_price = self._to_decimal(bar.get("open"))
-        high = self._to_decimal(bar.get("high"))
-        low = self._to_decimal(bar.get("low"))
-        close = self._to_decimal(bar.get("close"))
-        volume = bar.get("volume", 0)
+        symbol = bar["symbol"] if "symbol" in bar else bar.get("S", "")
+        timestamp = bar["timestamp"] if "timestamp" in bar else bar.get("t")
+        open_raw = bar["open"] if "open" in bar else bar.get("o")
+        high_raw = bar["high"] if "high" in bar else bar.get("h")
+        low_raw = bar["low"] if "low" in bar else bar.get("l")
+        close_raw = bar["close"] if "close" in bar else bar.get("c")
+        open_price = self._to_decimal(open_raw)
+        high = self._to_decimal(high_raw)
+        low = self._to_decimal(low_raw)
+        close = self._to_decimal(close_raw)
+        volume = bar["volume"] if "volume" in bar else bar.get("v", 0)
 
         # Symbol validation (GW-E7007)
         if not self._is_valid_symbol(symbol):
@@ -119,8 +123,8 @@ class DataValidator:
 
         # Timestamp validation (GW-E7001)
         if timestamp:
-            ts = self._parse_timestamp(timestamp)
-            if ts and ts > datetime.now(UTC):
+            now_utc = datetime.now(UTC)
+            if self._is_future_timestamp(timestamp, now_utc=now_utc):
                 result.add_error(
                     ValidationErrorCodes.FUTURE_TIMESTAMP,
                     f"Future timestamp: {timestamp}",
@@ -203,12 +207,14 @@ class DataValidator:
         """
         result = ValidationResult(valid=True, data=quote)
 
-        symbol = quote.get("symbol", "")
-        bid_price = self._to_decimal(quote.get("bid_price"))
-        ask_price = self._to_decimal(quote.get("ask_price"))
-        bid_size = quote.get("bid_size", 0)
-        ask_size = quote.get("ask_size", 0)
-        timestamp = quote.get("timestamp")
+        symbol = quote["symbol"] if "symbol" in quote else quote.get("S", "")
+        bid_raw = quote["bid_price"] if "bid_price" in quote else quote.get("bp")
+        ask_raw = quote["ask_price"] if "ask_price" in quote else quote.get("ap")
+        bid_price = self._to_decimal(bid_raw)
+        ask_price = self._to_decimal(ask_raw)
+        bid_size = quote["bid_size"] if "bid_size" in quote else quote.get("bs", 0)
+        ask_size = quote["ask_size"] if "ask_size" in quote else quote.get("as", 0)
+        timestamp = quote["timestamp"] if "timestamp" in quote else quote.get("t")
 
         # Symbol validation
         if not self._is_valid_symbol(symbol):
@@ -218,8 +224,8 @@ class DataValidator:
 
         # Timestamp validation
         if timestamp:
-            ts = self._parse_timestamp(timestamp)
-            if ts and ts > datetime.now(UTC):
+            now_utc = datetime.now(UTC)
+            if self._is_future_timestamp(timestamp, now_utc=now_utc):
                 result.add_error(
                     ValidationErrorCodes.FUTURE_TIMESTAMP,
                     f"Future timestamp: {timestamp}",
@@ -237,11 +243,11 @@ class DataValidator:
             )
 
         # Size validation
-        if bid_size < 0:
+        if bid_size is not None and bid_size < 0:
             result.add_error(
                 ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative bid size: {bid_size}", "bid_size"
             )
-        if ask_size < 0:
+        if ask_size is not None and ask_size < 0:
             result.add_error(
                 ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative ask size: {ask_size}", "ask_size"
             )
@@ -263,10 +269,11 @@ class DataValidator:
         """
         result = ValidationResult(valid=True, data=trade)
 
-        symbol = trade.get("symbol", "")
-        price = self._to_decimal(trade.get("price"))
-        size = trade.get("size", 0)
-        timestamp = trade.get("timestamp")
+        symbol = trade["symbol"] if "symbol" in trade else trade.get("S", "")
+        price_raw = trade["price"] if "price" in trade else trade.get("p")
+        price = self._to_decimal(price_raw)
+        size = trade["size"] if "size" in trade else trade.get("s", 0)
+        timestamp = trade["timestamp"] if "timestamp" in trade else trade.get("t")
 
         # Symbol validation
         if not self._is_valid_symbol(symbol):
@@ -276,8 +283,8 @@ class DataValidator:
 
         # Timestamp validation
         if timestamp:
-            ts = self._parse_timestamp(timestamp)
-            if ts and ts > datetime.now(UTC):
+            now_utc = datetime.now(UTC)
+            if self._is_future_timestamp(timestamp, now_utc=now_utc):
                 result.add_error(
                     ValidationErrorCodes.FUTURE_TIMESTAMP,
                     f"Future timestamp: {timestamp}",
@@ -291,7 +298,7 @@ class DataValidator:
             )
 
         # Size validation
-        if size < 0:
+        if size is not None and size < 0:
             result.add_error(
                 ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative trade size: {size}", "size"
             )
@@ -317,10 +324,27 @@ class DataValidator:
         """Convert value to Decimal, handling None."""
         if value is None:
             return None
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, int):
+            return Decimal(value)
+        if isinstance(value, float):
+            return Decimal(str(value))
+        if isinstance(value, str):
+            if not value:
+                return None
+            try:
+                return Decimal(value)
+            except Exception:
+                return None
         try:
             return Decimal(str(value))
         except Exception:
             return None
+
+    def _is_future_timestamp(self, timestamp: Any, *, now_utc: datetime) -> bool:
+        ts = self._parse_timestamp(timestamp)
+        return ts is not None and ts > now_utc
 
     def _parse_timestamp(self, ts: Any) -> datetime | None:
         """Parse timestamp to datetime."""

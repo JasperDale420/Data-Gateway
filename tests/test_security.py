@@ -104,6 +104,22 @@ class TestInputValidator:
         error = validator.validate_symbols_array(symbols, max_symbols=2)
         assert error is not None
 
+    def test_symbols_array_dedupes_before_validation(self, validator, monkeypatch):
+        """Duplicate symbols should not be revalidated."""
+        calls: list[str] = []
+        original = validator.validate_symbol
+
+        def _count(symbol: str, symbol_type: str = "stock"):
+            calls.append(symbol)
+            return original(symbol, symbol_type)
+
+        monkeypatch.setattr(validator, "validate_symbol", _count)
+
+        error = validator.validate_symbols_array(["AAPL", "aapl", "MSFT", "AAPL"])
+
+        assert error is None
+        assert calls == ["AAPL", "MSFT"]
+
     # ─────────────────────────────────────────────────────────────────────
     # Timeframe Validation
     # ─────────────────────────────────────────────────────────────────────

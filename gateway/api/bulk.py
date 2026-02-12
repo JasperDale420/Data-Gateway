@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from gateway.api.deps import get_registry, require_api_key, require_provider_rate_limit
@@ -149,6 +150,12 @@ class BulkJobStatusResponse(BaseModel):
     error: str | None = None
 
 
+def _job_status_value(job: Any) -> str:
+    """Normalize bulk job status enum/object to its string value."""
+    status = getattr(job, "status", None)
+    return str(getattr(status, "value", status))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
@@ -167,6 +174,19 @@ async def create_bulk_bars_job(
     registry: ProviderRegistry = Depends(get_registry),
 ) -> BulkJobCreatedResponse:
     """Create a bulk bars fetch job."""
+    # Enforce endpoint rate limit (PRD 7.5.3)
+    try:
+        get_endpoint_rate_limiter().acquire("bulk_create", client_id=client.id)
+    except EndpointRateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "GW-E4029",
+                "message": exc.message,
+            },
+            headers={"Retry-After": str(int(exc.retry_after))},
+        )
+
     manager = get_bulk_manager()
     settings = get_settings()
 
@@ -276,12 +296,22 @@ async def get_job_status(
 @router.get(
     "/jobs/{job_id}/download",
     summary="Download job results",
-    description="Download results of a completed bulk job. "
-    "Supports JSONL (default) and JSON formats.",
+    description="Download results of a completed bulk job. Supports JSONL (default) and JSON formats.",
 )
 async def download_job_results(
     job_id: str,
     format: str = Query(default="jsonl", description="Output format: jsonl or json"),
+    limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=5000,
+        description="Optional max number of records to include in download window",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of records to skip before streaming download content",
+    ),
     client: Any = Depends(require_api_key),
 ) -> Response:
     """Download results from a completed job."""
@@ -291,27 +321,23 @@ async def download_job_results(
     if not job or job.client_id != client.id:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
-    if job.status != BulkJobStatus.COMPLETE:
+    if _job_status_value(job) != BulkJobStatus.COMPLETE.value:
         raise HTTPException(
             status_code=400,
-            detail=f"Job not complete, status: {job.status.value}",
+            detail=f"Job not complete, status: {_job_status_value(job)}",
         )
 
     if format == "jsonl":
-        content = manager.get_results_jsonl(job_id)
-        return Response(
-            content=content,
+        return StreamingResponse(
+            content=manager.iter_results_jsonl_chunks(job_id, offset=offset, limit=limit),
             media_type="application/x-ndjson",
             headers={
                 "Content-Disposition": f"attachment; filename={job_id}.jsonl",
             },
         )
     elif format == "json":
-        import json
-
-        content = json.dumps({"data": job.results})
-        return Response(
-            content=content,
+        return StreamingResponse(
+            content=manager.iter_results_json_chunks(job_id, offset=offset, limit=limit),
             media_type="application/json",
             headers={
                 "Content-Disposition": f"attachment; filename={job_id}.json",
@@ -322,6 +348,56 @@ async def download_job_results(
             status_code=400,
             detail=f"Unsupported format: {format}. Use 'jsonl' or 'json'.",
         )
+
+
+@router.get(
+    "/jobs/{job_id}/results",
+    response_model=SuccessResponse,
+    summary="Get paged job results",
+    description="Return paged records for a completed bulk job using offset/limit pagination.",
+)
+async def get_job_results_page(
+    job_id: str,
+    limit: int = Query(
+        default=500,
+        ge=1,
+        le=5000,
+        description="Max number of records to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of records to skip before returning page",
+    ),
+    client: Any = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Get paged records from a completed bulk job."""
+    manager = get_bulk_manager()
+    job = await manager.get_job(job_id)
+
+    if not job or job.client_id != client.id:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    if _job_status_value(job) != BulkJobStatus.COMPLETE.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job not complete, status: {_job_status_value(job)}",
+        )
+
+    records, total_records, has_more, next_offset = manager.get_results_page(
+        job_id,
+        limit=limit,
+        offset=offset,
+    )
+    return {
+        "results": records,
+        "count": len(records),
+        "total_records": total_records,
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+        "next_offset": next_offset,
+    }
 
 
 @router.delete(
@@ -365,6 +441,17 @@ async def cancel_job(
 )
 async def list_jobs(
     status: str | None = Query(default=None, description="Filter by status"),
+    limit: int | None = Query(
+        default=None,
+        ge=1,
+        le=1000,
+        description="Optional max number of jobs to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of jobs to skip before returning results",
+    ),
     client: Any = Depends(require_api_key),
 ) -> dict[str, Any]:
     """List all bulk jobs."""
@@ -378,6 +465,11 @@ async def list_jobs(
     return {
         "jobs": [j.to_dict() for j in jobs],
         "count": len(jobs),
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+        "next_offset": next_offset,
     }
 
 

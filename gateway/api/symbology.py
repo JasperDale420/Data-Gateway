@@ -47,7 +47,12 @@ class SymbolValidateResponse(BaseModel):
 class BatchResolveRequest(BaseModel):
     """Request for batch symbol resolution."""
 
-    symbols: list[str]
+    symbols: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="List of symbols to resolve (max 500)",
+    )
 
 
 class BatchResolveResponse(BaseModel):
@@ -131,6 +136,7 @@ async def batch_resolve_symbols(
     Returns results for valid symbols and errors for invalid ones.
     """
     resolver = get_symbol_resolver()
+    record_symbology_batch_size(len(request.symbols))
     results = []
     errors = []
 

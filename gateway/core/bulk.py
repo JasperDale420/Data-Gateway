@@ -4,12 +4,17 @@ Implements async job-based bulk data fetching as specified in PRD.
 """
 
 import asyncio
+import contextlib
+import io
 import json
+import os
+import tempfile
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum
+from itertools import islice
 from typing import Any
 
 import structlog
@@ -131,11 +136,7 @@ class BulkOptionsRequest:
                 errors.append("moneyness_range.min_delta must be between 0 and 1")
             if max_delta is not None and not (0 <= float(max_delta) <= 1):
                 errors.append("moneyness_range.max_delta must be between 0 and 1")
-            if (
-                min_delta is not None
-                and max_delta is not None
-                and float(min_delta) > float(max_delta)
-            ):
+            if min_delta is not None and max_delta is not None and float(min_delta) > float(max_delta):
                 errors.append("moneyness_range.min_delta must be <= max_delta")
 
         return errors
@@ -201,6 +202,7 @@ class BulkJob:
 
     # Results storage
     results: list[dict[str, Any]] = field(default_factory=list)
+    results_spool_path: str | None = None
     error: str | None = None
 
     # Background task reference
@@ -268,12 +270,15 @@ class BulkJobManager:
     JOB_TTL_SECONDS = 3600  # Jobs expire after 1 hour
 
     def __init__(self) -> None:
+        settings = get_settings()
         self._jobs: dict[str, BulkJob] = {}
         self._lock = asyncio.Lock()
         self._fetch_bars_func: Any | None = None
         self._fetch_options_func: Any | None = None
         self._fetch_adjustments_func: Any | None = None
         self._max_concurrency = 10
+        self._max_results_in_memory = max(1, settings.bulk_results_max_in_memory)
+        self._spill_results_to_disk = settings.bulk_results_spool_to_disk
 
     def set_bars_fetcher(self, func: Any) -> None:
         """Set the function used to fetch bars for a symbol."""
@@ -445,8 +450,51 @@ class BulkJobManager:
         if not job:
             return
 
-        for record in job.results:
+        for record in self._iter_job_results(job):
             yield record
+
+    def iter_results_jsonl_chunks(
+        self,
+        job_id: str,
+        records_per_chunk: int = 500,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> Iterator[bytes]:
+        """Iterate JSONL bytes in bounded chunks for a completed job."""
+        job = self._jobs.get(job_id)
+        if not job or job.status != BulkJobStatus.COMPLETE:
+            return iter(())
+
+        chunk_size = max(1, records_per_chunk)
+        page_offset = max(0, offset)
+        page_limit = None if limit is None else max(1, limit)
+        paged_records = islice(
+            self._iter_job_results(job),
+            page_offset,
+            None if page_limit is None else page_offset + page_limit,
+        )
+
+        def _iter_chunks() -> Iterator[bytes]:
+            buffer_lines: list[str] = []
+            first_chunk = True
+            for index, record in enumerate(paged_records, start=1):
+                buffer_lines.append(json.dumps(record))
+                if index % chunk_size == 0:
+                    chunk_text = "\n".join(buffer_lines)
+                    if not first_chunk:
+                        chunk_text = f"\n{chunk_text}"
+                    yield chunk_text.encode("utf-8")
+                    first_chunk = False
+                    buffer_lines.clear()
+
+            if buffer_lines:
+                chunk_text = "\n".join(buffer_lines)
+                if not first_chunk:
+                    chunk_text = f"\n{chunk_text}"
+                yield chunk_text.encode("utf-8")
+
+        return _iter_chunks()
 
     def get_results_jsonl(self, job_id: str) -> str:
         """Get results as JSONL string."""
@@ -454,8 +502,152 @@ class BulkJobManager:
         if not job or job.status != BulkJobStatus.COMPLETE:
             return ""
 
-        lines = [json.dumps(r) for r in job.results]
-        return "\n".join(lines)
+        # Keep a fast string path for legacy call sites while avoiding
+        # intermediate list-of-lines materialization.
+        output = io.StringIO()
+        first = True
+        for record in self._iter_job_results(job):
+            if not first:
+                output.write("\n")
+            output.write(json.dumps(record))
+            first = False
+        return output.getvalue()
+
+    def get_results_json(self, job_id: str) -> list[dict[str, Any]]:
+        """Get results as JSON-serializable list."""
+        job = self._jobs.get(job_id)
+        if not job or job.status != BulkJobStatus.COMPLETE:
+            return []
+        return list(self._iter_job_results(job))
+
+    def iter_results_json_chunks(
+        self,
+        job_id: str,
+        records_per_chunk: int = 500,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> Iterator[bytes]:
+        """Iterate JSON bytes for `{\"data\":[...]}` in bounded chunks."""
+        job = self._jobs.get(job_id)
+        if not job or job.status != BulkJobStatus.COMPLETE:
+            return iter(())
+
+        chunk_size = max(1, records_per_chunk)
+        page_offset = max(0, offset)
+        page_limit = None if limit is None else max(1, limit)
+        paged_records = islice(
+            self._iter_job_results(job),
+            page_offset,
+            None if page_limit is None else page_offset + page_limit,
+        )
+
+        def _iter_chunks() -> Iterator[bytes]:
+            yield b'{"data":['
+            buffer_parts: list[str] = []
+            first = True
+            for index, record in enumerate(paged_records, start=1):
+                if first:
+                    buffer_parts.append(json.dumps(record))
+                    first = False
+                else:
+                    buffer_parts.append(",")
+                    buffer_parts.append(json.dumps(record))
+
+                if index % chunk_size == 0:
+                    yield "".join(buffer_parts).encode("utf-8")
+                    buffer_parts.clear()
+
+            if buffer_parts:
+                yield "".join(buffer_parts).encode("utf-8")
+            yield b"]}"
+
+        return _iter_chunks()
+
+    def get_results_page(
+        self,
+        job_id: str,
+        *,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int, bool, int | None]:
+        """Get paged job results with traversal metadata.
+
+        Returns:
+            (page_records, total_records, has_more, next_offset)
+        """
+        job = self._jobs.get(job_id)
+        if not job or job.status != BulkJobStatus.COMPLETE:
+            return [], 0, False, None
+
+        page_limit = max(1, limit)
+        page_offset = max(0, offset)
+        total_records = max(0, int(job.records_fetched))
+
+        page_records = list(
+            islice(
+                self._iter_job_results(job),
+                page_offset,
+                page_offset + page_limit,
+            )
+        )
+        returned = len(page_records)
+        consumed = page_offset + returned
+        has_more = consumed < total_records
+        next_offset = consumed if has_more else None
+        return page_records, total_records, has_more, next_offset
+
+    def _iter_job_results(self, job: BulkJob) -> Iterator[dict[str, Any]]:
+        """Iterate all job results from memory and optional spool storage."""
+        if job.results:
+            yield from job.results
+        if job.results_spool_path:
+            try:
+                with open(job.results_spool_path, encoding="utf-8") as spool_file:
+                    for line in spool_file:
+                        stripped = line.strip()
+                        if stripped:
+                            yield json.loads(stripped)
+            except FileNotFoundError:
+                logger.warning(
+                    "bulk_results_spool_missing",
+                    job_id=job.job_id,
+                    path=job.results_spool_path,
+                )
+
+    def _append_job_results(self, job: BulkJob, records: list[dict[str, Any]]) -> None:
+        """Append records to job results with optional spill-to-disk guardrail."""
+        if not records:
+            return
+        if not self._spill_results_to_disk:
+            job.results.extend(records)
+            return
+
+        if job.results_spool_path is None and (len(job.results) + len(records)) > self._max_results_in_memory:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                prefix=f"{job.job_id}-results-",
+                suffix=".jsonl",
+                delete=False,
+            ) as spool_init_file:
+                spool_path = spool_init_file.name
+                if job.results:
+                    for existing in job.results:
+                        spool_init_file.write(json.dumps(existing))
+                        spool_init_file.write("\n")
+            job.results.clear()
+            job.results_spool_path = spool_path
+            logger.info("bulk_results_spool_created", job_id=job.job_id, path=spool_path)
+
+        if job.results_spool_path:
+            with open(job.results_spool_path, "a", encoding="utf-8") as spool_append_file:
+                for record in records:
+                    spool_append_file.write(json.dumps(record))
+                    spool_append_file.write("\n")
+            return
+
+        job.results.extend(records)
 
     async def _process_bars_job(self, job: BulkJob) -> None:
         """Process a bulk bars job."""
@@ -501,7 +693,7 @@ class BulkJobManager:
                     bars = None
 
                 if bars:
-                    job.results.extend(bars)
+                    self._append_job_results(job, bars)
                     job.records_fetched += len(bars)
 
                 job.symbols_complete += 1
@@ -616,10 +808,7 @@ class BulkJobManager:
             async def _fetch_underlying_with_key(underlying: str) -> tuple[str, list[Any] | None]:
                 return underlying, await _fetch_underlying(underlying)
 
-            tasks = [
-                asyncio.create_task(_fetch_underlying_with_key(underlying))
-                for underlying in request.underlyings
-            ]
+            tasks = [asyncio.create_task(_fetch_underlying_with_key(underlying)) for underlying in request.underlyings]
             for task in asyncio.as_completed(tasks):
                 try:
                     underlying, contracts = await task
@@ -786,9 +975,7 @@ class BulkJobManager:
             ) -> tuple[str, list[dict[str, Any]] | None]:
                 return symbol, await _fetch_symbol(symbol)
 
-            tasks = [
-                asyncio.create_task(_fetch_symbol_with_key(symbol)) for symbol in request.symbols
-            ]
+            tasks = [asyncio.create_task(_fetch_symbol_with_key(symbol)) for symbol in request.symbols]
             for task in asyncio.as_completed(tasks):
                 try:
                     symbol, factors = await task
@@ -863,6 +1050,10 @@ class BulkJobManager:
                 expired.append(job_id)
 
         for job_id in expired:
+            spool_path = self._jobs[job_id].results_spool_path
+            if spool_path:
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(spool_path)
             del self._jobs[job_id]
             logger.debug("bulk_job_expired", job_id=job_id)
 

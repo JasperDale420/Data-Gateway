@@ -1,5 +1,6 @@
 """API middleware for rate limiting, cache headers, and envelope wrapping."""
 
+import asyncio
 import json
 import re
 import time
@@ -364,6 +365,7 @@ class CacheMiddleware(BaseHTTPMiddleware):
             async for chunk in response.body_iterator:
                 body_chunks.append(chunk)
             body = b"".join(body_chunks)
+            request.state._gateway_cached_response_body = body
 
             # Store headers (excluding hop-by-hop)
             cached_headers = {
@@ -517,19 +519,19 @@ FEED_MAPPING = {
     "trades": "trades",
     "trade": "trades",
     # Options & flow
-    "flow": "flow",
+    "flow": "flow_alerts",
     "darkpool": "darkpool",
-    "options": "options",
-    "chain": "options",
-    "greeks": "greeks",
-    "gex": "greeks",
+    "options": "option_contract",
+    "chain": "option_contract",
+    "greeks": "greek_exposure",
+    "gex": "greek_exposure",
     # Fundamentals & news
     "news": "news",
     "articles": "news",
-    "profile": "fundamentals",
-    "overview": "fundamentals",
-    "earnings": "fundamentals",
-    "financials": "fundamentals",
+    "profile": "stock_fundamentals",
+    "overview": "stock_fundamentals",
+    "earnings": "earnings",
+    "financials": "stock_fundamentals",
     "filings": "filings",
     "facts": "filings",
     # UW market sentiment
@@ -537,31 +539,55 @@ FEED_MAPPING = {
     "market_tide": "market_tide",
     "sector_tide": "sector_tide",
     # UW alternative data
-    "etf": "etf",
-    "holdings": "etf",
-    "flows": "etf",
-    "shorts": "shorts",
-    "short_interest": "shorts",
-    "ftd": "shorts",
-    "screener": "screener",
+    "etf": "etf_metadata",
+    "holdings": "etf_holding",
+    "flows": "etf_flow",
+    "shorts": "short_data",
+    "short_interest": "short_data",
+    "ftd": "ftd",
+    "screener": "screener_result",
     # UW political/institutional
-    "insiders": "insiders",
-    "institutions": "institutions",
-    "politicians": "politicians",
+    "insiders": "insider_trades",
+    "institutions": "institution_holdings",
+    "politicians": "politician_trades",
     # Analytics
-    "volatility": "analytics",
-    "iv_rank": "analytics",
-    "seasonality": "analytics",
-    "max_pain": "analytics",
+    "volatility": "volatility_stats",
+    "iv_rank": "iv_rank",
+    "seasonality": "seasonality",
+    "max_pain": "max_pain",
     # Forex
     "forex": "forex",
     "rates": "forex",
     # Company fundamentals
-    "company_overview": "fundamentals",
-    "income_statement": "fundamentals",
-    "balance_sheet": "fundamentals",
-    "cash_flow": "fundamentals",
+    "company_overview": "stock_fundamentals",
+    "income_statement": "stock_fundamentals",
+    "balance_sheet": "stock_fundamentals",
+    "cash_flow": "stock_fundamentals",
 }
+
+# Cerberus-critical routes that need canonical sink feed names.
+CANONICAL_ROUTE_FEEDS = [
+    (
+        re.compile(r"^/api/v1/alpaca/stocks/[^/]+/bars$"),
+        "alpaca",
+        "bars",
+    ),
+    (
+        re.compile(r"^/api/v1/alpaca/stocks/[^/]+/trades$"),
+        "alpaca",
+        "trades",
+    ),
+    (
+        re.compile(r"^/api/v1/uw/flow/[^/]+$"),
+        "unusual_whales",
+        "flow_alerts",
+    ),
+    (
+        re.compile(r"^/api/v1/uw/gex/[^/]+$"),
+        "unusual_whales",
+        "greek_exposure",
+    ),
+]
 
 # Paths to skip envelope wrapping (health, metrics, admin, etc)
 SKIP_PATHS = {
@@ -676,18 +702,52 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 "meta": data.get("meta", {}),
             }
 
-            wrapped_body = json.dumps(wrapped, default=str)
+            wrapped_body = json.dumps(wrapped, default=str, separators=(",", ":"))
 
             # Publish to data sink for Heber lakehouse (non-blocking)
             from gateway.api.deps import get_sink_registry
 
             sink_registry = get_sink_registry()
-            if sink_registry:
-                import asyncio
+            should_publish_to_sink = self._is_sink_publish_eligible(
+                path=path,
+                payload=payload,
+                feed=feed,
+            )
+            if sink_registry and should_publish_to_sink:
+                topic = "heber:events"
 
-                topic = f"gateway.rest.{feed}"
-                # Fire-and-forget publish (DataSinkRegistry handles task lifecycle)
-                asyncio.create_task(sink_registry.publish_all(topic, envelope))
+                if isinstance(payload, list):
+                    # EXPLODE LIST: Publish each item individually so Heber receives valid events
+                    tasks = []
+                    for item in payload:
+                        # Wrap individual item
+                        try:
+                            item_envelope = wrap_event(
+                                event=item,
+                                provider=provider,
+                                feed=feed,
+                                source="rest",
+                            )
+                            tasks.append(sink_registry.publish_all(topic, item_envelope))
+                        except Exception as e:
+                            logger.warning(
+                                "rest_envelope_explode_failed",
+                                path=path,
+                                error=str(e),
+                            )
+
+                    if tasks:
+                        # Fire and forget the batch of publishes.
+                        asyncio.create_task(self._publish_sink_batch(tasks, path=path))
+                else:
+                    # SINGLE ITEM: Publish the already-wrapped envelope
+                    asyncio.create_task(sink_registry.publish_all(topic, envelope))
+            elif sink_registry and not should_publish_to_sink:
+                logger.debug(
+                    "rest_envelope_sink_publish_skipped",
+                    path=path,
+                    feed=feed,
+                )
 
             logger.debug(
                 "rest_envelope_wrapped",
@@ -747,6 +807,10 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
 
     def _extract_route_info(self, path: str) -> tuple[str, str]:
         """Extract provider and feed from request path."""
+        for pattern, provider, feed in CANONICAL_ROUTE_FEEDS:
+            if pattern.match(path):
+                return provider, feed
+
         for pattern in ROUTE_PATTERNS:
             match = pattern.match(path)
             if match:
@@ -767,6 +831,26 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 return provider, feed
 
         return "unknown", "data"
+
+    def _is_sink_publish_eligible(self, path: str, payload: object, feed: str) -> bool:
+        """Allow sink publishing only for routes with known ingest-safe payload shapes."""
+        # Skip known aggregate-only bundles in phase 1 to avoid malformed ingest events.
+        if path.startswith("/api/v1/alpaca/screener/"):
+            return False
+
+        if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/bars"):
+            return isinstance(payload, dict) and isinstance(payload.get("bars"), list)
+
+        if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/trades"):
+            return isinstance(payload, dict) and isinstance(payload.get("trades"), list)
+
+        if path.startswith("/api/v1/uw/flow/") and feed == "flow_alerts":
+            return isinstance(payload, list)
+
+        if path.startswith("/api/v1/uw/gex/") and feed == "greek_exposure":
+            return isinstance(payload, list)
+
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -888,9 +972,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         # Get or create tracker
         tracker = self._ip_trackers.get(ip)
         if not tracker or now - tracker.first_request >= self.window_seconds:
-            self._ip_trackers[ip] = IPConnectionTracker(
-                requests=1, first_request=now, last_seen=now
-            )
+            self._ip_trackers[ip] = IPConnectionTracker(requests=1, first_request=now, last_seen=now)
             return True
 
         # Check limit

@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
@@ -24,6 +25,7 @@ from gateway.api import (
     admin_router,
     alpaca_router,
     alphavantage_router,
+    backfill_router,
     bulk_router,
     calendar_router,
     catalog_router,
@@ -114,21 +116,23 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
             )
 
     # Publish to data sink for Heber storage (non-blocking)
-    from gateway.api.deps import get_sink_registry
-
-    sink_registry = get_sink_registry()
+    sink_registry = _stream_sink_registry
     if sink_registry:
-        # Publish all events to single Heber stream for unified ingestion
-        await sink_registry.publish_all("heber:events", envelope)
+        # Schedule sink publish off the stream callback path.
+        _schedule_stream_sink_publish(sink_registry, envelope)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
-    import asyncio
     import signal
 
     settings = get_settings()
+    _configure_stream_sink_dispatch_limits(
+        max_inflight_publish=settings.data_sink_stream_publish_max_inflight,
+        max_pending_tasks=settings.data_sink_stream_publish_max_pending,
+    )
+    _set_stream_sink_registry(None)
 
     # Startup
     logger.info(
@@ -165,6 +169,8 @@ async def lifespan(app: FastAPI):
             on_data=_on_stream_data,
             use_iex=settings.stream_use_iex,
             lazy_connect=settings.stream_lazy_connect,
+            fanout_max_inflight=settings.stream_fanout_max_inflight,
+            fanout_batch_size=settings.stream_fanout_batch_size,
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()
@@ -195,9 +201,20 @@ async def lifespan(app: FastAPI):
         sink_registry.set_dedup_cache(dedup_cache)
 
         set_sink_registry(sink_registry)
+        _set_stream_sink_registry(sink_registry)
         logger.info("data_sink_initialized", sink="redis_streams", dedup_enabled=True)
     elif settings.data_sink_enabled:
         logger.warning("data_sink_skipped", reason="Missing GATEWAY_DATA_SINK_REDIS_URL")
+
+    # Configure backfill engine with provider and sink registries
+    from gateway.core.backfill import get_backfill_engine
+
+    backfill_engine = get_backfill_engine()
+    backfill_engine.configure(
+        provider_registry=registry,
+        sink_registry=sink_registry,
+    )
+    logger.info("backfill_engine_configured")
 
     # SIGHUP handler for hot config reload (PRD 6.5.4)
     def handle_sighup(signum, frame):
@@ -228,17 +245,39 @@ async def lifespan(app: FastAPI):
             flow_enabled=True,
             darkpool_enabled=True,
             market_tide_enabled=True,
+            eod_enabled=settings.uw_eod_enabled,
+            eod_hour=settings.uw_eod_hour,
+            eod_minute=settings.uw_eod_minute,
+            eod_concurrency=settings.uw_eod_concurrency,
         )
-        logger.info("uw_poller_initialized", interval_seconds=300)
+        logger.info(
+            "uw_poller_initialized",
+            interval_seconds=300,
+            eod_enabled=settings.uw_eod_enabled,
+        )
 
     yield
 
-    # Shutdown with graceful drain (PRD 6.5, 11.3.4)
+    # ── PRD §Graceful Shutdown: 8-step sequence ────────────────────────────
+
+    # Step 1: Mark as shutting down (health endpoints → 503)
+    from gateway.core.shutdown import ShutdownCoordinator
+
+    coordinator = ShutdownCoordinator.get_instance()
     drain_seconds = settings.shutdown_drain_seconds
+    coordinator.start_shutdown(drain_seconds=drain_seconds)
     logger.info("shutdown_starting", drain_seconds=drain_seconds)
 
-    # PRIORITY: Stop multiplexer FIRST to release Alpaca WebSocket connections immediately
-    # This prevents "connection limit exceeded" errors on restart
+    # Step 2: Notify connected clients
+    connections = get_connection_manager()
+    notified = await connections.broadcast_shutdown(timeout_seconds=drain_seconds)
+    logger.info("shutdown_clients_notified", count=notified)
+
+    # Step 3: Drain period — continue delivering queued messages
+    if drain_seconds > 0:
+        await asyncio.sleep(drain_seconds)
+
+    # Step 4: Unsubscribe upstream / stop multiplexer
     if multiplexer:
         logger.info("multiplexer_shutdown_starting")
         try:
@@ -249,26 +288,28 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("multiplexer_shutdown_error", error=str(e))
 
-    # Stop accepting new connections
-    connections = get_connection_manager()
-    logger.info("shutdown_connections", active=connections.active_count)
+    # Step 5: Close client connections with 1001 Going Away
+    await connections.close_all(code=1001, reason="Going Away")
 
-    # Wait for drain period (allow in-flight requests to complete)
-    if drain_seconds > 0:
-        await asyncio.sleep(drain_seconds)
+    # Step 6: Flush stream-to-sink publish tasks
+    await _drain_stream_sink_publish_tasks()
 
-    # Shutdown UW poller
+    # Step 7: Shutdown remaining services
     if uw_poller:
         from gateway.core.uw_poller import stop_uw_poller
 
         await stop_uw_poller()
 
-    # Shutdown remaining components
+    from gateway.core.backfill import get_backfill_engine
+
+    await get_backfill_engine().shutdown()
     await registry.shutdown()
     uptime_task.cancel()
     with suppress(asyncio.CancelledError):
         await uptime_task
     logger.info("gateway_shutdown_complete")
+    _set_stream_sink_registry(None)
+    ShutdownCoordinator.reset()
 
 
 def create_app() -> FastAPI:
@@ -315,6 +356,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(websocket_router)
     app.include_router(alpaca_router)
+    app.include_router(market_router)
     app.include_router(admin_router)
     app.include_router(uw_router)
     app.include_router(news_router)
@@ -334,6 +376,7 @@ def create_app() -> FastAPI:
     app.include_router(legacy_adjustments_router)
     app.include_router(quality_router)
     app.include_router(catalog_router)
+    app.include_router(backfill_router)
 
     # Root endpoint
     @app.get("/")

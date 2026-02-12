@@ -1,5 +1,6 @@
 """Finnhub data provider for quotes, company profiles, and financials."""
 
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -22,6 +23,7 @@ class FinnhubProvider(DataProvider):
         self._api_key: str = ""
         self._client: httpx.AsyncClient | None = None
         self._base_url: str = "https://finnhub.io/api/v1"
+        self._quotes_max_concurrency: int = 3
 
     @property
     def name(self) -> str:
@@ -51,6 +53,17 @@ class FinnhubProvider(DataProvider):
         if not self._api_key:
             logger.warning("finnhub_api_key_not_set", env_var=api_key_env)
             return
+
+        quotes_max_concurrency = config.get("quotes_max_concurrency")
+        if quotes_max_concurrency is not None:
+            try:
+                self._quotes_max_concurrency = max(1, int(quotes_max_concurrency))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "finnhub_invalid_quotes_max_concurrency",
+                    value=quotes_max_concurrency,
+                    fallback=self._quotes_max_concurrency,
+                )
 
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
@@ -136,15 +149,22 @@ class FinnhubProvider(DataProvider):
 
     async def get_quotes(self, symbols: list[str]) -> list[NormalizedQuote]:
         """Get quotes for multiple symbols."""
-        quotes = []
-        for symbol in symbols:
+        record_provider_quote_batch_size(self.name, len(symbols))
+        if not symbols:
+            return []
+
+        sem = asyncio.Semaphore(max(1, self._quotes_max_concurrency))
+
+        async def _fetch(symbol: str) -> NormalizedQuote | None:
             try:
-                quote = await self.get_quote(symbol)
-                if quote:
-                    quotes.append(quote)
+                async with sem:
+                    return await self.get_quote(symbol)
             except Exception as e:
                 logger.warning("finnhub_quote_skipped", symbol=symbol, error=str(e))
-        return quotes
+                return None
+
+        quotes = await asyncio.gather(*(_fetch(symbol) for symbol in symbols))
+        return [quote for quote in quotes if quote is not None]
 
     # ─────────────────────────────────────────────────────────────────
     # Historical Bars
@@ -207,16 +227,24 @@ class FinnhubProvider(DataProvider):
             }
             timeframe = timeframe_map.get(resolution, "1Day")
 
-            for i in range(len(timestamps)):
+            for ts, open_px, high_px, low_px, close_px, volume in zip(
+                timestamps,
+                opens,
+                highs,
+                lows,
+                closes,
+                volumes,
+                strict=False,
+            ):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
-                        timestamp=datetime.fromtimestamp(timestamps[i], tz=UTC),
-                        open=Decimal(str(opens[i])),
-                        high=Decimal(str(highs[i])),
-                        low=Decimal(str(lows[i])),
-                        close=Decimal(str(closes[i])),
-                        volume=int(volumes[i]),
+                        timestamp=datetime.fromtimestamp(ts, tz=UTC),
+                        open=Decimal(str(open_px)),
+                        high=Decimal(str(high_px)),
+                        low=Decimal(str(low_px)),
+                        close=Decimal(str(close_px)),
+                        volume=int(volume),
                         provider="finnhub",
                         timeframe=timeframe,
                     )
@@ -339,9 +367,7 @@ class FinnhubProvider(DataProvider):
                         "url": article.get("url", ""),
                         "source": article.get("source", ""),
                         "image_url": article.get("image"),
-                        "published_at": datetime.fromtimestamp(
-                            article.get("datetime", 0), tz=UTC
-                        ).isoformat(),
+                        "published_at": datetime.fromtimestamp(article.get("datetime", 0), tz=UTC).isoformat(),
                         "symbols": [symbol.upper()],
                         "category": article.get("category"),
                         "provider": "finnhub",
@@ -381,9 +407,7 @@ class FinnhubProvider(DataProvider):
                         "url": article.get("url", ""),
                         "source": article.get("source", ""),
                         "image_url": article.get("image"),
-                        "published_at": datetime.fromtimestamp(
-                            article.get("datetime", 0), tz=UTC
-                        ).isoformat(),
+                        "published_at": datetime.fromtimestamp(article.get("datetime", 0), tz=UTC).isoformat(),
                         "category": article.get("category"),
                         "provider": "finnhub",
                     }

@@ -5,7 +5,6 @@ from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from gateway.api.deps import require_api_key
-from gateway.core.metrics import update_memory_metrics
 
 router = APIRouter(
     tags=["metrics"],
@@ -19,8 +18,8 @@ async def get_metrics():
 
     Returns metrics in Prometheus text format for scraping.
     """
-    # Update dynamic metrics before generating output
-    update_memory_metrics()
+    # Update memory metrics on an interval; still serve scrape output each request.
+    update_memory_metrics_if_due()
 
     return PlainTextResponse(
         content=generate_latest(),

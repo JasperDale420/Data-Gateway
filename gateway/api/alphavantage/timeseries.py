@@ -58,6 +58,7 @@ async def get_intraday(
     symbol: str,
     interval: str = Query(default="5min", description="1min, 5min, 15min, 30min, 60min"),
     outputsize: str = Query(default="compact", description="compact (100 points) or full"),
+    max_points: int | None = Query(default=None, ge=1, description="Optional max bars to return"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -95,6 +96,7 @@ async def get_daily(
     symbol: str,
     outputsize: str = Query(default="compact", description="compact (100 days) or full"),
     adjusted: bool = Query(default=True, description="Include split/dividend adjustments"),
+    max_points: int | None = Query(default=None, ge=1, description="Optional max bars to return"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -131,6 +133,7 @@ async def get_daily(
 async def get_weekly(
     symbol: str,
     adjusted: bool = Query(default=True, description="Include adjustments"),
+    max_points: int | None = Query(default=None, ge=1, description="Optional max bars to return"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),
@@ -161,6 +164,7 @@ async def get_weekly(
 async def get_monthly(
     symbol: str,
     adjusted: bool = Query(default=True, description="Use adjusted close prices"),
+    max_points: int | None = Query(default=None, ge=1, description="Optional max bars to return"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),

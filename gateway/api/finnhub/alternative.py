@@ -14,6 +14,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -33,6 +34,7 @@ async def get_fda_calendar(
     key = cache_key("finnhub:fda-calendar")
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_fda_calendar", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -43,6 +45,7 @@ async def get_fda_calendar(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_fda_calendar()
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_fda_calendar", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -70,6 +73,7 @@ async def get_congress_trading(
     key = cache_key("finnhub:congress-trading", symbol_key, start, end)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_congress_trading", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -83,6 +87,7 @@ async def get_congress_trading(
 
         data = await provider.get_congress_trading(symbol=symbol, start=start_dt, end=end_dt)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_congress_trading", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -109,6 +114,7 @@ async def get_lobbying(
     key = cache_key("finnhub:lobbying", symbol.upper(), start, end)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_lobbying", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -122,6 +128,7 @@ async def get_lobbying(
 
         data = await provider.get_lobbying(symbol, start=start_dt, end=end_dt)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_lobbying", "miss", "finnhub")
         return {
             "success": True,
             "data": {"symbol": symbol.upper(), "lobbying": data},
@@ -148,6 +155,7 @@ async def get_usa_spending(
     key = cache_key("finnhub:usa-spending", symbol.upper(), start, end)
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_usa_spending", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -161,6 +169,7 @@ async def get_usa_spending(
 
         data = await provider.get_usa_spending(symbol, start=start_dt, end=end_dt)
         await cache.set(key, data, ttl=3600)
+        record_route_cache("finnhub_usa_spending", "miss", "finnhub")
         return {
             "success": True,
             "data": {"symbol": symbol.upper(), "spending": data},

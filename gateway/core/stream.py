@@ -6,7 +6,7 @@ crypto, news) and fans out received data to subscribed downstream clients.
 
 import asyncio
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -19,6 +19,45 @@ from gateway.core.envelope import wrap_event
 from gateway.core.validator import get_validator
 
 logger = structlog.get_logger()
+
+DEFAULT_FANOUT_MAX_INFLIGHT = 100
+DEFAULT_FANOUT_BATCH_SIZE = 32
+MESSAGE_TYPE_TO_DATA_TYPE = {
+    "b": "bars",
+    "q": "quotes",
+    "t": "trades",
+    "n": "news",
+}
+
+
+class SequenceTracker:
+    """Per-symbol, per-feed sequence counter for gap detection (PRD §Sequence Numbers).
+
+    Clients see monotonically increasing integers starting at 1.
+    A gap (new_seq != last_seq + 1) signals missed messages.
+    All counters reset on gateway restart.
+    """
+
+    def __init__(self) -> None:
+        self._counters: dict[tuple[str, str], int] = {}
+
+    def next_seq(self, symbol: str, feed: str) -> int:
+        """Return the next sequence number for (symbol, feed)."""
+        key = (symbol, feed)
+        seq = self._counters.get(key, 0) + 1
+        self._counters[key] = seq
+        return seq
+
+    def reset(self) -> None:
+        """Clear all counters (called on gateway restart)."""
+        self._counters.clear()
+
+    def get_status(self) -> dict:
+        """Diagnostic snapshot of tracked keys and total messages."""
+        return {
+            "tracked_keys": len(self._counters),
+            "total_messages": sum(self._counters.values()),
+        }
 
 
 class AlpacaStreamType(Enum):
@@ -341,7 +380,14 @@ class UpstreamConnection:
         return self._subscriptions
 
     async def connect(self) -> None:
-        """Establish WebSocket connection."""
+        """Establish WebSocket connection.
+
+        Closes any existing connection first to avoid leaking connection slots
+        on Alpaca's side (each endpoint allows only 1 concurrent connection).
+        """
+        # Close existing connection to release Alpaca's connection slot
+        await self._close_ws()
+
         endpoint = self.stream_type.endpoint
         logger.info("connecting_upstream", stream=self.stream_type.value, endpoint=endpoint)
 
@@ -502,34 +548,45 @@ class UpstreamConnection:
             except asyncio.CancelledError:
                 logger.debug("receive_task_cancelled", stream=self.stream_type.value)
 
-        # Aggressively close WebSocket connection
-        if self._ws:
+        # Close the WebSocket connection
+        await self._close_ws()
+
+    async def _close_ws(self) -> None:
+        """Close the current WebSocket connection and release Alpaca's connection slot.
+
+        Safe to call even if no connection exists. This must be called before opening
+        a new connection to the same endpoint, since Alpaca only allows 1 concurrent
+        connection per endpoint.
+        """
+        if not self._ws:
+            return
+
+        ws = self._ws
+        self._ws = None
+        self._authenticated = False
+
+        try:
+            await asyncio.wait_for(
+                ws.close(code=1000, reason="Gateway reconnecting"),
+                timeout=3.0,
+            )
+            logger.debug("websocket_closed", stream=self.stream_type.value)
+        except TimeoutError:
+            logger.warning(
+                "websocket_close_timeout",
+                stream=self.stream_type.value,
+                action="forcing_close",
+            )
             try:
-                # Send explicit close frame with normal closure code
-                await asyncio.wait_for(
-                    self._ws.close(code=1000, reason="Gateway shutdown"),
-                    timeout=3.0,
-                )
-                logger.info("websocket_closed_gracefully", stream=self.stream_type.value)
-            except TimeoutError:
-                logger.warning(
-                    "websocket_close_timeout",
-                    stream=self.stream_type.value,
-                    action="forcing_close",
-                )
-                # Force close the underlying socket
-                try:
-                    self._ws.transport.abort()
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.warning(
-                    "websocket_close_error",
-                    stream=self.stream_type.value,
-                    error=str(e),
-                )
-            finally:
-                self._ws = None
+                ws.transport.abort()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(
+                "websocket_close_error",
+                stream=self.stream_type.value,
+                error=str(e),
+            )
 
     async def _connect_and_run(self) -> None:
         """Main connection loop with reconnection."""
@@ -557,10 +614,19 @@ class UpstreamConnection:
                 logger.exception("connection_error", stream=self.stream_type.value)
 
             self._authenticated = False
-            self._ws = None
+            # Close the WebSocket to release Alpaca's connection slot before reconnecting
+            await self._close_ws()
 
             if self._running:
                 await self._reconnect_with_backoff()
+                if not self._running:
+                    # Reconnect gave up (max retries or non-recoverable error)
+                    logger.info(
+                        "stream_dormant",
+                        stream=self.stream_type.value,
+                        hint="Will restart on next client subscription",
+                    )
+                    return
 
     async def _receive_loop(self) -> None:
         """Receive and dispatch messages.
@@ -584,8 +650,15 @@ class UpstreamConnection:
             except Exception as e:
                 logger.error("message_parse_error", error=str(e))
 
+    # Auth error messages that indicate account-level issues, not transient failures
+    _NON_RECOVERABLE_ERRORS = ("connection limit exceeded",)
+
     async def _reconnect_with_backoff(self) -> None:
-        """Reconnect with exponential backoff per PRD."""
+        """Reconnect with exponential backoff per PRD.
+
+        Sets self._running = False if retries are exhausted or a non-recoverable
+        error is detected, signaling the outer loop to stop.
+        """
         for attempt in range(self.max_retries):
             delay = min(self.base_delay * (2**attempt), self.max_delay)
             jitter = delay * 0.2 * (random.random() * 2 - 1)  # ±20%
@@ -614,14 +687,27 @@ class UpstreamConnection:
                 return
 
             except Exception as e:
+                error_msg = str(e)
+                # Detect non-recoverable auth errors — stop immediately
+                if any(msg in error_msg for msg in self._NON_RECOVERABLE_ERRORS):
+                    logger.error(
+                        "non_recoverable_error",
+                        stream=self.stream_type.value,
+                        error=error_msg,
+                        hint="Check for stale connections or competing applications using the same Alpaca credentials.",
+                    )
+                    self._running = False
+                    return
+
                 logger.warning(
                     "reconnect_failed",
                     stream=self.stream_type.value,
                     attempt=attempt + 1,
-                    error=str(e),
+                    error=error_msg,
                 )
 
         logger.error("max_retries_exceeded", stream=self.stream_type.value)
+        self._running = False
 
 
 class StreamMultiplexer:
@@ -637,6 +723,8 @@ class StreamMultiplexer:
         on_data: Callable[[str, str, dict[str, Any]], Awaitable[None]],
         use_iex: bool = False,
         lazy_connect: bool = True,
+        fanout_max_inflight: int = DEFAULT_FANOUT_MAX_INFLIGHT,
+        fanout_batch_size: int = DEFAULT_FANOUT_BATCH_SIZE,
     ) -> None:
         """Initialize multiplexer.
 
@@ -646,11 +734,19 @@ class StreamMultiplexer:
             on_data: Callback for data messages (client_id, data_type, message)
             use_iex: Use IEX feed instead of SIP for stocks
             lazy_connect: If True, only connect to streams when first client subscribes
+            fanout_max_inflight: Max concurrent callback deliveries per fanout batch.
+            fanout_batch_size: Number of clients to dispatch per gather batch.
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.on_data = on_data
         self._lazy_connect = lazy_connect
+        self._fanout_max_inflight = max(1, fanout_max_inflight)
+        self._fanout_client_batch_size = max(1, fanout_batch_size)
+        set_stream_fanout_limits_metrics(
+            max_inflight=self._fanout_max_inflight,
+            batch_size=self._fanout_client_batch_size,
+        )
 
         stock_type = AlpacaStreamType.STOCKS_IEX if use_iex else AlpacaStreamType.STOCKS_SIP
 
@@ -683,7 +779,15 @@ class StreamMultiplexer:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
-        self._fanout_semaphore = asyncio.Semaphore(100)
+        self._fanout_semaphore = asyncio.Semaphore(self._fanout_max_inflight)
+        self._validator: Any | None = None
+        self._seq_tracker = SequenceTracker()
+
+    def _get_stream_validator(self) -> Any:
+        """Lazily resolve and cache the shared market-data validator."""
+        if self._validator is None:
+            self._validator = get_validator()
+        return self._validator
 
     async def start(self) -> None:
         """Start the multiplexer.
@@ -702,9 +806,7 @@ class StreamMultiplexer:
                 self._tasks.append(task)
                 logger.info("stream_started", stream=stream_type.value)
         else:
-            logger.info(
-                "lazy_connect_enabled", message="Streams will connect on first subscription"
-            )
+            logger.info("lazy_connect_enabled", message="Streams will connect on first subscription")
 
     async def stop(self) -> None:
         """Stop all upstream connections with aggressive cleanup.
@@ -746,14 +848,22 @@ class StreamMultiplexer:
         """Ensure connection is established for lazy connect mode.
 
         Returns True if connection is ready, False if failed.
+        Can restart a dormant stream that previously gave up after max retries.
         """
         conn = self._get_connection(stream_type)
         if not conn:
             return False
 
-        # Already connected or connecting
-        if conn.is_connected or conn._running:
+        # Already connected
+        if conn.is_connected:
             return True
+
+        # Connection task is actively running (connecting or retrying)
+        if conn._running:
+            return True
+
+        # Stream is dormant (gave up after max retries) — restart it
+        logger.info("restarting_dormant_stream", stream=stream_type.value)
 
         # Start connection for this stream
         logger.info("lazy_connect_starting", stream=stream_type.value)
@@ -805,9 +915,7 @@ class StreamMultiplexer:
                 }
 
         # Track client subscription
-        new_bars, new_quotes, new_trades, new_news = conn.subscriptions.subscribe(
-            client_id, bars, quotes, trades, news
-        )
+        new_bars, new_quotes, new_trades, new_news = conn.subscriptions.subscribe(client_id, bars, quotes, trades, news)
 
         # Subscribe upstream only for new symbols
         if new_bars or new_quotes or new_trades or new_news:
@@ -853,9 +961,7 @@ class StreamMultiplexer:
     async def client_disconnect(self, client_id: str) -> None:
         """Remove all subscriptions for a disconnecting client."""
         for conn in self._connections.values():
-            removed_bars, removed_quotes, removed_trades, removed_news = (
-                conn.subscriptions.remove_client(client_id)
-            )
+            removed_bars, removed_quotes, removed_trades, removed_news = conn.subscriptions.remove_client(client_id)
             if removed_bars or removed_quotes or removed_trades or removed_news:
                 await conn.unsubscribe(removed_bars, removed_quotes, removed_trades, removed_news)
 
@@ -974,12 +1080,19 @@ class StreamMultiplexer:
             stream_type=stream_type.value if stream_type else None,
         )
 
+        # Inject per-symbol, per-feed sequence number for gap detection (PRD §Sequence Numbers)
+        seq = self._seq_tracker.next_seq(symbol_for_log, data_type)
+        envelope["seq"] = seq
+        envelope["lineage"]["seq"] = seq
+
         # Fan out envelope to each subscribed client with bounded concurrency
         async def _send(client_id: str) -> None:
             try:
                 async with self._fanout_semaphore:
                     await self.on_data(client_id, data_type, envelope)
+                record_stream_fanout_dispatch_event("delivered")
             except Exception as e:
+                record_stream_fanout_dispatch_event("error")
                 logger.error(
                     "fanout_error",
                     client_id=client_id,
@@ -988,4 +1101,22 @@ class StreamMultiplexer:
                     error=str(e),
                 )
 
-        await asyncio.gather(*(_send(client_id) for client_id in clients))
+        for client_batch in self._iter_client_batches(clients):
+            if len(client_batch) == 1:
+                await _send(client_batch[0])
+                continue
+            await asyncio.gather(*(_send(client_id) for client_id in client_batch))
+
+    def _iter_client_batches(self, clients: set[str]) -> Iterator[list[str]]:
+        """Yield bounded client batches to avoid per-message task bursts."""
+        batch_size = self._fanout_client_batch_size
+        batch: list[str] = []
+        for client_id in clients:
+            batch.append(client_id)
+            if len(batch) == batch_size:
+                record_stream_fanout_batch_size(len(batch))
+                yield batch
+                batch = []
+        if batch:
+            record_stream_fanout_batch_size(len(batch))
+            yield batch

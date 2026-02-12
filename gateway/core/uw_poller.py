@@ -11,7 +11,7 @@ Features:
 
 import asyncio
 from datetime import UTC, datetime, time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -20,6 +20,7 @@ from gateway.config import get_settings
 from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
+from gateway.core.ticker_universe import TickerUniverse
 
 if TYPE_CHECKING:
     from gateway.providers.uw import UnusualWhalesProvider
@@ -73,6 +74,10 @@ class UWPoller:
         darkpool_enabled: bool = True,
         market_tide_enabled: bool = True,
         sector_tide_enabled: bool = True,
+        eod_enabled: bool = False,
+        eod_hour: int = 16,
+        eod_minute: int = 30,
+        eod_concurrency: int = 5,
     ):
         settings = get_settings()
         self.poll_interval = poll_interval_seconds
@@ -80,15 +85,24 @@ class UWPoller:
         self.darkpool_enabled = darkpool_enabled
         self.market_tide_enabled = market_tide_enabled
         self.sector_tide_enabled = sector_tide_enabled
+        self.eod_enabled = eod_enabled
+        self._eod_hour = eod_hour
+        self._eod_minute = eod_minute
+        self._eod_concurrency = max(1, eod_concurrency)
         self._running = False
         self._task: asyncio.Task | None = None
         self._provider: UnusualWhalesProvider | None = None
         self._calendar = TradingCalendar()
+        self._ticker_universe: TickerUniverse | None = None
+
+        # Track EOD polling — once per trading day
+        self._last_eod_date: str | None = None
 
         # Deduplication cache (event_id -> timestamp)
         # Keep IDs for last 2 hours to handle polling overlap
         self._seen_ids: dict[str, datetime] = {}
         self._cache_ttl_seconds = 7200  # 2 hours
+        self._publish_max_inflight = max(1, int(settings.uw_poller_publish_max_inflight))
         self._redis_dedupe: RedisCache | None = None
         if settings.cache_redis_enabled and settings.cache_redis_url:
             self._redis_dedupe = RedisCache(
@@ -120,9 +134,7 @@ class UWPoller:
         now_et = datetime.now(ET)
         current_time = now_et.time()
         # Extended hours: 4:00 AM - 8:00 PM ET on trading days
-        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(
-            now_et.date()
-        )
+        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(now_et.date())
 
     def _is_morning_rush(self) -> bool:
         """Check if we're in high-volume morning period (first hour of trading)."""
@@ -162,18 +174,111 @@ class UWPoller:
     def _cleanup_cache(self) -> None:
         """Remove expired entries from dedup cache."""
         now = datetime.now(UTC)
-        expired = [
-            eid
-            for eid, ts in self._seen_ids.items()
-            if (now - ts).total_seconds() > self._cache_ttl_seconds
-        ]
+        expired = [eid for eid, ts in self._seen_ids.items() if (now - ts).total_seconds() > self._cache_ttl_seconds]
         for eid in expired:
             del self._seen_ids[eid]
 
         if expired:
-            logger.debug(
-                "uw_poller_cache_cleanup", removed=len(expired), remaining=len(self._seen_ids)
-            )
+            logger.debug("uw_poller_cache_cleanup", removed=len(expired), remaining=len(self._seen_ids))
+
+    async def _load_redis_duplicate_ids(
+        self,
+        dedupe_items: list[tuple[str, str]],
+    ) -> set[str]:
+        """Fetch duplicate flags from Redis cache in parallel."""
+        if self._redis_dedupe is None or not dedupe_items:
+            return set()
+
+        checks = await asyncio.gather(
+            *(self._redis_dedupe.get(cache_key) for _, cache_key in dedupe_items),
+            return_exceptions=True,
+        )
+        duplicates: set[str] = set()
+        for (event_id, cache_key), result in zip(dedupe_items, checks, strict=False):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "uw_poller_redis_dedupe_get_failed",
+                    cache_key=cache_key,
+                    error=str(result),
+                )
+                continue
+            if result is not None:
+                duplicates.add(event_id)
+        return duplicates
+
+    async def _publish_envelopes(
+        self,
+        sink_registry: Any,
+        envelopes: list[dict[str, Any]],
+        dedupe_prefix: str,
+        missing_event_log: str,
+    ) -> tuple[int, int]:
+        """Publish envelopes with bounded concurrency and batched dedupe checks."""
+        if not envelopes:
+            return 0, 0
+
+        duplicates = 0
+        to_publish: list[tuple[dict[str, Any], str, str | None]] = []
+        dedupe_items: list[tuple[str, str]] = []
+
+        for envelope in envelopes:
+            event_id = str(envelope.get("event_id", ""))
+            if not event_id:
+                logger.warning(missing_event_log)
+                to_publish.append((envelope, "", None))
+                continue
+            if self._is_duplicate(event_id):
+                duplicates += 1
+                continue
+            dedupe_cache_key = f"{dedupe_prefix}:{event_id}"
+            dedupe_items.append((event_id, dedupe_cache_key))
+            to_publish.append((envelope, event_id, dedupe_cache_key))
+
+        redis_duplicates = await self._load_redis_duplicate_ids(dedupe_items)
+        if redis_duplicates:
+            duplicates += len(redis_duplicates)
+            to_publish = [item for item in to_publish if not item[1] or item[1] not in redis_duplicates]
+
+        publish_sem = asyncio.Semaphore(max(1, self._publish_max_inflight))
+
+        async def _publish_one(
+            item: tuple[dict[str, Any], str, str | None],
+        ) -> tuple[tuple[dict[str, Any], str, str | None], Exception | None]:
+            envelope, _, _ = item
+            try:
+                async with publish_sem:
+                    await sink_registry.publish_all(HEBER_STREAM, envelope)
+                return item, None
+            except Exception as exc:
+                return item, exc
+
+        publish_results = await asyncio.gather(*(_publish_one(item) for item in to_publish))
+
+        published = 0
+        redis_sets = []
+        for (envelope, event_id, cache_key), publish_error in publish_results:
+            if publish_error is not None:
+                logger.warning(
+                    "uw_poller_publish_failed",
+                    event_id=event_id or "missing",
+                    feed=envelope.get("feed"),
+                    error=str(publish_error),
+                )
+                continue
+
+            published += 1
+            if event_id:
+                self._mark_seen(event_id)
+                if self._redis_dedupe is not None and cache_key:
+                    redis_sets.append(self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds))
+
+        if redis_sets:
+            set_results = await asyncio.gather(*redis_sets, return_exceptions=True)
+            for result in set_results:
+                if isinstance(result, Exception):
+                    logger.warning("uw_poller_redis_dedupe_set_failed", error=str(result))
+
+        return published, duplicates
 
     def _should_poll_tide(self) -> bool:
         """Check if enough time has passed to poll market tide again."""
@@ -196,6 +301,35 @@ class UWPoller:
         elapsed = (datetime.now(UTC) - self._last_darkpool_poll).total_seconds()
         return elapsed >= self._darkpool_interval
 
+    def get_runtime_snapshot(self) -> dict[str, Any]:
+        """Return lightweight runtime/tuning telemetry for admin surfaces."""
+        return {
+            "running": self._running,
+            "enabled": True,
+            "publish_max_inflight": self._publish_max_inflight,
+            "dedupe_cache_entries": len(self._seen_ids),
+            "dedupe_cache_ttl_seconds": self._cache_ttl_seconds,
+            "poll_intervals_seconds": {
+                "flow": self._flow_interval,
+                "darkpool": self._darkpool_interval,
+                "tide": self._tide_interval,
+                "base_loop": DARKPOOL_POLL_INTERVAL,
+            },
+            "feeds": {
+                "flow": self.flow_enabled,
+                "darkpool": self.darkpool_enabled,
+                "market_tide": self.market_tide_enabled,
+                "sector_tide": self.sector_tide_enabled,
+                "eod": self.eod_enabled,
+            },
+            "eod": {
+                "hour": self._eod_hour,
+                "minute": self._eod_minute,
+                "concurrency": self._eod_concurrency,
+                "last_run_date": self._last_eod_date,
+            },
+        }
+
     async def start(self) -> None:
         """Start the background polling task."""
         if self._running:
@@ -216,6 +350,19 @@ class UWPoller:
             logger.error("uw_poller_provider_not_initialized")
             return
 
+        # Initialize ticker universe for EOD polling
+        if self.eod_enabled:
+            settings = get_settings()
+            core = (
+                [t.strip().upper() for t in settings.uw_core_tickers.split(",") if t.strip()]
+                if settings.uw_core_tickers
+                else None
+            )
+            self._ticker_universe = TickerUniverse(
+                core_tickers=core,
+                dynamic_count=settings.uw_dynamic_ticker_count,
+            )
+
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
         logger.info(
@@ -224,6 +371,7 @@ class UWPoller:
             flow=self.flow_enabled,
             darkpool=self.darkpool_enabled,
             market_tide=self.market_tide_enabled,
+            eod=self.eod_enabled,
         )
 
     async def stop(self) -> None:
@@ -281,6 +429,11 @@ class UWPoller:
                     if self._is_market_hours():
                         await self._poll_sector_tides(sink_registry)
 
+                # EOD snapshot polling (once per trading day after market close)
+                if self.eod_enabled and self._should_poll_eod():
+                    logger.info("uw_poller_starting_eod_snapshots")
+                    await self._poll_eod_snapshots(sink_registry)
+
                 # Periodic cache cleanup
                 self._cleanup_cache()
 
@@ -294,12 +447,16 @@ class UWPoller:
         assert self._provider is not None
         try:
             alerts = await self._provider.get_flow_alerts(limit=limit)
-            published = 0
-            duplicates = 0
             out_of_order = 0
             prev_ts: datetime | None = None
+            envelopes: list[dict[str, Any]] = []
 
             for alert in alerts:
+                if not envelopes and alerts:
+                    logger.info(
+                        "uw_poller_debug_first_alert", alert_type=type(alerts[0]), alert_dump=alerts[0].model_dump()
+                    )
+
                 envelope = wrap_event(
                     event=alert.model_dump(),
                     provider="unusual_whales",
@@ -307,7 +464,6 @@ class UWPoller:
                     source="rest",
                 )
 
-                event_id = envelope.get("event_id", "")
                 ts_event = self._parse_ts(envelope.get("ts_event"))
                 if ts_event and prev_ts and ts_event < prev_ts:
                     out_of_order += 1
@@ -318,25 +474,14 @@ class UWPoller:
                     )
                 if ts_event:
                     prev_ts = ts_event
-                if not event_id:
-                    logger.warning("uw_flow_missing_event_id")
-                else:
-                    if self._is_duplicate(event_id):
-                        duplicates += 1
-                        continue
-                    if self._redis_dedupe is not None:
-                        cache_key = f"uw:flow:{event_id}"
-                        cached = await self._redis_dedupe.get(cache_key)
-                        if cached is not None:
-                            duplicates += 1
-                            continue
+                envelopes.append(envelope)
 
-                await sink_registry.publish_all(HEBER_STREAM, envelope)
-                if event_id:
-                    self._mark_seen(event_id)
-                    if self._redis_dedupe is not None:
-                        await self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
-                published += 1
+            published, duplicates = await self._publish_envelopes(
+                sink_registry=sink_registry,
+                envelopes=envelopes,
+                dedupe_prefix="uw:flow",
+                missing_event_log="uw_flow_missing_event_id",
+            )
 
             logger.info(
                 "uw_poller_flow_published",
@@ -353,10 +498,9 @@ class UWPoller:
         assert self._provider is not None
         try:
             trades = await self._provider.get_darkpool_recent(limit=limit)
-            published = 0
-            duplicates = 0
             out_of_order = 0
             prev_ts: datetime | None = None
+            envelopes: list[dict[str, Any]] = []
 
             for trade in trades:
                 envelope = wrap_event(
@@ -366,7 +510,6 @@ class UWPoller:
                     source="rest",
                 )
 
-                event_id = envelope.get("event_id", "")
                 ts_event = self._parse_ts(envelope.get("ts_event"))
                 if ts_event and prev_ts and ts_event < prev_ts:
                     out_of_order += 1
@@ -377,25 +520,14 @@ class UWPoller:
                     )
                 if ts_event:
                     prev_ts = ts_event
-                if not event_id:
-                    logger.warning("uw_darkpool_missing_event_id")
-                else:
-                    if self._is_duplicate(event_id):
-                        duplicates += 1
-                        continue
-                    if self._redis_dedupe is not None:
-                        cache_key = f"uw:darkpool:{event_id}"
-                        cached = await self._redis_dedupe.get(cache_key)
-                        if cached is not None:
-                            duplicates += 1
-                            continue
+                envelopes.append(envelope)
 
-                await sink_registry.publish_all(HEBER_STREAM, envelope)
-                if event_id:
-                    self._mark_seen(event_id)
-                    if self._redis_dedupe is not None:
-                        await self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
-                published += 1
+            published, duplicates = await self._publish_envelopes(
+                sink_registry=sink_registry,
+                envelopes=envelopes,
+                dedupe_prefix="uw:darkpool",
+                missing_event_log="uw_darkpool_missing_event_id",
+            )
 
             logger.info(
                 "uw_poller_darkpool_published",
@@ -421,10 +553,9 @@ class UWPoller:
             # Take last 5 to cover the 5-minute polling gap
             recent_tides = tides[-5:] if len(tides) > 5 else tides
 
-            published = 0
-            duplicates = 0
             out_of_order = 0
             prev_ts: datetime | None = None
+            envelopes: list[dict[str, Any]] = []
 
             for tide in recent_tides:
                 envelope = wrap_event(
@@ -434,7 +565,6 @@ class UWPoller:
                     source="rest",
                 )
 
-                event_id = envelope.get("event_id", "")
                 ts_event = self._parse_ts(envelope.get("ts_event"))
                 if ts_event and prev_ts and ts_event < prev_ts:
                     out_of_order += 1
@@ -445,25 +575,14 @@ class UWPoller:
                     )
                 if ts_event:
                     prev_ts = ts_event
-                if not event_id:
-                    logger.warning("uw_market_tide_missing_event_id")
-                else:
-                    if self._is_duplicate(event_id):
-                        duplicates += 1
-                        continue
-                    if self._redis_dedupe is not None:
-                        cache_key = f"uw:market_tide:{event_id}"
-                        cached = await self._redis_dedupe.get(cache_key)
-                        if cached is not None:
-                            duplicates += 1
-                            continue
+                envelopes.append(envelope)
 
-                await sink_registry.publish_all(HEBER_STREAM, envelope)
-                if event_id:
-                    self._mark_seen(event_id)
-                    if self._redis_dedupe is not None:
-                        await self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds)
-                published += 1
+            published, duplicates = await self._publish_envelopes(
+                sink_registry=sink_registry,
+                envelopes=envelopes,
+                dedupe_prefix="uw:market_tide",
+                missing_event_log="uw_market_tide_missing_event_id",
+            )
 
             if published or duplicates:
                 logger.info(
@@ -495,6 +614,7 @@ class UWPoller:
                 # Take last 5 records for each sector
                 recent_tides = tides[-5:] if len(tides) > 5 else tides
                 prev_ts: datetime | None = None
+                sector_envelopes: list[dict[str, Any]] = []
 
                 for tide in recent_tides:
                     envelope = wrap_event(
@@ -504,7 +624,6 @@ class UWPoller:
                         source="rest",
                     )
 
-                    event_id = envelope.get("event_id", "")
                     ts_event = self._parse_ts(envelope.get("ts_event"))
                     if ts_event and prev_ts and ts_event < prev_ts:
                         total_out_of_order += 1
@@ -516,27 +635,16 @@ class UWPoller:
                         )
                     if ts_event:
                         prev_ts = ts_event
-                    if not event_id:
-                        logger.warning("uw_sector_tide_missing_event_id")
-                    else:
-                        if self._is_duplicate(event_id):
-                            total_duplicates += 1
-                            continue
-                        if self._redis_dedupe is not None:
-                            cache_key = f"uw:sector_tide:{event_id}"
-                            cached = await self._redis_dedupe.get(cache_key)
-                            if cached is not None:
-                                total_duplicates += 1
-                                continue
+                    sector_envelopes.append(envelope)
 
-                    await sink_registry.publish_all(HEBER_STREAM, envelope)
-                    if event_id:
-                        self._mark_seen(event_id)
-                        if self._redis_dedupe is not None:
-                            await self._redis_dedupe.set(
-                                cache_key, True, ttl=self._cache_ttl_seconds
-                            )
-                    total_published += 1
+                published, duplicates = await self._publish_envelopes(
+                    sink_registry=sink_registry,
+                    envelopes=sector_envelopes,
+                    dedupe_prefix="uw:sector_tide",
+                    missing_event_log="uw_sector_tide_missing_event_id",
+                )
+                total_published += published
+                total_duplicates += duplicates
 
                 sectors_polled += 1
 
@@ -552,6 +660,337 @@ class UWPoller:
                 out_of_order=total_out_of_order,
             )
 
+    # ─────────────────────────────────────────────────────────────────────
+    # EOD Snapshot Polling
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _should_poll_eod(self) -> bool:
+        """Check if EOD snapshots should be polled.
+
+        Fires once per trading day at the configured hour/minute (ET).
+        """
+        now_et = datetime.now(ET)
+        today_str = now_et.strftime("%Y-%m-%d")
+
+        # Already polled today
+        if self._last_eod_date == today_str:
+            return False
+
+        # Only fire after the configured time
+        if now_et.hour < self._eod_hour:
+            return False
+        if now_et.hour == self._eod_hour and now_et.minute < self._eod_minute:
+            return False
+
+        # Must be a trading day
+        if not self._calendar.is_trading_day(now_et.date()):
+            return False
+
+        return True
+
+    async def _poll_eod_snapshots(self, sink_registry) -> None:
+        """Orchestrate all EOD per-ticker polls with bounded concurrency."""
+        assert self._provider is not None
+        assert self._ticker_universe is not None
+
+        # Refresh dynamic tickers from screener
+        await self._ticker_universe.refresh_dynamic(self._provider)
+        tickers = self._ticker_universe.all_tickers
+
+        logger.info("uw_eod_starting", ticker_count=len(tickers))
+
+        sem = asyncio.Semaphore(self._eod_concurrency)
+
+        # Per-ticker endpoints
+        per_ticker_polls = [
+            ("greek_exposure", self._poll_eod_greek_exposure),
+            ("iv_rank", self._poll_eod_iv_rank),
+            ("oi_change", self._poll_eod_oi_change),
+            ("historic_option_volume", self._poll_eod_option_volume),
+            ("short_interest", self._poll_eod_short_interest),
+            ("short_volume", self._poll_eod_short_volume),
+            ("ftds", self._poll_eod_ftds),
+        ]
+
+        totals: dict[str, dict[str, int]] = {}
+
+        for feed_name, poll_fn in per_ticker_polls:
+            published_total = 0
+            errors = 0
+
+            async def _poll_ticker(
+                ticker: str,
+                _fn=poll_fn,
+                _feed=feed_name,
+            ) -> tuple[int, int]:
+                async with sem:
+                    try:
+                        count = await _fn(sink_registry, ticker)
+                        return (count, 0)
+                    except Exception as e:
+                        logger.error(
+                            f"uw_eod_{_feed}_ticker_error",
+                            ticker=ticker,
+                            error=str(e),
+                        )
+                        return (0, 1)
+
+            results = await asyncio.gather(
+                *[_poll_ticker(t) for t in tickers],
+                return_exceptions=True,
+            )
+
+            for r in results:
+                if isinstance(r, tuple):
+                    published_total += r[0]
+                    errors += r[1]
+                else:
+                    errors += 1
+
+            totals[feed_name] = {"published": published_total, "errors": errors}
+
+        # Market-wide endpoints (no ticker required)
+        try:
+            congress_count = await self._poll_eod_congress_trades(sink_registry)
+            totals["congress_trades"] = {"published": congress_count, "errors": 0}
+        except Exception as e:
+            logger.error("uw_eod_congress_error", error=str(e))
+            totals["congress_trades"] = {"published": 0, "errors": 1}
+
+        try:
+            insider_count = await self._poll_eod_insiders(sink_registry)
+            totals["insider_trades"] = {"published": insider_count, "errors": 0}
+        except Exception as e:
+            logger.error("uw_eod_insiders_error", error=str(e))
+            totals["insider_trades"] = {"published": 0, "errors": 1}
+
+        # Mark today as polled
+        self._last_eod_date = datetime.now(ET).strftime("%Y-%m-%d")
+
+        logger.info("uw_eod_completed", totals=totals)
+
+    async def _poll_eod_greek_exposure(self, sink_registry, ticker: str) -> int:
+        """Poll Greek exposure for a single ticker."""
+        assert self._provider is not None
+        results = await self._provider.get_greek_exposure(ticker)
+        if not results:
+            return 0
+
+        envelopes = [
+            wrap_event(
+                event=item.model_dump(),
+                provider="unusual_whales",
+                feed="greek_exposure",
+                source="rest",
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:gex",
+            missing_event_log="uw_gex_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_iv_rank(self, sink_registry, ticker: str) -> int:
+        """Poll IV rank for a single ticker."""
+        assert self._provider is not None
+        result = await self._provider.get_iv_rank(ticker)
+        if not result:
+            return 0
+
+        envelope = wrap_event(
+            event=result.model_dump(),
+            provider="unusual_whales",
+            feed="iv_rank",
+            source="rest",
+        )
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=[envelope],
+            dedupe_prefix="uw:ivr",
+            missing_event_log="uw_ivr_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_oi_change(self, sink_registry, ticker: str) -> int:
+        """Poll OI change for a single ticker."""
+        assert self._provider is not None
+        results = await self._provider.get_oi_change(ticker)
+        if not results:
+            return 0
+
+        envelopes = [
+            wrap_event(
+                event=item.model_dump(),
+                provider="unusual_whales",
+                feed="oi_change",
+                source="rest",
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:oi",
+            missing_event_log="uw_oi_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_option_volume(self, sink_registry, ticker: str) -> int:
+        """Poll historic option volume for a single ticker."""
+        assert self._provider is not None
+        results = await self._provider.get_historic_option_volume(ticker)
+        if not results:
+            return 0
+
+        envelopes = [
+            wrap_event(
+                event=item,
+                provider="unusual_whales",
+                feed="historic_option_volume",
+                source="rest",
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:optvol",
+            missing_event_log="uw_optvol_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_short_interest(self, sink_registry, ticker: str) -> int:
+        """Poll short interest for a single ticker."""
+        assert self._provider is not None
+        results = await self._provider.get_short_interest(ticker)
+        if not results:
+            return 0
+
+        envelopes = [
+            wrap_event(
+                event=item.model_dump(),
+                provider="unusual_whales",
+                feed="short_interest",
+                source="rest",
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:si",
+            missing_event_log="uw_si_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_short_volume(self, sink_registry, ticker: str) -> int:
+        """Poll short volume for a single ticker."""
+        assert self._provider is not None
+        results = await self._provider.get_short_volume(ticker)
+        if not results:
+            return 0
+
+        envelopes = [
+            wrap_event(
+                event=item.model_dump(),
+                provider="unusual_whales",
+                feed="short_volume",
+                source="rest",
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:sv",
+            missing_event_log="uw_sv_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_ftds(self, sink_registry, ticker: str) -> int:
+        """Poll FTDs for a single ticker."""
+        assert self._provider is not None
+        results = await self._provider.get_ftds(ticker)
+        if not results:
+            return 0
+
+        envelopes = [
+            wrap_event(
+                event=item.model_dump(),
+                provider="unusual_whales",
+                feed="ftds",
+                source="rest",
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:ftd",
+            missing_event_log="uw_ftd_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_congress_trades(self, sink_registry) -> int:
+        """Poll congress trades (market-wide, no ticker needed)."""
+        assert self._provider is not None
+        results = await self._provider.get_congress_trades(limit=200)
+        if not results:
+            return 0
+
+        envelopes = [
+            wrap_event(
+                event=item,
+                provider="unusual_whales",
+                feed="congress_trades",
+                source="rest",
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:congress",
+            missing_event_log="uw_congress_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_insiders(self, sink_registry) -> int:
+        """Poll insider trades (market-wide, no ticker needed)."""
+        assert self._provider is not None
+        results = await self._provider.get_insiders(limit=200)
+        if not results:
+            return 0
+
+        envelopes = [
+            wrap_event(
+                event=item,
+                provider="unusual_whales",
+                feed="insider_trades",
+                source="rest",
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:insider",
+            missing_event_log="uw_insider_missing_event_id",
+        )
+        return published
+
 
 # Global poller instance
 _uw_poller: UWPoller | None = None
@@ -562,12 +1001,33 @@ def get_uw_poller() -> UWPoller | None:
     return _uw_poller
 
 
+def get_uw_poller_snapshot() -> dict[str, Any]:
+    """Get UW poller runtime snapshot for status surfaces."""
+    poller = get_uw_poller()
+    if poller is None:
+        return {
+            "running": False,
+            "enabled": False,
+            "publish_max_inflight": None,
+            "dedupe_cache_entries": 0,
+            "dedupe_cache_ttl_seconds": None,
+            "poll_intervals_seconds": {},
+            "feeds": {},
+            "eod": {},
+        }
+    return poller.get_runtime_snapshot()
+
+
 async def start_uw_poller(
     poll_interval_seconds: int = DEFAULT_POLL_INTERVAL,
     flow_enabled: bool = True,
     darkpool_enabled: bool = True,
     market_tide_enabled: bool = True,
     sector_tide_enabled: bool = True,
+    eod_enabled: bool = False,
+    eod_hour: int = 16,
+    eod_minute: int = 30,
+    eod_concurrency: int = 5,
 ) -> UWPoller:
     """Start the global UW poller."""
     global _uw_poller
@@ -581,6 +1041,10 @@ async def start_uw_poller(
         darkpool_enabled=darkpool_enabled,
         market_tide_enabled=market_tide_enabled,
         sector_tide_enabled=sector_tide_enabled,
+        eod_enabled=eod_enabled,
+        eod_hour=eod_hour,
+        eod_minute=eod_minute,
+        eod_concurrency=eod_concurrency,
     )
     await _uw_poller.start()
     return _uw_poller

@@ -12,6 +12,21 @@ import structlog
 
 logger = structlog.get_logger()
 
+_TIMEFRAME_TO_MINUTES: dict[str, int] = {
+    "1Min": 1,
+    "1m": 1,
+    "5Min": 5,
+    "5m": 5,
+    "15Min": 15,
+    "15m": 15,
+    "30Min": 30,
+    "30m": 30,
+    "1Hour": 60,
+    "1h": 60,
+    "1D": 390,
+    "1d": 390,
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Quality Issue Codes (per PRD)
@@ -192,6 +207,7 @@ class QualityAnalyzer:
         bars: list[dict],
         expected_count: int | None = None,
         timeframe: str = "1Min",
+        issues_out: list[QualityIssue] | None = None,
     ) -> BarQuality:
         """Analyze bar data quality.
 
@@ -211,6 +227,8 @@ class QualityAnalyzer:
 
         # Detect gaps
         gaps = self._detect_bar_gaps(bars, timeframe)
+        if issues_out is not None:
+            issues_out.extend(self._detect_bar_issues(bars))
 
         return BarQuality(
             expected=expected_count,
@@ -219,7 +237,11 @@ class QualityAnalyzer:
             gaps=gaps,
         )
 
-    def analyze_quotes(self, quotes: list[dict]) -> QuoteQuality:
+    def analyze_quotes(
+        self,
+        quotes: list[dict],
+        issues_out: list[QualityIssue] | None = None,
+    ) -> QuoteQuality:
         """Analyze quote data quality."""
         total = len(quotes)
         crossed = 0
@@ -232,10 +254,19 @@ class QualityAnalyzer:
         for quote in quotes:
             bid = quote.get("bid_price", quote.get("bp", 0))
             ask = quote.get("ask_price", quote.get("ap", 0))
+            curr_time = self._parse_timestamp(quote.get("timestamp", quote.get("t")))
 
             # Check for crossed quote
             if bid > ask:
                 crossed += 1
+                if issues_out is not None:
+                    issues_out.append(
+                        QualityIssue(
+                            code=QualityCode.CROSSED_QUOTE,
+                            message=f"Crossed quote: bid {bid} > ask {ask}",
+                            timestamp=quote.get("timestamp", quote.get("t")),
+                        )
+                    )
 
             # Calculate spread
             if ask > 0 and bid > 0:
@@ -245,7 +276,6 @@ class QualityAnalyzer:
 
             # Check for stale quote
             if prev_quote is not None and prev_time is not None:
-                curr_time = self._parse_timestamp(quote.get("timestamp", quote.get("t")))
                 if curr_time and prev_time:
                     if quote.get("bid_price") == prev_quote.get("bid_price") and quote.get(
                         "ask_price"
@@ -255,7 +285,7 @@ class QualityAnalyzer:
                             stale += 1
 
             prev_quote = quote
-            prev_time = self._parse_timestamp(quote.get("timestamp", quote.get("t")))
+            prev_time = curr_time
 
         avg_spread = sum(spreads) / len(spreads) if spreads else 0.0
 
@@ -319,7 +349,7 @@ class QualityAnalyzer:
 
     def _detect_bar_gaps(self, bars: list[dict], timeframe: str) -> list[GapInfo]:
         """Detect gaps in bar data."""
-        gaps = []
+        gaps: list[GapInfo] = []
 
         if len(bars) < 2:
             return gaps
@@ -327,19 +357,16 @@ class QualityAnalyzer:
         # Determine expected interval
         interval_minutes = self._timeframe_to_minutes(timeframe)
 
-        # Sort bars by timestamp
-        sorted_bars = sorted(
-            bars,
-            key=lambda b: b.get("timestamp", b.get("t", "")),
+        # Sort only when needed; most feeds arrive in timestamp order.
+        sorted_bars = (
+            bars
+            if self._bars_are_sorted_by_timestamp(bars)
+            else sorted(bars, key=lambda b: b.get("timestamp", b.get("t", "")))
         )
 
-        for i in range(1, len(sorted_bars)):
-            prev_ts = self._parse_timestamp(
-                sorted_bars[i - 1].get("timestamp", sorted_bars[i - 1].get("t"))
-            )
-            curr_ts = self._parse_timestamp(
-                sorted_bars[i].get("timestamp", sorted_bars[i].get("t"))
-            )
+        prev_ts = self._parse_timestamp(sorted_bars[0].get("timestamp", sorted_bars[0].get("t")))
+        for bar in sorted_bars[1:]:
+            curr_ts = self._parse_timestamp(bar.get("timestamp", bar.get("t")))
 
             if prev_ts and curr_ts:
                 delta_minutes = (curr_ts - prev_ts).total_seconds() / 60
@@ -355,6 +382,7 @@ class QualityAnalyzer:
                                 missing=missing,
                             )
                         )
+            prev_ts = curr_ts
 
         return gaps
 
@@ -435,21 +463,21 @@ class QualityAnalyzer:
 
     def _timeframe_to_minutes(self, timeframe: str) -> int:
         """Convert timeframe string to minutes."""
-        tf_map = {
-            "1Min": 1,
-            "1m": 1,
-            "5Min": 5,
-            "5m": 5,
-            "15Min": 15,
-            "15m": 15,
-            "30Min": 30,
-            "30m": 30,
-            "1Hour": 60,
-            "1h": 60,
-            "1D": 390,
-            "1d": 390,
-        }
-        return tf_map.get(timeframe, 1)
+        return _TIMEFRAME_TO_MINUTES.get(timeframe, 1)
+
+    def _bars_are_sorted_by_timestamp(self, bars: list[dict]) -> bool:
+        """Fast-path check for common in-order ISO timestamp payloads."""
+        prev_ts = bars[0].get("timestamp", bars[0].get("t", ""))
+        if not isinstance(prev_ts, str):
+            return False
+        for bar in bars[1:]:
+            curr_ts = bar.get("timestamp", bar.get("t", ""))
+            if not isinstance(curr_ts, str):
+                return False
+            if curr_ts < prev_ts:
+                return False
+            prev_ts = curr_ts
+        return True
 
     def _parse_timestamp(self, ts: Any) -> datetime | None:
         """Parse timestamp to datetime."""

@@ -1,9 +1,20 @@
 """Common dependencies and constants for Alpaca API endpoints."""
 
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
+
 from fastapi import Depends, HTTPException
 
-from gateway.api.deps import get_registry, require_api_key, require_provider_rate_limit
+from gateway.api.deps import (
+    get_cache,
+    get_registry,
+    require_api_key,
+    require_provider_rate_limit,
+)
 from gateway.core.auth import Client
+from gateway.core.cache import HybridCache, InMemoryCache
+from gateway.core.metrics import record_route_cache
 from gateway.core.registry import ProviderRegistry
 
 # Query description constants
@@ -15,6 +26,24 @@ DESC_COMMA_SYMBOLS = "Comma-separated symbols"
 
 # Error message constants
 ERR_PROVIDER_NOT_AVAILABLE = "Alpaca provider not available"
+T = TypeVar("T")
+CacheBackend = InMemoryCache | HybridCache
+_ALPACA_CACHE_INFLIGHT: dict[str, asyncio.Task[Any]] = {}
+_ALPACA_CACHE_LOCK = asyncio.Lock()
+
+
+def parse_comma_values(
+    raw: str,
+    *,
+    uppercase: bool = False,
+    drop_empty: bool = False,
+) -> list[str]:
+    """Parse comma-separated values with whitespace trimming."""
+    values = [item.strip() for item in raw.split(",")]
+    if drop_empty:
+        values = [item for item in values if item]
+    parsed = [item.upper() if uppercase else item for item in values]
+    return parsed
 
 
 async def get_alpaca_provider(
@@ -27,6 +56,71 @@ async def get_alpaca_provider(
     return provider
 
 
+async def execute_alpaca_provider_call(
+    *,
+    registry: ProviderRegistry,
+    provider_call: Callable[[Any], Awaitable[T]],
+    block: bool = False,
+) -> T:
+    """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling."""
+    provider = registry.get("alpaca")
+    if not provider:
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
+
+    try:
+        await require_provider_rate_limit("alpaca", block=block)
+        return await provider_call(provider)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}") from e
+
+
+async def execute_alpaca_cached_call(
+    *,
+    registry: ProviderRegistry,
+    cache: CacheBackend,
+    cache_key: str,
+    ttl: int,
+    provider_call: Callable[[Any], Awaitable[T]],
+    route_label: str,
+    cache_mode: str = "alpaca",
+    block: bool = False,
+) -> T:
+    """Run Alpaca provider call with shared cache + in-flight de-dupe."""
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        record_route_cache(route_label, "hit", cache_mode)
+        return cached
+
+    record_route_cache(route_label, "miss", cache_mode)
+
+    owner = False
+    async with _ALPACA_CACHE_LOCK:
+        future = _ALPACA_CACHE_INFLIGHT.get(cache_key)
+        if future is None:
+            future = asyncio.create_task(
+                execute_alpaca_provider_call(
+                    registry=registry,
+                    provider_call=provider_call,
+                    block=block,
+                )
+            )
+            _ALPACA_CACHE_INFLIGHT[cache_key] = future
+            owner = True
+
+    try:
+        result = await future
+        if owner:
+            await cache.set(cache_key, result, ttl=ttl)
+        return result
+    finally:
+        if owner:
+            async with _ALPACA_CACHE_LOCK:
+                if _ALPACA_CACHE_INFLIGHT.get(cache_key) is future:
+                    _ALPACA_CACHE_INFLIGHT.pop(cache_key, None)
+
+
 __all__ = [
     "DESC_BAR_TIMEFRAME",
     "DESC_START_TIME",
@@ -34,7 +128,11 @@ __all__ = [
     "DESC_MAX_BARS",
     "DESC_COMMA_SYMBOLS",
     "ERR_PROVIDER_NOT_AVAILABLE",
+    "parse_comma_values",
     "get_alpaca_provider",
+    "execute_alpaca_cached_call",
+    "execute_alpaca_provider_call",
+    "get_cache",
     "require_api_key",
     "require_provider_rate_limit",
     "Client",

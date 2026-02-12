@@ -60,7 +60,7 @@ gateway/
 ├── api/          # FastAPI route handlers (one file per provider)
 ├── core/         # Business logic (auth, cache, stream, etc.)
 ├── providers/    # Data provider implementations
-└── schemas.py    # Pydantic response models
+└── schemas/      # Pydantic response models
 ```
 
 ## Testing
@@ -95,7 +95,7 @@ pytest tests/test_websocket.py -v
 2. Add entry to `config/providers.yaml`
 3. Add router in `gateway/api/{name}.py`
 4. Register router in `gateway/main.py`
-5. Write tests in `tests/providers/test_{name}.py`
+5. Write tests in `tests/test_{name}_provider.py`
 6. Update documentation
 
 ### Adding a New Endpoint

@@ -47,6 +47,7 @@ async def get_crypto_rating(
 async def get_crypto_daily(
     symbol: str,
     market: str = Query(default="USD", description="Market currency"),
+    max_points: int = Query(default=100, ge=1, description="Max points to return"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
     cache: InMemoryCache = Depends(get_cache),

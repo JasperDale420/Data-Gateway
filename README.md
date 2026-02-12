@@ -27,6 +27,9 @@ graph LR
         MUX[Stream Multiplexer]
         CACHE[Cache Layer]
         AUTH[Authenticator]
+        POLL[UW Poller]
+        NORM[Normalizer]
+        SINK[Data Sink]
     end
 
     subgraph Providers
@@ -37,13 +40,21 @@ graph LR
         SEC[SEC EDGAR]
     end
 
+    subgraph Storage
+        REDIS[(Redis Streams)]
+    end
+
     C1 & C2 & C3 --> AUTH
     AUTH --> WS & REST
     WS --> MUX
     REST --> CACHE
     MUX --> ALP
     CACHE --> ALP & UW & FH & YF & SEC
+    POLL --> UW
+    MUX & CACHE & POLL --> NORM --> SINK --> REDIS
 ```
+
+For a deep dive into each subsystem, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/AUDIT_LOGGING.md](docs/AUDIT_LOGGING.md) for security auditing details.
 
 | Provider | Data Types | API Key | Status |
 |---|---|---|---|
@@ -125,6 +136,35 @@ Authentication: Most endpoints require `X-Gateway-Key`. Health endpoints are pub
 Legacy aliases (deprecated): `/symbology/*`, `/corporate-actions/*`, `/adjustment-factors/*`.
 
 Full OpenAPI docs available at `http://localhost:8080/docs` when running.
+
+## Data Pipeline
+
+All data flows through a normalization and envelope pipeline before reaching clients or storage:
+
+1. **Raw data** arrives from providers (REST, WebSocket, or poller)
+2. **Normalizer** converts provider-specific formats to standard dataclasses (`NormalizedBar`, `NormalizedQuote`, `NormalizedTrade`)
+3. **Envelope wrapper** adds metadata: event ID, timestamps, instrument key, source lineage
+4. **Deduplicator** computes a SHA-256 hash for idempotent delivery
+5. **Data sink** publishes to Redis Streams for downstream storage (Heber)
+
+## UW Poller
+
+The Unusual Whales Poller runs independently, continuously polling UW endpoints and publishing results through the data sink.
+
+**Real-time polls** (every 60s): flow alerts, darkpool, market tide, sector tide.
+
+**EOD polls** (daily at 4:30 PM ET): 9 per-ticker endpoints including greek exposure, IV rank, OI change, short interest, FTDs, congress trades, and insider trades.
+
+The **Ticker Universe** manages which symbols are polled:
+
+- ~30 static core tickers (mega-caps, major ETFs, sector ETFs)
+- Configurable dynamic tickers refreshed daily from UW's stock screener
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details.
+
+## Data Sink (Heber Integration)
+
+When enabled, the gateway publishes all events to Redis Streams for downstream consumption by Heber (the storage layer). Events are wrapped in `EventEnvelope` format with idempotent deduplication.
 
 ## API Discovery
 
@@ -243,6 +283,24 @@ ws://localhost:8080/ws
 | `SEC_USER_AGENT` | SEC EDGAR | Optional (recommended) |
 
 > **Note:** SEC EDGAR and yfinance require no API keys.
+
+#### UW EOD Polling
+
+| Variable | Description | Default |
+|---|---|---|
+| `GATEWAY_UW_EOD_ENABLED` | Enable daily EOD polling | `false` |
+| `GATEWAY_UW_EOD_HOUR` | EOD poll hour (ET) | `16` |
+| `GATEWAY_UW_EOD_MINUTE` | EOD poll minute (ET) | `30` |
+| `GATEWAY_UW_CORE_TICKERS` | Comma-separated core ticker override | (defaults ~30) |
+| `GATEWAY_UW_DYNAMIC_TICKER_COUNT` | Dynamic tickers from screener | `20` |
+| `GATEWAY_UW_EOD_CONCURRENCY` | Concurrent ticker polls | `5` |
+
+#### Data Sink
+
+| Variable | Description | Default |
+|---|---|---|
+| `GATEWAY_DATA_SINK_ENABLED` | Enable Redis Streams sink | `false` |
+| `GATEWAY_DATA_SINK_REDIS_URL` | Redis URL for sink | — |
 
 ### Client Keys
 

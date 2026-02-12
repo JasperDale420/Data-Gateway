@@ -7,6 +7,7 @@ import asyncio
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, cast
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
@@ -31,6 +32,52 @@ from gateway.types.provider_protocols import (
 )
 
 router = APIRouter(prefix="/api/v1/calendar", tags=["Trading Calendar"])
+logger = structlog.get_logger()
+
+_CALENDAR_PROVIDER_DEGRADE_WINDOW_SECONDS = 30.0
+_CALENDAR_PROVIDER_DEGRADED_UNTIL: dict[str, float] = {}
+_CALENDAR_PROVIDER_LAST_LOG_AT: dict[str, float] = {}
+
+
+def _parse_alpaca_time(value: str | None) -> time | None:
+    if not value:
+        return None
+    for fmt in ("%H:%M", "%H:%M:%S"):
+        try:
+            return datetime.strptime(value, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
+def _calendar_provider_is_degraded(route_key: str, now_monotonic: float | None = None) -> bool:
+    now = now_monotonic if now_monotonic is not None else time_module.monotonic()
+    degraded_until = _CALENDAR_PROVIDER_DEGRADED_UNTIL.get(route_key, 0.0)
+    return now < degraded_until
+
+
+def _mark_calendar_provider_failure(
+    route_key: str,
+    error: Exception,
+    now_monotonic: float | None = None,
+) -> None:
+    now = now_monotonic if now_monotonic is not None else time_module.monotonic()
+    _CALENDAR_PROVIDER_DEGRADED_UNTIL[route_key] = now + _CALENDAR_PROVIDER_DEGRADE_WINDOW_SECONDS
+
+    last_log = _CALENDAR_PROVIDER_LAST_LOG_AT.get(route_key, 0.0)
+    if last_log <= 0 or (now - last_log) >= _CALENDAR_PROVIDER_DEGRADE_WINDOW_SECONDS:
+        _CALENDAR_PROVIDER_LAST_LOG_AT[route_key] = now
+        logger.warning(
+            "calendar_provider_fallback_degraded",
+            route=route_key,
+            cooldown_seconds=_CALENDAR_PROVIDER_DEGRADE_WINDOW_SECONDS,
+            error=str(error),
+        )
+
+
+def _mark_calendar_provider_success(route_key: str) -> None:
+    _CALENDAR_PROVIDER_DEGRADED_UNTIL.pop(route_key, None)
+    _CALENDAR_PROVIDER_LAST_LOG_AT.pop(route_key, None)
 
 
 def _parse_alpaca_time(value: str | None) -> time | None:
@@ -119,9 +166,7 @@ async def get_market_hours(
                 is_early = bool(close_time and close_time < calendar.REGULAR_END)
                 regular_start = open_time or calendar.REGULAR_START
                 regular_end = close_time or calendar.REGULAR_END
-                afterhours_start = (
-                    calendar.REGULAR_EARLY_END if is_early else calendar.AFTERHOURS_START
-                )
+                afterhours_start = calendar.REGULAR_EARLY_END if is_early else calendar.AFTERHOURS_START
 
                 hours = MarketHours(
                     date=query_date,

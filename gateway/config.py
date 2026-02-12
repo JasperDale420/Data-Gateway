@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     stream_reconnect_max_retries: int = Field(default=10, ge=1)
     stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     stream_reconnect_max_delay: float = Field(default=16.0, ge=1.0)
+    stream_fanout_max_inflight: int = Field(default=100, ge=1)
+    stream_fanout_batch_size: int = Field(default=32, ge=1)
 
     # Rate Limiting
     rate_limit_enabled: bool = True
@@ -90,6 +92,31 @@ class Settings(BaseSettings):
     data_sink_enabled: bool = False
     data_sink_redis_url: str = Field(default="", alias="GATEWAY_DATA_SINK_REDIS_URL")
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
+    data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
+    data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
+
+    # Bulk Jobs
+    bulk_results_max_in_memory: int = Field(default=25_000, ge=100)
+    bulk_results_spool_to_disk: bool = True
+
+    # UW Poller
+    uw_poller_publish_max_inflight: int = Field(default=16, ge=1)
+
+    # UW EOD Polling (daily snapshots for per-ticker endpoints)
+    uw_eod_enabled: bool = False
+    uw_eod_hour: int = Field(default=16, ge=0, le=23)  # 4:00 PM ET
+    uw_eod_minute: int = Field(default=30, ge=0, le=59)  # 4:30 PM ET
+    uw_core_tickers: str = ""  # comma-separated override, empty = use defaults
+    uw_dynamic_ticker_count: int = Field(default=20, ge=0)
+    uw_eod_concurrency: int = Field(default=5, ge=1, le=20)
+
+    # Replay
+    replay_messages_max_in_memory: int = Field(default=50_000, ge=100)
+    replay_messages_spool_to_disk: bool = True
+
+    # Endpoint Rate Limits (PRD 7.5.3)
+    bulk_rate_limit_per_hour: int = Field(default=10, ge=1)
+    replay_max_concurrent_sessions: int = Field(default=5, ge=1)
 
 
 @lru_cache

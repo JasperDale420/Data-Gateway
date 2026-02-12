@@ -239,6 +239,7 @@ class AlpacaProvider(DataProvider):
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
+        record_provider_quote_batch_size(self.name, len(symbols))
         results: list[NormalizedQuote] = []
         symbols_param = ",".join(symbols)
 
@@ -268,6 +269,7 @@ class AlpacaProvider(DataProvider):
         symbols: list[str],
         start: datetime,
         end: datetime,
+        limit: int = 10000,
     ) -> list[NormalizedTrade]:
         """Fetch historical trades from Alpaca."""
         if not self._client:
@@ -275,13 +277,14 @@ class AlpacaProvider(DataProvider):
 
         results: list[NormalizedTrade] = []
         symbols_param = ",".join(symbols)
+        request_limit = max(1, min(limit, 10000))
 
         params: dict[str, str | int] = {
             "symbols": symbols_param,
             "start": start.isoformat(),
             "end": end.isoformat(),
             "feed": self._feed,
-            "limit": 10000,
+            "limit": request_limit,
         }
 
         try:
@@ -467,6 +470,7 @@ class AlpacaProvider(DataProvider):
         strike_gte: float | None = None,
         strike_lte: float | None = None,
         option_type: str | None = None,
+        limit: int | None = None,
     ) -> list:
         """Get option chain with greeks for an underlying."""
         from gateway.schemas import NormalizedOptionContract
@@ -474,10 +478,11 @@ class AlpacaProvider(DataProvider):
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
+        request_limit = max(1, min(limit, 1000)) if limit is not None else 1000
         params: dict[str, Any] = {
             "underlying_symbols": underlying.upper(),
             "feed": "indicative",
-            "limit": 1000,
+            "limit": request_limit,
         }
 
         if expiration_date:
@@ -727,11 +732,7 @@ class AlpacaProvider(DataProvider):
                 gamma=Decimal(str(greeks.get("gamma", 0))) if greeks.get("gamma") else None,
                 theta=Decimal(str(greeks.get("theta", 0))) if greeks.get("theta") else None,
                 vega=Decimal(str(greeks.get("vega", 0))) if greeks.get("vega") else None,
-                iv=(
-                    Decimal(str(snapshot.get("impliedVolatility", 0)))
-                    if snapshot.get("impliedVolatility")
-                    else None
-                ),
+                iv=(Decimal(str(snapshot.get("impliedVolatility", 0))) if snapshot.get("impliedVolatility") else None),
                 provider="alpaca",
                 timestamp=datetime.now(UTC),
             )
@@ -772,9 +773,7 @@ class AlpacaProvider(DataProvider):
 
         try:
             # Crypto endpoint uses v1beta3
-            response = await self._client.get(
-                "/v1beta3/crypto/us/bars", params={"symbols": pair, **params}
-            )
+            response = await self._client.get("/v1beta3/crypto/us/bars", params={"symbols": pair, **params})
             response.raise_for_status()
             data = response.json()
 
@@ -840,9 +839,7 @@ class AlpacaProvider(DataProvider):
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         try:
-            response = await self._client.get(
-                "/v1beta3/crypto/us/latest/quotes", params={"symbols": pair}
-            )
+            response = await self._client.get("/v1beta3/crypto/us/latest/quotes", params={"symbols": pair})
             response.raise_for_status()
             data = response.json()
 
@@ -866,9 +863,7 @@ class AlpacaProvider(DataProvider):
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         try:
-            response = await self._client.get(
-                "/v1beta3/crypto/us/snapshots", params={"symbols": pair}
-            )
+            response = await self._client.get("/v1beta3/crypto/us/snapshots", params={"symbols": pair})
             response.raise_for_status()
             data = response.json()
 
@@ -948,9 +943,7 @@ class AlpacaProvider(DataProvider):
 
         try:
             pairs_param = ",".join(pairs)
-            response = await self._client.get(
-                "/v1beta1/forex/rates/latest", params={"currency_pairs": pairs_param}
-            )
+            response = await self._client.get("/v1beta1/forex/rates/latest", params={"currency_pairs": pairs_param})
             response.raise_for_status()
             data = response.json()
 
@@ -1067,9 +1060,7 @@ class AlpacaProvider(DataProvider):
                         url=article.get("url"),
                         source=article.get("source", "unknown"),
                         author=article.get("author"),
-                        published_at=datetime.fromisoformat(
-                            article.get("created_at", "").replace("Z", UTC_OFFSET)
-                        ),
+                        published_at=self._parse_timestamp(article.get("created_at", "")),
                         symbols=article.get("symbols", []),
                         provider="alpaca",
                     )
@@ -1110,9 +1101,7 @@ class AlpacaProvider(DataProvider):
         }
 
         try:
-            response = await self._client.get(
-                "/v1beta1/screener/stocks/most-actives", params=params
-            )
+            response = await self._client.get("/v1beta1/screener/stocks/most-actives", params=params)
             response.raise_for_status()
             data = response.json()
 
@@ -1154,9 +1143,7 @@ class AlpacaProvider(DataProvider):
         }
 
         try:
-            response = await self._client.get(
-                f"/v1beta1/screener/{market_type}/movers", params=params
-            )
+            response = await self._client.get(f"/v1beta1/screener/{market_type}/movers", params=params)
             response.raise_for_status()
             data = response.json()
 
@@ -1245,11 +1232,7 @@ class AlpacaProvider(DataProvider):
                             ex_date=action.get("ex_date", ""),
                             record_date=action.get("record_date"),
                             payable_date=action.get("payable_date"),
-                            amount=(
-                                Decimal(str(action.get("cash_amount", 0)))
-                                if action.get("cash_amount")
-                                else None
-                            ),
+                            amount=(Decimal(str(action.get("cash_amount", 0))) if action.get("cash_amount") else None),
                             ratio=action.get("new_rate") or action.get("ratio"),
                             provider="alpaca",
                         )
@@ -1356,11 +1339,7 @@ class AlpacaProvider(DataProvider):
             ]
 
             timestamp_str = ob_data.get("t")
-            timestamp = (
-                datetime.fromisoformat(str(timestamp_str).replace("Z", UTC_OFFSET))
-                if timestamp_str
-                else datetime.now(UTC)
-            )
+            timestamp = self._parse_timestamp(str(timestamp_str)) if timestamp_str else datetime.now(UTC)
 
             result = NormalizedOrderbook(
                 symbol=pair.upper(),
@@ -1555,9 +1534,7 @@ class AlpacaProvider(DataProvider):
         tif = tif_map.get(time_in_force.lower(), TimeInForce.DAY)
 
         try:
-            request: (
-                MarketOrderRequest | LimitOrderRequest | StopOrderRequest | StopLimitOrderRequest
-            )
+            request: MarketOrderRequest | LimitOrderRequest | StopOrderRequest | StopLimitOrderRequest
             if order_type.lower() == "market":
                 request = MarketOrderRequest(
                     symbol=symbol.upper(),
@@ -1963,9 +1940,7 @@ class AlpacaProvider(DataProvider):
 
         try:
             activities = self._trading_client.get_account_activities(
-                activity_types=(
-                    [ActivityType(t) for t in activity_types] if activity_types else None
-                ),
+                activity_types=([ActivityType(t) for t in activity_types] if activity_types else None),
             )
             return [self._model_to_dict(a) for a in activities]
         except APIError as e:
@@ -2053,9 +2028,7 @@ class AlpacaProvider(DataProvider):
             watchlist = self._trading_client.add_asset_to_watchlist_by_id(watchlist_id, symbol)
             return self._model_to_dict(watchlist)
         except APIError:
-            logger.error(
-                "alpaca_watchlist_add_asset_error", watchlist_id=watchlist_id, symbol=symbol
-            )
+            logger.error("alpaca_watchlist_add_asset_error", watchlist_id=watchlist_id, symbol=symbol)
             raise
 
     def remove_asset_from_watchlist(self, watchlist_id: str, symbol: str) -> dict[str, Any]:
@@ -2067,9 +2040,7 @@ class AlpacaProvider(DataProvider):
             watchlist = self._trading_client.remove_asset_from_watchlist_by_id(watchlist_id, symbol)
             return self._model_to_dict(watchlist)
         except APIError:
-            logger.error(
-                "alpaca_watchlist_remove_asset_error", watchlist_id=watchlist_id, symbol=symbol
-            )
+            logger.error("alpaca_watchlist_remove_asset_error", watchlist_id=watchlist_id, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -2107,11 +2078,17 @@ class AlpacaProvider(DataProvider):
     # Normalization
     # ─────────────────────────────────────────────────────────────────
 
+    def _parse_timestamp(self, value: str | datetime) -> datetime:
+        """Parse Alpaca timestamps with fast-path support for datetime values."""
+        if isinstance(value, datetime):
+            return value
+        return datetime.fromisoformat(value.replace("Z", UTC_OFFSET))
+
     def _normalize_bar(self, symbol: str, raw: dict[str, Any]) -> NormalizedBar:
         """Convert Alpaca bar to normalized format."""
         return NormalizedBar(
             symbol=symbol,
-            timestamp=datetime.fromisoformat(raw["t"].replace("Z", UTC_OFFSET)),
+            timestamp=self._parse_timestamp(raw["t"]),
             open=Decimal(str(raw["o"])),
             high=Decimal(str(raw["h"])),
             low=Decimal(str(raw["l"])),
@@ -2126,7 +2103,7 @@ class AlpacaProvider(DataProvider):
         """Convert Alpaca quote to normalized format."""
         return NormalizedQuote(
             symbol=symbol,
-            timestamp=datetime.fromisoformat(raw["t"].replace("Z", UTC_OFFSET)),
+            timestamp=self._parse_timestamp(raw["t"]),
             bid_price=Decimal(str(raw["bp"])),
             bid_size=int(raw["bs"]),
             ask_price=Decimal(str(raw["ap"])),
@@ -2142,7 +2119,7 @@ class AlpacaProvider(DataProvider):
         """Convert Alpaca trade to normalized format."""
         return NormalizedTrade(
             symbol=symbol,
-            timestamp=datetime.fromisoformat(raw["t"].replace("Z", UTC_OFFSET)),
+            timestamp=self._parse_timestamp(raw["t"]),
             price=Decimal(str(raw["p"])),
             size=int(raw["s"]),
             trade_id=str(raw["i"]) if raw.get("i") else None,

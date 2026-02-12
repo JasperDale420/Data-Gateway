@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # Data Gateway Development Rules
 
 ## Core References

@@ -257,18 +257,21 @@ class ProviderRateLimitManager:
         limiter = self._limiters[provider]
 
         if block:
-            # Wait for slot with exponential backoff
-            wait_time = 0.1
-            total_waited = 0.0
+            # Wait for slot based on limiter-provided retry_after hints.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + max_wait
 
-            while total_waited < max_wait:
+            while True:
                 allowed, retry_after = limiter.try_acquire()
                 if allowed:
                     return True
 
-                await asyncio.sleep(min(wait_time, max_wait - total_waited))
-                total_waited += wait_time
-                wait_time = min(wait_time * 2, 5.0)
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+
+                sleep_for = min(max(0.01, float(retry_after)), remaining)
+                await asyncio.sleep(sleep_for)
 
             limiter.total_throttled += 1
             raise RateLimitExceeded(provider, int(max_wait), "Timeout waiting for rate limit slot")
@@ -333,3 +336,219 @@ async def check_rate_limit(provider: str, block: bool = False) -> bool:
 def get_provider_limits(provider: str) -> ProviderLimits | None:
     """Get configured limits for a provider."""
     return PROVIDER_LIMITS.get(provider.lower())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Endpoint-Level Rate Limiting (PRD 7.5.3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class EndpointRateLimitExceeded(Exception):
+    """Raised when an endpoint-level rate limit is exceeded."""
+
+    def __init__(self, endpoint: str, retry_after: float, message: str = ""):
+        self.endpoint = endpoint
+        self.retry_after = retry_after
+        self.message = message or f"Endpoint rate limit exceeded for {endpoint}"
+        super().__init__(self.message)
+
+
+@dataclass
+class EndpointRateLimitConfig:
+    """Configuration for a single endpoint group's rate limits.
+
+    Supports two complementary limit types:
+    - requests_per_window: Sliding window rate limit (e.g., bulk: 10 per hour)
+    - max_concurrent: Concurrent session limit (e.g., replay: 5 simultaneous)
+    """
+
+    requests_per_window: int | None = None
+    window_seconds: float = 3600
+    max_concurrent: int | None = None
+
+
+@dataclass
+class _ClientWindowBucket:
+    """Tracks per-client request timestamps for sliding window enforcement."""
+
+    timestamps: deque = field(default_factory=deque)
+
+
+class EndpointRateLimiter:
+    """Rate limiter for specific API endpoint groups.
+
+    Enforces per-endpoint, per-client request limits and concurrent session
+    limits for resource-intensive operations.
+
+    Usage:
+        limiter = EndpointRateLimiter()
+        limiter.configure("bulk_create",
+            EndpointRateLimitConfig(requests_per_window=10, window_seconds=3600))
+        limiter.configure("replay_session",
+            EndpointRateLimitConfig(max_concurrent=5))
+
+        # For request-count limits
+        limiter.acquire("bulk_create", client_id="cerberus")
+
+        # For concurrent limits
+        limiter.acquire_concurrent("replay_session", session_id="abc123")
+        limiter.release_concurrent("replay_session", session_id="abc123")
+    """
+
+    _instance: "EndpointRateLimiter | None" = None
+
+    def __init__(self) -> None:
+        self._configs: dict[str, EndpointRateLimitConfig] = {}
+        self._client_buckets: dict[str, dict[str, _ClientWindowBucket]] = {}
+        self._active_sessions: dict[str, set[str]] = {}
+
+    @classmethod
+    def get_instance(cls) -> "EndpointRateLimiter":
+        """Get or create the singleton instance."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def configure(self, endpoint: str, config: EndpointRateLimitConfig) -> None:
+        """Register rate limit configuration for an endpoint group."""
+        self._configs[endpoint] = config
+        if config.requests_per_window is not None:
+            self._client_buckets.setdefault(endpoint, {})
+        if config.max_concurrent is not None:
+            self._active_sessions.setdefault(endpoint, set())
+        logger.info(
+            "endpoint_rate_limit_configured",
+            endpoint=endpoint,
+            requests_per_window=config.requests_per_window,
+            window_seconds=config.window_seconds,
+            max_concurrent=config.max_concurrent,
+        )
+
+    def acquire(self, endpoint: str, client_id: str) -> None:
+        """Acquire a rate limit slot for a request. Raises EndpointRateLimitExceeded."""
+        config = self._configs.get(endpoint)
+        if config is None or config.requests_per_window is None:
+            return
+
+        buckets = self._client_buckets.setdefault(endpoint, {})
+        bucket = buckets.get(client_id)
+        if bucket is None:
+            bucket = _ClientWindowBucket()
+            buckets[client_id] = bucket
+
+        now = time.time()
+        window_start = now - config.window_seconds
+
+        # Evict expired timestamps
+        while bucket.timestamps and bucket.timestamps[0] <= window_start:
+            bucket.timestamps.popleft()
+
+        if len(bucket.timestamps) >= config.requests_per_window:
+            # Calculate retry_after from oldest timestamp in window
+            oldest = bucket.timestamps[0]
+            retry_after = oldest + config.window_seconds - now
+            logger.warning(
+                "endpoint_rate_limit_exceeded",
+                endpoint=endpoint,
+                client_id=client_id,
+                used=len(bucket.timestamps),
+                limit=config.requests_per_window,
+                retry_after=round(retry_after, 1),
+            )
+            raise EndpointRateLimitExceeded(
+                endpoint=endpoint,
+                retry_after=max(retry_after, 0.1),
+                message=(
+                    f"Endpoint rate limit exceeded for {endpoint}: "
+                    f"{len(bucket.timestamps)}/{config.requests_per_window} "
+                    f"requests in {config.window_seconds}s window"
+                ),
+            )
+
+        bucket.timestamps.append(now)
+
+    def acquire_concurrent(self, endpoint: str, session_id: str) -> None:
+        """Acquire a concurrent session slot. Raises EndpointRateLimitExceeded."""
+        config = self._configs.get(endpoint)
+        if config is None or config.max_concurrent is None:
+            return
+
+        sessions = self._active_sessions.setdefault(endpoint, set())
+
+        # Idempotent: same session_id doesn't count twice
+        if session_id in sessions:
+            return
+
+        if len(sessions) >= config.max_concurrent:
+            logger.warning(
+                "endpoint_concurrent_limit_exceeded",
+                endpoint=endpoint,
+                session_id=session_id,
+                active=len(sessions),
+                limit=config.max_concurrent,
+            )
+            raise EndpointRateLimitExceeded(
+                endpoint=endpoint,
+                retry_after=0,
+                message=(
+                    f"Concurrent session limit exceeded for {endpoint}: "
+                    f"{len(sessions)}/{config.max_concurrent} active sessions"
+                ),
+            )
+
+        sessions.add(session_id)
+
+    def release_concurrent(self, endpoint: str, session_id: str) -> None:
+        """Release a concurrent session slot."""
+        sessions = self._active_sessions.get(endpoint)
+        if sessions is not None:
+            sessions.discard(session_id)
+
+    def get_status(self, endpoint: str | None = None) -> dict:
+        """Get rate limit status for admin visibility."""
+        if endpoint is not None:
+            return self._endpoint_status(endpoint)
+
+        return {ep: self._endpoint_status(ep) for ep in self._configs}
+
+    def _endpoint_status(self, endpoint: str) -> dict:
+        """Build status dict for a single endpoint."""
+        config = self._configs.get(endpoint)
+        if config is None:
+            return {"endpoint": endpoint, "status": "not_configured"}
+
+        now = time.time()
+        result: dict = {
+            "config": {
+                "requests_per_window": config.requests_per_window,
+                "window_seconds": config.window_seconds,
+                "max_concurrent": config.max_concurrent,
+            },
+        }
+
+        # Window usage per client
+        if config.requests_per_window is not None:
+            buckets = self._client_buckets.get(endpoint, {})
+            window_start = now - config.window_seconds
+            clients: dict = {}
+            for cid, bucket in buckets.items():
+                # Count only non-expired timestamps
+                used = sum(1 for ts in bucket.timestamps if ts > window_start)
+                clients[cid] = {
+                    "used": used,
+                    "limit": config.requests_per_window,
+                    "remaining": max(0, config.requests_per_window - used),
+                }
+            result["clients"] = clients
+
+        # Concurrent usage
+        if config.max_concurrent is not None:
+            sessions = self._active_sessions.get(endpoint, set())
+            result["concurrent"] = {
+                "active": len(sessions),
+                "limit": config.max_concurrent,
+                "remaining": max(0, config.max_concurrent - len(sessions)),
+                "sessions": sorted(sessions),
+            }
+
+        return result

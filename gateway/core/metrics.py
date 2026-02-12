@@ -1,6 +1,16 @@
 """Prometheus metrics for gateway observability."""
 
+import time
+from copy import deepcopy
+from typing import Any
+
 from prometheus_client import Counter, Gauge, Histogram, Info
+
+_PATH_NORMALIZATION_CACHE_MAX = 4096
+_PATH_NORMALIZATION_CACHE_PRUNE_TARGET = _PATH_NORMALIZATION_CACHE_MAX // 4
+_PATH_NORMALIZATION_CACHE: dict[str, str] = {}
+_MEMORY_METRICS_REFRESH_INTERVAL_SECONDS = 10.0
+_LAST_MEMORY_METRICS_UPDATE_MONOTONIC = 0.0
 
 # Gateway info
 GATEWAY_INFO = Info(
@@ -73,6 +83,13 @@ PROVIDER_LATENCY = Histogram(
     buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
 
+PROVIDER_QUOTE_BATCH_SIZE = Histogram(
+    "gateway_provider_quote_batch_size",
+    "Number of symbols requested in provider multi-quote calls",
+    ["provider"],
+    buckets=(1, 2, 5, 10, 25, 50, 100, 250, 500, 1000),
+)
+
 PROVIDER_HEALTH = Gauge(
     "gateway_provider_healthy",
     "Provider health status (1=healthy, 0=unhealthy)",
@@ -133,6 +150,56 @@ SINK_PUBLISH = Counter(
     "Total data sink publish operations",
     ["sink", "topic", "status"],  # status: success, error
 )
+
+STREAM_SINK_DISPATCH_EVENTS = Counter(
+    "gateway_stream_sink_dispatch_events_total",
+    "Stream-to-sink scheduler events",
+    ["status"],  # scheduled, dropped_backpressure, completed, failed, cancelled
+)
+
+STREAM_SINK_PENDING_TASKS = Gauge(
+    "gateway_stream_sink_pending_tasks",
+    "Current number of queued stream-to-sink publish tasks",
+)
+
+STREAM_SINK_DISPATCH_LIMIT = Gauge(
+    "gateway_stream_sink_dispatch_limit",
+    "Configured stream-to-sink dispatch limits",
+    ["limit_type"],  # max_inflight_publish, max_pending_tasks
+)
+
+STREAM_FANOUT_EVENTS = Counter(
+    "gateway_stream_fanout_events_total",
+    "WebSocket stream fanout dispatch events",
+    ["status"],  # delivered, error
+)
+
+STREAM_FANOUT_BATCH_SIZE = Histogram(
+    "gateway_stream_fanout_batch_size",
+    "Number of clients in each fanout dispatch batch",
+    buckets=(1, 2, 4, 8, 16, 32, 64, 128, 256, 512),
+)
+
+STREAM_FANOUT_LIMIT = Gauge(
+    "gateway_stream_fanout_limit",
+    "Configured stream fanout limits",
+    ["limit_type"],  # max_inflight, batch_size
+)
+
+_STREAM_SINK_DISPATCH_SNAPSHOT: dict[str, Any] = {
+    "limits": {"max_inflight_publish": 1, "max_pending_tasks": 1},
+    "pending_tasks": 0,
+    "events": {},
+}
+
+_STREAM_FANOUT_SNAPSHOT: dict[str, Any] = {
+    "limits": {"max_inflight": 1, "batch_size": 1},
+    "events": {},
+    "batches": {"count": 0, "total_clients": 0, "max_batch_size": 0},
+}
+
+_PROVIDER_HEALTH_CHECK_SNAPSHOT: dict[str, dict[str, Any]] = {}
+_PROVIDER_QUOTE_BATCH_SNAPSHOT: dict[str, dict[str, Any]] = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SLI Metrics (PRD 11.1.2-4)
@@ -238,6 +305,38 @@ def update_memory_metrics() -> None:
         pass  # psutil not installed
 
 
+def update_memory_metrics_if_due(
+    *,
+    force: bool = False,
+    now_monotonic: float | None = None,
+) -> bool:
+    """Update memory metrics at most once per refresh interval.
+
+    Returns True when an update was performed, otherwise False.
+    """
+    global _LAST_MEMORY_METRICS_UPDATE_MONOTONIC
+
+    now = now_monotonic if now_monotonic is not None else time.monotonic()
+    if not force:
+        last_update = _LAST_MEMORY_METRICS_UPDATE_MONOTONIC
+        if last_update > 0 and (now - last_update) < _MEMORY_METRICS_REFRESH_INTERVAL_SECONDS:
+            return False
+
+    update_memory_metrics()
+    _LAST_MEMORY_METRICS_UPDATE_MONOTONIC = now
+    return True
+
+
+def record_symbology_batch_size(batch_size: int) -> None:
+    """Record symbol count for symbology batch requests."""
+    SYMBOLOGY_BATCH_SIZE.observe(max(0, batch_size))
+
+
+def record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:
+    """Record route-level cache hit/miss events."""
+    ROUTE_CACHE_EVENTS.labels(route=route, status=status, cache_mode=cache_mode).inc()
+
+
 def record_request(method: str, path: str, status: int, duration: float) -> None:
     """Record HTTP request metrics."""
     # Normalize path to avoid high cardinality
@@ -261,6 +360,45 @@ def record_provider_request(provider: str, success: bool, duration: float) -> No
     status = "success" if success else "error"
     PROVIDER_REQUESTS.labels(provider=provider, status=status).inc()
     PROVIDER_LATENCY.labels(provider=provider).observe(duration)
+
+
+def record_provider_quote_batch_size(provider: str, batch_size: int) -> None:
+    """Record requested symbol count for provider multi-quote calls."""
+    bounded_size = max(0, batch_size)
+    PROVIDER_QUOTE_BATCH_SIZE.labels(provider=provider).observe(bounded_size)
+    snapshot = _PROVIDER_QUOTE_BATCH_SNAPSHOT.setdefault(
+        provider,
+        {"count": 0, "total_symbols": 0, "max_batch_size": 0},
+    )
+    snapshot["count"] = int(snapshot.get("count", 0)) + 1
+    snapshot["total_symbols"] = int(snapshot.get("total_symbols", 0)) + bounded_size
+    snapshot["max_batch_size"] = max(int(snapshot.get("max_batch_size", 0)), bounded_size)
+
+
+def get_provider_quote_batch_snapshot() -> dict[str, dict[str, Any]]:
+    """Get provider multi-quote batch telemetry snapshot for admin status surfaces."""
+    snapshot = deepcopy(_PROVIDER_QUOTE_BATCH_SNAPSHOT)
+    for provider_data in snapshot.values():
+        count = float(int(provider_data.get("count", 0)))
+        total_symbols = float(int(provider_data.get("total_symbols", 0)))
+        max_batch_size = float(int(provider_data.get("max_batch_size", 0)))
+        avg_batch_size = _safe_ratio(total_symbols, count)
+        batch_level = max(
+            _threshold_level(avg_batch_size, warning_at=50, critical_at=100),
+            _threshold_level(max_batch_size, warning_at=100, critical_at=250),
+            key=lambda level: {"healthy": 0, "warning": 1, "critical": 2}[level],
+        )
+        recommendations: list[str] = []
+        if avg_batch_size >= 50:
+            recommendations.append("Consider lowering client max_symbols or splitting large quote requests.")
+        if max_batch_size >= 100:
+            recommendations.append("Review provider max_symbols_per_request and tune per-provider quote batching.")
+        provider_data["derived"] = {
+            "avg_batch_size": avg_batch_size,
+            "batch_level": batch_level,
+            "recommendations": recommendations,
+        }
+    return snapshot
 
 
 def set_provider_health(provider: str, healthy: bool) -> None:
@@ -295,9 +433,7 @@ def record_alphavantage_route_cache(endpoint: str, status: str, cache_mode: str)
 
 def record_alphavantage_payload_bytes(endpoint: str, cache_mode: str, payload_bytes: int) -> None:
     """Record Alpha Vantage payload size in bytes."""
-    ALPHAVANTAGE_PAYLOAD_BYTES.labels(endpoint=endpoint, cache_mode=cache_mode).observe(
-        max(payload_bytes, 0)
-    )
+    ALPHAVANTAGE_PAYLOAD_BYTES.labels(endpoint=endpoint, cache_mode=cache_mode).observe(max(payload_bytes, 0))
 
 
 def record_rate_limit_exceeded(client_id: str) -> None:
@@ -312,6 +448,10 @@ def _normalize_path(path: str) -> str:
 
     Replaces variable path segments with placeholders.
     """
+    cached = _PATH_NORMALIZATION_CACHE.get(path)
+    if cached is not None:
+        return cached
+
     parts = path.split("/")
     normalized = []
 
@@ -328,7 +468,20 @@ def _normalize_path(path: str) -> str:
         else:
             normalized.append(part)
 
-    return "/" + "/".join(normalized)
+    normalized_path = "/" + "/".join(normalized)
+    if len(_PATH_NORMALIZATION_CACHE) >= _PATH_NORMALIZATION_CACHE_MAX:
+        _prune_path_normalization_cache()
+    _PATH_NORMALIZATION_CACHE[path] = normalized_path
+    return normalized_path
+
+
+def _prune_path_normalization_cache() -> None:
+    """Prune oldest cached normalized paths instead of clearing all entries."""
+    if not _PATH_NORMALIZATION_CACHE:
+        return
+    prune_count = min(_PATH_NORMALIZATION_CACHE_PRUNE_TARGET, len(_PATH_NORMALIZATION_CACHE))
+    for key in list(_PATH_NORMALIZATION_CACHE)[:prune_count]:
+        _PATH_NORMALIZATION_CACHE.pop(key, None)
 
 
 def _looks_like_symbol(s: str) -> bool:

@@ -1,9 +1,13 @@
 """Tests for Historical Replay Mode."""
 
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import WebSocketDisconnect
 
+import gateway.api.replay as replay_api
+import gateway.core.replay as replay_module
 from gateway.core.replay import (
     ReplayConfig,
     ReplayMessage,
@@ -223,6 +227,35 @@ class TestReplaySessionManager:
         assert len(sessions) == 2
 
     @pytest.mark.asyncio
+    async def test_list_sessions_page_returns_total_and_next_offset(self, manager):
+        """Should paginate and report traversal metadata."""
+        config = ReplayConfig(
+            name="test",
+            symbols=["AAPL"],
+            feeds=["bars"],
+            start=datetime.now(UTC),
+            end=datetime.now(UTC) + timedelta(hours=1),
+        )
+
+        await manager.create_session(config, client_id="test-client")
+        s2 = await manager.create_session(config, client_id="test-client")
+        s3 = await manager.create_session(config, client_id="test-client")
+        s2.state = ReplayState.RUNNING
+        s3.state = ReplayState.RUNNING
+
+        sessions, total, has_more, next_offset = await manager.list_sessions_page(
+            client_id="test-client",
+            state="running",
+            limit=1,
+            offset=0,
+        )
+
+        assert total == 2
+        assert [s.session_id for s in sessions] == [s2.session_id]
+        assert has_more is True
+        assert next_offset == 1
+
+    @pytest.mark.asyncio
     async def test_delete_session(self, manager):
         """Should delete sessions."""
         config = ReplayConfig(
@@ -245,3 +278,215 @@ class TestReplaySessionManager:
         m1 = get_replay_manager()
         m2 = get_replay_manager()
         assert m1 is m2
+
+    @pytest.mark.asyncio
+    async def test_run_replay_sorts_out_of_order_list_loader(self, manager):
+        """Out-of-order list loader data should be replayed in timestamp order."""
+        start = datetime(2024, 1, 15, 9, 30, tzinfo=UTC)
+        config = ReplayConfig(
+            name="sorted-replay",
+            symbols=["AAPL"],
+            feeds=["bars"],
+            start=start,
+            end=start + timedelta(minutes=1),
+            speed=100.0,
+        )
+        session = ReplaySession(session_id="replay-sort", config=config, client_id="test-client")
+        session.state = ReplayState.RUNNING
+
+        newer = ReplayMessage(
+            feed="stock_bars",
+            symbol="AAPL",
+            data={"close": 2},
+            market_timestamp=start + timedelta(seconds=1),
+        )
+        older = ReplayMessage(
+            feed="stock_bars",
+            symbol="AAPL",
+            data={"close": 1},
+            market_timestamp=start,
+        )
+
+        async def _loader(_session):
+            return [newer, older]
+
+        manager.set_data_loader(_loader)
+
+        sent: list[dict] = []
+
+        async def _callback(message):
+            sent.append(message)
+
+        await manager._run_replay(session, _callback)
+
+        assert session.state == ReplayState.COMPLETED
+        assert [msg["data"]["close"] for msg in sent] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_run_replay_supports_async_iterable_loader(self, manager):
+        """Replay should support streaming async iterable loaders without list materialization."""
+        start = datetime(2024, 1, 15, 9, 30, tzinfo=UTC)
+        config = ReplayConfig(
+            name="streaming-replay",
+            symbols=["AAPL"],
+            feeds=["bars"],
+            start=start,
+            end=start + timedelta(minutes=1),
+            speed=100.0,
+        )
+        session = ReplaySession(session_id="replay-stream", config=config, client_id="test-client")
+        session.state = ReplayState.RUNNING
+
+        async def _loader(_session):
+            async def _messages():
+                yield ReplayMessage(
+                    feed="stock_bars",
+                    symbol="AAPL",
+                    data={"close": 10},
+                    market_timestamp=start,
+                )
+                yield ReplayMessage(
+                    feed="stock_bars",
+                    symbol="AAPL",
+                    data={"close": 11},
+                    market_timestamp=start,
+                )
+
+            return _messages()
+
+        manager.set_data_loader(_loader)
+
+        sent: list[dict] = []
+
+        async def _callback(message):
+            sent.append(message)
+
+        await manager._run_replay(session, _callback)
+
+        assert session.state == ReplayState.COMPLETED
+        assert session.messages_sent == 2
+        assert [msg["data"]["close"] for msg in sent] == [10, 11]
+
+    @pytest.mark.asyncio
+    async def test_iter_list_messages_spools_and_cleans_temp_file(self, manager, monkeypatch):
+        """Large list loaders should spool to disk and clean up temp files."""
+        manager._spool_lists_to_disk = True
+        manager._spool_list_threshold = 1
+
+        start = datetime(2024, 1, 15, 9, 30, tzinfo=UTC)
+        messages = [
+            ReplayMessage(
+                feed="stock_bars",
+                symbol="AAPL",
+                data={"close": 1},
+                market_timestamp=start,
+            ),
+            ReplayMessage(
+                feed="stock_bars",
+                symbol="AAPL",
+                data={"close": 2},
+                market_timestamp=start + timedelta(seconds=1),
+            ),
+            ReplayMessage(
+                feed="stock_bars",
+                symbol="AAPL",
+                data={"close": 3},
+                market_timestamp=start + timedelta(seconds=2),
+            ),
+        ]
+
+        removed_paths: list[str] = []
+        real_remove = os.remove
+
+        def _tracking_remove(path: str) -> None:
+            removed_paths.append(path)
+            real_remove(path)
+
+        monkeypatch.setattr(replay_module.os, "remove", _tracking_remove)
+
+        closes: list[int] = []
+        async for message in manager._iter_list_messages(messages):
+            closes.append(message.data["close"])
+
+        assert closes == [1, 2, 3]
+        assert messages == []
+        assert len(removed_paths) == 1
+
+
+class _FakeReplayWebSocket:
+    def __init__(self, messages: list[dict[str, object] | Exception]) -> None:
+        self._messages = messages
+
+    async def receive_json(self) -> dict[str, object]:
+        if self._messages:
+            payload = self._messages.pop(0)
+            if isinstance(payload, Exception):
+                raise payload
+            return payload
+        raise WebSocketDisconnect(code=1000)
+
+
+def _make_replay_session() -> ReplaySession:
+    config = ReplayConfig(
+        name="ws-control",
+        symbols=["AAPL"],
+        feeds=["bars"],
+        start=datetime(2026, 1, 1, 14, 30, tzinfo=UTC),
+        end=datetime(2026, 1, 1, 15, 30, tzinfo=UTC),
+    )
+    session = ReplaySession(session_id="replay-ws", config=config, client_id="test-client")
+    session.state = ReplayState.RUNNING
+    return session
+
+
+class TestReplayWebSocketControlLoop:
+    @pytest.mark.asyncio
+    async def test_apply_replay_ws_action_updates_session_state(self) -> None:
+        session = _make_replay_session()
+
+        should_stop = replay_api._apply_replay_ws_action(session, {"action": "pause"})
+        assert should_stop is False
+        assert session.state == ReplayState.PAUSED
+
+        should_stop = replay_api._apply_replay_ws_action(
+            session, {"action": "resume", "speed": 3.0}
+        )
+        assert should_stop is False
+        assert session.state == ReplayState.RUNNING
+        assert session.speed == 3.0
+
+        should_stop = replay_api._apply_replay_ws_action(
+            session,
+            {"action": "seek", "timestamp": "2026-01-01T14:45:00+00:00"},
+        )
+        assert should_stop is False
+        assert session.current_timestamp == datetime(2026, 1, 1, 14, 45, tzinfo=UTC)
+
+        should_stop = replay_api._apply_replay_ws_action(session, {"action": "stop"})
+        assert should_stop is True
+        assert session.state == ReplayState.STOPPED
+
+    @pytest.mark.asyncio
+    async def test_receive_replay_control_messages_processes_controls(self) -> None:
+        session = _make_replay_session()
+        ws = _FakeReplayWebSocket(
+            [
+                {"action": "pause"},
+                {"action": "resume", "speed": 5.0},
+                {"action": "stop"},
+            ]
+        )
+
+        await replay_api._receive_replay_control_messages(ws, session)
+
+        assert session.speed == 5.0
+        assert session.state == ReplayState.STOPPED
+
+    @pytest.mark.asyncio
+    async def test_receive_replay_control_messages_stops_on_disconnect(self) -> None:
+        session = _make_replay_session()
+        ws = _FakeReplayWebSocket([WebSocketDisconnect(code=1001)])
+
+        await replay_api._receive_replay_control_messages(ws, session)
+
+        assert session.state == ReplayState.STOPPED

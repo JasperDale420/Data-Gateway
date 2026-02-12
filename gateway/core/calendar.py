@@ -224,6 +224,7 @@ class TradingCalendar:
     REGULAR_EARLY_END = time(13, 0)
     AFTERHOURS_START = time(16, 0)
     AFTERHOURS_END = time(20, 0)
+    MAX_TRADING_RANGE_DAYS = 3660
 
     def __init__(self, market: str = "NYSE") -> None:
         self.market = market
@@ -288,6 +289,13 @@ class TradingCalendar:
         Returns:
             Tuple of (trading_days, holidays, early_closes)
         """
+        if end < start:
+            return [], [], []
+
+        date_span_days = (end - start).days
+        if date_span_days > self.MAX_TRADING_RANGE_DAYS:
+            raise ValueError(f"Date range cannot exceed {self.MAX_TRADING_RANGE_DAYS} days")
+
         trading_days = []
         holidays = []
         early_closes = []
@@ -376,9 +384,7 @@ class EarningsCalendar:
     def __init__(self) -> None:
         # In production, this would fetch from Alpaca or other provider
         self._cache: dict[str, list[EarningsEvent]] = {}
-        self._fetch_earnings_func: (
-            Callable[[list[str], date, date], Awaitable[list[EarningsEvent]]] | None
-        ) = None
+        self._fetch_earnings_func: Callable[[list[str], date, date], Awaitable[list[EarningsEvent]]] | None = None
 
     def set_fetcher(
         self,

@@ -13,6 +13,7 @@ from gateway.api.finnhub.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
@@ -33,6 +34,7 @@ async def get_etf_profile(
     key = cache_key("finnhub:etf-profile", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_etf_profile", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -43,6 +45,7 @@ async def get_etf_profile(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_etf_profile(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_etf_profile", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -67,6 +70,7 @@ async def get_etf_holdings(
     key = cache_key("finnhub:etf-holdings", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_etf_holdings", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -77,6 +81,7 @@ async def get_etf_holdings(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_etf_holdings(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_etf_holdings", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -101,6 +106,7 @@ async def get_etf_sector(
     key = cache_key("finnhub:etf-sector", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_etf_sector", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -111,6 +117,7 @@ async def get_etf_sector(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_etf_sector(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_etf_sector", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -135,6 +142,7 @@ async def get_etf_country(
     key = cache_key("finnhub:etf-country", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_etf_country", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -145,6 +153,7 @@ async def get_etf_country(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_etf_country(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_etf_country", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -169,6 +178,7 @@ async def get_index_constituents(
     key = cache_key("finnhub:index-constituents", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_index_constituents", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -179,6 +189,7 @@ async def get_index_constituents(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_index_constituents(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_index_constituents", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
@@ -203,6 +214,7 @@ async def get_index_historical(
     key = cache_key("finnhub:index-historical", symbol.upper())
     cached = await cache.get(key)
     if cached:
+        record_route_cache("finnhub_index_historical", "hit", "finnhub")
         return {
             "success": True,
             "data": cached,
@@ -213,6 +225,7 @@ async def get_index_historical(
         await require_provider_rate_limit("finnhub")
         data = await provider.get_index_historical(symbol)
         await cache.set(key, data, ttl=86400)
+        record_route_cache("finnhub_index_historical", "miss", "finnhub")
         return {
             "success": True,
             "data": data,
