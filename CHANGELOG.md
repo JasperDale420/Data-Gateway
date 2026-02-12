@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.63] - 2026-02-12
+
+### Changed
+
+- **Adaptive darkpool polling**: Replaced static 60s darkpool poll interval with time-of-day adaptive intervals — 15s during morning rush (9:30-10:30 ET), 30s during normal market hours, 60s during extended hours. Reduces missed trades during peak volume periods. Base loop tick reduced from 60s to 15s to support the faster cadence.
+
+## [0.5.62] - 2026-02-12
+
+### Added
+
+- **REST sink explode regression coverage**: Added middleware tests in `tests/test_middleware_streaming.py` for Alpaca REST dict payloads with nested `bars[]` and `trades[]`, including empty-list skip behavior.
+
+### Fixed
+
+- **Malformed sink payload shape for Alpaca REST bars/trades**: Updated `gateway/api/middleware.py` so sink publishing now explodes nested REST payloads (`data.bars[]` / `data.trades[]`) into one EventEnvelope per item, preserving top-level context like `symbol` and `timeframe`.
+- **Empty aggregate sink noise**: Sink publishing now skips empty list payloads for eligible routes instead of emitting empty aggregate envelopes that normalize to null-heavy Silver rows.
+
 ## [0.5.61] - 2026-02-12
 
 ### Fixed

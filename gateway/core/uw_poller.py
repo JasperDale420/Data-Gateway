@@ -37,7 +37,10 @@ MORNING_RUSH_END = time(10, 30)
 
 # Poll settings
 DEFAULT_POLL_INTERVAL = 300  # 5 minutes for flow
-DARKPOOL_POLL_INTERVAL = 60  # 1 minute for darkpool (API max 200/call)
+DARKPOOL_RUSH_INTERVAL = 15  # 15s during morning rush (9:30-10:30 ET)
+DARKPOOL_MARKET_INTERVAL = 30  # 30s during normal market hours
+DARKPOOL_EXTENDED_INTERVAL = 60  # 60s during extended hours
+BASE_LOOP_INTERVAL = 15  # Base loop tick (must be <= smallest poll interval)
 MARKET_TIDE_POLL_INTERVAL = 3600  # 1 hour (API returns full day's data)
 
 # Extended hours (darkpool runs here too)
@@ -114,9 +117,8 @@ class UWPoller:
         self._last_flow_poll: datetime | None = None
         self._flow_interval = DEFAULT_POLL_INTERVAL
 
-        # Darkpool tracks its own polling time (runs every minute)
+        # Darkpool tracks its own polling time (adaptive interval)
         self._last_darkpool_poll: datetime | None = None
-        self._darkpool_interval = DARKPOOL_POLL_INTERVAL
 
         # Market/sector tide polls hourly since API returns full day's data
         self._last_tide_poll: datetime | None = None
@@ -294,12 +296,25 @@ class UWPoller:
         elapsed = (datetime.now(UTC) - self._last_flow_poll).total_seconds()
         return elapsed >= self._flow_interval
 
+    def _get_darkpool_interval(self) -> int:
+        """Return adaptive darkpool poll interval based on time of day.
+
+        - 15s during morning rush (9:30-10:30 ET) for peak volume capture
+        - 30s during normal market hours
+        - 60s during extended hours (pre-market, after-hours)
+        """
+        if self._is_morning_rush():
+            return DARKPOOL_RUSH_INTERVAL
+        if self._is_market_hours():
+            return DARKPOOL_MARKET_INTERVAL
+        return DARKPOOL_EXTENDED_INTERVAL
+
     def _should_poll_darkpool(self) -> bool:
-        """Check if enough time has passed to poll darkpool again (every minute)."""
+        """Check if enough time has passed to poll darkpool again."""
         if self._last_darkpool_poll is None:
             return True
         elapsed = (datetime.now(UTC) - self._last_darkpool_poll).total_seconds()
-        return elapsed >= self._darkpool_interval
+        return elapsed >= self._get_darkpool_interval()
 
     def get_runtime_snapshot(self) -> dict[str, Any]:
         """Return lightweight runtime/tuning telemetry for admin surfaces."""
@@ -311,9 +326,9 @@ class UWPoller:
             "dedupe_cache_ttl_seconds": self._cache_ttl_seconds,
             "poll_intervals_seconds": {
                 "flow": self._flow_interval,
-                "darkpool": self._darkpool_interval,
+                "darkpool": self._get_darkpool_interval(),
                 "tide": self._tide_interval,
-                "base_loop": DARKPOOL_POLL_INTERVAL,
+                "base_loop": BASE_LOOP_INTERVAL,
             },
             "feeds": {
                 "flow": self.flow_enabled,
@@ -391,8 +406,8 @@ class UWPoller:
         """Main polling loop."""
         from gateway.api.deps import get_sink_registry
 
-        # Base interval is 1 minute (darkpool frequency)
-        base_interval = DARKPOOL_POLL_INTERVAL
+        # Base loop tick — must be <= smallest poll interval
+        base_interval = BASE_LOOP_INTERVAL
 
         while self._running:
             try:
