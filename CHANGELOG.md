@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.51] - 2026-02-12
+
+### Changed
+
+- **Removed embedded trading-bot scaffold**: Deleted legacy `trading-bot/` scripts, docs, and source modules from this repository to keep Data-Gateway scope focused on gateway services and providers.
+
 ## [0.5.50] - 2026-02-12
 
 ### Fixed
