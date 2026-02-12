@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import structlog
 
-from gateway.core.metrics import httpx_event_hooks
+from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
 
@@ -172,10 +172,11 @@ class FinnhubProvider(DataProvider):
 
     async def get_bars(
         self,
-        symbol: str,
-        resolution: str = "D",
+        symbols: list[str] | str,
+        timeframe: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        **kwargs: Any,
     ) -> list[NormalizedBar]:
         """Get historical OHLCV bars.
 
@@ -184,78 +185,110 @@ class FinnhubProvider(DataProvider):
         if not self._client:
             raise RuntimeError("Provider not initialized")
 
+        timeframe_to_resolution = {
+            "1m": "1",
+            "1Min": "1",
+            "5m": "5",
+            "5Min": "5",
+            "15m": "15",
+            "15Min": "15",
+            "30m": "30",
+            "30Min": "30",
+            "1h": "60",
+            "1Hour": "60",
+            "1d": "D",
+            "1Day": "D",
+            "1w": "W",
+            "1Week": "W",
+            "1M": "M",
+            "1Month": "M",
+        }
+        resolution_to_timeframe = {
+            "1": "1Min",
+            "5": "5Min",
+            "15": "15Min",
+            "30": "30Min",
+            "60": "1Hour",
+            "D": "1Day",
+            "W": "1Week",
+            "M": "1Month",
+        }
+
+        if isinstance(symbols, str):
+            symbol_list = [symbols]
+            resolution = str(kwargs.get("resolution", "D"))
+            normalized_timeframe = resolution_to_timeframe.get(resolution, "1Day")
+        else:
+            symbol_list = symbols
+            normalized_timeframe = timeframe or "1Day"
+            resolution = timeframe_to_resolution.get(normalized_timeframe, "D")
+            normalized_timeframe = resolution_to_timeframe.get(resolution, normalized_timeframe)
+
         if not end:
             end = datetime.now(UTC)
         if not start:
             start = end - timedelta(days=30)
 
-        try:
-            response = await self._client.get(
-                "/stock/candle",
-                params={
-                    "symbol": symbol.upper(),
-                    "resolution": resolution,
-                    "from": int(start.timestamp()),
-                    "to": int(end.timestamp()),
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
+        all_bars: list[NormalizedBar] = []
 
-            if data.get("s") != "ok":
-                logger.warning("finnhub_no_data", symbol=symbol, status=data.get("s"))
-                return []
-
-            bars = []
-            timestamps = data.get("t", [])
-            opens = data.get("o", [])
-            highs = data.get("h", [])
-            lows = data.get("l", [])
-            closes = data.get("c", [])
-            volumes = data.get("v", [])
-
-            # Map resolution to timeframe
-            timeframe_map = {
-                "1": "1Min",
-                "5": "5Min",
-                "15": "15Min",
-                "30": "30Min",
-                "60": "1Hour",
-                "D": "1Day",
-                "W": "1Week",
-                "M": "1Month",
-            }
-            timeframe = timeframe_map.get(resolution, "1Day")
-
-            for ts, open_px, high_px, low_px, close_px, volume in zip(
-                timestamps,
-                opens,
-                highs,
-                lows,
-                closes,
-                volumes,
-                strict=False,
-            ):
-                bars.append(
-                    NormalizedBar(
-                        symbol=symbol.upper(),
-                        timestamp=datetime.fromtimestamp(ts, tz=UTC),
-                        open=Decimal(str(open_px)),
-                        high=Decimal(str(high_px)),
-                        low=Decimal(str(low_px)),
-                        close=Decimal(str(close_px)),
-                        volume=int(volume),
-                        provider="finnhub",
-                        timeframe=timeframe,
-                    )
+        # Finnhub doesn't support batch bars, fetch per symbol
+        for symbol in symbol_list:
+            try:
+                response = await self._client.get(
+                    "/stock/candle",
+                    params={
+                        "symbol": symbol.upper(),
+                        "resolution": resolution,
+                        "from": int(start.timestamp()),
+                        "to": int(end.timestamp()),
+                    },
                 )
+                response.raise_for_status()
+                data = response.json()
 
-            logger.info("finnhub_bars_fetched", symbol=symbol, count=len(bars))
-            return bars
+                if data.get("s") != "ok":
+                    logger.warning("finnhub_no_data", symbol=symbol, status=data.get("s"))
+                    continue
 
-        except Exception as e:
-            logger.error("finnhub_bars_failed", symbol=symbol, error=str(e))
-            raise
+                timestamps = data.get("t", [])
+                opens = data.get("o", [])
+                highs = data.get("h", [])
+                lows = data.get("l", [])
+                closes = data.get("c", [])
+                volumes = data.get("v", [])
+
+                bars = []
+                for ts, open_px, high_px, low_px, close_px, volume in zip(
+                    timestamps,
+                    opens,
+                    highs,
+                    lows,
+                    closes,
+                    volumes,
+                    strict=False,
+                ):
+                    bars.append(
+                        NormalizedBar(
+                            symbol=symbol.upper(),
+                            timestamp=datetime.fromtimestamp(ts, tz=UTC),
+                            open=Decimal(str(open_px)),
+                            high=Decimal(str(high_px)),
+                            low=Decimal(str(low_px)),
+                            close=Decimal(str(close_px)),
+                            volume=int(volume),
+                            provider="finnhub",
+                            timeframe=normalized_timeframe,
+                        )
+                    )
+                all_bars.extend(bars)
+                logger.info("finnhub_bars_fetched", symbol=symbol, count=len(bars))
+
+            except Exception as e:
+                logger.error("finnhub_bars_failed", symbol=symbol, error=str(e))
+                # Continue to next symbol
+                continue
+
+        return all_bars
 
     # ─────────────────────────────────────────────────────────────────
     # Company Profile & Fundamentals

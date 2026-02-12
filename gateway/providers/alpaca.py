@@ -35,7 +35,7 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
-from gateway.core.metrics import httpx_event_hooks
+from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
@@ -2132,5 +2132,14 @@ class AlpacaProvider(DataProvider):
 
     def _convert_timeframe(self, timeframe: str) -> str:
         """Convert gateway timeframe to Alpaca format."""
-        # Gateway uses "1Min", Alpaca uses "1Min" - already compatible
-        return timeframe
+        mapping = {
+            "1m": "1Min",
+            "5m": "5Min",
+            "15m": "15Min",
+            "30m": "30Min",
+            "1h": "1Hour",
+            "1d": "1Day",
+            "1w": "1Week",
+            "1M": "1Month",
+        }
+        return mapping.get(timeframe, timeframe)

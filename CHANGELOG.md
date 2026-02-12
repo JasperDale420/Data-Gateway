@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.50] - 2026-02-12
+
+### Fixed
+
+- **Finnhub bars compatibility regression**: `gateway/providers/finnhub.py` now supports both legacy `get_bars(symbol, resolution=...)` calls and batch `get_bars(symbols, timeframe, start, end)` calls without breaking tests or runtime callers.
+- **Provider quote batch metric imports**: Added missing `record_provider_quote_batch_size` imports in `gateway/providers/finnhub.py` and `gateway/providers/alpaca.py` to prevent quote-path NameErrors.
+
 ## [0.5.49] - 2026-02-12
 
 ### Added
