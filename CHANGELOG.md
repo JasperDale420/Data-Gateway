@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.56] - 2026-02-12
+
+### Fixed
+
+- **Alpha Vantage route max-points forwarding**: Updated `gateway/api/alphavantage/timeseries.py` to pass `max_points` through to provider calls for intraday/daily/weekly/monthly endpoints.
+- **Alpha Vantage cache-key correctness for max-points requests**: Included `max_points` in Alpha Vantage time-series cache keys so capped responses do not share cache entries with uncapped/full responses.
+- **Timeseries route regression tests restored**: Fixed `tests/test_alphavantage_timeseries.py` expectations by restoring intended route behavior (`max_points` forwarded + cache key suffix includes point cap).
+
 ## [0.5.55] - 2026-02-12
 
 ### Added
