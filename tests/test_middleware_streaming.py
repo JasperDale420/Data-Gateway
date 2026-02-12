@@ -194,3 +194,15 @@ def test_sink_envelopes_skip_empty_alpaca_lists() -> None:
 
     assert empty_bars == []
     assert empty_trades == []
+
+
+def test_extract_route_info_maps_alpaca_bulk_stocks_routes_to_canonical_feeds() -> None:
+    middleware = EventEnvelopeMiddleware(FastAPI())
+
+    bars_provider, bars_feed = middleware._extract_route_info("/api/v1/alpaca/stocks/bars")  # noqa: SLF001
+    trades_provider, trades_feed = middleware._extract_route_info("/api/v1/alpaca/stocks/trades")  # noqa: SLF001
+
+    assert bars_provider == "alpaca"
+    assert bars_feed == "bars"
+    assert trades_provider == "alpaca"
+    assert trades_feed == "trades"

@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 
 - **Malformed sink payload shape for Alpaca REST bars/trades**: Updated `gateway/api/middleware.py` so sink publishing now explodes nested REST payloads (`data.bars[]` / `data.trades[]`) into one EventEnvelope per item, preserving top-level context like `symbol` and `timeframe`.
 - **Empty aggregate sink noise**: Sink publishing now skips empty list payloads for eligible routes instead of emitting empty aggregate envelopes that normalize to null-heavy Silver rows.
+- **Bulk Alpaca stocks route feed resolution**: Updated canonical route mapping so `/api/v1/alpaca/stocks/bars` and `/api/v1/alpaca/stocks/trades` resolve to sink feeds `bars` / `trades` instead of fallback `stocks`.
 
 ## [0.5.61] - 2026-02-12
 

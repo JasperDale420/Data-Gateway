@@ -568,6 +568,16 @@ FEED_MAPPING = {
 # Cerberus-critical routes that need canonical sink feed names.
 CANONICAL_ROUTE_FEEDS = [
     (
+        re.compile(r"^/api/v1/alpaca/stocks/bars$"),
+        "alpaca",
+        "bars",
+    ),
+    (
+        re.compile(r"^/api/v1/alpaca/stocks/trades$"),
+        "alpaca",
+        "trades",
+    ),
+    (
         re.compile(r"^/api/v1/alpaca/stocks/[^/]+/bars$"),
         "alpaca",
         "bars",
