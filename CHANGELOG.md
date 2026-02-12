@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.52] - 2026-02-12
+
+### Added
+
+- **Middleware regression guard for UW flow list envelopes**: Added `tests/test_middleware_streaming.py::test_envelope_middleware_wraps_uw_flow_list_with_sink_enabled` to lock behavior for list payload envelope wrapping when sink publishing is enabled.
+
+### Fixed
+
+- **REST envelope sink batch publish crash**: Restored `EventEnvelopeMiddleware._publish_sink_batch(...)` in `gateway/api/middleware.py` so list payload sink publishes no longer throw `'EventEnvelopeMiddleware' object has no attribute '_publish_sink_batch'` and leak un-awaited coroutine warnings.
+
 ## [0.5.51] - 2026-02-12
 
 ### Changed

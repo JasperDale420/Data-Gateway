@@ -782,6 +782,17 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 headers=dict(response.headers),
             )
 
+    async def _publish_sink_batch(self, tasks: list, path: str) -> None:
+        """Publish sink writes in batch without affecting request response path."""
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            logger.warning(
+                "rest_envelope_sink_publish_batch_failed",
+                path=path,
+                failed=len(failures),
+            )
+
     def _should_wrap_response(self, response: Response) -> bool:
         """Only wrap small JSON responses with explicit length.
 
