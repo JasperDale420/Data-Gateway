@@ -41,7 +41,7 @@ async def get_most_actives(
     return {
         "success": True,
         "data": {
-            "most_actives": [a.model_dump(mode="json") for a in actives],
+            "most_actives": [a.model_dump() for a in actives],
         },
         "meta": {
             "count": len(actives),
@@ -73,8 +73,8 @@ async def get_movers(
     return {
         "success": True,
         "data": {
-            "gainers": [g.model_dump(mode="json") for g in movers.get("gainers", [])],
-            "losers": [loser.model_dump(mode="json") for loser in movers.get("losers", [])],
+            "gainers": [g.model_dump() for g in movers.get("gainers", [])],
+            "losers": [loser.model_dump() for loser in movers.get("losers", [])],
         },
         "meta": {
             "gainers_count": len(movers.get("gainers", [])),

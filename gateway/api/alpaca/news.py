@@ -42,9 +42,7 @@ async def get_news(
     articles = await execute_alpaca_cached_call(
         registry=registry,
         cache=cache,
-        cache_key=(
-            f"alpaca:news:articles:{symbols_key}:{start_key}:{end_key}:{limit}:{include_content_key}"
-        ),
+        cache_key=(f"alpaca:news:articles:{symbols_key}:{start_key}:{end_key}:{limit}:{include_content_key}"),
         ttl=NEWS_CACHE_TTL_SECONDS,
         route_label="alpaca_news_articles",
         provider_call=lambda provider: provider.get_news(
@@ -59,7 +57,7 @@ async def get_news(
     return {
         "success": True,
         "data": {
-            "articles": [a.model_dump(mode="json") for a in articles],
+            "articles": [a.model_dump() for a in articles],
         },
         "meta": {
             "count": len(articles),

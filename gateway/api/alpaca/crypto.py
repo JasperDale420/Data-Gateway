@@ -48,7 +48,7 @@ async def get_crypto_bars(
         "data": {
             "pair": pair.upper(),
             "timeframe": timeframe,
-            "bars": [bar.model_dump(mode="json") for bar in bars],
+            "bars": [bar.model_dump() for bar in bars],
         },
         "meta": {"count": len(bars), "provider": "alpaca"},
     }
@@ -78,7 +78,7 @@ async def get_crypto_trades(
         "success": True,
         "data": {
             "pair": pair.upper(),
-            "trades": [trade.model_dump(mode="json") for trade in trades],
+            "trades": [trade.model_dump() for trade in trades],
         },
         "meta": {"count": len(trades), "provider": "alpaca"},
     }
@@ -101,7 +101,7 @@ async def get_crypto_quotes(
 
     return {
         "success": True,
-        "data": quote.model_dump(mode="json"),
+        "data": quote.model_dump(),
         "meta": {"provider": "alpaca"},
     }
 
@@ -139,7 +139,7 @@ async def get_crypto_orderbook(
 
     # Handle both dict and NormalizedOrderbook
     if hasattr(data, "model_dump"):
-        data_dict = data.model_dump(mode="json")
+        data_dict = data.model_dump()
     else:
         data_dict = data
 

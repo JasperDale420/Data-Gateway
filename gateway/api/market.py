@@ -54,7 +54,7 @@ async def get_stock_bars(
         "data": {
             "symbol": symbol.upper(),
             "timeframe": timeframe,
-            "bars": [bar.model_dump(mode="json") for bar in bars],
+            "bars": [bar.model_dump() for bar in bars],
         },
         "meta": {
             "count": len(bars),
@@ -79,7 +79,7 @@ async def get_stock_quote(
 
     return {
         "success": True,
-        "data": quotes[0].model_dump(mode="json") if quotes else None,
+        "data": quotes[0].model_dump() if quotes else None,
         "meta": {"provider": "unified", "strategy": "failover"},
     }
 
@@ -114,7 +114,7 @@ async def get_stock_trades(
         "success": True,
         "data": {
             "symbol": symbol.upper(),
-            "trades": [t.model_dump(mode="json") for t in trades],
+            "trades": [t.model_dump() for t in trades],
         },
         "meta": {
             "count": len(trades),

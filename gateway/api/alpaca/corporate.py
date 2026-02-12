@@ -25,9 +25,7 @@ CORPORATE_ACTIONS_CACHE_TTL_SECONDS = 300
 @router.get("/corporate-actions/{symbol}", response_model=SuccessResponse)
 async def get_corporate_actions(
     symbol: str,
-    types: str | None = Query(
-        default=None, description="Action types: dividend,split,merger,spinoff"
-    ),
+    types: str | None = Query(default=None, description="Action types: dividend,split,merger,spinoff"),
     start: datetime | None = Query(default=None, description=DESC_START_TIME),
     end: datetime | None = Query(default=None, description=DESC_END_TIME),
     client: Client = Depends(require_api_key),
@@ -58,7 +56,7 @@ async def get_corporate_actions(
         "success": True,
         "data": {
             "symbol": symbol.upper(),
-            "actions": [a.model_dump(mode="json") for a in actions],
+            "actions": [a.model_dump() for a in actions],
         },
         "meta": {
             "count": len(actions),

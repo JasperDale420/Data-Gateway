@@ -52,7 +52,7 @@ async def get_option_chain(
         "success": True,
         "data": {
             "underlying": underlying.upper(),
-            "contracts": [c.model_dump(mode="json") for c in contracts],
+            "contracts": [c.model_dump() for c in contracts],
         },
         "meta": {
             "count": len(contracts),
@@ -82,7 +82,7 @@ async def get_option_chain_snapshot(
         "success": True,
         "data": {
             "underlying": underlying.upper(),
-            "contracts": [c.model_dump(mode="json") for c in contracts],
+            "contracts": [c.model_dump() for c in contracts],
         },
         "meta": {
             "count": len(contracts),
@@ -124,7 +124,7 @@ async def get_option_bars(
         "data": {
             "contract": contract.upper(),
             "timeframe": timeframe,
-            "bars": [bar.model_dump(mode="json") for bar in bars],
+            "bars": [bar.model_dump() for bar in bars],
         },
         "meta": {
             "count": len(bars),
@@ -149,7 +149,7 @@ async def get_option_quotes(
 
     return {
         "success": True,
-        "data": quotes[0].model_dump(mode="json"),
+        "data": quotes[0].model_dump(),
         "meta": {"provider": "alpaca"},
     }
 
@@ -167,13 +167,11 @@ async def get_options_trades(
     contracts_list = parse_comma_values(contracts, uppercase=True)
     trades = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: provider.get_option_trades(
-            contracts_list, start, end, limit
-        ),
+        provider_call=lambda provider: provider.get_option_trades(contracts_list, start, end, limit),
     )
     return {
         "success": True,
-        "data": [t.model_dump(mode="json") for t in trades],
+        "data": [t.model_dump() for t in trades],
         "meta": {"count": len(trades), "provider": "alpaca"},
     }
 
@@ -192,7 +190,7 @@ async def get_options_latest_trades(
     )
     return {
         "success": True,
-        "data": [t.model_dump(mode="json") for t in trades],
+        "data": [t.model_dump() for t in trades],
         "meta": {"count": len(trades), "provider": "alpaca"},
     }
 
