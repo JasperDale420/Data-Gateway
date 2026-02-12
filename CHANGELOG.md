@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.55] - 2026-02-12
+
+### Added
+
+- **Alpha Vantage regression guard for daily max-points path**: Added `tests/test_alphavantage_provider.py::test_get_daily_respects_max_points_window` to reproduce and prevent the missing helper crash in time-series iteration.
+
+### Fixed
+
+- **Alpha Vantage daily/intraday/weekly time-series crash**: Restored `AlphaVantageProvider._iter_time_series_items(...)` in `gateway/providers/alphavantage.py` so max-points-limited time-series endpoints no longer raise `AttributeError: _iter_time_series_items` and return `502`.
+
 ## [0.5.54] - 2026-02-12
 
 ### Fixed

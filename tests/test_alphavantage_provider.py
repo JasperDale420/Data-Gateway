@@ -34,11 +34,7 @@ class _FakeHTTPClient:
 
 def test_parse_csv_response_handles_quoted_commas() -> None:
     provider = AlphaVantageProvider()
-    payload = (
-        "symbol,name,reportDate\n"
-        'AAPL,"Apple, Inc.",2026-02-01\n'
-        'MSFT,"Microsoft Corporation",2026-02-02\n'
-    )
+    payload = 'symbol,name,reportDate\nAAPL,"Apple, Inc.",2026-02-01\nMSFT,"Microsoft Corporation",2026-02-02\n'
 
     rows = provider._parse_csv_response(payload)
 
@@ -115,6 +111,39 @@ async def test_fetch_json_raises_on_rate_limit_note() -> None:
 
     with pytest.raises(RuntimeError, match="Rate limit exceeded"):
         await provider._fetch_json({"function": "GLOBAL_QUOTE", "symbol": "IBM"})
+
+
+@pytest.mark.asyncio
+async def test_get_daily_respects_max_points_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = AlphaVantageProvider()
+
+    async def _fake_fetch_json(_params: dict[str, object]) -> dict[str, object]:
+        return {
+            "Time Series (Daily)": {
+                "2026-02-03": {
+                    "1. open": "100",
+                    "2. high": "101",
+                    "3. low": "99",
+                    "4. close": "100.5",
+                    "6. volume": "10",
+                },
+                "2026-02-02": {
+                    "1. open": "99",
+                    "2. high": "100",
+                    "3. low": "98",
+                    "4. close": "99.5",
+                    "6. volume": "20",
+                },
+            }
+        }
+
+    monkeypatch.setattr(provider, "_fetch_json", _fake_fetch_json)
+
+    bars = await provider.get_daily("AAPL", max_points=1)
+
+    assert len(bars) == 1
+    assert bars[0].symbol == "AAPL"
+    assert bars[0].timestamp.isoformat() == "2026-02-03T00:00:00"
 
 
 def test_top_time_series_items_fast_path_keeps_head_order() -> None:

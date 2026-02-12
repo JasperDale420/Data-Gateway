@@ -169,6 +169,12 @@ class AlphaVantageProvider(DataProvider):
             return head_items
         return sorted(series.items(), reverse=True)[:limit]
 
+    def _iter_time_series_items(self, series: dict[str, Any], max_points: int | None) -> Iterable[tuple[str, Any]]:
+        """Return time-series items, optionally limited to newest points."""
+        if max_points is None:
+            return series.items()
+        return self._top_time_series_items(series, limit=max_points)
+
     # ─────────────────────────────────────────────────────────────────
     # Quote Methods
     # ─────────────────────────────────────────────────────────────────
