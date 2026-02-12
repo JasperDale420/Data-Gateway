@@ -1,5 +1,6 @@
 """Health check endpoints."""
 
+import inspect
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -16,16 +17,10 @@ from gateway.core.shutdown import ShutdownCoordinator
 
 logger = structlog.get_logger()
 
-logger = structlog.get_logger()
-
 router = APIRouter(prefix="/health", tags=["health"])
 
 _LAST_CACHE_ERROR_LOG: float = 0.0
 _LAST_SINK_ERROR_LOG: float = 0.0
-
-
-def _should_log(last_log: float, interval_seconds: float = 60.0) -> bool:
-    return (time.time() - last_log) >= interval_seconds
 
 
 def _should_log(last_log: float, interval_seconds: float = 60.0) -> bool:

@@ -78,7 +78,7 @@ def test_data_gateway_endpoints():
         ("/api/v1/providers", "Available providers"),
     ]
 
-    headers = {"X-API-Key": test_client_key, "Content-Type": "application/json"}
+    headers = {"X-Gateway-Key": test_client_key, "Content-Type": "application/json"}
 
     for endpoint, description in endpoints:
         try:

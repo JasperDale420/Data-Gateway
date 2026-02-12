@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.49] - 2026-02-12
+
+### Added
+
+- **Trading-bot gateway client regression tests**: Added `tests/test_trading_bot_gateway_client.py` to lock auth/header behavior with TDD coverage for:
+  - required `X-Gateway-Key` header usage,
+  - API key resolution from explicit arg / env / `config/clients.yaml`,
+  - fail-fast error when no key is available.
+
+### Changed
+
+- **Trading-bot gateway auth alignment**: Updated `trading-bot/src/core/gateway_client.py` to use `X-Gateway-Key` (matching gateway middleware), remove hardcoded default key fallback, and fail fast when no valid key source exists.
+- **Trading-bot connectivity script auth header**: Updated `trading-bot/test_connectivity.py` to use `X-Gateway-Key` for authenticated endpoint checks.
+
+### Fixed
+
+- **Readiness probe runtime error**: Fixed missing `inspect` import in `gateway/api/health.py` so async cache-delete readiness checks execute correctly (`/health/ready` no longer flips to `not_ready` from `NameError`).
+
+## [0.5.48] - 2026-02-12
+
+### Changed
+
+- **Finnhub bars API compatibility restore**: Updated `gateway/providers/finnhub.py` `get_bars(...)` to support both legacy single-symbol calls (`symbol`, `resolution`) and current batch signature (`symbols`, `timeframe`, `start`, `end`) while preserving normalized timeframe output.
+- **Finnhub quote-batch telemetry hook**: Added `record_provider_quote_batch_size` wiring in `gateway/providers/finnhub.py` to keep provider quote batch metrics emitting consistently.
+- **Alpaca quote-batch telemetry hook**: Added `record_provider_quote_batch_size` import in `gateway/providers/alpaca.py` to resolve quote-path metric calls.
+- **Alpaca timeframe normalization**: Expanded `_convert_timeframe(...)` mapping in `gateway/providers/alpaca.py` to normalize shorthand inputs (`1m`, `5m`, `1h`, `1d`, etc.) into Alpaca-compatible timeframe strings.
+
 ## [0.5.47] - 2026-02-12
 
 ### Changed
