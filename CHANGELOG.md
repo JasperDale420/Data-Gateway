@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.7] - 2026-02-13
+
+### Performance
+
+- **Cached client permission hash for cache keys**: Reuse a per-client permissions hash instead of recomputing JSON serialization on every request.
+
 ## [0.5.6] - 2026-02-05
 
 ### Added
