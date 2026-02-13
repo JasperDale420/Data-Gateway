@@ -62,6 +62,7 @@ async def get_max_pain(
 
 
 @router.get("/{symbol}/iv-rank", response_model=SuccessResponse)
+@router.get("/options/{symbol}/iv-rank", response_model=SuccessResponse)
 async def get_iv_rank(
     symbol: str,
     client: Client = Depends(require_api_key),

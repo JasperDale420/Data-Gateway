@@ -26,6 +26,7 @@ async def get_watchlists(
     data = await execute_alpaca_provider_call(
         registry=registry,
         provider_call=lambda provider: asyncio.to_thread(provider.get_watchlists),
+        rate_limit_key="alpaca_trading",
     )
     return {
         "success": True,
@@ -45,9 +46,8 @@ async def create_watchlist(
     symbols_list = symbols.split(",") if symbols else None
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(
-            provider.create_watchlist, name, symbols_list
-        ),
+        provider_call=lambda provider: asyncio.to_thread(provider.create_watchlist, name, symbols_list),
+        rate_limit_key="alpaca_trading",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -62,6 +62,7 @@ async def get_watchlist(
     data = await execute_alpaca_provider_call(
         registry=registry,
         provider_call=lambda provider: asyncio.to_thread(provider.get_watchlist, watchlist_id),
+        rate_limit_key="alpaca_trading",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -78,9 +79,8 @@ async def update_watchlist(
     symbols_list = symbols.split(",") if symbols else None
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(
-            provider.update_watchlist, watchlist_id, name, symbols_list
-        ),
+        provider_call=lambda provider: asyncio.to_thread(provider.update_watchlist, watchlist_id, name, symbols_list),
+        rate_limit_key="alpaca_trading",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -95,6 +95,7 @@ async def delete_watchlist(
     success = await execute_alpaca_provider_call(
         registry=registry,
         provider_call=lambda provider: asyncio.to_thread(provider.delete_watchlist, watchlist_id),
+        rate_limit_key="alpaca_trading",
     )
     return {
         "success": success,
@@ -113,9 +114,8 @@ async def add_asset_to_watchlist(
     """Add an asset to a watchlist."""
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(
-            provider.add_asset_to_watchlist, watchlist_id, symbol
-        ),
+        provider_call=lambda provider: asyncio.to_thread(provider.add_asset_to_watchlist, watchlist_id, symbol),
+        rate_limit_key="alpaca_trading",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -130,8 +130,7 @@ async def remove_asset_from_watchlist(
     """Remove an asset from a watchlist."""
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(
-            provider.remove_asset_from_watchlist, watchlist_id, symbol
-        ),
+        provider_call=lambda provider: asyncio.to_thread(provider.remove_asset_from_watchlist, watchlist_id, symbol),
+        rate_limit_key="alpaca_trading",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}

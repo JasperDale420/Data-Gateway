@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 
 - **3roses client rate limit**: Increased from 300 → 6,000 req/min in `clients.yaml` to accommodate ~5,000 symbol pre-market scanner burst.
 - **Alpaca provider limits**: Updated from free-tier defaults (200/min, 10/sec) to paid-tier (10,000/min, 75/sec) in `rate_limiter.py`.
+- **Alpaca rate limit split**: Added `alpaca_trading` virtual provider at 200/min for trading endpoints (account, orders, positions, watchlists, clock, calendar), keeping `alpaca` at 10K/min for market data. Updated `common.py`, `trading.py`, `account.py`, `watchlists.py`.
 
 ## [0.5.67] - 2026-02-13
 
