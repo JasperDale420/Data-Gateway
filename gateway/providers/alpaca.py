@@ -191,16 +191,14 @@ class AlpacaProvider(DataProvider):
         end: datetime,
         **kwargs: Any,
     ) -> list[NormalizedBar]:
-        """Fetch historical bars from Alpaca."""
+        """Fetch historical bars from Alpaca with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         results: list[NormalizedBar] = []
-
-        # Alpaca accepts comma-separated symbols
         symbols_param = ",".join(symbols)
 
-        params = {
+        params: dict[str, Any] = {
             "symbols": symbols_param,
             "timeframe": self._convert_timeframe(timeframe),
             "start": start.isoformat(),
@@ -211,13 +209,19 @@ class AlpacaProvider(DataProvider):
         }
 
         try:
-            response = await self._client.get("/v2/stocks/bars", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v2/stocks/bars", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, bars in data.get("bars", {}).items():
-                for bar in bars:
-                    results.append(self._normalize_bar(symbol, bar))
+                for symbol, bars in data.get("bars", {}).items():
+                    for bar in bars:
+                        results.append(self._normalize_bar(symbol, bar))
+
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
 
             logger.info(
                 "alpaca_bars_fetched",
@@ -272,7 +276,7 @@ class AlpacaProvider(DataProvider):
         end: datetime,
         limit: int = 10000,
     ) -> list[NormalizedTrade]:
-        """Fetch historical trades from Alpaca."""
+        """Fetch historical trades from Alpaca with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
@@ -289,13 +293,25 @@ class AlpacaProvider(DataProvider):
         }
 
         try:
-            response = await self._client.get("/v2/stocks/trades", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v2/stocks/trades", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, trades in data.get("trades", {}).items():
-                for trade in trades:
-                    results.append(self._normalize_trade(symbol, trade))
+                for symbol, trades in data.get("trades", {}).items():
+                    for trade in trades:
+                        results.append(self._normalize_trade(symbol, trade))
+
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
+
+            logger.info(
+                "alpaca_trades_fetched",
+                symbols=len(symbols),
+                trades=len(results),
+            )
 
         except httpx.HTTPStatusError as e:
             logger.error(
@@ -368,31 +384,42 @@ class AlpacaProvider(DataProvider):
         end: datetime,
         limit: int = 10000,
     ) -> list[NormalizedQuote]:
-        """Fetch historical quotes from Alpaca."""
+        """Fetch historical quotes from Alpaca with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         results: list[NormalizedQuote] = []
         symbols_param = ",".join(symbols)
+        request_limit = max(1, min(limit, 10000))
 
         params: dict[str, str | int] = {
             "symbols": symbols_param,
             "start": start.isoformat(),
             "end": end.isoformat(),
             "feed": self._feed,
-            "limit": limit,
+            "limit": request_limit,
         }
 
         try:
-            response = await self._client.get("/v2/stocks/quotes", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v2/stocks/quotes", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, quotes in data.get("quotes", {}).items():
-                for quote in quotes:
-                    results.append(self._normalize_quote(symbol, quote))
+                for symbol, quotes in data.get("quotes", {}).items():
+                    for quote in quotes:
+                        results.append(self._normalize_quote(symbol, quote))
 
-            logger.info("alpaca_historical_quotes_fetched", count=len(results))
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
+
+            logger.info(
+                "alpaca_historical_quotes_fetched",
+                symbols=len(symbols),
+                quotes=len(results),
+            )
 
         except httpx.HTTPStatusError as e:
             logger.error("alpaca_historical_quotes_error", status=e.response.status_code)
