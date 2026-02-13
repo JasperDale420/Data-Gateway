@@ -482,7 +482,7 @@ class UWPoller:
                 ts_event = self._parse_ts(envelope.get("ts_event"))
                 if ts_event and prev_ts and ts_event < prev_ts:
                     out_of_order += 1
-                    logger.warning(
+                    logger.debug(
                         "uw_flow_out_of_order_ts",
                         prev_ts=prev_ts.isoformat(),
                         curr_ts=ts_event.isoformat(),
@@ -528,7 +528,7 @@ class UWPoller:
                 ts_event = self._parse_ts(envelope.get("ts_event"))
                 if ts_event and prev_ts and ts_event < prev_ts:
                     out_of_order += 1
-                    logger.warning(
+                    logger.debug(
                         "uw_darkpool_out_of_order_ts",
                         prev_ts=prev_ts.isoformat(),
                         curr_ts=ts_event.isoformat(),
@@ -583,7 +583,7 @@ class UWPoller:
                 ts_event = self._parse_ts(envelope.get("ts_event"))
                 if ts_event and prev_ts and ts_event < prev_ts:
                     out_of_order += 1
-                    logger.warning(
+                    logger.debug(
                         "uw_market_tide_out_of_order_ts",
                         prev_ts=prev_ts.isoformat(),
                         curr_ts=ts_event.isoformat(),
@@ -642,7 +642,7 @@ class UWPoller:
                     ts_event = self._parse_ts(envelope.get("ts_event"))
                     if ts_event and prev_ts and ts_event < prev_ts:
                         total_out_of_order += 1
-                        logger.warning(
+                        logger.debug(
                             "uw_sector_tide_out_of_order_ts",
                             sector=sector,
                             prev_ts=prev_ts.isoformat(),

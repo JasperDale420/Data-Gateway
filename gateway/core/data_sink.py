@@ -88,7 +88,6 @@ class DataSinkRegistry:
         self._dedup_stats = {"checked": 0, "deduplicated": 0}
         self._publish_stats = {"scheduled": 0, "dropped_backpressure": 0}
         self._sink_semaphores: dict[str, asyncio.Semaphore] = {}
-        self._slot_lock = asyncio.Lock()
 
     def set_dedup_cache(self, cache: Any) -> None:
         """Set dedup cache after initialization (for lazy setup)."""
@@ -177,16 +176,22 @@ class DataSinkRegistry:
             task.add_done_callback(self._background_tasks.discard)
 
     async def _try_acquire_sink_slot(self, sink_name: str) -> bool:
-        """Try to reserve an in-flight publish slot without blocking."""
-        async with self._slot_lock:
-            sem = self._sink_semaphores.get(sink_name)
-            if sem is None:
-                sem = asyncio.Semaphore(self._max_in_flight_per_sink)
-                self._sink_semaphores[sink_name] = sem
-            if sem.locked():
-                return False
-            await sem.acquire()
+        """Try to reserve an in-flight publish slot with a short timeout.
+
+        Waits up to 2 seconds for a slot to become available during burst
+        publishing (e.g., batch backfill or EOD polls). This prevents
+        silently dropping events during short-lived spikes while still
+        protecting against unbounded backlog.
+        """
+        sem = self._sink_semaphores.get(sink_name)
+        if sem is None:
+            sem = asyncio.Semaphore(self._max_in_flight_per_sink)
+            self._sink_semaphores[sink_name] = sem
+        try:
+            await asyncio.wait_for(sem.acquire(), timeout=2.0)
             return True
+        except TimeoutError:
+            return False
 
     async def _safe_publish_with_release(
         self,

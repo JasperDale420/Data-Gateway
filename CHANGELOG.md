@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.69] - 2026-02-13
+
+### Fixed
+
+- **UW poller out-of-order timestamp log flood**: Downgraded per-item `uw_flow_out_of_order_ts`, `uw_darkpool_out_of_order_ts`, `uw_market_tide_out_of_order_ts`, and `uw_sector_tide_out_of_order_ts` logs from `warning` to `debug` in `gateway/core/uw_poller.py`. The UW API returns data sorted newest-first, so consecutive pairs naturally trigger this check — producing ~5,200 warnings per 9 minutes. The aggregate out-of-order count remains logged at info-level in each poll summary line.
+- **Data sink backpressure silently dropping events**: Replaced instant-drop backpressure in `gateway/core/data_sink.py` `_try_acquire_sink_slot` with a 2-second queuing timeout using `asyncio.wait_for`. During burst publishing (e.g., 200+ darkpool records in a batch poll), events now wait briefly for a publish slot instead of being silently dropped. Removed unused `_slot_lock` mutex.
+
 ## [0.5.68] - 2026-02-13
 
 ### Added
