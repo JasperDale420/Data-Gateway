@@ -15,6 +15,8 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, Field
 
+from gateway.core.metrics import record_envelope_created
+
 logger = structlog.get_logger()
 
 # Schema version for envelope format
@@ -144,7 +146,7 @@ def compute_event_id(
             parts.append(str(field))
 
     data = "|".join(parts)
-    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:32]
+    return hashlib.sha256(data.encode("utf-8"), usedforsecurity=False).hexdigest()[:32]
 
 
 # Feed-specific unique field extractors for event ID computation
@@ -378,12 +380,7 @@ def wrap_event(
         )
 
         # Record metrics
-        try:
-            from gateway.core.metrics import record_envelope_created
-
-            record_envelope_created(provider=provider, feed=feed)
-        except ImportError:
-            pass  # Metrics not available
+        record_envelope_created(provider=provider, feed=feed)
 
         return envelope
 

@@ -11,6 +11,7 @@ from typing import Any
 import structlog
 
 from gateway.core.data_sink import DataSink
+from gateway.core.metrics import record_sink_publish
 
 logger = structlog.get_logger()
 
@@ -120,12 +121,7 @@ class RedisStreamsSink(DataSink):
             )
 
             # Record metrics
-            try:
-                from gateway.core.metrics import record_sink_publish
-
-                record_sink_publish(sink=self.name, topic=topic, success=True)
-            except ImportError:
-                pass
+            record_sink_publish(sink=self.name, topic=topic, success=True)
 
             return True
 
@@ -133,12 +129,7 @@ class RedisStreamsSink(DataSink):
             self._reset_connection(operation="publish", error=e)
             logger.warning("redis_sink_publish_error", topic=topic, error=str(e))
             # Record error metrics
-            try:
-                from gateway.core.metrics import record_sink_publish
-
-                record_sink_publish(sink=self.name, topic=topic, success=False)
-            except ImportError:
-                pass
+            record_sink_publish(sink=self.name, topic=topic, success=False)
             return False
 
     async def health_check(self) -> bool:

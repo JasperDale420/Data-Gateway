@@ -491,14 +491,11 @@ class CacheMiddleware(BaseHTTPMiddleware):
         client._permissions_hash_value = value
         return value
 
+    _PUBLIC_EXACT = frozenset({"/", "/openapi.json", "/docs", "/redoc"})
+    _PUBLIC_PREFIXES = ("/health",)
+
     def _is_public_path(self, path: str) -> bool:
-        if path == "/":
-            return True
-        if path in {"/openapi.json", "/docs", "/redoc"}:
-            return True
-        if path.startswith("/health"):
-            return True
-        return False
+        return path in self._PUBLIC_EXACT or path.startswith(self._PUBLIC_PREFIXES)
 
     async def _ensure_authenticated(self, request: Request, api_key: str | None) -> Response | None:
         """Authenticate request to avoid serving cached data without auth checks."""

@@ -5,12 +5,14 @@ crypto, news) and fans out received data to subscribed downstream clients.
 """
 
 import asyncio
+import json
 import random
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import msgpack
 import structlog
 import websockets
 from websockets.client import WebSocketClientProtocol
@@ -33,6 +35,7 @@ MESSAGE_TYPE_TO_DATA_TYPE = {
     "t": "trades",
     "n": "news",
 }
+_VALIDATABLE_FEEDS = frozenset({"bars", "quotes", "trades"})
 
 
 class SequenceTracker:
@@ -410,20 +413,12 @@ class UpstreamConnection:
 
     def _decode_message(self, message: bytes | str) -> Any:
         """Decode a message from either JSON or MessagePack format."""
-        import json
-
-        import msgpack
-
         if isinstance(message, bytes):
             return msgpack.unpackb(message, raw=False)
         return json.loads(message)
 
     def _encode_message(self, data: dict[str, Any]) -> bytes | str:
         """Encode a message to either JSON or MessagePack format."""
-        import json
-
-        import msgpack
-
         if self._is_msgpack_stream():
             return msgpack.packb(data)
         return json.dumps(data)
@@ -987,21 +982,13 @@ class StreamMultiplexer:
         """Route incoming message to subscribed clients."""
         msg_type = message.get("T", "")
 
-        # Map Alpaca message types to our data types
-        data_type_map = {
-            "b": "bars",
-            "q": "quotes",
-            "t": "trades",
-            "n": "news",
-        }
-
-        data_type = data_type_map.get(msg_type)
+        data_type = MESSAGE_TYPE_TO_DATA_TYPE.get(msg_type)
         if not data_type:
             # System message, heartbeat, etc.
             return
 
-        if data_type in {"bars", "quotes", "trades"}:
-            validator = get_validator()
+        if data_type in _VALIDATABLE_FEEDS:
+            validator = self._get_stream_validator()
             if data_type == "bars":
                 result = validator.validate_bar(
                     {

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.70] - 2026-02-13
+
+### Performance
+
+- **Hoisted per-message imports**: Moved `json` and `msgpack` imports from `_decode_message`/`_encode_message` to module level in `gateway/core/stream.py`, eliminating `sys.modules` lookup overhead on every WebSocket message.
+- **Cached validator in hot path**: Replaced `get_validator()` call per message with `_get_stream_validator()` (already cached on the multiplexer) in `stream.py:_handle_message`.
+- **Eliminated per-message dict creation**: Replaced inline `data_type_map` dict with existing `MESSAGE_TYPE_TO_DATA_TYPE` module constant; added `_VALIDATABLE_FEEDS` frozenset for the feed validation check in `stream.py`.
+- **Hoisted metrics imports**: Moved `record_envelope_created` and `record_sink_publish` imports from deferred try/except blocks to module-level in `gateway/core/envelope.py` and `gateway/core/redis_sink.py`.
+- **Pre-serialized broadcast JSON**: `ConnectionManager.broadcast` in `gateway/core/connections.py` now serializes the message dict once with `json.dumps` and sends via `send_text`, avoiding redundant `send_json` serialization per client.
+- **SHA256 usedforsecurity flag**: Added `usedforsecurity=False` to `hashlib.sha256` in `envelope.py:compute_event_id` to skip FIPS compliance checks.
+- **Frozenset for public path check**: `CacheMiddleware._is_public_path` in `gateway/api/middleware.py` now uses class-level `frozenset` and tuple `startswith` for O(1) lookups.
+
 ## [0.5.69] - 2026-02-13
 
 ### Fixed

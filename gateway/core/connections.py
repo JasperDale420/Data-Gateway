@@ -1,6 +1,7 @@
 """WebSocket connection management."""
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -95,15 +96,9 @@ class ConnectionManager:
 
     def get_stats(self) -> dict:
         """Get connection statistics."""
-        total_subscriptions = sum(
-            len(connection.subscriptions) for connection in self._connections.values()
-        )
+        total_subscriptions = sum(len(connection.subscriptions) for connection in self._connections.values())
         unique_subscriptions = len(
-            {
-                subscription
-                for connection in self._connections.values()
-                for subscription in connection.subscriptions
-            }
+            {subscription for connection in self._connections.values() for subscription in connection.subscriptions}
         )
         return {
             "active": self.active_count,
@@ -123,6 +118,8 @@ class ConnectionManager:
         Returns:
             Number of connections that received the message.
         """
+        # Pre-serialize once to avoid redundant json.dumps per connection
+        payload = json.dumps(message)
 
         async def _send(connection: Connection) -> bool:
             if not connection.authenticated:
@@ -131,7 +128,7 @@ class ConnectionManager:
                 return False
             try:
                 async with self._broadcast_semaphore:
-                    await connection.websocket.send_json(message)
+                    await connection.websocket.send_text(payload)
                 return True
             except Exception as e:
                 logger.warning(
@@ -141,9 +138,7 @@ class ConnectionManager:
                 )
                 return False
 
-        results = await asyncio.gather(
-            *(_send(connection) for connection in self._connections.values())
-        )
+        results = await asyncio.gather(*(_send(connection) for connection in self._connections.values()))
         return sum(1 for sent in results if sent)
 
     async def broadcast_shutdown(self, timeout_seconds: int = 30) -> int:
