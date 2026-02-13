@@ -22,13 +22,6 @@ from gateway.schemas import SuccessResponse
 router = APIRouter()
 
 
-def _as_utc(dt: datetime) -> datetime:
-    """Normalize datetime inputs to UTC for upstream RFC3339 serialization."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
-
-
 @router.get("/stocks/{symbol}/bars", response_model=SuccessResponse)
 async def get_stock_bars(
     symbol: str,
@@ -51,8 +44,6 @@ async def get_stock_bars(
         end = datetime.now(UTC)
     if not start:
         start = end - timedelta(hours=24)
-    end = _as_utc(end)
-    start = _as_utc(start)
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
@@ -81,30 +72,6 @@ async def get_stock_bars(
 
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
-
-
-@router.get("/stocks/bars", response_model=SuccessResponse)
-async def get_stock_bars_by_query_symbol(
-    symbol: str = Query(..., description="Stock symbol"),
-    timeframe: str = Query(default="1Day", description=DESC_BAR_TIMEFRAME),
-    start: datetime | None = Query(default=None, description=DESC_START_TIME),
-    end: datetime | None = Query(default=None, description=DESC_END_TIME),
-    limit: int = Query(default=1000, le=10000, description=DESC_MAX_BARS),
-    feed: str = Query(default="sip", description="Data feed: sip or iex"),
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-):
-    """Legacy compatibility for `/stocks/bars?symbol=...` requests."""
-    return await get_stock_bars(
-        symbol=symbol,
-        timeframe=timeframe,
-        start=start,
-        end=end,
-        limit=limit,
-        feed=feed,
-        client=client,
-        registry=registry,
-    )
 
 
 @router.get("/stocks/{symbol}/quotes", response_model=SuccessResponse)

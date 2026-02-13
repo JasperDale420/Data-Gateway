@@ -3,9 +3,8 @@
 Tracks request counts per provider and enforces their specific rate limits
 to prevent 429 errors from upstream APIs.
 
-Provider Limits (Premium / Algo Trader Plus):
-- Alpaca Market Data (stocks, options, crypto, news, screener): 10,000/min, 75/sec
-- Alpaca Trading (account, orders, positions, watchlists, clock, calendar): 200/min
+Provider Limits (Free Tier):
+- Alpaca: 200/min (market data can be higher with paid)
 - Finnhub: 60/min general, 300/min fundamentals, 900/min market data
 - Alpha Vantage: 5/min, 25/day (extremely restrictive)
 - NewsAPI: 100/day
@@ -54,9 +53,6 @@ PROVIDER_LIMITS: dict[str, ProviderLimits] = {
         requests_per_minute=10000,
         requests_per_second=75,
         market_data_per_minute=10000,
-    ),
-    "alpaca_trading": ProviderLimits(
-        requests_per_minute=200,
     ),
     "finnhub": ProviderLimits(
         requests_per_minute=60,

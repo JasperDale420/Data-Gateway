@@ -34,7 +34,6 @@ async def get_account_configurations(
         ttl=ACCOUNT_CONFIG_CACHE_TTL_SECONDS,
         route_label="alpaca_account_configurations",
         provider_call=lambda provider: asyncio.to_thread(provider.get_account_configurations),
-        rate_limit_key="alpaca_trading",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -64,7 +63,6 @@ async def set_account_configurations(
             max_margin_multiplier=max_margin_multiplier,
             pdt_check=pdt_check,
         ),
-        rate_limit_key="alpaca_trading",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -79,8 +77,9 @@ async def get_account_activities(
     types_list = activity_types.split(",") if activity_types else None
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(provider.get_account_activities, types_list),
-        rate_limit_key="alpaca_trading",
+        provider_call=lambda provider: asyncio.to_thread(
+            provider.get_account_activities, types_list
+        ),
     )
     return {
         "success": True,

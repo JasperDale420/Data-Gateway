@@ -61,20 +61,14 @@ async def execute_alpaca_provider_call(
     registry: ProviderRegistry,
     provider_call: Callable[[Any], Awaitable[T]],
     block: bool = False,
-    rate_limit_key: str = "alpaca",
 ) -> T:
-    """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling.
-
-    Args:
-        rate_limit_key: Provider key for rate limiting. Use "alpaca" for market data
-                        endpoints (10K/min) or "alpaca_trading" for trading endpoints (200/min).
-    """
+    """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling."""
     provider = registry.get("alpaca")
     if not provider:
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
-        await require_provider_rate_limit(rate_limit_key, block=block)
+        await require_provider_rate_limit("alpaca", block=block)
         return await provider_call(provider)
     except HTTPException:
         raise
@@ -92,7 +86,6 @@ async def execute_alpaca_cached_call(
     route_label: str,
     cache_mode: str = "alpaca",
     block: bool = False,
-    rate_limit_key: str = "alpaca",
 ) -> T:
     """Run Alpaca provider call with shared cache + in-flight de-dupe."""
     cached = await cache.get(cache_key)
@@ -111,7 +104,6 @@ async def execute_alpaca_cached_call(
                     registry=registry,
                     provider_call=provider_call,
                     block=block,
-                    rate_limit_key=rate_limit_key,
                 )
             )
             _ALPACA_CACHE_INFLIGHT[cache_key] = future
