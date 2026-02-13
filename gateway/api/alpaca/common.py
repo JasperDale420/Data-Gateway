@@ -60,7 +60,7 @@ async def execute_alpaca_provider_call(
     *,
     registry: ProviderRegistry,
     provider_call: Callable[[Any], Awaitable[T]],
-    block: bool = False,
+    block: bool = True,
 ) -> T:
     """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling."""
     provider = registry.get("alpaca")
@@ -85,7 +85,7 @@ async def execute_alpaca_cached_call(
     provider_call: Callable[[Any], Awaitable[T]],
     route_label: str,
     cache_mode: str = "alpaca",
-    block: bool = False,
+    block: bool = True,
 ) -> T:
     """Run Alpaca provider call with shared cache + in-flight de-dupe."""
     cached = await cache.get(cache_key)

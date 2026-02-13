@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - **3roses client rate limit**: Increased from 300 → 6,000 req/min in `clients.yaml` to accommodate ~5,000 symbol pre-market scanner burst.
 - **Alpaca provider limits**: Updated from free-tier defaults (200/min, 10/sec) to paid-tier (10,000/min, 75/sec) in `rate_limiter.py`.
 - **Provider rate limits aligned with official docs**: Removed arbitrary NewsAPI 10/min (their docs only enforce 100/day). Updated SEC EDGAR from conservative 8/sec + 300/min to official 10/sec + 600/min. Updated module docstring to document each provider's plan tier.
+- **Rate limiter queues by default**: Changed `require_provider_rate_limit` default from `block=False` (immediate 429) to `block=True` (wait up to 30s for a slot). All provider calls now queue instead of rejecting.
 
 ## [0.5.67] - 2026-02-13
 

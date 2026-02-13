@@ -290,9 +290,13 @@ def get_provider_rate_limiter() -> ProviderRateLimitManager:
 
 async def require_provider_rate_limit(
     provider: str,
-    block: bool = False,
+    block: bool = True,
 ) -> bool:
     """FastAPI dependency that checks provider rate limit.
+
+    Queues requests by default (block=True), waiting up to 30s for a slot
+    rather than immediately returning 429. Only raises 429 if the wait
+    deadline is exceeded.
 
     Usage in endpoint:
         @router.get("/quote/{symbol}")
@@ -300,8 +304,6 @@ async def require_provider_rate_limit(
             symbol: str,
             _: bool = Depends(lambda: require_provider_rate_limit("finnhub")),
         ):
-
-    Raises HTTPException 429 if rate limited.
     """
     limiter = get_rate_limiter()
 
