@@ -457,16 +457,39 @@ class CacheMiddleware(BaseHTTPMiddleware):
         import hashlib
         import json
 
+        providers = sorted(client.permissions.providers or [])
+        feeds = sorted(client.permissions.feeds or [])
+        ws_subscriptions_max = getattr(client.permissions, "ws_subscriptions_max", 0)
+        role = getattr(client, "role", "client")
+
+        cache_key = (
+            tuple(providers),
+            tuple(feeds),
+            client.permissions.max_symbols,
+            client.permissions.rate_limit,
+            ws_subscriptions_max,
+            role,
+        )
+
+        # Cache the hash on the client to avoid repeated JSON serialization per request.
+        cached_key = getattr(client, "_permissions_hash_key", None)
+        cached_value = getattr(client, "_permissions_hash_value", None)
+        if cached_key == cache_key and cached_value:
+            return cached_value
+
         payload = {
-            "providers": sorted(client.permissions.providers or []),
-            "feeds": sorted(client.permissions.feeds or []),
+            "providers": providers,
+            "feeds": feeds,
             "max_symbols": client.permissions.max_symbols,
             "rate_limit": client.permissions.rate_limit,
-            "ws_subscriptions_max": getattr(client.permissions, "ws_subscriptions_max", 0),
-            "role": getattr(client, "role", "client"),
+            "ws_subscriptions_max": ws_subscriptions_max,
+            "role": role,
         }
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-        return digest[:8]
+        value = digest[:8]
+        client._permissions_hash_key = cache_key
+        client._permissions_hash_value = value
+        return value
 
     def _is_public_path(self, path: str) -> bool:
         if path == "/":
