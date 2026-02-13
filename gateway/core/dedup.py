@@ -152,6 +152,19 @@ class MessageDeduplicator:
             "duplicates_detected": 0,
         }
 
+    def _serialize_data(self, data: dict) -> str:
+        """Serialize data for stable hashing."""
+        try:
+            return json.dumps(data, sort_keys=True, default=str)
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "dedup_payload_unserializable",
+                payload_type=type(data).__name__,
+                error=str(exc),
+                exc_info=True,
+            )
+            return repr(data)
+
     def _hash(self, symbol: str, timestamp: str, data: dict) -> str:
         """Create unique hash for deduplication.
 
@@ -163,7 +176,7 @@ class MessageDeduplicator:
         Returns:
             MD5 hash of the message content
         """
-        content = f"{symbol}:{timestamp}:{json.dumps(data, sort_keys=True)}"
+        content = f"{symbol}:{timestamp}:{self._serialize_data(data)}"
         return hashlib.md5(content.encode()).hexdigest()
 
     def is_duplicate(self, symbol: str, message: dict) -> bool:
