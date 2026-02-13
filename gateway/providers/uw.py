@@ -253,6 +253,101 @@ class UnusualWhalesProvider(DataProvider):
                 return await self._call_sync(func, *call_args, **fallback_kwargs), True
             raise
 
+    @staticmethod
+    def _extract_http_status_code(exc: Exception) -> int | None:
+        """Extract HTTP status code from HTTP-style exceptions when available."""
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        return status_code if isinstance(status_code, int) else None
+
+    def _parse_iv_rank_payload(self, symbol: str, payload: Any) -> NormalizedIVRank | None:
+        """Parse raw IV-rank payload into canonical schema."""
+        data = payload.get("data") if isinstance(payload, dict) else payload
+
+        if isinstance(data, list):
+            if not data:
+                return None
+            latest = data[-1]
+        else:
+            latest = data
+
+        if not isinstance(latest, dict):
+            logger.warning(
+                "uw_iv_rank_unexpected_payload",
+                symbol=symbol,
+                payload_type=type(latest).__name__,
+            )
+            return None
+
+        get = latest.get
+        iv_rank_value = get("iv_rank") or get("iv_rank_1y")
+        if iv_rank_value in (None, ""):
+            return None
+
+        return NormalizedIVRank(
+            symbol=symbol.upper(),
+            iv_rank=Decimal(str(iv_rank_value)),
+            iv_percentile=(Decimal(str(get("iv_percentile") or 0)) if get("iv_percentile") else None),
+            current_iv=(
+                Decimal(str(get("current_iv") or get("iv") or get("volatility") or 0))
+                if get("current_iv") or get("iv") or get("volatility")
+                else None
+            ),
+            one_year_high=(
+                Decimal(str(get("one_year_high") or get("iv_1y_high") or 0))
+                if get("one_year_high") or get("iv_1y_high")
+                else None
+            ),
+            one_year_low=(
+                Decimal(str(get("one_year_low") or get("iv_1y_low") or 0))
+                if get("one_year_low") or get("iv_1y_low")
+                else None
+            ),
+            provider="unusual_whales",
+        )
+
+    async def _get_darkpool_recent_raw(
+        self,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[NormalizedDarkpoolTrade]:
+        """Fetch darkpool recent trades via raw HTTP when SDK parsing fails."""
+        if not self._client:
+            return []
+
+        try:
+            http_client = self._client.get_httpx_client()
+            params: dict[str, str] = {"limit": str(limit)}
+            if offset > 0:
+                params["offset"] = str(offset)
+
+            response = await self._call_sync(
+                http_client.get,
+                "/api/darkpool/recent",
+                params=params,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as e:
+            status_code = self._extract_http_status_code(e)
+            if status_code is not None and status_code >= 500:
+                logger.warning("uw_darkpool_recent_upstream_unavailable", status_code=status_code, error=str(e))
+            else:
+                logger.error("uw_darkpool_recent_raw_failed", error=str(e))
+            return []
+
+        data_items = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(data_items, list):
+            data_items = [data_items] if isinstance(data_items, dict) else []
+
+        trades: list[NormalizedDarkpoolTrade] = []
+        for item in data_items:
+            trade = self._normalize_darkpool_trade(item)
+            if trade:
+                trades.append(trade)
+        return trades
+
     async def get_flow_alerts(
         self,
         limit: int = 50,
@@ -389,8 +484,11 @@ class UnusualWhalesProvider(DataProvider):
             return trades
 
         except Exception as e:
-            logger.error("uw_darkpool_recent_failed", error=str(e))
-            return []
+            logger.warning("uw_darkpool_recent_sdk_failed", error=str(e))
+            fallback_trades = await self._get_darkpool_recent_raw(limit=limit, offset=offset)
+            if fallback_trades:
+                logger.info("uw_darkpool_recent_fetched", count=len(fallback_trades), source="raw_http")
+            return fallback_trades
 
     async def get_darkpool_ticker(
         self,
@@ -1366,76 +1464,62 @@ class UnusualWhalesProvider(DataProvider):
             symbol: Stock ticker symbol
             date_str: Date in YYYY-MM-DD format (defaults to today)
         """
-        from gateway.schemas import NormalizedIVRank
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
             return None
 
         try:
-            # Default date to today if not provided
-            if not date_str:
-                date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-
             # The SDK response parser for this endpoint is incompatible with
             # the live payload shape, so fetch raw JSON directly.
             http_client = self._client.get_httpx_client()
-            response = await self._call_sync(
-                http_client.get,
-                f"/api/stock/{symbol.upper()}/iv-rank",
-                params={"date": date_str},
-            )
-            response.raise_for_status()
-            payload = response.json()
-            data = payload.get("data") if isinstance(payload, dict) else payload
+            params = {"date": date_str} if date_str else None
 
-            if isinstance(data, list):
-                if not data:
-                    return None
-                latest = data[-1]
-            else:
-                latest = data
-
-            if not isinstance(latest, dict):
-                logger.warning(
-                    "uw_iv_rank_unexpected_payload",
-                    symbol=symbol,
-                    payload_type=type(latest).__name__,
+            try:
+                response = await self._call_sync(
+                    http_client.get,
+                    f"/api/stock/{symbol.upper()}/iv-rank",
+                    params=params,
                 )
-                return None
+                response.raise_for_status()
+                payload = response.json()
+            except Exception as e:
+                status_code = self._extract_http_status_code(e)
+                if date_str and status_code == 422:
+                    logger.warning(
+                        "uw_iv_rank_date_unprocessable_retrying_without_date",
+                        symbol=symbol,
+                        date=date_str,
+                        status_code=status_code,
+                    )
+                    response = await self._call_sync(
+                        http_client.get,
+                        f"/api/stock/{symbol.upper()}/iv-rank",
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                else:
+                    raise
 
-            get = latest.get
-            iv_rank_value = get("iv_rank") or get("iv_rank_1y")
-            if iv_rank_value in (None, ""):
+            result = self._parse_iv_rank_payload(symbol=symbol, payload=payload)
+            if not result:
                 return None
-
-            result = NormalizedIVRank(
-                symbol=symbol.upper(),
-                iv_rank=Decimal(str(iv_rank_value)),
-                iv_percentile=(Decimal(str(get("iv_percentile") or 0)) if get("iv_percentile") else None),
-                current_iv=(
-                    Decimal(str(get("current_iv") or get("iv") or get("volatility") or 0))
-                    if get("current_iv") or get("iv") or get("volatility")
-                    else None
-                ),
-                one_year_high=(
-                    Decimal(str(get("one_year_high") or get("iv_1y_high") or 0))
-                    if get("one_year_high") or get("iv_1y_high")
-                    else None
-                ),
-                one_year_low=(
-                    Decimal(str(get("one_year_low") or get("iv_1y_low") or 0))
-                    if get("one_year_low") or get("iv_1y_low")
-                    else None
-                ),
-                provider="unusual_whales",
-            )
 
             logger.info("uw_iv_rank_fetched", symbol=symbol)
             return result
 
         except Exception as e:
-            logger.error("uw_iv_rank_failed", symbol=symbol, error=str(e))
+            status_code = self._extract_http_status_code(e)
+            if status_code == 422:
+                logger.warning(
+                    "uw_iv_rank_unprocessable",
+                    symbol=symbol,
+                    date=date_str,
+                    status_code=status_code,
+                    error=str(e),
+                )
+            else:
+                logger.error("uw_iv_rank_failed", symbol=symbol, error=str(e))
             return None
 
     async def get_oi_change(self, symbol: str, date_str: str | None = None) -> list:

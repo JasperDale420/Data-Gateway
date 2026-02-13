@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.66] - 2026-02-13
+
+### Added
+
+- Added UW provider regression tests in `tests/test_uw_provider.py` for:
+  - IV-rank latest lookup without forced date filtering.
+  - IV-rank retry behavior when a date-filtered request returns HTTP 422.
+  - Darkpool recent raw-HTTP fallback when SDK payload parsing fails.
+
+### Fixed
+
+- **UW IV-rank EOD poll error flood (HTTP 422)**: Updated `gateway/providers/uw.py` so `get_iv_rank(...)` no longer forces `date=today` when no date is provided, and retries once without date when date-filtered requests are rejected with `422`.
+- **UW darkpool recent parser fragility on upstream gateway failures**: Updated `gateway/providers/uw.py` so `get_darkpool_recent(...)` falls back to raw HTTP (`/api/darkpool/recent`) when SDK parsing fails and logs upstream `5xx` as warning context.
+
 ## [0.5.65] - 2026-02-13
 
 ### Added
