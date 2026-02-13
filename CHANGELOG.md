@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.71] - 2026-02-13
+
+### Performance
+
+- **Raw ASGI middleware**: Converted all 7 `BaseHTTPMiddleware` classes (`RequestMetricsMiddleware`, `InputValidationMiddleware`, `RateLimitMiddleware`, `SecurityHeadersMiddleware`, `GlobalRateLimitMiddleware`, `CacheMiddleware`, `EventEnvelopeMiddleware`) to raw ASGI `__call__` pattern. Eliminates per-request `Request`/`Response` object creation overhead from Starlette's middleware adapter. `CacheMiddleware` and `EventEnvelopeMiddleware` use response body buffering via `send` interceptors for caching and envelope wrapping.
+- **Redis pipeline batching**: Added `RedisStreamsSink.publish_batch()` using Redis pipelines to batch multiple `XADD` commands in a single network round trip. Added `DataSinkRegistry.publish_all_batch()` to orchestrate batch publishing with circuit breaker support. Backfill engine `_publish_items` now uses batch publishing for all items in a chunk.
+
+### Fixed
+
+- **CacheMiddleware BYPASS header**: Non-cacheable 200 responses (streaming, missing content-length) now correctly return `X-Gateway-Cache: BYPASS` instead of `MISS`.
+- **Stock router test**: Fixed `test_get_stock_trades_threads_limit_to_provider` which was monkeypatching `stock.execute_alpaca_provider_call` — a function that no longer exists in `stock.py`. Test now bypasses the rate limiter and uses the actual provider call path.
+
 ## [0.5.70] - 2026-02-13
 
 ### Performance

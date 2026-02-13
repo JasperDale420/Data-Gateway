@@ -525,7 +525,7 @@ class BackfillEngine:
             logger.warning("backfill_publish_skipped", reason="no sink registry", job_id=job_id)
             return 0
 
-        published = 0
+        messages: list[tuple[str, dict[str, Any]]] = []
         for item in items:
             envelope = wrap_event(
                 event=item,
@@ -533,9 +533,16 @@ class BackfillEngine:
                 feed=feed,
                 source="backfill",
             )
-            await self._sink_registry.publish_all(HEBER_EVENTS_TOPIC, envelope)
-            published += 1
+            messages.append((HEBER_EVENTS_TOPIC, envelope))
 
+        if type(self._sink_registry).__name__ == "DataSinkRegistry":
+            return await self._sink_registry.publish_all_batch(messages)
+
+        # Fallback: individual publishes for registries without batch support
+        published = 0
+        for topic, envelope in messages:
+            await self._sink_registry.publish_all(topic, envelope)
+            published += 1
         return published
 
     async def shutdown(self) -> None:

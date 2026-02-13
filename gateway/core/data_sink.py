@@ -175,6 +175,56 @@ class DataSinkRegistry:
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
 
+    async def publish_all_batch(
+        self,
+        messages: list[tuple[str, dict[str, Any]]],
+    ) -> int:
+        """Batch-publish multiple messages to all registered sinks.
+
+        Sinks that implement ``publish_batch`` receive all messages in a single
+        pipeline call. Other sinks fall back to individual ``publish`` calls.
+
+        Args:
+            messages: List of (topic, data) tuples.
+
+        Returns:
+            Total number of successfully published messages across all sinks.
+        """
+        if not self._enabled or not self._sinks or not messages:
+            return 0
+
+        total_published = 0
+
+        for sink in self._sinks:
+            if hasattr(sink, "publish_batch"):
+                try:
+                    breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+                    if breaker.state == CircuitState.OPEN:
+                        logger.warning(
+                            "data_sink_batch_circuit_open",
+                            sink=sink.name,
+                            count=len(messages),
+                        )
+                        continue
+
+                    count = await sink.publish_batch(messages)
+                    total_published += count
+                except Exception:
+                    logger.exception(
+                        "data_sink_batch_publish_failed",
+                        sink=sink.name,
+                        count=len(messages),
+                    )
+            else:
+                # Fallback: publish individually
+                for topic, data in messages:
+                    task = asyncio.create_task(self._safe_publish(sink, topic, data))
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                    total_published += 1  # Optimistic; errors logged in _safe_publish
+
+        return total_published
+
     async def _try_acquire_sink_slot(self, sink_name: str) -> bool:
         """Try to reserve an in-flight publish slot with a short timeout.
 

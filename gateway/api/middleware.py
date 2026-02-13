@@ -5,13 +5,13 @@ import json
 import re
 import time
 from collections import deque
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import structlog
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from gateway.core.envelope import wrap_event
 from gateway.core.metrics import (
@@ -24,48 +24,73 @@ from gateway.core.metrics import (
 logger = structlog.get_logger()
 
 
-class RequestMetricsMiddleware(BaseHTTPMiddleware):
+class RequestMetricsMiddleware:
     """Record basic HTTP request metrics."""
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope["method"]
+        path = scope["path"]
         start = time.perf_counter()
+        status_code = 500
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
         try:
-            response = await call_next(request)
-        except Exception:
+            await self.app(scope, receive, send_wrapper)
+        finally:
             duration = time.perf_counter() - start
-            record_request(request.method, request.url.path, 500, duration)
-            raise
-
-        duration = time.perf_counter() - start
-        record_request(request.method, request.url.path, response.status_code, duration)
-        return response
+            record_request(method, path, status_code, duration)
 
 
-class InputValidationMiddleware(BaseHTTPMiddleware):
+class InputValidationMiddleware:
     """Apply basic request input validation limits."""
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Skip safe/public endpoints
-        path = request.url.path
-        if path.startswith("/health") or path in {"/metrics", "/openapi.json", "/docs", "/redoc"}:
-            return await call_next(request)
+    _SKIP_EXACT = frozenset({"/metrics", "/openapi.json", "/docs", "/redoc"})
 
-        content_length = request.headers.get("content-length")
-        if content_length:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope["path"]
+        if path.startswith("/health") or path in self._SKIP_EXACT:
+            await self.app(scope, receive, send)
+            return
+
+        # Check content-length from raw headers
+        headers = dict(scope.get("headers", []))
+        content_length_raw = headers.get(b"content-length")
+        if content_length_raw:
             try:
                 from gateway.core.security import get_input_validator
 
                 validator = get_input_validator()
-                error = validator.validate_request_size(int(content_length), endpoint_type="rest")
+                error = validator.validate_request_size(int(content_length_raw), endpoint_type="rest")
                 if error:
-                    return JSONResponse(
+                    response = JSONResponse(
                         status_code=413,
                         content={"detail": error.to_dict()},
                     )
+                    await response(scope, receive, send)
+                    return
             except ValueError:
                 pass
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
 
 
 @dataclass
@@ -115,7 +140,7 @@ class RateLimitBucket:
         return max(0, int(self._timestamps[0] + self._window - time.time()))
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
+class RateLimitMiddleware:
     """Adds rate limit headers to responses.
 
     Headers added:
@@ -127,19 +152,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     Per-client limits are read from client permissions if available.
     """
 
-    def __init__(self, app, default_limit: int = 600):
-        super().__init__(app)
+    def __init__(self, app: ASGIApp, default_limit: int = 600) -> None:
+        self.app = app
         self.default_limit = default_limit
         self._buckets: dict[str, RateLimitBucket] = {}
         self._last_prune = time.time()
         self._prune_interval = 60.0
         self._bucket_ttl = 120.0
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         now = time.time()
         self._prune_buckets(now)
 
-        # Extract client identifier and limit
+        # Build a Request just for extracting client info
+        request = Request(scope)
         client_id, client_limit = self._get_client_info(request)
 
         # Get or create bucket with client-specific limit
@@ -165,21 +195,26 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             record_rate_limit_exceeded(client_id)
             headers = self._rate_limit_headers(bucket)
             headers["Retry-After"] = str(bucket.reset_after)
-            return Response(
+            response = Response(
                 content='{"error": {"code": "GW-E4001", "message": "Rate limit exceeded"}}',
                 status_code=429,
                 media_type="application/json",
                 headers=headers,
             )
+            await response(scope, receive, send)
+            return
 
-        # Process request
-        response = await call_next(request)
+        # Inject rate limit headers into downstream response
+        rl_headers = self._rate_limit_headers(bucket)
 
-        # Add rate limit headers
-        for key, value in self._rate_limit_headers(bucket).items():
-            response.headers[key] = value
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for key, value in rl_headers.items():
+                    headers.append(key, value)
+            await send(message)
 
-        return response
+        await self.app(scope, receive, send_wrapper)
 
     def _prune_buckets(self, now: float) -> None:
         """Prune idle buckets to prevent unbounded growth."""
@@ -270,7 +305,7 @@ class CacheEntry:
         )
 
 
-class CacheMiddleware(BaseHTTPMiddleware):
+class CacheMiddleware:
     """Adds cache headers and caching for GET requests.
 
     Uses HybridCache (L1 memory + L2 Redis) when available for durable caching.
@@ -281,14 +316,16 @@ class CacheMiddleware(BaseHTTPMiddleware):
     - X-Gateway-Cache-TTL: Remaining TTL in milliseconds
     """
 
+    _HOP_BY_HOP = frozenset({b"content-length", b"set-cookie", b"connection", b"keep-alive"})
+
     def __init__(
         self,
-        app,
+        app: ASGIApp,
         default_ttl: int = 60,
         max_size: int = 10000,
         max_body_bytes: int = 524288,
-    ):
-        super().__init__(app)
+    ) -> None:
+        self.app = app
         self.default_ttl = default_ttl
         self.max_body_bytes = max_body_bytes
         self._cache = None  # Lazy initialization
@@ -319,12 +356,18 @@ class CacheMiddleware(BaseHTTPMiddleware):
 
         return cache.__class__.__name__.lower()
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Only cache GET requests
-        if request.method != "GET":
-            return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        path = request.url.path
+        # Only cache GET requests
+        if scope["method"] != "GET":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
+        path = scope["path"]
         is_public = self._is_public_path(path)
         request.state.cache_public = is_public
 
@@ -332,13 +375,20 @@ class CacheMiddleware(BaseHTTPMiddleware):
             api_key = request.headers.get("X-Gateway-Key")
             auth_error = await self._ensure_authenticated(request, api_key)
             if auth_error is not None:
-                return auth_error
+                await auth_error(scope, receive, send)
+                return
 
         # Check for cache bypass
         if request.headers.get("X-Gateway-Cache") == "bypass":
-            response = await call_next(request)
-            response.headers["X-Gateway-Cache"] = "BYPASS"
-            return response
+
+            async def bypass_send(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    headers = MutableHeaders(scope=message)
+                    headers.append("X-Gateway-Cache", "BYPASS")
+                await send(message)
+
+            await self.app(scope, receive, bypass_send)
+            return
 
         # Generate cache key
         cache_key = self._cache_key(request)
@@ -362,66 +412,103 @@ class CacheMiddleware(BaseHTTPMiddleware):
                             "X-Gateway-Cache-TTL": str(entry.ttl_remaining),
                         }
                     )
-                    return Response(
+                    response = Response(
                         content=entry.content,
                         status_code=200,
                         media_type=entry.media_type,
                         headers=headers,
                     )
+                    await response(scope, receive, send)
+                    return
             record_cache_miss(cache_type)
         except Exception as e:
             logger.debug("cache_read_error", key=cache_key, error=str(e))
 
-        # Process request
-        response = await call_next(request)
+        # Buffer downstream response to decide whether to cache
+        response_started = False
+        initial_message: Message | None = None
+        body_chunks: list[bytes] = []
+        status_code = 0
+        should_cache = False
 
-        # Cache successful responses
-        if response.status_code == 200:
-            if not self._should_cache_response(response):
-                response.headers["X-Gateway-Cache"] = "BYPASS"
-                return response
+        async def buffering_send(message: Message) -> None:
+            nonlocal response_started, initial_message, status_code, should_cache
 
-            body_chunks: list[bytes] = []
-            async for chunk in response.body_iterator:
-                body_chunks.append(chunk)
-            body = b"".join(body_chunks)
-            request.state._gateway_cached_response_body = body
+            if message["type"] == "http.response.start":
+                response_started = True
+                initial_message = message
+                status_code = message["status"]
 
-            # Store headers (excluding hop-by-hop)
-            cached_headers = {
-                k: v
-                for k, v in response.headers.items()
-                if k.lower() not in ("content-length", "set-cookie", "connection", "keep-alive")
-            }
+                if status_code == 200:
+                    # Check content-type and content-length to decide cacheability
+                    raw_headers = dict(message.get("headers", []))
+                    ct = raw_headers.get(b"content-type", b"").decode().lower()
+                    if "text/event-stream" in ct or "application/x-ndjson" in ct:
+                        should_cache = False
+                    else:
+                        cl = raw_headers.get(b"content-length")
+                        if cl:
+                            try:
+                                should_cache = int(cl) <= self.max_body_bytes
+                            except ValueError:
+                                should_cache = False
 
-            entry = CacheEntry(
-                content=body,
-                media_type=response.media_type or "application/json",
-                headers=cached_headers,
-                created_at=time.time(),
-                ttl=self.default_ttl,
-            )
+                    if should_cache:
+                        return  # Buffer; don't send yet
 
-            # Store in cache (async)
-            try:
-                await cache.set(cache_key, entry.to_dict(), ttl=self.default_ttl)
-            except Exception as e:
-                logger.debug("cache_write_error", key=cache_key, error=str(e))
+                # Add cache header: BYPASS for non-cacheable 200, MISS for non-200
+                cache_header = "BYPASS" if status_code == 200 else "MISS"
+                headers = MutableHeaders(scope=message)
+                headers.append("X-Gateway-Cache", cache_header)
+                await send(message)
+                return
 
-            return Response(
-                content=body,
-                status_code=200,
-                media_type=response.media_type,
-                headers={
-                    **dict(response.headers),
-                    "X-Gateway-Cache": "MISS",
-                    "X-Gateway-Cache-Age": "0",
-                    "X-Gateway-Cache-TTL": str(self.default_ttl * 1000),
-                },
-            )
+            if message["type"] == "http.response.body":
+                if should_cache:
+                    body_chunks.append(message.get("body", b""))
+                    if not message.get("more_body", False):
+                        # Body complete — cache it and send
+                        body = b"".join(body_chunks)
+                        request.state._gateway_cached_response_body = body
 
-        response.headers["X-Gateway-Cache"] = "MISS"
-        return response
+                        # Build cached headers (excluding hop-by-hop)
+                        hop = self._HOP_BY_HOP
+                        cached_headers = {
+                            k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
+                            for k, v in (initial_message.get("headers", []))
+                            if (k if isinstance(k, bytes) else k.encode()).lower() not in hop
+                        }
+
+                        # Determine media type from headers
+                        raw_headers = dict(initial_message.get("headers", []))
+                        media_type = raw_headers.get(b"content-type", b"application/json").decode()
+
+                        entry = CacheEntry(
+                            content=body,
+                            media_type=media_type,
+                            headers=cached_headers,
+                            created_at=time.time(),
+                            ttl=self.default_ttl,
+                        )
+
+                        try:
+                            await cache.set(cache_key, entry.to_dict(), ttl=self.default_ttl)
+                        except Exception as e:
+                            logger.debug("cache_write_error", key=cache_key, error=str(e))
+
+                        # Send the response with MISS headers
+                        out_headers = MutableHeaders(scope=initial_message)
+                        out_headers.append("X-Gateway-Cache", "MISS")
+                        out_headers.append("X-Gateway-Cache-Age", "0")
+                        out_headers.append("X-Gateway-Cache-TTL", str(self.default_ttl * 1000))
+                        await send(initial_message)
+                        await send(message)
+                    return
+
+                # Non-cacheable path: pass through body as-is
+                await send(message)
+
+        await self.app(scope, receive, buffering_send)
 
     def _cache_key(self, request: Request) -> str:
         """Generate cache key from request."""
@@ -518,20 +605,6 @@ class CacheMiddleware(BaseHTTPMiddleware):
         # Attach client for downstream middleware and cache key scoping.
         request.state.client = client
         return None
-
-    def _should_cache_response(self, response: Response) -> bool:
-        """Decide if response is safe to cache without buffering large bodies."""
-        content_type = response.headers.get("content-type", "").lower()
-        if "text/event-stream" in content_type or "application/x-ndjson" in content_type:
-            return False
-
-        content_length = response.headers.get("content-length")
-        if not content_length:
-            return False
-        try:
-            return int(content_length) <= self.max_body_bytes
-        except ValueError:
-            return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -654,7 +727,7 @@ SKIP_PATHS = {
 }
 
 
-class EventEnvelopeMiddleware(BaseHTTPMiddleware):
+class EventEnvelopeMiddleware:
     """Wraps all REST API responses in EventEnvelope for universal routing/storage.
 
     This middleware intercepts successful API responses and wraps the data payload
@@ -667,62 +740,97 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
     Skipped paths: health, metrics, admin endpoints
     """
 
-    def __init__(self, app, max_body_bytes: int = 524288):
-        super().__init__(app)
+    def __init__(self, app: ASGIApp, max_body_bytes: int = 524288) -> None:
+        self.app = app
         self.max_body_bytes = max_body_bytes
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope["path"]
+
         # Skip non-API and system paths
-        path = request.url.path
         if not path.startswith("/api/v1/") or any(path.startswith(skip) for skip in SKIP_PATHS):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # Skip non-GET requests (POST, PUT, DELETE are typically mutations)
-        if request.method != "GET":
-            return await call_next(request)
+        # Skip non-GET requests
+        if scope["method"] != "GET":
+            await self.app(scope, receive, send)
+            return
 
-        # Process request
-        response = await call_next(request)
+        # Buffer response to wrap in envelope
+        initial_message: Message | None = None
+        body_chunks: list[bytes] = []
+        should_wrap = False
 
-        # Only wrap successful JSON responses and skip streaming/large bodies
-        if not self._should_wrap_response(response):
-            return response
+        async def buffering_send(message: Message) -> None:
+            nonlocal initial_message, should_wrap
+
+            if message["type"] == "http.response.start":
+                initial_message = message
+                status_code = message["status"]
+
+                if status_code == 200:
+                    # Check content-type and content-length for wrappability
+                    raw_headers = dict(message.get("headers", []))
+                    ct = raw_headers.get(b"content-type", b"").decode().lower()
+                    if "application/json" in ct:
+                        cl = raw_headers.get(b"content-length")
+                        if cl:
+                            try:
+                                should_wrap = int(cl) <= self.max_body_bytes
+                            except ValueError:
+                                should_wrap = False
+
+                if should_wrap:
+                    return  # Buffer
+
+                await send(message)
+                return
+
+            if message["type"] == "http.response.body":
+                if should_wrap:
+                    body_chunks.append(message.get("body", b""))
+                    if not message.get("more_body", False):
+                        # Body complete — wrap in envelope
+                        body = b"".join(body_chunks)
+                        await self._wrap_and_send(path, body, initial_message, send)
+                    return
+
+                await send(message)
+
+        await self.app(scope, receive, buffering_send)
+
+    async def _wrap_and_send(
+        self,
+        path: str,
+        body: bytes,
+        initial_message: Message,
+        send: Send,
+    ) -> None:
+        """Process the buffered body, wrap in envelope, and send."""
+        if len(body) > self.max_body_bytes:
+            await send(initial_message)
+            await send({"type": "http.response.body", "body": body})
+            return
 
         try:
-            # Read response body
-            body_chunks: list[bytes] = []
-            async for chunk in response.body_iterator:
-                body_chunks.append(chunk)
-            body = b"".join(body_chunks)
-            if len(body) > self.max_body_bytes:
-                return Response(
-                    content=body,
-                    status_code=response.status_code,
-                    media_type=response.media_type,
-                    headers=dict(response.headers),
-                )
-
-            # Parse JSON
             data = json.loads(body)
 
             # Skip if already wrapped or is an error
             if "envelope" in data or not data.get("success", True):
-                return Response(
-                    content=body,
-                    status_code=response.status_code,
-                    media_type=response.media_type,
-                    headers=dict(response.headers),
-                )
+                await send(initial_message)
+                await send({"type": "http.response.body", "body": body})
+                return
 
-            # Extract provider and feed from path
             provider, feed = self._extract_route_info(path)
-
-            # Get the actual data payload
             payload = data.get("data", data)
 
-            # Handle list responses (wrap each item)
+            # Handle different payload shapes
             if isinstance(payload, list) and len(payload) > 0:
-                # For lists, wrap the entire response as one envelope
                 envelope = wrap_event(
                     event={"items": payload, "count": len(payload)},
                     provider=provider,
@@ -730,9 +838,6 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                     source="rest",
                 )
             elif isinstance(payload, dict) and self._is_symbol_keyed_dict(payload):
-                # Symbol-keyed dicts (snapshots, auctions, etc.) —
-                # flatten into items with the symbol injected so
-                # wrap_event can extract instrument info correctly.
                 items = [{"symbol": sym, **snap} for sym, snap in payload.items() if isinstance(snap, dict)]
                 envelope = wrap_event(
                     event={"items": items, "count": len(items)},
@@ -741,7 +846,6 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                     source="rest",
                 )
             elif isinstance(payload, dict):
-                # For single objects, wrap directly
                 envelope = wrap_event(
                     event=payload,
                     provider=provider,
@@ -749,25 +853,19 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                     source="rest",
                 )
             else:
-                # Skip wrapping for primitive responses
-                return Response(
-                    content=body,
-                    status_code=response.status_code,
-                    media_type=response.media_type,
-                    headers=dict(response.headers),
-                )
+                await send(initial_message)
+                await send({"type": "http.response.body", "body": body})
+                return
 
-            # Build wrapped response
             wrapped = {
                 "success": True,
                 "envelope": envelope,
-                "data": payload,  # Backward compat
+                "data": payload,
                 "meta": data.get("meta", {}),
             }
+            wrapped_body = json.dumps(wrapped, default=str, separators=(",", ":")).encode()
 
-            wrapped_body = json.dumps(wrapped, default=str, separators=(",", ":"))
-
-            # Publish to data sink for Heber lakehouse (non-blocking)
+            # Publish to data sink (non-blocking)
             from gateway.api.deps import get_sink_registry
 
             sink_registry = get_sink_registry()
@@ -785,21 +883,16 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                     payload=payload,
                 )
                 if sink_envelopes:
-                    tasks = [sink_registry.publish_all(topic, sink_envelope) for sink_envelope in sink_envelopes]
-                    # Fire and forget the batch of publishes.
-                    asyncio.create_task(self._publish_sink_batch(tasks, path=path))
+                    tasks = [sink_registry.publish_all(topic, se) for se in sink_envelopes]
+                    task = asyncio.create_task(self._publish_sink_batch(tasks, path=path))
+                    # Prevent GC by storing reference
+                    self._background_tasks = getattr(self, "_background_tasks", set())
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
                 else:
-                    logger.debug(
-                        "rest_envelope_sink_publish_empty",
-                        path=path,
-                        feed=feed,
-                    )
+                    logger.debug("rest_envelope_sink_publish_empty", path=path, feed=feed)
             elif sink_registry and not should_publish_to_sink:
-                logger.debug(
-                    "rest_envelope_sink_publish_skipped",
-                    path=path,
-                    feed=feed,
-                )
+                logger.debug("rest_envelope_sink_publish_skipped", path=path, feed=feed)
 
             logger.debug(
                 "rest_envelope_wrapped",
@@ -809,30 +902,32 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 event_id=envelope.get("event_id"),
             )
 
-            return Response(
-                content=wrapped_body,
-                status_code=200,
-                media_type="application/json",
-                headers={
-                    **{k: v for k, v in response.headers.items() if k.lower() != "content-length"},
-                    "X-Gateway-Envelope": "true",
-                    "X-Gateway-Event-Id": envelope.get("event_id", ""),
-                },
+            # Build new headers: strip old content-length, add envelope headers
+            new_headers: list[tuple[bytes, bytes]] = [
+                (k, v) for k, v in initial_message.get("headers", []) if k.lower() != b"content-length"
+            ]
+            new_headers.extend(
+                [
+                    (b"content-length", str(len(wrapped_body)).encode()),
+                    (b"x-gateway-envelope", b"true"),
+                    (b"x-gateway-event-id", envelope.get("event_id", "").encode()),
+                ]
             )
 
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": new_headers,
+                }
+            )
+            await send({"type": "http.response.body", "body": wrapped_body})
+
         except Exception as e:
-            logger.warning(
-                "envelope_middleware_error",
-                path=path,
-                error=str(e),
-            )
+            logger.warning("envelope_middleware_error", path=path, error=str(e))
             # Return original response on error
-            return Response(
-                content=body if "body" in dir() else b"",
-                status_code=response.status_code,
-                media_type=response.media_type,
-                headers=dict(response.headers),
-            )
+            await send(initial_message)
+            await send({"type": "http.response.body", "body": body})
 
     async def _publish_sink_batch(self, tasks: list, path: str) -> None:
         """Publish sink writes in batch without affecting request response path."""
@@ -844,29 +939,6 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 path=path,
                 failed=len(failures),
             )
-
-    def _should_wrap_response(self, response: Response) -> bool:
-        """Only wrap small JSON responses with explicit length.
-
-        This avoids buffering unknown-size/chunked streams (SSE, NDJSON, file streams).
-        """
-        if response.status_code != 200:
-            return False
-
-        content_type = response.headers.get("content-type", "").lower()
-        if "application/json" not in content_type:
-            return False
-        if "text/event-stream" in content_type or "application/x-ndjson" in content_type:
-            return False
-
-        content_length = response.headers.get("content-length")
-        if not content_length:
-            return False
-
-        try:
-            return int(content_length) <= self.max_body_bytes
-        except ValueError:
-            return False
 
     def _extract_route_info(self, path: str) -> tuple[str, str]:
         """Extract provider and feed from request path."""
@@ -1065,7 +1137,7 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+class SecurityHeadersMiddleware:
     """Adds security headers to all responses.
 
     Headers added:
@@ -1076,28 +1148,35 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     - Referrer-Policy: strict-origin-when-cross-origin
     """
 
-    def __init__(self, app, hsts_max_age: int = 31536000, include_subdomains: bool = True):
-        super().__init__(app)
-        self.hsts_max_age = hsts_max_age
-        self.include_subdomains = include_subdomains
-
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Add security headers to response."""
-        response = await call_next(request)
-
-        # HSTS header (PRD 7.2.2)
-        hsts_value = f"max-age={self.hsts_max_age}"
-        if self.include_subdomains:
+    def __init__(self, app: ASGIApp, hsts_max_age: int = 31536000, include_subdomains: bool = True) -> None:
+        self.app = app
+        hsts_value = f"max-age={hsts_max_age}"
+        if include_subdomains:
             hsts_value += "; includeSubDomains"
-        response.headers["Strict-Transport-Security"] = hsts_value
+        # Pre-encode headers once at init, not per-request
+        self._extra_headers: list[tuple[bytes, bytes]] = [
+            (b"strict-transport-security", hsts_value.encode()),
+            (b"x-content-type-options", b"nosniff"),
+            (b"x-frame-options", b"DENY"),
+            (b"x-xss-protection", b"1; mode=block"),
+            (b"referrer-policy", b"strict-origin-when-cross-origin"),
+        ]
 
-        # Additional security headers
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        return response
+        extra = self._extra_headers
+
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.extend(extra)
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1115,7 +1194,7 @@ class IPConnectionTracker:
     last_seen: float = field(default_factory=time.time)
 
 
-class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
+class GlobalRateLimitMiddleware:
     """Global and per-IP rate limiting.
 
     Implements:
@@ -1126,15 +1205,17 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
     Uses sliding window for rate limiting.
     """
 
+    _HEALTH_PATHS = frozenset({"/health", "/health/ready"})
+
     def __init__(
         self,
-        app,
+        app: ASGIApp,
         global_limit: int = 10000,
         per_ip_limit: int = 1000,
         max_connections_per_ip: int = 10,
         window_seconds: int = 60,
-    ):
-        super().__init__(app)
+    ) -> None:
+        self.app = app
         self.global_limit = global_limit
         self.per_ip_limit = per_ip_limit
         self.max_connections_per_ip = max_connections_per_ip
@@ -1148,14 +1229,14 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         self._last_prune = time.time()
         self._prune_interval = 60.0
 
-    def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP from request."""
-        # Check X-Forwarded-For for proxy scenarios
-        forwarded = request.headers.get("X-Forwarded-For")
+    def _get_client_ip(self, scope: Scope) -> str:
+        """Extract client IP from ASGI scope."""
+        headers = dict(scope.get("headers", []))
+        forwarded = headers.get(b"x-forwarded-for")
         if forwarded:
-            return forwarded.split(",")[0].strip()
-        # Fall back to direct connection
-        return request.client.host if request.client else "unknown"
+            return forwarded.decode().split(",")[0].strip()
+        client = scope.get("client")
+        return client[0] if client else "unknown"
 
     def _reset_window_if_needed(self) -> None:
         """Reset global window if expired."""
@@ -1194,12 +1275,18 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
 
         return True
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Check global and per-IP limits."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         self._prune_ip_trackers()
+
         # Skip for health endpoints
-        if request.url.path in ("/health", "/health/ready"):
-            return await call_next(request)
+        if scope["path"] in self._HEALTH_PATHS:
+            await self.app(scope, receive, send)
+            return
 
         # Reset window if needed
         self._reset_window_if_needed()
@@ -1209,7 +1296,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
             logger.warning("global_rate_limit_exceeded", current=self._global_requests)
             record_rate_limit_exceeded("global")
             retry_after = max(1, int(self._global_window_start + self.window_seconds - time.time()))
-            return Response(
+            response = Response(
                 content=json.dumps(
                     {
                         "success": False,
@@ -1223,14 +1310,16 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
                 media_type="application/json",
                 headers={"Retry-After": str(retry_after)},
             )
+            await response(scope, receive, send)
+            return
 
         # Check per-IP limit (PRD 7.5.2)
-        client_ip = self._get_client_ip(request)
+        client_ip = self._get_client_ip(scope)
         if not self._check_ip_limit(client_ip):
             record_rate_limit_exceeded(f"ip:{client_ip}")
             tracker = self._ip_trackers.get(client_ip)
             retry_after = max(1, int(tracker.first_request + self.window_seconds - time.time())) if tracker else 60
-            return Response(
+            response = Response(
                 content=json.dumps(
                     {
                         "success": False,
@@ -1244,11 +1333,13 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
                 media_type="application/json",
                 headers={"Retry-After": str(retry_after)},
             )
+            await response(scope, receive, send)
+            return
 
         # Increment global counter
         self._global_requests += 1
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
 
     def _prune_ip_trackers(self) -> None:
         """Prune idle IP trackers and expired blocks."""

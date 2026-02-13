@@ -132,6 +132,71 @@ class RedisStreamsSink(DataSink):
             record_sink_publish(sink=self.name, topic=topic, success=False)
             return False
 
+    async def publish_batch(
+        self,
+        messages: list[tuple[str, dict[str, Any]]],
+    ) -> int:
+        """Publish multiple messages via a Redis pipeline (single round trip).
+
+        Args:
+            messages: List of (topic, data) tuples to publish.
+
+        Returns:
+            Number of successfully published messages.
+        """
+        if not messages:
+            return 0
+
+        await self._ensure_connected()
+
+        try:
+            pipe = self._redis.pipeline(transaction=False)
+            for topic, data in messages:
+                payload = {"data": json.dumps(data, default=str)}
+                pipe.xadd(
+                    topic,
+                    payload,
+                    maxlen=self._max_len,
+                    approximate=self._approximate,
+                )
+
+            results = await asyncio.wait_for(
+                pipe.execute(),
+                timeout=self._operation_timeout_seconds * 2,
+            )
+
+            published = 0
+            for i, result in enumerate(results):
+                topic = messages[i][0]
+                if isinstance(result, Exception):
+                    logger.warning(
+                        "redis_sink_batch_item_error",
+                        topic=topic,
+                        error=str(result),
+                    )
+                    record_sink_publish(sink=self.name, topic=topic, success=False)
+                else:
+                    published += 1
+                    record_sink_publish(sink=self.name, topic=topic, success=True)
+
+            logger.debug(
+                "redis_sink_batch_published",
+                total=len(messages),
+                published=published,
+            )
+            return published
+
+        except Exception as e:
+            self._reset_connection(operation="publish_batch", error=e)
+            logger.warning(
+                "redis_sink_batch_error",
+                count=len(messages),
+                error=str(e),
+            )
+            for topic, _ in messages:
+                record_sink_publish(sink=self.name, topic=topic, success=False)
+            return 0
+
     async def health_check(self) -> bool:
         """Check Redis connection health."""
         try:
