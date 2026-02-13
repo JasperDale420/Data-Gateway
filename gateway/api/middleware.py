@@ -533,6 +533,8 @@ FEED_MAPPING = {
     "earnings": "earnings",
     "financials": "stock_fundamentals",
     "filings": "filings",
+    "snapshots": "snapshots",
+    "snapshot": "snapshots",
     "facts": "filings",
     # UW market sentiment
     "tide": "market_tide",
@@ -683,6 +685,17 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 # For lists, wrap the entire response as one envelope
                 envelope = wrap_event(
                     event={"items": payload, "count": len(payload)},
+                    provider=provider,
+                    feed=feed,
+                    source="rest",
+                )
+            elif isinstance(payload, dict) and self._is_symbol_keyed_dict(payload):
+                # Symbol-keyed dicts (snapshots, auctions, etc.) —
+                # flatten into items with the symbol injected so
+                # wrap_event can extract instrument info correctly.
+                items = [{"symbol": sym, **snap} for sym, snap in payload.items() if isinstance(snap, dict)]
+                envelope = wrap_event(
+                    event={"items": items, "count": len(items)},
                     provider=provider,
                     feed=feed,
                     source="rest",
@@ -841,6 +854,46 @@ class EventEnvelopeMiddleware(BaseHTTPMiddleware):
                 return provider, feed
 
         return "unknown", "data"
+
+    @staticmethod
+    def _is_symbol_keyed_dict(payload: dict) -> bool:
+        """Detect if payload is a symbol-keyed dict (e.g., snapshots keyed by ticker).
+
+        Returns True when every value is a dict and none of the keys are
+        standard event metadata fields.  This distinguishes payloads like
+        ``{"AAPL": {...}, "MSFT": {...}}`` from regular event dicts like
+        ``{"symbol": "AAPL", "bars": [...]}``.
+        """
+        if not payload:
+            return False
+        # Standard event/envelope metadata keys that indicate a normal dict payload
+        _metadata_keys = {
+            "symbol",
+            "timestamp",
+            "bars",
+            "trades",
+            "quotes",
+            "quote",
+            "timeframe",
+            "success",
+            "data",
+            "meta",
+            "error",
+            "items",
+            "count",
+            "latest_bar",
+            "trade",
+            "bid",
+            "ask",
+            "open",
+            "close",
+            "high",
+            "low",
+            "volume",
+        }
+        if _metadata_keys & payload.keys():
+            return False
+        return all(isinstance(v, dict) for v in payload.values())
 
     def _is_sink_publish_eligible(self, path: str, payload: object, feed: str) -> bool:
         """Allow sink publishing only for routes with known ingest-safe payload shapes."""

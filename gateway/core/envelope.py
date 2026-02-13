@@ -290,6 +290,8 @@ def wrap_event(
 
     # Extract symbol - handle various field names
     symbol = payload.get("symbol") or payload.get("S") or payload.get("underlying") or payload.get("ticker") or ""
+    if not isinstance(symbol, str):
+        symbol = str(symbol) if not isinstance(symbol, dict) else ""
 
     # Market-wide feeds may not include a symbol; set a stable placeholder
     if not symbol and feed in {"market_tide", "sector_tide", "etf_tide", "market_tide_by_etf"}:

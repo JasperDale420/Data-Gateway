@@ -104,12 +104,8 @@ class TestComputeEventId:
         """Handles Decimal values in unique fields."""
         ts = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 
-        id1 = compute_event_id(
-            "alpaca", "quotes", "equity:AAPL", ts, [Decimal("150.25"), Decimal("150.26"), 100, 200]
-        )
-        id2 = compute_event_id(
-            "alpaca", "quotes", "equity:AAPL", ts, [Decimal("150.25"), Decimal("150.26"), 100, 200]
-        )
+        id1 = compute_event_id("alpaca", "quotes", "equity:AAPL", ts, [Decimal("150.25"), Decimal("150.26"), 100, 200])
+        id2 = compute_event_id("alpaca", "quotes", "equity:AAPL", ts, [Decimal("150.25"), Decimal("150.26"), 100, 200])
 
         assert id1 == id2
 
@@ -252,6 +248,19 @@ class TestWrapEvent:
         assert envelope["symbol"] == "MSFT"
         assert envelope["payload"]["value"] == 42
 
+    def test_wrap_event_symbol_keyed_dict_does_not_crash(self):
+        """wrap_event handles payloads where a key like 'S' maps to a dict (snapshot data)."""
+        # Simulates a snapshot payload like {"S": {"latestTrade": {...}}, "AAPL": {...}}
+        # where "S" is the SentinelOne ticker and its value is a nested dict
+        snapshot_payload = {
+            "S": {"latestTrade": {"p": 10.5}, "latestQuote": {"bp": 10.4}},
+            "AAPL": {"latestTrade": {"p": 150.0}, "latestQuote": {"bp": 149.9}},
+        }
+        # Should not raise 'dict' object has no attribute 'upper'
+        envelope = wrap_event(snapshot_payload, provider="alpaca", feed="snapshots", source="rest")
+        assert isinstance(envelope["symbol"], str)
+        assert envelope["provider"] == "alpaca"
+
 
 class TestEventEnvelopeModel:
     """Tests for EventEnvelope Pydantic model."""
@@ -292,6 +301,48 @@ class TestEventEnvelopeModel:
         assert envelope.lineage == {}
         assert envelope.quality_flags == []
         assert envelope.schema_version == SCHEMA_VERSION
+
+
+class TestIsSymbolKeyedDict:
+    """Tests for EventEnvelopeMiddleware._is_symbol_keyed_dict."""
+
+    def _make_middleware(self):
+        from gateway.api.middleware import EventEnvelopeMiddleware
+
+        return EventEnvelopeMiddleware(app=None)
+
+    def test_snapshot_dict_detected(self):
+        """Symbol-keyed dicts like snapshots are correctly identified."""
+        mw = self._make_middleware()
+        payload = {
+            "AAPL": {"latestTrade": {"p": 150.0}},
+            "MSFT": {"latestTrade": {"p": 420.0}},
+        }
+        assert mw._is_symbol_keyed_dict(payload) is True
+
+    def test_normal_event_dict_not_detected(self):
+        """Normal event dicts with metadata keys are not false-positived."""
+        mw = self._make_middleware()
+        payload = {
+            "symbol": "AAPL",
+            "timeframe": "1Day",
+            "bars": [{"o": 1, "c": 2}],
+        }
+        assert mw._is_symbol_keyed_dict(payload) is False
+
+    def test_empty_dict_not_detected(self):
+        """Empty dicts return False."""
+        mw = self._make_middleware()
+        assert mw._is_symbol_keyed_dict({}) is False
+
+    def test_non_dict_values_not_detected(self):
+        """Dicts with non-dict values (like auction lists) are not matched."""
+        mw = self._make_middleware()
+        payload = {
+            "AAPL": [{"auction_price": 150.0}],
+            "MSFT": [{"auction_price": 420.0}],
+        }
+        assert mw._is_symbol_keyed_dict(payload) is False
 
 
 if __name__ == "__main__":

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.67] - 2026-02-13
+
+### Added
+
+- **Snapshot envelope wrapping regression tests**: Added `test_wrap_event_symbol_keyed_dict_does_not_crash` and `TestIsSymbolKeyedDict` tests in `tests/test_envelope.py` to lock behavior for symbol-keyed dict payloads and middleware detection heuristic.
+- Added `snapshots` and `snapshot` entries to `FEED_MAPPING` in `middleware.py`.
+
+### Fixed
+
+- **Envelope middleware crash on snapshots endpoint (`'dict' object has no attribute 'upper'`)**: Updated `EventEnvelopeMiddleware` in `gateway/api/middleware.py` to detect symbol-keyed dict payloads (where keys are ticker symbols like `"AAPL"`, `"S"`) and flatten them into per-symbol items before wrapping, instead of passing the entire keyed dict to `wrap_event` which misinterpreted tickers like `"S"` as metadata field lookups returning nested dicts.
+- **Defensive symbol type guard in `wrap_event`**: Added type check in `gateway/core/envelope.py` to ensure the extracted symbol is always a string, preventing `AttributeError` if a non-string value is returned by the `or` extraction chain.
+
 ## [0.5.66] - 2026-02-13
 
 ### Added
