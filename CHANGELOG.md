@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.65] - 2026-02-13
+
+### Added
+
+- Added `TESTING.md` with Data Gateway test commands, test layout, and TDD expectations.
+- Added `DEVELOPER_NOTES.md` with operational gotchas, debugging tips, and high-risk edit areas.
+
+### Changed
+
+- Standardized AI agent guidance file to `AGENTS.md` and aligned content to current repository docs layout.
+- Moved operational docs into standard locations:
+  - `runbook.md` -> `docs/RUNBOOK.md`
+  - `API_REFERENCE.md` -> `docs/API_REFERENCE.md`
+- Relocated root audit/report artifacts to `docs/audits/` and normalized checklist naming to `AUDIT_CHECKLIST.md`.
+- Updated cross-document links in `README.md`, `CONTRIBUTING.md`, and `docs/API_REFERENCE.md` to match standardized paths.
+
+### Fixed
+
+- Corrected runbook authentication header examples from `X-API-Key` to `X-Gateway-Key` to match actual gateway auth behavior.
+
 ## [0.5.64] - 2026-02-12
 
 ### Added

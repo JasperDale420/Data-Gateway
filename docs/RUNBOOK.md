@@ -111,7 +111,7 @@ Full defaults live in `gateway/config.py`; see `.env.example` for a commented te
 ### 3.2  Prometheus Metrics
 
 ```bash
-curl -H "X-API-Key: <key>" http://localhost:8080/metrics
+curl -H "X-Gateway-Key: <key>" http://localhost:8080/metrics
 ```
 
 Returns Prometheus text format. Scrape with Prometheus, Grafana Agent, or Datadog.
@@ -169,11 +169,11 @@ Restart the gateway for changes to take effect.
 
 ```bash
 # Disable finnhub without restart
-curl -X POST -H "X-API-Key: <key>" \
+curl -X POST -H "X-Gateway-Key: <key>" \
   http://localhost:8080/api/v1/providers/finnhub/disable
 
 # Re-enable
-curl -X POST -H "X-API-Key: <key>" \
+curl -X POST -H "X-Gateway-Key: <key>" \
   http://localhost:8080/api/v1/providers/finnhub/enable
 ```
 
@@ -253,7 +253,7 @@ async with websockets.connect("ws://localhost:8080/ws") as ws:
 
 | Code | Meaning                    | Action                                                  |
 |------|----------------------------|---------------------------------------------------------|
-| 401  | Missing / invalid API key  | Check `X-API-Key` header against `config/clients.yaml`  |
+| 401  | Missing / invalid API key  | Check `X-Gateway-Key` header against `config/clients.yaml`  |
 | 403  | Insufficient permissions   | Client lacks access to requested provider/feed          |
 | 429  | Rate limited               | Check `GET /api/v1/rate-limits`; increase client limit  |
 | 502  | Upstream provider error    | Check provider health via `GET /api/v1/providers`       |
@@ -272,7 +272,7 @@ async with websockets.connect("ws://localhost:8080/ws") as ws:
 
 ```bash
 # Check which provider is throttled
-curl -H "X-API-Key: <key>" \
+curl -H "X-Gateway-Key: <key>" \
   "http://localhost:8080/api/v1/rate-limits?provider=alpaca"
 ```
 
@@ -350,16 +350,16 @@ curl localhost:8080/health
 curl localhost:8080/health/ready
 
 # Provider status
-curl -H "X-API-Key: $GW_KEY" localhost:8080/api/v1/providers
+curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/api/v1/providers
 
 # Rate limit status
-curl -H "X-API-Key: $GW_KEY" localhost:8080/api/v1/rate-limits
+curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/api/v1/rate-limits
 
 # Recent errors
-curl -H "X-API-Key: $GW_KEY" localhost:8080/api/v1/logs
+curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/api/v1/logs
 
 # Prometheus metrics
-curl -H "X-API-Key: $GW_KEY" localhost:8080/metrics
+curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/metrics
 
 # Smoke test all providers
 python scripts/live_provider_smoke.py

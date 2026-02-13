@@ -112,7 +112,7 @@ Legacy payloads may still send `feed` instead of `feeds`.
 
 ## REST API Providers
 
-Provider endpoint contracts are generated from live routes in `PROVIDER_ENDPOINT_CONTRACT.md`.
+Provider endpoint contracts are generated from live routes in [`PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md).
 
 ## Bulk Data
 
@@ -159,7 +159,7 @@ Options flow, dark pool, institutional, and alternative data.
 
 **Documentation:** <https://docs.unusualwhales.com/>
 
-- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `unusual_whales`.
+- Authoritative routes are generated from FastAPI and listed in [`PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md) under `unusual_whales`.
 
 ---
 
@@ -169,7 +169,7 @@ SEC filings, company facts, and insider data.
 
 **Documentation:** <https://www.sec.gov/developer>
 
-- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `sec`.
+- Authoritative routes are generated from FastAPI and listed in [`PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md) under `sec`.
 
 ---
 
@@ -179,7 +179,7 @@ Fundamentals, earnings, news, and alternative data.
 
 **Documentation:** <https://finnhub.io/docs/api>
 
-- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `finnhub`.
+- Authoritative routes are generated from FastAPI and listed in [`PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md) under `finnhub`.
 
 ---
 
@@ -189,7 +189,7 @@ Technical indicators, forex, and economic data.
 
 **Documentation:** <https://www.alphavantage.co/documentation/>
 
-- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `alphavantage`.
+- Authoritative routes are generated from FastAPI and listed in [`PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md) under `alphavantage`.
 
 ---
 
@@ -197,7 +197,7 @@ Technical indicators, forex, and economic data.
 
 Free stock quotes, financials, and analysis.
 
-- Authoritative routes are generated from FastAPI and listed in `PROVIDER_ENDPOINT_CONTRACT.md` under `yfinance`.
+- Authoritative routes are generated from FastAPI and listed in [`PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md) under `yfinance`.
 
 ---
 
