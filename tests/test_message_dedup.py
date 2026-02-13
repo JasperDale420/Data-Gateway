@@ -1,5 +1,7 @@
 """Tests for Message Deduplicator."""
 
+import datetime as dt
+
 import pytest
 
 from gateway.core.dedup import (
@@ -136,6 +138,13 @@ class TestMessageDeduplicator:
     def test_handles_missing_keys(self, dedup):
         """Missing timestamp/data keys should be handled."""
         msg = {}
+
+        assert dedup.is_duplicate("AAPL", msg) is False
+        assert dedup.is_duplicate("AAPL", msg) is True
+
+    def test_handles_non_json_data(self, dedup):
+        """Non-JSON-serializable data should not crash."""
+        msg = {"timestamp": "t1", "data": {"when": dt.datetime(2024, 1, 1, 12, 0, 0)}}
 
         assert dedup.is_duplicate("AAPL", msg) is False
         assert dedup.is_duplicate("AAPL", msg) is True

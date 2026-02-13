@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Message deduplication resilience**: Message hashing now tolerates non-JSON-serializable payloads by falling back to a string representation with warning logs, and adds regression coverage.
+
 ## [0.5.6] - 2026-02-05
 
 ### Added
