@@ -3,14 +3,14 @@
 Tracks request counts per provider and enforces their specific rate limits
 to prevent 429 errors from upstream APIs.
 
-Provider Limits (Free Tier):
-- Alpaca: 200/min (market data can be higher with paid)
-- Finnhub: 60/min general, 300/min fundamentals, 900/min market data
-- Alpha Vantage: 5/min, 25/day (extremely restrictive)
-- NewsAPI: 100/day
+Provider Limits (official, per plan):
+- Alpaca (Algo Trader Plus): 10,000/min market data, 200/min trading
+- Finnhub (Free): 60/min, 30/sec
+- Alpha Vantage (Free): 5/min, 25/day
+- NewsAPI (Developer): 100/day
 - Unusual Whales: 120/min, 15K/day
 - SEC EDGAR: 10/sec (600/min)
-- YFinance: No official limit (be conservative)
+- YFinance: No official limit (conservative estimate)
 """
 
 import asyncio
@@ -65,7 +65,7 @@ PROVIDER_LIMITS: dict[str, ProviderLimits] = {
         requests_per_day=25,
     ),
     "news": ProviderLimits(
-        requests_per_minute=10,  # Conservative: 100/day = ~0.07/min
+        requests_per_minute=100,  # No per-minute limit in docs; 100/day on free plan
         requests_per_day=100,
     ),
     "unusual_whales": ProviderLimits(
@@ -73,8 +73,8 @@ PROVIDER_LIMITS: dict[str, ProviderLimits] = {
         requests_per_day=15000,
     ),
     "sec": ProviderLimits(
-        requests_per_minute=300,  # 10/sec = 600/min, be conservative
-        requests_per_second=8,
+        requests_per_minute=600,  # 10/sec = 600/min
+        requests_per_second=10,
     ),
     "yfinance": ProviderLimits(
         requests_per_minute=60,  # No official limit, be conservative
