@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -69,32 +70,49 @@ class InputValidationMiddleware(BaseHTTPMiddleware):
 
 @dataclass
 class RateLimitBucket:
-    """Per-client rate limit tracking."""
+    """Per-client sliding window rate limit tracking.
+
+    Uses a deque of timestamps instead of a fixed-window counter so that
+    expired requests roll off continuously.  This prevents burst starvation
+    where the entire allowance is consumed in <1 second.
+    """
 
     limit: int
-    remaining: int
+    remaining: int  # kept for compatibility but computed from deque
     reset_at: float = field(default_factory=lambda: time.time() + 60)
     last_seen: float = field(default_factory=time.time)
+    _timestamps: deque = field(default_factory=deque)
+    _window: float = 60.0
+
+    def _cleanup(self, now: float) -> None:
+        """Remove timestamps older than the window."""
+        cutoff = now - self._window
+        while self._timestamps and self._timestamps[0] <= cutoff:
+            self._timestamps.popleft()
 
     def consume(self) -> bool:
         """Consume one request. Returns True if allowed."""
         now = time.time()
         self.last_seen = now
+        self._cleanup(now)
 
-        # Reset bucket if window expired
-        if now >= self.reset_at:
-            self.remaining = self.limit
-            self.reset_at = now + 60
-
-        if self.remaining > 0:
-            self.remaining -= 1
+        if len(self._timestamps) < self.limit:
+            self._timestamps.append(now)
+            self.remaining = max(0, self.limit - len(self._timestamps))
+            self.reset_at = (self._timestamps[0] + self._window) if self._timestamps else now + self._window
             return True
+
+        # Update bookkeeping for headers
+        self.remaining = 0
+        self.reset_at = (self._timestamps[0] + self._window) if self._timestamps else now + self._window
         return False
 
     @property
     def reset_after(self) -> int:
-        """Seconds until reset."""
-        return max(0, int(self.reset_at - time.time()))
+        """Seconds until the oldest request expires from the window."""
+        if not self._timestamps:
+            return 0
+        return max(0, int(self._timestamps[0] + self._window - time.time()))
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -145,11 +163,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 limit=bucket.limit,
             )
             record_rate_limit_exceeded(client_id)
+            headers = self._rate_limit_headers(bucket)
+            headers["Retry-After"] = str(bucket.reset_after)
             return Response(
                 content='{"error": {"code": "GW-E4001", "message": "Rate limit exceeded"}}',
                 status_code=429,
                 media_type="application/json",
-                headers=self._rate_limit_headers(bucket),
+                headers=headers,
             )
 
         # Process request
@@ -1168,6 +1188,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         if self._global_requests >= self.global_limit:
             logger.warning("global_rate_limit_exceeded", current=self._global_requests)
             record_rate_limit_exceeded("global")
+            retry_after = max(1, int(self._global_window_start + self.window_seconds - time.time()))
             return Response(
                 content=json.dumps(
                     {
@@ -1180,12 +1201,15 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
                 ),
                 status_code=429,
                 media_type="application/json",
+                headers={"Retry-After": str(retry_after)},
             )
 
         # Check per-IP limit (PRD 7.5.2)
         client_ip = self._get_client_ip(request)
         if not self._check_ip_limit(client_ip):
             record_rate_limit_exceeded(f"ip:{client_ip}")
+            tracker = self._ip_trackers.get(client_ip)
+            retry_after = max(1, int(tracker.first_request + self.window_seconds - time.time())) if tracker else 60
             return Response(
                 content=json.dumps(
                     {
@@ -1198,6 +1222,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
                 ),
                 status_code=429,
                 media_type="application/json",
+                headers={"Retry-After": str(retry_after)},
             )
 
         # Increment global counter

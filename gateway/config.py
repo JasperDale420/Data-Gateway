@@ -58,12 +58,14 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_default: int = Field(default=600, ge=1)  # requests per minute
 
+    # Per-provider rate limits (override hardcoded defaults via env)
+    alpaca_rate_limit_per_minute: int = Field(default=10000, ge=1)
+    alpaca_rate_limit_per_second: int = Field(default=75, ge=1)
+
     # Alpaca (loaded from env, not prefixed)
     alpaca_api_key: str = Field(default="", alias="APCA_API_KEY_ID")
     alpaca_secret_key: str = Field(default="", alias="APCA_API_SECRET_KEY")
-    alpaca_base_url: str = Field(
-        default="https://paper-api.alpaca.markets", alias="APCA_API_BASE_URL"
-    )
+    alpaca_base_url: str = Field(default="https://paper-api.alpaca.markets", alias="APCA_API_BASE_URL")
 
     # Unusual Whales
     uw_api_key: str = Field(default="", alias="UNUSUAL_WHALES_API_KEY")

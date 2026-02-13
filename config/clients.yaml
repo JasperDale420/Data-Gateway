@@ -22,7 +22,7 @@ clients:
       providers: ["alpaca"]
       feeds: ["bars", "quotes", "trades", "news"]
       max_symbols: 1000
-      rate_limit: 300
+      rate_limit: 6000  # ~5000 symbols scanned pre-market
     enabled: true
 
   # Orion trading system

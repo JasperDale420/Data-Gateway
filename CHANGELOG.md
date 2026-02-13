@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.68] - 2026-02-13
+
+### Added
+
+- **Sliding window rate limiting**: Replaced fixed-window counter in `RateLimitBucket` (`middleware.py`) with sliding window deque to prevent burst starvation where the entire allowance was consumed in <1 second.
+- **Standard `Retry-After` header**: All 429 responses from `RateLimitMiddleware` and `GlobalRateLimitMiddleware` now include the `Retry-After` header for proper HTTP backoff.
+- **Configurable Alpaca rate limits**: Added `GATEWAY_ALPACA_RATE_LIMIT_PER_MINUTE` and `GATEWAY_ALPACA_RATE_LIMIT_PER_SECOND` env vars in `config.py` to override Alpaca provider limits without code changes.
+- **Sliding window rate limit tests**: New `tests/test_sliding_window_rate_limit.py` with 10 tests covering burst behavior, window expiry, and Retry-After header presence.
+
+### Changed
+
+- **3roses client rate limit**: Increased from 300 → 6,000 req/min in `clients.yaml` to accommodate ~5,000 symbol pre-market scanner burst.
+- **Alpaca provider limits**: Updated from free-tier defaults (200/min, 10/sec) to paid-tier (10,000/min, 75/sec) in `rate_limiter.py`.
+
 ## [0.5.67] - 2026-02-13
 
 ### Added

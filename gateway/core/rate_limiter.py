@@ -47,12 +47,12 @@ class ProviderLimits:
     fundamentals_per_minute: int | None = None
 
 
-# Provider rate limit configurations (conservative free-tier values)
+# Provider rate limit configurations (Alpaca uses paid-tier defaults; override via env)
 PROVIDER_LIMITS: dict[str, ProviderLimits] = {
     "alpaca": ProviderLimits(
-        requests_per_minute=200,
-        requests_per_second=10,
-        market_data_per_minute=200,  # Can be 10K with paid plan
+        requests_per_minute=10000,
+        requests_per_second=75,
+        market_data_per_minute=10000,
     ),
     "finnhub": ProviderLimits(
         requests_per_minute=60,
@@ -209,7 +209,24 @@ class ProviderRateLimitManager:
         return cls._instance
 
     def _initialize_limiters(self) -> None:
-        """Initialize rate limiters from config."""
+        """Initialize rate limiters from config.
+
+        Alpaca limits can be overridden via GATEWAY_ALPACA_RATE_LIMIT_PER_MINUTE
+        and GATEWAY_ALPACA_RATE_LIMIT_PER_SECOND environment variables.
+        """
+        # Apply config overrides for Alpaca limits
+        try:
+            from gateway.config import get_settings
+
+            settings = get_settings()
+            alpaca_limits = PROVIDER_LIMITS.get("alpaca")
+            if alpaca_limits:
+                alpaca_limits.requests_per_minute = settings.alpaca_rate_limit_per_minute
+                alpaca_limits.requests_per_second = settings.alpaca_rate_limit_per_second
+                alpaca_limits.market_data_per_minute = settings.alpaca_rate_limit_per_minute
+        except Exception:
+            pass  # Fall back to hardcoded defaults if settings unavailable
+
         for provider, limits in PROVIDER_LIMITS.items():
             per_second = None
             if limits.requests_per_second:
@@ -298,9 +315,7 @@ class ProviderRateLimitManager:
                 return self._limiters[provider].get_status()
             return {"provider": provider, "status": "not_tracked"}
 
-        return {
-            "providers": {name: limiter.get_status() for name, limiter in self._limiters.items()}
-        }
+        return {"providers": {name: limiter.get_status() for name, limiter in self._limiters.items()}}
 
     def get_headers(self, provider: str) -> dict[str, str]:
         """Get rate limit headers for a provider."""
