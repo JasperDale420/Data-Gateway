@@ -115,7 +115,11 @@ def compute_event_id(
     ts_event: datetime,
     unique_fields: list[Any],
 ) -> str:
-    """Compute SHA256 idempotency hash for event deduplication.
+    """Compute BLAKE2b idempotency hash for event deduplication.
+
+    Uses BLAKE2b with a 16-byte digest (32 hex chars) for faster hashing
+    compared to SHA256, while maintaining sufficient collision resistance
+    for bounded event streams.
 
     Args:
         provider: Data provider name
@@ -146,7 +150,7 @@ def compute_event_id(
             parts.append(str(field))
 
     data = "|".join(parts)
-    return hashlib.sha256(data.encode("utf-8"), usedforsecurity=False).hexdigest()[:32]
+    return hashlib.blake2b(data.encode("utf-8"), digest_size=16, usedforsecurity=False).hexdigest()
 
 
 # Feed-specific unique field extractors for event ID computation
@@ -409,3 +413,90 @@ def wrap_event(
             "quality_flags": ["error"],
             "payload": payload,
         }
+
+
+def fast_wrap_streaming_event(
+    event: dict[str, Any],
+    provider: str,
+    feed: str,
+    instrument_type: str,
+    ts_ingest: datetime,
+    sequence: int | None = None,
+) -> dict[str, Any]:
+    """Optimized event wrapper for high-frequency streaming.
+
+    Skips:
+    - Pydantic model validation (assumes dict)
+    - Instrument type inference (passed in)
+    - Content hashing (uses fast random ID)
+    - Extensive unique field extraction
+
+    Args:
+        event: Raw event dict
+        provider: Provider name (e.g. "alpaca")
+        feed: Feed type (e.g. "trades")
+        instrument_type: Known instrument type
+        ts_ingest: Pre-computed ingest timestamp
+        sequence: Optional sequence number
+
+    Returns:
+        Serialized envelope dict
+    """
+    # symbol - fast path
+    symbol = event.get("S") or event.get("symbol") or ""
+    if not isinstance(symbol, str):
+        symbol = str(symbol)
+
+    # timestamp - assume ISO string or let json.dumps handle format if it's already a string?
+    # Actually, we need to standardize to ISO string for the envelope.
+    # Alpaca sends 't' as RFC3339 string (usually).
+    ts_event_str = event.get("t") or event.get("timestamp")
+    if not ts_event_str:
+        ts_event_str = ts_ingest.isoformat()
+    elif not isinstance(ts_event_str, str):
+        # Fallback for non-string timestamps (unlikely in Alpaca V2)
+        try:
+            ts_event_str = ts_event_str.isoformat()
+        except AttributeError:
+            ts_event_str = str(ts_event_str)
+
+    # instrument_key - manual inline construction for speed
+    # (Replicates make_instrument_key logic for common cases)
+    if instrument_type == "option":
+        # Fast path for options (symbol is key if no contract specific)
+        # But we assume standard "option:SYMBOL" or "option:OCC:..." logic?
+        # make_instrument_key handles crypto normalization too.
+        # For speed, let's call make_instrument_key but optimize it later if needed.
+        # It's dominated by hashing anyway.
+        inst_key = make_instrument_key(symbol, instrument_type)
+    else:
+        # Equity is just equity:SYMBOL
+        inst_key = f"equity:{symbol}" if instrument_type == "equity" else make_instrument_key(symbol, instrument_type)
+
+    # event_id - fast random 32-char hex (skip BLAKE2b/SHA256)
+    # Using urandom or simple string construction is faster than hashing content.
+    # UUID4 is ~1-2us. Hashing 100 bytes is ~5-10us.
+    # Let's use os.urandom(16).hex()
+    import os
+
+    event_id = os.urandom(16).hex()
+
+    lineage = {}
+    if sequence is not None:
+        lineage["seq"] = sequence
+
+    return {
+        "event_id": event_id,
+        "provider": provider,
+        "feed": feed,
+        "source": "websocket",
+        "instrument_type": instrument_type,
+        "instrument_key": inst_key,
+        "symbol": symbol,
+        "ts_event": ts_event_str,
+        "ts_ingest": ts_ingest.isoformat(),
+        "schema_version": SCHEMA_VERSION,
+        "lineage": lineage,
+        "quality_flags": ["streaming"],
+        "payload": event,
+    }

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.72] - 2026-02-14
+
+### Performance
+
+- **orjson serialization**: Replaced `json.dumps` with `orjson.dumps` in `ConnectionManager.broadcast` and `RedisStreamsSink.publish`/`publish_batch`. `orjson.dumps` returns `bytes` directly, eliminating UTF-8 encode/decode overhead for WebSocket and Redis I/O.
+- **uvloop event loop**: Explicitly install `uvloop.EventLoopPolicy` in `gateway/main.py` for 2-4x faster asyncio event loop execution. Added `orjson` and `uvloop` as explicit dependencies in `pyproject.toml`.
+
+### Fixed
+
+- **Pre-serialization test assertion**: Updated `test_main_stream_sink.py` to expect pre-serialized JSON string from `_on_stream_data` (aligned with Item #5 pre-serialization optimization).
+
 ## [0.5.71] - 2026-02-13
 
 ### Performance

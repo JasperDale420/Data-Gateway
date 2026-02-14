@@ -264,6 +264,68 @@ class RedisCache:
         except Exception as e:
             logger.warning("redis_cache_set_error", key=key, error=str(e))
 
+    async def mget(self, keys: list[str]) -> dict[str, Any]:
+        """Fetch multiple keys in a single MGET round trip.
+
+        Returns:
+            Mapping of key -> parsed value for keys that exist.
+        """
+        if not keys:
+            return {}
+        try:
+            await self._ensure_connected()
+            assert self._redis is not None
+            import json
+
+            prefixed = [f"{self.KEY_PREFIX}{k}" for k in keys]
+            values = await self._redis.mget(prefixed)
+            result: dict[str, Any] = {}
+            for key, raw in zip(keys, values, strict=False):
+                if raw is not None:
+                    self._stats.hits += 1
+                    result[key] = json.loads(raw)
+                else:
+                    self._stats.misses += 1
+            return result
+        except Exception as e:
+            logger.warning("redis_cache_mget_error", count=len(keys), error=str(e))
+            self._stats.misses += len(keys)
+            return {}
+
+    async def set_many(
+        self,
+        items: list[tuple[str, Any]],
+        ttl: int | None = None,
+    ) -> int:
+        """Set multiple keys in a single Redis pipeline.
+
+        Args:
+            items: List of (key, value) tuples to set.
+            ttl: TTL in seconds (uses default_ttl if None).
+
+        Returns:
+            Number of successfully set keys.
+        """
+        if not items:
+            return 0
+        try:
+            await self._ensure_connected()
+            assert self._redis is not None
+            import json
+
+            effective_ttl = ttl or self.default_ttl
+            pipe = self._redis.pipeline(transaction=False)
+            for key, value in items:
+                serialized = json.dumps(value, default=str)
+                pipe.setex(f"{self.KEY_PREFIX}{key}", effective_ttl, serialized)
+            results = await pipe.execute()
+            success = sum(1 for r in results if not isinstance(r, Exception))
+            self._stats.sets += success
+            return success
+        except Exception as e:
+            logger.warning("redis_cache_set_many_error", count=len(items), error=str(e))
+            return 0
+
     async def delete(self, key: str) -> bool:
         """Delete key from Redis cache."""
         try:

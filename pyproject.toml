@@ -25,6 +25,8 @@ dependencies = [
     "yfinance>=0.2",
     "alpaca-py>=0.28",
     "msgpack>=1.0",
+    "orjson>=3.9",
+    "uvloop>=0.19",
     # unusualwhales SDK is installed separately in Docker via copied local package
 ]
 

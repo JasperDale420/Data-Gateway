@@ -63,7 +63,13 @@ async def test_on_stream_data_does_not_block_on_sink_publish(
 
     assert elapsed_ms < 20.0
     await gateway_main._drain_stream_sink_publish_tasks(timeout_seconds=1.0)
-    assert registry.calls == [("heber:events", {"event_id": "e1", "payload": {"symbol": "AAPL"}})]
+    assert len(registry.calls) == 1
+    assert registry.calls[0][0] == "heber:events"
+    # _on_stream_data pre-serializes the envelope to a JSON string for sink efficiency
+    import json
+
+    expected_envelope = json.loads(registry.calls[0][1])
+    assert expected_envelope == {"event_id": "e1", "payload": {"symbol": "AAPL"}}
 
 
 @pytest.mark.asyncio
@@ -99,9 +105,7 @@ def test_configure_stream_sink_dispatch_limits_clamps_and_resets_semaphore(
     def _set_pending(count: int) -> None:
         pending_counts.append(count)
 
-    monkeypatch.setattr(
-        gateway_main, "set_stream_sink_dispatch_limits_metrics", _set_dispatch_limits
-    )
+    monkeypatch.setattr(gateway_main, "set_stream_sink_dispatch_limits_metrics", _set_dispatch_limits)
     monkeypatch.setattr(gateway_main, "set_stream_sink_pending_tasks", _set_pending)
     gateway_main._configure_stream_sink_dispatch_limits(max_inflight_publish=0, max_pending_tasks=0)
 

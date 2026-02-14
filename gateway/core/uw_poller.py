@@ -10,7 +10,9 @@ Features:
 """
 
 import asyncio
+from collections import OrderedDict
 from datetime import UTC, datetime, time
+from time import monotonic as _monotonic
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -101,11 +103,17 @@ class UWPoller:
         # Track EOD polling — once per trading day
         self._last_eod_date: str | None = None
 
-        # Deduplication cache (event_id -> timestamp)
-        # Keep IDs for last 2 hours to handle polling overlap
-        self._seen_ids: dict[str, datetime] = {}
+        # Deduplication cache — OrderedDict for O(1) FIFO eviction.
+        # Entries are appended in insertion order; cleanup pops from the front.
+        self._seen_ids: OrderedDict[str, datetime] = OrderedDict()
         self._cache_ttl_seconds = 7200  # 2 hours
         self._publish_max_inflight = max(1, int(settings.uw_poller_publish_max_inflight))
+
+        # Cache market hours lookups (30-second TTL)
+        self._market_hours_cache: tuple[bool, float] = (False, 0.0)
+        self._extended_hours_cache: tuple[bool, float] = (False, 0.0)
+        self._MARKET_HOURS_CACHE_TTL = 30.0
+        self._EXTENDED_HOURS_CACHE_TTL = 30.0
         self._redis_dedupe: RedisCache | None = None
         if settings.cache_redis_enabled and settings.cache_redis_url:
             self._redis_dedupe = RedisCache(
@@ -125,18 +133,26 @@ class UWPoller:
         self._tide_interval = MARKET_TIDE_POLL_INTERVAL
 
     def _is_market_hours(self) -> bool:
-        """Check if market is currently open using TradingCalendar."""
-        return self._calendar.is_market_open()
+        """Check if market is currently open (cached for 30s)."""
+        now = _monotonic()
+        cached_val, cached_at = self._market_hours_cache
+        if now - cached_at < self._MARKET_HOURS_CACHE_TTL:
+            return cached_val
+        result = self._calendar.is_market_open()
+        self._market_hours_cache = (result, now)
+        return result
 
     def _is_extended_hours(self) -> bool:
-        """Check if we're in extended trading hours (pre-market or after-hours).
-
-        Darkpool trades occur during extended hours as well.
-        """
+        """Check if we're in extended trading hours (cached for 30s)."""
+        now = _monotonic()
+        cached_val, cached_at = self._extended_hours_cache
+        if now - cached_at < self._EXTENDED_HOURS_CACHE_TTL:
+            return cached_val
         now_et = datetime.now(ET)
         current_time = now_et.time()
-        # Extended hours: 4:00 AM - 8:00 PM ET on trading days
-        return PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(now_et.date())
+        result = PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(now_et.date())
+        self._extended_hours_cache = (result, now)
+        return result
 
     def _is_morning_rush(self) -> bool:
         """Check if we're in high-volume morning period (first hour of trading)."""
@@ -170,43 +186,47 @@ class UWPoller:
         return False
 
     def _mark_seen(self, event_id: str) -> None:
-        """Mark event as seen."""
+        """Mark event as seen (appends to end of OrderedDict)."""
         self._seen_ids[event_id] = datetime.now(UTC)
+        self._seen_ids.move_to_end(event_id)
 
     def _cleanup_cache(self) -> None:
-        """Remove expired entries from dedup cache."""
-        now = datetime.now(UTC)
-        expired = [eid for eid, ts in self._seen_ids.items() if (now - ts).total_seconds() > self._cache_ttl_seconds]
-        for eid in expired:
-            del self._seen_ids[eid]
+        """Remove expired entries from dedup cache via O(1) FIFO pops.
 
-        if expired:
-            logger.debug("uw_poller_cache_cleanup", removed=len(expired), remaining=len(self._seen_ids))
+        Since entries are in insertion order, pop from the front until
+        we hit an unexpired entry.
+        """
+        now = datetime.now(UTC)
+        cutoff = self._cache_ttl_seconds
+        removed = 0
+        while self._seen_ids:
+            # Peek at the oldest entry
+            eid, ts = next(iter(self._seen_ids.items()))
+            if (now - ts).total_seconds() > cutoff:
+                del self._seen_ids[eid]
+                removed += 1
+            else:
+                break
+
+        if removed:
+            logger.debug("uw_poller_cache_cleanup", removed=removed, remaining=len(self._seen_ids))
 
     async def _load_redis_duplicate_ids(
         self,
         dedupe_items: list[tuple[str, str]],
     ) -> set[str]:
-        """Fetch duplicate flags from Redis cache in parallel."""
+        """Fetch duplicate flags via a single MGET round trip."""
         if self._redis_dedupe is None or not dedupe_items:
             return set()
 
-        checks = await asyncio.gather(
-            *(self._redis_dedupe.get(cache_key) for _, cache_key in dedupe_items),
-            return_exceptions=True,
-        )
-        duplicates: set[str] = set()
-        for (event_id, cache_key), result in zip(dedupe_items, checks, strict=False):
-            if isinstance(result, Exception):
-                logger.warning(
-                    "uw_poller_redis_dedupe_get_failed",
-                    cache_key=cache_key,
-                    error=str(result),
-                )
-                continue
-            if result is not None:
-                duplicates.add(event_id)
-        return duplicates
+        cache_keys = [cache_key for _, cache_key in dedupe_items]
+        try:
+            found = await self._redis_dedupe.mget(cache_keys)
+        except Exception as e:
+            logger.warning("uw_poller_redis_dedupe_mget_failed", count=len(cache_keys), error=str(e))
+            return set()
+
+        return {event_id for (event_id, cache_key) in dedupe_items if cache_key in found}
 
     async def _publish_envelopes(
         self,
@@ -215,7 +235,12 @@ class UWPoller:
         dedupe_prefix: str,
         missing_event_log: str,
     ) -> tuple[int, int]:
-        """Publish envelopes with bounded concurrency and batched dedupe checks."""
+        """Publish envelopes via batch pipeline with deduplication.
+
+        Uses ``publish_all_batch`` when the sink registry supports it
+        (single Redis pipeline per call) and falls back to individual
+        ``publish_all`` calls otherwise.
+        """
         if not envelopes:
             return 0, 0
 
@@ -241,44 +266,39 @@ class UWPoller:
             duplicates += len(redis_duplicates)
             to_publish = [item for item in to_publish if not item[1] or item[1] not in redis_duplicates]
 
-        publish_sem = asyncio.Semaphore(max(1, self._publish_max_inflight))
+        if not to_publish:
+            return 0, duplicates
 
-        async def _publish_one(
-            item: tuple[dict[str, Any], str, str | None],
-        ) -> tuple[tuple[dict[str, Any], str, str | None], Exception | None]:
-            envelope, _, _ = item
-            try:
-                async with publish_sem:
-                    await sink_registry.publish_all(HEBER_STREAM, envelope)
-                return item, None
-            except Exception as exc:
-                return item, exc
+        # Batch publish: build message list and send in a single pipeline call
+        messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, envelope) for envelope, _, _ in to_publish]
 
-        publish_results = await asyncio.gather(*(_publish_one(item) for item in to_publish))
+        try:
+            if type(sink_registry).__name__ == "DataSinkRegistry":
+                published = await sink_registry.publish_all_batch(messages)
+            else:
+                # Fallback for mocks / non-registry objects
+                for topic, envelope in messages:
+                    await sink_registry.publish_all(topic, envelope)
+                published = len(messages)
+        except Exception as exc:
+            logger.warning(
+                "uw_poller_batch_publish_failed",
+                count=len(messages),
+                error=str(exc),
+            )
+            published = 0
 
-        published = 0
-        redis_sets = []
-        for (envelope, event_id, cache_key), publish_error in publish_results:
-            if publish_error is not None:
-                logger.warning(
-                    "uw_poller_publish_failed",
-                    event_id=event_id or "missing",
-                    feed=envelope.get("feed"),
-                    error=str(publish_error),
-                )
-                continue
+        # Mark all successfully-published items as seen and batch Redis dedup SETs
+        if published > 0:
+            redis_items: list[tuple[str, Any]] = []
+            for envelope, event_id, cache_key in to_publish[:published]:
+                if event_id:
+                    self._mark_seen(event_id)
+                    if self._redis_dedupe is not None and cache_key:
+                        redis_items.append((cache_key, True))
 
-            published += 1
-            if event_id:
-                self._mark_seen(event_id)
-                if self._redis_dedupe is not None and cache_key:
-                    redis_sets.append(self._redis_dedupe.set(cache_key, True, ttl=self._cache_ttl_seconds))
-
-        if redis_sets:
-            set_results = await asyncio.gather(*redis_sets, return_exceptions=True)
-            for result in set_results:
-                if isinstance(result, Exception):
-                    logger.warning("uw_poller_redis_dedupe_set_failed", error=str(result))
+            if redis_items:
+                await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
 
         return published, duplicates
 

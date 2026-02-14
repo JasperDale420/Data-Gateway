@@ -6,8 +6,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager, suppress
+
+# Use uvloop for better asyncio performance
+try:
+    import uvloop
+
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+except ImportError:
+    pass
 
 # Configure stdlib logging for structlog integration
 logging.basicConfig(
@@ -126,8 +135,14 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
     # Publish to data sink for Heber storage (non-blocking)
     sink_registry = _stream_sink_registry
     if sink_registry:
-        # Schedule sink publish off the stream callback path.
-        _schedule_stream_sink_publish(sink_registry, envelope)
+        # Optimization: Pre-serialize to JSON string to avoid re-serialization in Redis sink
+        # envelope is already a dict, so we serialize it once here.
+        try:
+            envelope_json = json.dumps(envelope, default=str)
+            _schedule_stream_sink_publish(sink_registry, envelope_json)
+        except Exception:
+            # Fallback to dict if serialization fails (unlikely)
+            _schedule_stream_sink_publish(sink_registry, envelope)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,20 +206,26 @@ def _on_stream_sink_publish_done(task: asyncio.Task[None]) -> None:
     record_stream_sink_dispatch_event("completed")
 
 
-async def _publish_stream_event(sink_registry, envelope: dict) -> None:
+async def _publish_stream_event(sink_registry, envelope: dict | str) -> None:
     semaphore = _get_stream_sink_publish_semaphore()
     async with semaphore:
         await sink_registry.publish_all(STREAM_SINK_TOPIC, envelope)
 
 
-def _schedule_stream_sink_publish(sink_registry, envelope: dict) -> None:
+def _schedule_stream_sink_publish(sink_registry, envelope: dict | str) -> None:
     if len(_stream_sink_publish_tasks) >= _stream_sink_max_pending_tasks:
         record_stream_sink_dispatch_event("dropped_backpressure")
+        # Extract event_id safely whether envelope is dict or string
+        event_id = "unknown"
+        if isinstance(envelope, dict):
+            event_id = envelope.get("event_id", "unknown")
+        # Creating a task just to log dropped event ID from string is overkill, skip parsing
+
         logger.warning(
             "stream_sink_publish_backpressure_drop",
             pending_tasks=len(_stream_sink_publish_tasks),
             max_pending_tasks=_stream_sink_max_pending_tasks,
-            event_id=envelope.get("event_id", "unknown"),
+            event_id=event_id,
         )
         return
 
@@ -277,6 +298,7 @@ async def lifespan(app: FastAPI):
     # Initialize stream multiplexer (only if credentials are set)
     multiplexer = None
     if settings.alpaca_api_key and settings.alpaca_secret_key:
+        connections = get_connection_manager()
         multiplexer = StreamMultiplexer(
             api_key=settings.alpaca_api_key,
             api_secret=settings.alpaca_secret_key,
@@ -285,6 +307,7 @@ async def lifespan(app: FastAPI):
             lazy_connect=settings.stream_lazy_connect,
             fanout_max_inflight=settings.stream_fanout_max_inflight,
             fanout_batch_size=settings.stream_fanout_batch_size,
+            on_broadcast=connections.broadcast,
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()

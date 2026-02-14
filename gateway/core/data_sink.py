@@ -30,7 +30,7 @@ class DataSink(ABC):
         ...
 
     @abstractmethod
-    async def publish(self, topic: str, data: dict[str, Any]) -> bool:
+    async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
         """Publish data to the sink.
 
         Args:
@@ -121,7 +121,7 @@ class DataSinkRegistry:
         """Return publish scheduling/backpressure statistics."""
         return self._publish_stats.copy()
 
-    async def publish_all(self, topic: str, data: dict[str, Any]) -> None:
+    async def publish_all(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish to all registered sinks (non-blocking).
 
         Uses fire-and-forget pattern to avoid blocking the caller.
@@ -130,31 +130,32 @@ class DataSinkRegistry:
         if not self._enabled or not self._sinks:
             return
 
-        # Dedup check: skip if event_id already published
-        event_id = data.get("event_id")
-        if event_id and self._dedup_cache:
-            self._dedup_stats["checked"] += 1
-            cache_key = f"dedup:publish:{event_id}"
-            try:
-                cached = await self._dedup_cache.get(cache_key)
-                if cached is not None:
-                    self._dedup_stats["deduplicated"] += 1
-                    logger.debug(
-                        "publish_deduplicated",
-                        event_id=event_id,
-                        topic=topic,
-                    )
-                    return  # Skip duplicate
+        # Dedup check: skip if event_id already published (only for dicts)
+        if isinstance(data, dict):
+            event_id = data.get("event_id")
+            if event_id and self._dedup_cache:
+                self._dedup_stats["checked"] += 1
+                cache_key = f"dedup:publish:{event_id}"
+                try:
+                    cached = await self._dedup_cache.get(cache_key)
+                    if cached is not None:
+                        self._dedup_stats["deduplicated"] += 1
+                        logger.debug(
+                            "publish_deduplicated",
+                            event_id=event_id,
+                            topic=topic,
+                        )
+                        return  # Skip duplicate
 
-                # Mark as published
-                await self._dedup_cache.set(cache_key, "1", ttl=self.DEDUP_TTL_SECONDS)
-            except Exception as e:
-                # On cache error, proceed with publish (fail open)
-                logger.warning(
-                    "dedup_cache_error",
-                    event_id=event_id,
-                    error=str(e),
-                )
+                    # Mark as published
+                    await self._dedup_cache.set(cache_key, "1", ttl=self.DEDUP_TTL_SECONDS)
+                except Exception as e:
+                    # On cache error, proceed with publish (fail open)
+                    logger.warning(
+                        "dedup_cache_error",
+                        event_id=event_id,
+                        error=str(e),
+                    )
 
         for sink in self._sinks:
             acquired = await self._try_acquire_sink_slot(sink.name)
@@ -247,7 +248,7 @@ class DataSinkRegistry:
         self,
         sink: DataSink,
         topic: str,
-        data: dict[str, Any],
+        data: dict[str, Any] | str | bytes,
     ) -> None:
         """Publish and always release the per-sink in-flight slot."""
         try:
@@ -257,7 +258,7 @@ class DataSinkRegistry:
             if sem is not None:
                 sem.release()
 
-    async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any]) -> None:
+    async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish with error handling."""
         try:
             breaker = await get_circuit_breaker(f"data_sink:{sink.name}")

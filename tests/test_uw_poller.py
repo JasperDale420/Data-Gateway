@@ -40,6 +40,19 @@ class _FakeRedisDedupe:
         self.set_calls.append((key, value, ttl))
         return True
 
+    async def mget(self, keys: list[str]) -> dict[str, bool]:
+        result: dict[str, bool] = {}
+        for key in keys:
+            self.get_calls.append(key)
+            if key in self.duplicate_keys:
+                result[key] = True
+        return result
+
+    async def set_many(self, items: list[tuple[str, bool]], ttl: int | None = None) -> int:
+        for key, value in items:
+            self.set_calls.append((key, value, ttl))
+        return len(items)
+
 
 @pytest.mark.asyncio
 async def test_publish_envelopes_dedupes_seen_and_redis_hits() -> None:

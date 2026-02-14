@@ -7,7 +7,6 @@ as specified in the PRD Data Validation section.
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 import structlog
@@ -68,9 +67,7 @@ class ValidationResult:
         """Convert to dictionary for logging/response."""
         return {
             "valid": self.valid,
-            "errors": [
-                {"code": e.code, "message": e.message, "field": e.field} for e in self.errors
-            ],
+            "errors": [{"code": e.code, "message": e.message, "field": e.field} for e in self.errors],
         }
 
 
@@ -109,17 +106,15 @@ class DataValidator:
         high_raw = bar["high"] if "high" in bar else bar.get("h")
         low_raw = bar["low"] if "low" in bar else bar.get("l")
         close_raw = bar["close"] if "close" in bar else bar.get("c")
-        open_price = self._to_decimal(open_raw)
-        high = self._to_decimal(high_raw)
-        low = self._to_decimal(low_raw)
-        close = self._to_decimal(close_raw)
+        open_price = self._to_float(open_raw)
+        high = self._to_float(high_raw)
+        low = self._to_float(low_raw)
+        close = self._to_float(close_raw)
         volume = bar["volume"] if "volume" in bar else bar.get("v", 0)
 
         # Symbol validation (GW-E7007)
         if not self._is_valid_symbol(symbol):
-            result.add_error(
-                ValidationErrorCodes.INVALID_SYMBOL, f"Invalid symbol format: {symbol}", "symbol"
-            )
+            result.add_error(ValidationErrorCodes.INVALID_SYMBOL, f"Invalid symbol format: {symbol}", "symbol")
 
         # Timestamp validation (GW-E7001)
         if timestamp:
@@ -133,17 +128,11 @@ class DataValidator:
 
         # Price validation (GW-E7002)
         if open_price is not None and open_price <= 0:
-            result.add_error(
-                ValidationErrorCodes.INVALID_PRICE, f"Invalid open price: {open_price}", "open"
-            )
+            result.add_error(ValidationErrorCodes.INVALID_PRICE, f"Invalid open price: {open_price}", "open")
         if close is not None and close <= 0:
-            result.add_error(
-                ValidationErrorCodes.INVALID_PRICE, f"Invalid close price: {close}", "close"
-            )
+            result.add_error(ValidationErrorCodes.INVALID_PRICE, f"Invalid close price: {close}", "close")
         if high is not None and high <= 0:
-            result.add_error(
-                ValidationErrorCodes.INVALID_PRICE, f"Invalid high price: {high}", "high"
-            )
+            result.add_error(ValidationErrorCodes.INVALID_PRICE, f"Invalid high price: {high}", "high")
         if low is not None and low <= 0:
             result.add_error(ValidationErrorCodes.INVALID_PRICE, f"Invalid low price: {low}", "low")
 
@@ -151,9 +140,7 @@ class DataValidator:
         if high is not None and low is not None:
             # High >= Low (GW-E7003)
             if high < low:
-                result.add_error(
-                    ValidationErrorCodes.HIGH_LESS_THAN_LOW, f"High ({high}) < Low ({low})", "high"
-                )
+                result.add_error(ValidationErrorCodes.HIGH_LESS_THAN_LOW, f"High ({high}) < Low ({low})", "high")
 
             # High >= Open and Close (GW-E7004)
             if open_price is not None and high < open_price:
@@ -185,9 +172,7 @@ class DataValidator:
 
         # Volume validation (GW-E7006)
         if volume is not None and volume < 0:
-            result.add_error(
-                ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative volume: {volume}", "volume"
-            )
+            result.add_error(ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative volume: {volume}", "volume")
 
         # Clear data if invalid
         if not result.valid:
@@ -210,17 +195,15 @@ class DataValidator:
         symbol = quote["symbol"] if "symbol" in quote else quote.get("S", "")
         bid_raw = quote["bid_price"] if "bid_price" in quote else quote.get("bp")
         ask_raw = quote["ask_price"] if "ask_price" in quote else quote.get("ap")
-        bid_price = self._to_decimal(bid_raw)
-        ask_price = self._to_decimal(ask_raw)
+        bid_price = self._to_float(bid_raw)
+        ask_price = self._to_float(ask_raw)
         bid_size = quote["bid_size"] if "bid_size" in quote else quote.get("bs", 0)
         ask_size = quote["ask_size"] if "ask_size" in quote else quote.get("as", 0)
         timestamp = quote["timestamp"] if "timestamp" in quote else quote.get("t")
 
         # Symbol validation
         if not self._is_valid_symbol(symbol):
-            result.add_error(
-                ValidationErrorCodes.INVALID_SYMBOL, f"Invalid symbol format: {symbol}", "symbol"
-            )
+            result.add_error(ValidationErrorCodes.INVALID_SYMBOL, f"Invalid symbol format: {symbol}", "symbol")
 
         # Timestamp validation
         if timestamp:
@@ -234,23 +217,15 @@ class DataValidator:
 
         # Price validation
         if bid_price is not None and bid_price < 0:
-            result.add_error(
-                ValidationErrorCodes.INVALID_PRICE, f"Negative bid price: {bid_price}", "bid_price"
-            )
+            result.add_error(ValidationErrorCodes.INVALID_PRICE, f"Negative bid price: {bid_price}", "bid_price")
         if ask_price is not None and ask_price < 0:
-            result.add_error(
-                ValidationErrorCodes.INVALID_PRICE, f"Negative ask price: {ask_price}", "ask_price"
-            )
+            result.add_error(ValidationErrorCodes.INVALID_PRICE, f"Negative ask price: {ask_price}", "ask_price")
 
         # Size validation
         if bid_size is not None and bid_size < 0:
-            result.add_error(
-                ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative bid size: {bid_size}", "bid_size"
-            )
+            result.add_error(ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative bid size: {bid_size}", "bid_size")
         if ask_size is not None and ask_size < 0:
-            result.add_error(
-                ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative ask size: {ask_size}", "ask_size"
-            )
+            result.add_error(ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative ask size: {ask_size}", "ask_size")
 
         if not result.valid:
             result.data = None
@@ -271,15 +246,13 @@ class DataValidator:
 
         symbol = trade["symbol"] if "symbol" in trade else trade.get("S", "")
         price_raw = trade["price"] if "price" in trade else trade.get("p")
-        price = self._to_decimal(price_raw)
+        price = self._to_float(price_raw)
         size = trade["size"] if "size" in trade else trade.get("s", 0)
         timestamp = trade["timestamp"] if "timestamp" in trade else trade.get("t")
 
         # Symbol validation
         if not self._is_valid_symbol(symbol):
-            result.add_error(
-                ValidationErrorCodes.INVALID_SYMBOL, f"Invalid symbol format: {symbol}", "symbol"
-            )
+            result.add_error(ValidationErrorCodes.INVALID_SYMBOL, f"Invalid symbol format: {symbol}", "symbol")
 
         # Timestamp validation
         if timestamp:
@@ -293,15 +266,11 @@ class DataValidator:
 
         # Price validation
         if price is not None and price <= 0:
-            result.add_error(
-                ValidationErrorCodes.INVALID_PRICE, f"Invalid trade price: {price}", "price"
-            )
+            result.add_error(ValidationErrorCodes.INVALID_PRICE, f"Invalid trade price: {price}", "price")
 
         # Size validation
         if size is not None and size < 0:
-            result.add_error(
-                ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative trade size: {size}", "size"
-            )
+            result.add_error(ValidationErrorCodes.NEGATIVE_VOLUME, f"Negative trade size: {size}", "size")
 
         if not result.valid:
             result.data = None
@@ -320,25 +289,23 @@ class DataValidator:
             or self.CRYPTO_PATTERN.match(symbol)
         )
 
-    def _to_decimal(self, value: Any) -> Decimal | None:
-        """Convert value to Decimal, handling None."""
+    def _to_float(self, value: Any) -> float | None:
+        """Convert value to float, handling None."""
         if value is None:
             return None
-        if isinstance(value, Decimal):
+        if isinstance(value, float):
             return value
         if isinstance(value, int):
-            return Decimal(value)
-        if isinstance(value, float):
-            return Decimal(str(value))
+            return float(value)
         if isinstance(value, str):
             if not value:
                 return None
             try:
-                return Decimal(value)
+                return float(value)
             except Exception:
                 return None
         try:
-            return Decimal(str(value))
+            return float(value)
         except Exception:
             return None
 

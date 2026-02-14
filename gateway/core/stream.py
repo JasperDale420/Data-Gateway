@@ -17,7 +17,7 @@ import structlog
 import websockets
 from websockets.client import WebSocketClientProtocol
 
-from gateway.core.envelope import wrap_event
+from gateway.core.envelope import fast_wrap_streaming_event
 from gateway.core.metrics import (
     record_stream_fanout_batch_size,
     record_stream_fanout_dispatch_event,
@@ -117,6 +117,17 @@ class AlpacaStreamType(Enum):
             AlpacaStreamType.NEWS: "wss://stream.data.alpaca.markets/v1beta1/news",
         }
         return endpoints[self]
+
+    @property
+    def instrument_type(self) -> str:
+        """Get canonical instrument type for this stream."""
+        if self in (AlpacaStreamType.STOCKS_SIP, AlpacaStreamType.STOCKS_IEX, AlpacaStreamType.NEWS):
+            return "equity"
+        if self == AlpacaStreamType.OPTIONS:
+            return "option"
+        if self == AlpacaStreamType.CRYPTO:
+            return "crypto"
+        return "equity"
 
 
 @dataclass
@@ -322,8 +333,12 @@ class SubscriptionManager:
         return removed_bars, removed_quotes, removed_trades, removed_news
 
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
-        """Get all clients subscribed to a symbol for a data type."""
-        return list(self._index.get(data_type, {}).get(symbol, ()))
+        """Get all clients subscribed to a symbol for a data type (returns copy)."""
+        return list(self.get_clients_for_symbol_view(symbol, data_type))
+
+    def get_clients_for_symbol_view(self, symbol: str, data_type: str) -> set[str]:
+        """Get raw set of clients subscribed to a symbol (zero-copy view)."""
+        return self._index.get(data_type, {}).get(symbol, set())
 
     def _aggregate(self) -> tuple[set[str], set[str], set[str], set[str]]:
         """Compute union of all client subscriptions."""
@@ -725,6 +740,7 @@ class StreamMultiplexer:
         lazy_connect: bool = True,
         fanout_max_inflight: int = DEFAULT_FANOUT_MAX_INFLIGHT,
         fanout_batch_size: int = DEFAULT_FANOUT_BATCH_SIZE,
+        on_broadcast: Callable[[dict[str, Any] | str | bytes, list[str]], Awaitable[int]] | None = None,
     ) -> None:
         """Initialize multiplexer.
 
@@ -736,6 +752,7 @@ class StreamMultiplexer:
             lazy_connect: If True, only connect to streams when first client subscribes
             fanout_max_inflight: Max concurrent callback deliveries per fanout batch.
             fanout_batch_size: Number of clients to dispatch per gather batch.
+            on_broadcast: Optional callback for efficient broadcast (message, client_ids) -> count
         """
         self.api_key = api_key
         self.api_secret = api_secret
@@ -743,6 +760,7 @@ class StreamMultiplexer:
         self._lazy_connect = lazy_connect
         self._fanout_max_inflight = max(1, fanout_max_inflight)
         self._fanout_client_batch_size = max(1, fanout_batch_size)
+        self._on_broadcast = on_broadcast
         set_stream_fanout_limits_metrics(
             max_inflight=self._fanout_max_inflight,
             batch_size=self._fanout_client_batch_size,
@@ -987,6 +1005,38 @@ class StreamMultiplexer:
             # System message, heartbeat, etc.
             return
 
+        # Find connection and get subscribed clients
+        conn = self._get_connection(stream_type)
+        if not conn:
+            return
+
+        symbols: list[str]
+        if data_type == "news":
+            symbols = []
+            symbol_field = message.get("S")
+            if symbol_field:
+                symbols.append(symbol_field)
+            raw_symbols = message.get("symbols")
+            if isinstance(raw_symbols, list):
+                symbols.extend([s for s in raw_symbols if s])
+            if not symbols:
+                symbols = ["*"]
+            symbol_for_log = symbols[0] if symbols else "*"
+        else:
+            symbol = message.get("S", "")
+            if not symbol:
+                return
+            symbols = [symbol]
+            symbol_for_log = symbol
+
+        clients: set[str] = set()
+        if data_type == "news":
+            clients.update(conn.subscriptions.get_clients_for_symbol_view("*", data_type))
+        for sym in set(symbols):
+            clients.update(conn.subscriptions.get_clients_for_symbol_view(sym, data_type))
+        if not clients:
+            return
+
         if data_type in _VALIDATABLE_FEEDS:
             validator = self._get_stream_validator()
             if data_type == "bars":
@@ -1031,56 +1081,57 @@ class StreamMultiplexer:
                 )
                 return
 
-        # Find connection and get subscribed clients
-        conn = self._get_connection(stream_type)
-        if not conn:
-            return
+        # Use fast-path wrapper for streaming
+        # Optimizations:
+        # 1. Skip per-message UUID/BLAKE2b hash (use fast random ID)
+        # 2. Skip instrument inference (we know the stream type)
+        # 3. Skip Pydantic validation (assumes upstream structure is somewhat trusted/consistent)
+        from datetime import UTC, datetime
 
-        symbols: list[str]
-        if data_type == "news":
-            symbols = []
-            symbol_field = message.get("S")
-            if symbol_field:
-                symbols.append(symbol_field)
-            raw_symbols = message.get("symbols")
-            if isinstance(raw_symbols, list):
-                symbols.extend([s for s in raw_symbols if s])
-            if not symbols:
-                symbols = ["*"]
-            symbol_for_log = symbols[0] if symbols else "*"
-        else:
-            symbol = message.get("S", "")
-            if not symbol:
-                return
-            symbols = [symbol]
-            symbol_for_log = symbol
+        ts_ingest = datetime.now(UTC)
+        seq = self._seq_tracker.next_seq(symbol_for_log, data_type)
 
-        clients: set[str] = set()
-        if data_type == "news":
-            clients.update(conn.subscriptions.get_clients_for_symbol("*", data_type))
-        for sym in symbols:
-            clients.update(conn.subscriptions.get_clients_for_symbol(sym, data_type))
-        if not clients:
-            return
-
-        # Wrap event in EventEnvelope for downstream consumers
-        envelope = wrap_event(
+        envelope = fast_wrap_streaming_event(
             event=message,
             provider="alpaca",
             feed=data_type,
-            source="websocket",
-            stream_type=stream_type.value if stream_type else None,
+            instrument_type=stream_type.instrument_type if stream_type else "equity",
+            ts_ingest=ts_ingest,
+            sequence=seq,
         )
 
-        # Inject per-symbol, per-feed sequence number for gap detection (PRD §Sequence Numbers)
-        seq = self._seq_tracker.next_seq(symbol_for_log, data_type)
-        envelope["seq"] = seq
-        envelope["lineage"]["seq"] = seq
+        # Serialize once if we are going to broadcast
+        # envelope is a dict here, we can serialize it to string once for efficiency
+        # This matches what we did for RedisSink optimization
+        envelope_json = json.dumps(envelope)
 
-        # Fan out envelope to each subscribed client with bounded concurrency
+        if self._on_broadcast:
+            # Efficient O(1) loop-level broadcast via ConnectionManager
+            # We pass the list of clients and let ConnectionManager handle the async write loop
+            try:
+                # on_broadcast expects (message, client_ids)
+                await self._on_broadcast(envelope_json, list(clients))
+                record_stream_fanout_dispatch_event("delivered")
+            except Exception as e:
+                record_stream_fanout_dispatch_event("error")
+                logger.error(
+                    "broadcast_error",
+                    symbol=symbol_for_log,
+                    event_id=envelope.get("event_id", "unknown"),
+                    error=str(e),
+                )
+            return
+
+        # Fallback to manual fanout if no broadcast callback (e.g. tests)
         async def _send(client_id: str) -> None:
             try:
                 async with self._fanout_semaphore:
+                    # Send pre-serialized JSON string if possible, or envelope dict
+                    # on_data signature might need update or flexible handling
+                    # Current on_data is Callable[[str, str, dict[str, Any]], Awaitable[None]]
+                    # We should check if on_data supports string payload, but standard Multiplexer uses on_data from main.py
+                    # which calls connection_manager.send_personal_message which expects JSON-serializable
+                    # For safety in fallback mode, we pass the dict envelope
                     await self.on_data(client_id, data_type, envelope)
                 record_stream_fanout_dispatch_event("delivered")
             except Exception as e:

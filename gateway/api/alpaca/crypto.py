@@ -21,7 +21,7 @@ from gateway.schemas import SuccessResponse
 router = APIRouter()
 
 
-@router.get("/crypto/{pair}/bars", response_model=SuccessResponse)
+@router.get("/crypto/{pair:path}/bars", response_model=SuccessResponse)
 async def get_crypto_bars(
     pair: str,
     timeframe: str = Query(default="1Hour", description=DESC_BAR_TIMEFRAME),
@@ -54,7 +54,7 @@ async def get_crypto_bars(
     }
 
 
-@router.get("/crypto/{pair}/trades", response_model=SuccessResponse)
+@router.get("/crypto/{pair:path}/trades", response_model=SuccessResponse)
 async def get_crypto_trades(
     pair: str,
     start: datetime | None = Query(default=None),
@@ -84,7 +84,7 @@ async def get_crypto_trades(
     }
 
 
-@router.get("/crypto/{pair}/quotes", response_model=SuccessResponse)
+@router.get("/crypto/{pair:path}/quotes", response_model=SuccessResponse)
 async def get_crypto_quotes(
     pair: str,
     client: Client = Depends(require_api_key),
@@ -106,7 +106,7 @@ async def get_crypto_quotes(
     }
 
 
-@router.get("/crypto/{pair}/snapshot", response_model=SuccessResponse)
+@router.get("/crypto/{pair:path}/snapshot", response_model=SuccessResponse)
 async def get_crypto_snapshot(
     pair: str,
     client: Client = Depends(require_api_key),
@@ -125,7 +125,7 @@ async def get_crypto_snapshot(
     }
 
 
-@router.get("/crypto/{pair}/orderbook", response_model=SuccessResponse)
+@router.get("/crypto/{pair:path}/orderbook", response_model=SuccessResponse)
 async def get_crypto_orderbook(
     pair: str,
     client: Client = Depends(require_api_key),

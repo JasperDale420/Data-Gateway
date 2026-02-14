@@ -5,9 +5,9 @@ can consume for storage in the Bronze layer.
 """
 
 import asyncio
-import json
 from typing import Any
 
+import orjson
 import structlog
 
 from gateway.core.data_sink import DataSink
@@ -85,7 +85,7 @@ class RedisStreamsSink(DataSink):
             error=str(error),
         )
 
-    async def publish(self, topic: str, data: dict[str, Any]) -> bool:
+    async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
         """Publish data to a Redis Stream.
 
         Args:
@@ -98,8 +98,12 @@ class RedisStreamsSink(DataSink):
         await self._ensure_connected()
 
         try:
-            # Serialize payload
-            payload = {"data": json.dumps(data, default=str)}
+            # Serialize payload if not already serialized
+            if isinstance(data, str | bytes):
+                payload = {"data": data}
+            else:
+                # orjson returns bytes, which Redis handles natively
+                payload = {"data": orjson.dumps(data, default=str)}
 
             # Add to stream with automatic trimming
             message_id = await asyncio.wait_for(
@@ -117,7 +121,7 @@ class RedisStreamsSink(DataSink):
                 "redis_sink_published",
                 topic=topic,
                 message_id=str(message_id),
-                event_id=data.get("event_id", "unknown"),
+                event_id=data.get("event_id", "unknown") if isinstance(data, dict) else "unknown",
             )
 
             # Record metrics
@@ -134,7 +138,7 @@ class RedisStreamsSink(DataSink):
 
     async def publish_batch(
         self,
-        messages: list[tuple[str, dict[str, Any]]],
+        messages: list[tuple[str, dict[str, Any] | str | bytes]],
     ) -> int:
         """Publish multiple messages via a Redis pipeline (single round trip).
 
@@ -152,7 +156,10 @@ class RedisStreamsSink(DataSink):
         try:
             pipe = self._redis.pipeline(transaction=False)
             for topic, data in messages:
-                payload = {"data": json.dumps(data, default=str)}
+                if isinstance(data, str | bytes):
+                    payload = {"data": data}
+                else:
+                    payload = {"data": orjson.dumps(data, default=str)}
                 pipe.xadd(
                     topic,
                     payload,
@@ -226,9 +233,13 @@ class LogSink(DataSink):
     def name(self) -> str:
         return "log"
 
-    async def publish(self, topic: str, data: dict[str, Any]) -> bool:
+    async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
         """Log the message."""
-        logger.debug("data_sink_log", topic=topic, data_keys=list(data.keys()))
+        if isinstance(data, dict):
+            keys = list(data.keys())
+        else:
+            keys = ["<serialized>"]
+        logger.debug("data_sink_log", topic=topic, data_keys=keys)
         return True
 
     async def health_check(self) -> bool:

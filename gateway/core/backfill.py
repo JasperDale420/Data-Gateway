@@ -197,6 +197,11 @@ async def _uw_earnings(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) ->
     return await p.get_earnings(sym)
 
 
+async def _alpaca_news(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Alpaca news endpoint accepts multiple symbols, but backfill engine drives per-symbol
+    return await p.get_news(symbols=[sym], start=s, end=e, include_content=True)
+
+
 BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     # Alpaca
     ("alpaca", "bars"): _alpaca_bars,
@@ -205,6 +210,7 @@ BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     ("alpaca", "option_trades"): _alpaca_option_trades,
     ("alpaca", "crypto_bars"): _alpaca_crypto_bars,
     ("alpaca", "crypto_trades"): _alpaca_crypto_trades,
+    ("alpaca", "news"): _alpaca_news,
     # Unusual Whales
     ("unusual_whales", "flow_alerts"): _uw_flow,
     ("unusual_whales", "ticker_flow"): _uw_ticker_flow,

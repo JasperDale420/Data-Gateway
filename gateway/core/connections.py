@@ -1,10 +1,10 @@
 """WebSocket connection management."""
 
 import asyncio
-import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+import orjson
 import structlog
 from fastapi import WebSocket
 
@@ -34,6 +34,7 @@ class ConnectionManager:
 
     def __init__(self):
         self._connections: dict[str, Connection] = {}
+        self._client_map: dict[str, set[str]] = {}  # client_id -> set of connection_ids
         self._lock = asyncio.Lock()
         self._broadcast_semaphore = asyncio.Semaphore(100)
 
@@ -45,6 +46,7 @@ class ConnectionManager:
 
         async with self._lock:
             self._connections[connection_id] = connection
+            # Anonymous connections are not in client_map yet
 
         logger.info("connection_opened", connection_id=connection_id)
         return connection
@@ -53,6 +55,13 @@ class ConnectionManager:
         """Remove a connection."""
         async with self._lock:
             connection = self._connections.pop(connection_id, None)
+            if connection and connection.client:
+                # Remove from client_map
+                c_id = connection.client.id
+                if c_id in self._client_map:
+                    self._client_map[c_id].discard(connection_id)
+                    if not self._client_map[c_id]:
+                        del self._client_map[c_id]
 
         if connection:
             logger.info(
@@ -69,8 +78,21 @@ class ConnectionManager:
             if not connection:
                 return False
 
+            old_client_id = connection.client.id if connection.client else None
             connection.client = client
             connection.authenticated = True
+
+            # Update client_map
+            if old_client_id:
+                # Should not happen in normal flow, but handle purely for correctness
+                if old_client_id in self._client_map:
+                    self._client_map[old_client_id].discard(connection_id)
+                    if not self._client_map[old_client_id]:
+                        del self._client_map[old_client_id]
+
+            if client.id not in self._client_map:
+                self._client_map[client.id] = set()
+            self._client_map[client.id].add(connection_id)
 
         logger.info("connection_authenticated", connection_id=connection_id, client_id=client.id)
         return True
@@ -108,27 +130,60 @@ class ConnectionManager:
             "subscriptions_unique": unique_subscriptions,
         }
 
-    async def broadcast(self, message: dict, client_ids: list[str] | None = None) -> int:
+    async def broadcast(
+        self,
+        message: dict | str | bytes,
+        client_ids: list[str] | None = None,
+    ) -> int:
         """Broadcast message to connections.
 
         Args:
-            message: Message to send
+            message: Message to send (dict, str, or bytes)
             client_ids: Optional list of client IDs to target. If None, broadcast to all.
 
         Returns:
             Number of connections that received the message.
         """
-        # Pre-serialize once to avoid redundant json.dumps per connection
-        payload = json.dumps(message)
+        # Pre-serialize once if needed
+        # orjson.dumps returns bytes, which is optimal for network I/O
+        if isinstance(message, str | bytes):
+            payload = message
+        else:
+            payload = orjson.dumps(message)
+
+        # Identify target connections
+        # If client_ids is provided, use the index to find connections O(TargetClients)
+        # If not provided, iterate all connections O(TotalConnections)
+        targets: list[Connection] = []
+
+        if client_ids:
+            # Targeted broadcast using index
+            # Read lock optimization: copying required connection IDs is fast
+            # We don't hold lock during send
+            async with self._lock:
+                for cid in client_ids:
+                    conn_ids = self._client_map.get(cid)
+                    if conn_ids:
+                        for conn_id in conn_ids:
+                            conn = self._connections.get(conn_id)
+                            if conn and conn.authenticated:
+                                targets.append(conn)
+        else:
+            # Broadcast to all authenticated
+            targets = [c for c in self._connections.values() if c.authenticated]
+
+        if not targets:
+            return 0
 
         async def _send(connection: Connection) -> bool:
-            if not connection.authenticated:
-                return False
-            if client_ids and connection.client_id not in client_ids:
-                return False
             try:
+                # Use semaphore to bound concurrency
                 async with self._broadcast_semaphore:
-                    await connection.websocket.send_text(payload)
+                    # WebSocket.send_text handles str, send_bytes handles bytes
+                    if isinstance(payload, str):
+                        await connection.websocket.send_text(payload)
+                    else:
+                        await connection.websocket.send_bytes(payload)
                 return True
             except Exception as e:
                 logger.warning(
@@ -138,7 +193,8 @@ class ConnectionManager:
                 )
                 return False
 
-        results = await asyncio.gather(*(_send(connection) for connection in self._connections.values()))
+        # Gather all sends
+        results = await asyncio.gather(*(_send(conn) for conn in targets))
         return sum(1 for sent in results if sent)
 
     async def broadcast_shutdown(self, timeout_seconds: int = 30) -> int:

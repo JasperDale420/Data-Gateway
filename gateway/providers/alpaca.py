@@ -82,6 +82,7 @@ class AlpacaProvider(DataProvider):
             supports_quotes=True,
             supports_trades=True,
             supports_options=True,
+            supports_news=True,
             supports_streaming=True,
             supports_historical=True,
             max_symbols_per_request=1000,
