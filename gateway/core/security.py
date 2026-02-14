@@ -201,11 +201,23 @@ class InputValidator:
             if normalized in seen_symbols:
                 continue
             seen_symbols.add(normalized)
-            error = self.validate_symbol(symbol)
-            if error:
-                return error
+            # Try all known patterns — accept if any match
+            if not self._matches_any_symbol_pattern(normalized):
+                return InputValidationError(
+                    code=ValidationErrorCode.INVALID_SYMBOL_FORMAT.value,
+                    message="Invalid symbol format",
+                    field="symbol",
+                    value=symbol,
+                )
 
         return None
+
+    @staticmethod
+    def _matches_any_symbol_pattern(symbol: str) -> bool:
+        """Return True if symbol matches any known format (stock, crypto, option, forex, wildcard)."""
+        if symbol == "*":
+            return True
+        return any(pattern.match(symbol) for pattern in SYMBOL_PATTERNS.values())
 
     def validate_timeframe(self, timeframe: str) -> InputValidationError | None:
         """Validate timeframe value."""
