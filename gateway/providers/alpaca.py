@@ -205,7 +205,7 @@ class AlpacaProvider(DataProvider):
             "start": start.isoformat(),
             "end": end.isoformat(),
             "feed": kwargs.get("feed", self._feed),
-            "adjustment": kwargs.get("adjustment", "raw"),
+            "adjustment": kwargs.get("adjustment", "split"),
             "limit": kwargs.get("limit", 10000),
         }
 

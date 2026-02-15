@@ -138,7 +138,7 @@ def _date_chunks(start: date, end: date, chunk_days: int) -> list[tuple[datetime
 
 
 async def _alpaca_bars(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
-    return await p.get_bars([sym], kw.get("timeframe", "1Day"), s, e)
+    return await p.get_bars([sym], kw.get("timeframe", "1Day"), s, e, adjustment=kw.get("adjustment", "split"))
 
 
 async def _alpaca_trades(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
