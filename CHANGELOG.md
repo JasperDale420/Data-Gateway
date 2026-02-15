@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.77] - 2026-02-15
+
+### Changed
+
+- **pyproject.toml cleanup**: Remove stale mypy overrides for deleted `gateway.core.redis_cache` and non-existent `gateway.api._legacy`
+- **pyproject.toml cleanup**: Remove unused `numpy.typing.mypy_plugin` (no numpy imports in gateway)
+- **pyproject.toml cleanup**: Remove unused `black>=24.0` dev dependency (ruff-format handles formatting)
+
 ## [0.5.76] - 2026-02-15
 
 ### Fixed
