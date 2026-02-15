@@ -201,14 +201,9 @@ class InputValidator:
             if normalized in seen_symbols:
                 continue
             seen_symbols.add(normalized)
-            # Try all known patterns — accept if any match
-            if not self._matches_any_symbol_pattern(normalized):
-                return InputValidationError(
-                    code=ValidationErrorCode.INVALID_SYMBOL_FORMAT.value,
-                    message="Invalid symbol format",
-                    field="symbol",
-                    value=symbol,
-                )
+            error = self.validate_symbol(normalized)
+            if error is not None:
+                return error
 
         return None
 

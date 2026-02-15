@@ -32,27 +32,53 @@ def _iter_provider_files(provider: str) -> list[Path]:
     return sorted(path for path in source.glob("*.py") if path.name != "__init__.py")
 
 
+ROUTE_PATTERN = re.compile(
+    r"@(?:base_)?router\.(get|post|put|patch|delete)\(\s*[\"']([^\"']+)[\"']",
+    re.MULTILINE,
+)
+
+_FUNC_PATTERN = re.compile(r"(?:async\s+def|def)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
+
+
+def _index_function_defs(text: str) -> tuple[list[int], list[str]]:
+    """Return (positions, names) for every function def in *text*."""
+    positions: list[int] = []
+    names: list[str] = []
+    for m in _FUNC_PATTERN.finditer(text):
+        positions.append(m.start())
+        names.append(m.group(1))
+    return positions, names
+
+
+def _resolve_handler_name(
+    route_end: int,
+    positions: list[int],
+    names: list[str],
+) -> str:
+    """Return the name of the first function defined after *route_end*."""
+    import bisect
+
+    idx = bisect.bisect_left(positions, route_end)
+    if idx < len(names):
+        return names[idx]
+    return "unknown_handler"
+
+
 def _collect_routes() -> dict[str, list[tuple[str, str, str]]]:
     routes: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
-
-    route_pattern = re.compile(
-        r"@(?:base_)?router\.(get|post|put|patch|delete)\(\s*[\"']([^\"']+)[\"']",
-        re.MULTILINE,
-    )
-    func_pattern = re.compile(r"(?:async\s+def|def)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
 
     for provider, prefix in PROVIDER_PREFIXES.items():
         for file_path in _iter_provider_files(provider):
             text = file_path.read_text()
-            for match in route_pattern.finditer(text):
+            positions, names = _index_function_defs(text)
+            for match in ROUTE_PATTERN.finditer(text):
                 method = match.group(1).upper()
                 subpath = match.group(2)
                 if subpath.startswith("/api/v1/"):
                     full_path = subpath
                 else:
                     full_path = f"{prefix}{subpath}"
-                func_match = func_pattern.search(text, match.end())
-                handler_name = func_match.group(1) if func_match else "unknown_handler"
+                handler_name = _resolve_handler_name(match.end(), positions, names)
                 handler_ref = f"{file_path.as_posix()}:{handler_name}"
                 routes[provider].append((method, full_path, handler_ref))
 
@@ -128,9 +154,7 @@ def main() -> int:
     if args.check:
         existing = output_path.read_text() if output_path.exists() else ""
         if existing != rendered:
-            print(
-                f"{output_path} is out-of-date. Regenerate with: python scripts/generate_provider_contract.py"
-            )
+            print(f"{output_path} is out-of-date. Regenerate with: python scripts/generate_provider_contract.py")
             return 1
         print(f"{output_path} is up-to-date.")
         return 0

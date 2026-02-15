@@ -1032,7 +1032,7 @@ class StreamMultiplexer:
         clients: set[str] = set()
         if data_type == "news":
             clients.update(conn.subscriptions.get_clients_for_symbol_view("*", data_type))
-        for sym in set(symbols):
+        for sym in dict.fromkeys(symbols):
             clients.update(conn.subscriptions.get_clients_for_symbol_view(sym, data_type))
         if not clients:
             return

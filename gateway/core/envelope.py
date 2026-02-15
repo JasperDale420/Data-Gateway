@@ -485,7 +485,7 @@ def fast_wrap_streaming_event(
     if sequence is not None:
         lineage["seq"] = sequence
 
-    return {
+    envelope = {
         "event_id": event_id,
         "provider": provider,
         "feed": feed,
@@ -500,3 +500,6 @@ def fast_wrap_streaming_event(
         "quality_flags": ["streaming"],
         "payload": event,
     }
+    if sequence is not None:
+        envelope["seq"] = sequence
+    return envelope

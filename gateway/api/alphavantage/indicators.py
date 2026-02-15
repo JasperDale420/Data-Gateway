@@ -54,6 +54,7 @@ async def get_technical_indicator(
                 interval,
                 time_period,
                 series_type,
+                max_points=max_points,
             ),
             cache_transform=lambda data: data,
             endpoint="indicator",

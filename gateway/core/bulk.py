@@ -428,6 +428,33 @@ class BulkJobManager:
             return jobs
         return [job for job in jobs if job.client_id == client_id]
 
+    async def list_jobs_page(
+        self,
+        client_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[BulkJob], int, bool, int | None]:
+        """List jobs with filtering and pagination.
+
+        Returns:
+            (page_jobs, total_matching, has_more, next_offset)
+        """
+        matching = list(self._jobs.values())
+        if client_id is not None:
+            matching = [j for j in matching if j.client_id == client_id]
+        if status is not None:
+            matching = [j for j in matching if j.status.value == status]
+
+        total = len(matching)
+        page_offset = max(0, offset)
+        page_limit = max(1, limit)
+        page = matching[page_offset : page_offset + page_limit]
+        consumed = page_offset + len(page)
+        has_more = consumed < total
+        next_offset = consumed if has_more else None
+        return page, total, has_more, next_offset
+
     async def cancel_job(self, job_id: str) -> bool:
         """Cancel a job if it's still running."""
         job = self._jobs.get(job_id)

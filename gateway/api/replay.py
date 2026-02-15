@@ -11,9 +11,10 @@ from typing import Any, Protocol
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from gateway.api.deps import get_authenticator, require_api_key
+from gateway.api.deps import get_authenticator, get_endpoint_rate_limiter, require_api_key
 from gateway.config import get_settings
 from gateway.core.auth import ClientAuthenticator
+from gateway.core.rate_limiter import EndpointRateLimitExceeded
 from gateway.core.replay import (
     ReplayConfig,
     ReplayState,
@@ -304,9 +305,18 @@ async def list_sessions(
     manager = get_replay_manager()
     sessions = await manager.list_sessions(client.id)
 
+    # Filter by state if provided
+    if state and isinstance(state, str):
+        sessions = [s for s in sessions if s.state.value == state]
+
+    total = len(sessions)
+    page = sessions[offset:] if limit is None else sessions[offset : offset + limit]
+    has_more = (offset + len(page)) < total
+    next_offset = (offset + len(page)) if has_more else None
+
     return {
-        "sessions": [s.to_dict() for s in sessions],
-        "count": len(sessions),
+        "sessions": [s.to_dict() for s in page],
+        "count": len(page),
         "total": total,
         "offset": offset,
         "limit": limit,

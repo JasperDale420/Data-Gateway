@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.73] - 2026-02-15
+
+### Fixed
+
+- **broadcast_shutdown**: Send shutdown messages via `send_json` per connection instead of delegating to `broadcast` which pre-serialized to bytes (`connections.py`)
+- **validate_symbols_array**: Route through `validate_symbol` instead of `_matches_any_symbol_pattern` for consistent validation (`security.py`)
+- **UW options alias**: Added `/options/{symbol}/iv-rank` alias route (`uw/options.py`)
+- **AlphaVantage max_points**: Pass `max_points` through to provider calls and cache keys in `indicators.py`, `forex.py`, and `crypto.py`
+- **Calendar degradation**: Added degradation tracking in `get_market_hours` endpoint (`calendar.py`)
+- **Fetcher guards**: Added `has_fetcher()` / `has_bars_fetcher()` guards in `bulk.py`, `calendar.py`, and `corporate.py` to prevent double-binding
+- **Pagination logic**: Fixed undefined `total`, `has_more`, `next_offset` in `bulk.py:list_jobs` and `replay.py:list_sessions`
+- **Envelope seq field**: Added `seq` as top-level field in `fast_wrap_streaming_event` output (`envelope.py`)
+- **News symbol ordering**: Use `dict.fromkeys()` for order-preserving deduplication in news message routing (`stream.py`)
+- **Replay state filter**: Guard `state` filter with `isinstance(state, str)` to handle direct function calls (`replay.py`)
+- **Missing script functions**: Added `_run_provider_smoke_check` to `live_provider_smoke.py` and `_index_function_defs`, `_resolve_handler_name`, `ROUTE_PATTERN` to `generate_provider_contract.py`
+- **Rate limiter imports**: Added missing `get_endpoint_rate_limiter` and `EndpointRateLimitExceeded` imports in `bulk.py` and `replay.py`
+
+### Added
+
+- **BulkJobManager.list_jobs_page**: Paginated job listing with `client_id` and `status` filtering (`core/bulk.py`)
+- **ReplaySessionManager.list_sessions_page**: Paginated session listing with `client_id` and `state` filtering (`core/replay.py`)
+- **trading-bot gateway client**: Created `trading-bot/src/core/gateway_client.py` with `DataGatewayClient` using `X-Gateway-Key` header authentication
+
 ## [0.5.72] - 2026-02-14
 
 ### Performance

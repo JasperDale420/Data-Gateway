@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from gateway.api.deps import get_registry, require_api_key, require_provider_rate_limit
+from gateway.api.deps import get_endpoint_rate_limiter, get_registry, require_api_key, require_provider_rate_limit
 from gateway.config import get_settings
 from gateway.core.bulk import (
     BulkAdjustmentFactorsRequest,
@@ -19,6 +19,7 @@ from gateway.core.bulk import (
     BulkOptionsRequest,
     get_bulk_manager,
 )
+from gateway.core.rate_limiter import EndpointRateLimitExceeded
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 from gateway.types.provider_protocols import (
@@ -213,7 +214,8 @@ async def create_bulk_bars_job(
             )
             return [bar.model_dump(mode="json") for bar in bars]
 
-        manager.set_bars_fetcher(_fetch_bars)
+        if not manager.has_bars_fetcher():
+            manager.set_bars_fetcher(_fetch_bars)
     elif not settings.allow_stub_data:
         raise HTTPException(status_code=503, detail="Alpaca provider not available")
 
@@ -462,9 +464,14 @@ async def list_jobs(
     if status:
         jobs = [j for j in jobs if j.status.value == status]
 
+    total = len(jobs)
+    page = jobs[offset:] if limit is None else jobs[offset : offset + limit]
+    has_more = (offset + len(page)) < total
+    next_offset = (offset + len(page)) if has_more else None
+
     return {
-        "jobs": [j.to_dict() for j in jobs],
-        "count": len(jobs),
+        "jobs": [j.to_dict() for j in page],
+        "count": len(page),
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -522,7 +529,8 @@ async def create_bulk_options_job(
             expiration_lte=expiration_lte,
         )
 
-    manager.set_options_fetcher(_fetch_chain)
+    if not manager.has_options_fetcher():
+        manager.set_options_fetcher(_fetch_chain)
 
     bulk_request = BulkOptionsRequest(
         underlyings=[u.upper() for u in request.underlyings],

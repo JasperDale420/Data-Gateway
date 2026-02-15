@@ -208,7 +208,16 @@ class ConnectionManager:
             "event": "shutdown",
             "timeout_seconds": timeout_seconds,
         }
-        return await self.broadcast(message)
+        count = 0
+        async with self._lock:
+            targets = [conn for conn in self._connections.values() if conn.authenticated]
+        for conn in targets:
+            try:
+                await conn.websocket.send_json(message)
+                count += 1
+            except Exception:
+                pass
+        return count
 
     async def close_all(self, code: int = 1001, reason: str = "Going Away") -> None:
         """Close all WebSocket connections (PRD §Graceful Shutdown step 5).
