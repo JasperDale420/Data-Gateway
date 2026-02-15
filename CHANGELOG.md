@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.75] - 2026-02-15
+
+### Removed
+
+- **Dead code: `redis_cache.py`**: Deleted deprecated compatibility shim with zero imports (`core/redis_cache.py`)
+- **Dead code: `multiplexer.py`**: Deleted legacy `SubscriptionManager` superseded by `StreamMultiplexer` (`core/multiplexer.py`)
+- **Dead code: `MessageDeduplicator`**: Removed unused class, singleton, and imports from `core/dedup.py`
+
+### Fixed
+
+- **TYPE_CHECKING import**: Corrected `StreamMultiplexer` import path in `deps.py` from `multiplexer` → `stream`
+
 ## [0.5.74] - 2026-02-15
 
 ### Fixed

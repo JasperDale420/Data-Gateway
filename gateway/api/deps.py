@@ -15,7 +15,7 @@ from gateway.core.registry import ProviderRegistry
 
 if TYPE_CHECKING:
     from gateway.core.data_sink import DataSinkRegistry
-    from gateway.core.multiplexer import StreamMultiplexer
+    from gateway.core.stream import StreamMultiplexer
 
 
 @lru_cache
