@@ -341,20 +341,26 @@ class CacheMiddleware:
         return self._cache
 
     def _cache_type(self, cache) -> str:
-        """Derive cache type for metrics labels."""
+        """Derive cache type for metrics labels (cached after first call)."""
+        if hasattr(self, "_cache_type_label"):
+            return self._cache_type_label
+
         try:
             from gateway.core.cache import HybridCache, InMemoryCache, RedisCache
 
             if isinstance(cache, HybridCache):
-                return "hybrid"
-            if isinstance(cache, RedisCache):
-                return "redis"
-            if isinstance(cache, InMemoryCache):
-                return "memory"
+                label = "hybrid"
+            elif isinstance(cache, RedisCache):
+                label = "redis"
+            elif isinstance(cache, InMemoryCache):
+                label = "memory"
+            else:
+                label = cache.__class__.__name__.lower()
         except Exception:
-            pass
+            label = cache.__class__.__name__.lower()
 
-        return cache.__class__.__name__.lower()
+        self._cache_type_label = label
+        return label
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":

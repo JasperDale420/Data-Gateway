@@ -9,10 +9,12 @@ import json
 import random
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
 import msgpack
+import orjson
 import structlog
 import websockets
 from websockets.client import WebSocketClientProtocol
@@ -384,6 +386,7 @@ class UpstreamConnection:
         self._running = False
         self._receive_task: asyncio.Task | None = None
         self._subscriptions = SubscriptionManager()
+        self._connected_event = asyncio.Event()
 
     @property
     def is_connected(self) -> bool:
@@ -579,6 +582,7 @@ class UpstreamConnection:
         ws = self._ws
         self._ws = None
         self._authenticated = False
+        self._connected_event.clear()
 
         try:
             await asyncio.wait_for(
@@ -609,6 +613,7 @@ class UpstreamConnection:
             try:
                 await self.connect()
                 await self.authenticate()
+                self._connected_event.set()
 
                 # Resubscribe to all symbols
                 bars, quotes, trades, news = self._subscriptions.get_all_subscriptions()
@@ -889,14 +894,13 @@ class StreamMultiplexer:
         self._tasks.append(task)
 
         # Wait briefly for connection to establish
-        for _ in range(50):  # 5 second timeout
-            await asyncio.sleep(0.1)
-            if conn.is_connected:
-                logger.info("lazy_connect_established", stream=stream_type.value)
-                return True
-
-        logger.warning("lazy_connect_timeout", stream=stream_type.value)
-        return False
+        try:
+            await asyncio.wait_for(conn._connected_event.wait(), timeout=5.0)
+            logger.info("lazy_connect_established", stream=stream_type.value)
+            return True
+        except TimeoutError:
+            logger.warning("lazy_connect_timeout", stream=stream_type.value)
+            return False
 
     async def client_subscribe(
         self,
@@ -1086,8 +1090,6 @@ class StreamMultiplexer:
         # 1. Skip per-message UUID/BLAKE2b hash (use fast random ID)
         # 2. Skip instrument inference (we know the stream type)
         # 3. Skip Pydantic validation (assumes upstream structure is somewhat trusted/consistent)
-        from datetime import UTC, datetime
-
         ts_ingest = datetime.now(UTC)
         seq = self._seq_tracker.next_seq(symbol_for_log, data_type)
 
@@ -1103,7 +1105,7 @@ class StreamMultiplexer:
         # Serialize once if we are going to broadcast
         # envelope is a dict here, we can serialize it to string once for efficiency
         # This matches what we did for RedisSink optimization
-        envelope_json = json.dumps(envelope)
+        envelope_json = orjson.dumps(envelope)
 
         if self._on_broadcast:
             # Efficient O(1) loop-level broadcast via ConnectionManager

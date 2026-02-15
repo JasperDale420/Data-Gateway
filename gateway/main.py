@@ -284,7 +284,7 @@ async def lifespan(app: FastAPI):
         try:
             while True:
                 update_uptime()
-                await asyncio.sleep(1)
+                await asyncio.sleep(5)
         except asyncio.CancelledError:
             pass
 

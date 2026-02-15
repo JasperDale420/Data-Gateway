@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.74] - 2026-02-15
+
+### Fixed
+
+- **CLI key rotation**: `cmd_rotate_key` now appends old key hash to `old_key_hashes` before overwriting (`cli.py`)
+- **Stream lazy connect**: Replace busy-poll loop with `asyncio.Event` in `_ensure_connected` (`stream.py`)
+- **Hot-path import**: Move `datetime` import from per-message scope to module level (`stream.py`)
+
+### Performance
+
+- **Stream fanout serialization**: Switch `json.dumps` → `orjson.dumps` for ~5-10x faster envelope serialization (`stream.py`)
+- **Uptime loop interval**: Reduce polling from 1s → 5s since Prometheus scrapes at 15-30s intervals (`main.py`)
+- **Middleware cache type**: Cache `_cache_type` label to avoid repeated import + isinstance checks per request (`middleware.py`)
+
 ## [0.5.73] - 2026-02-15
 
 ### Fixed
