@@ -1,5 +1,6 @@
 """In-memory cache with TTL support."""
 
+import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -236,8 +237,6 @@ class RedisCache:
             assert self._redis is not None
             value = await self._redis.get(f"{self.KEY_PREFIX}{key}")
             if value is not None:
-                import json
-
                 self._stats.hits += 1
                 return json.loads(value)
             self._stats.misses += 1
@@ -252,7 +251,6 @@ class RedisCache:
         try:
             await self._ensure_connected()
             assert self._redis is not None
-            import json
 
             serialized = json.dumps(value, default=str)
             await self._redis.setex(
@@ -275,7 +273,6 @@ class RedisCache:
         try:
             await self._ensure_connected()
             assert self._redis is not None
-            import json
 
             prefixed = [f"{self.KEY_PREFIX}{k}" for k in keys]
             values = await self._redis.mget(prefixed)
@@ -311,7 +308,6 @@ class RedisCache:
         try:
             await self._ensure_connected()
             assert self._redis is not None
-            import json
 
             effective_ttl = ttl or self.default_ttl
             pipe = self._redis.pipeline(transaction=False)

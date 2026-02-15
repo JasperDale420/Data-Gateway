@@ -6,9 +6,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
-import json
 import logging
 from contextlib import asynccontextmanager, suppress
+
+import orjson
 
 # Use uvloop for better asyncio performance
 try:
@@ -138,7 +139,7 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
         # Optimization: Pre-serialize to JSON string to avoid re-serialization in Redis sink
         # envelope is already a dict, so we serialize it once here.
         try:
-            envelope_json = json.dumps(envelope, default=str)
+            envelope_json = orjson.dumps(envelope, default=str).decode()
             _schedule_stream_sink_publish(sink_registry, envelope_json)
         except Exception:
             # Fallback to dict if serialization fails (unlikely)

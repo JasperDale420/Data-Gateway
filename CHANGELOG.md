@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.76] - 2026-02-15
+
+### Fixed
+
+- **Heartbeat counter bug** (`websocket.py`): `missed_heartbeats` now resets to 0 on successful send; previously intermittent failures accumulated until false disconnect
+
+### Changed
+
+- **Stream dispatch serialization** (`main.py`): Switch `json.dumps` → `orjson.dumps` in Heber sink dispatch hot path for consistency with fanout
+- **Upstream encode** (`stream.py`): Switch `json.dumps` → `orjson.dumps` in `_encode_message` for consistency
+- **Redis cache imports** (`cache.py`): Move 4 inline `import json` statements to module level
+- **WebSocket message loop** (`websocket.py`): Remove redundant `get_settings()` calls per received message — use pre-resolved `max_bytes`
+
 ## [0.5.75] - 2026-02-15
 
 ### Removed

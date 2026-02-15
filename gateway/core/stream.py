@@ -439,7 +439,7 @@ class UpstreamConnection:
         """Encode a message to either JSON or MessagePack format."""
         if self._is_msgpack_stream():
             return msgpack.packb(data)
-        return json.dumps(data)
+        return orjson.dumps(data).decode()
 
     async def authenticate(self) -> None:
         """Send authentication message and wait for response.
