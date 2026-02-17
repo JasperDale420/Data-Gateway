@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.78] - 2026-02-17
+
+### Fixed
+
+- **Blocking health_check** (`yfinance.py`): `health_check` called `yf.Ticker().info` synchronously on the event loop; wrapped in `asyncio.to_thread` to prevent blocking the async server
+
+### Removed
+
+- **Dead constant** (`yfinance.py`): Remove unused `YFINANCE_CACHE_TTL` — caching is handled at the API route layer (`gateway/api/yf.py`)
+
+### Changed
+
+- **Docstring correction** (`yfinance.py`): Clarify that response caching is handled at the route layer, not the provider
+
 ## [0.5.77] - 2026-02-15
 
 ### Changed

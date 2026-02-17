@@ -12,15 +12,13 @@ from gateway.schemas import NormalizedBar
 
 logger = structlog.get_logger()
 
-# Cache TTL for yfinance data (scraper-based, minimize load)
-YFINANCE_CACHE_TTL = 300
-
 
 class YFinanceProvider(DataProvider):
     """yfinance-based provider for company fundamentals and financials.
 
-    Note: yfinance is a scraper-based library. Responses should be cached
-    for 300s to minimize scraping load per PRD specification.
+    yfinance is a scraper-based library. All blocking SDK calls are
+    offloaded via ``asyncio.to_thread``. Response caching (300s TTL)
+    is handled at the API route layer (``gateway/api/yf.py``).
     """
 
     def __init__(self):
@@ -75,9 +73,12 @@ class YFinanceProvider(DataProvider):
         try:
             import yfinance as yf
 
+            def _probe():
+                ticker = yf.Ticker("AAPL")
+                return ticker.info.get("symbol")
+
             start = datetime.now(UTC)
-            ticker = yf.Ticker("AAPL")
-            _ = ticker.info.get("symbol")
+            await asyncio.to_thread(_probe)
             latency = (datetime.now(UTC) - start).total_seconds() * 1000
 
             return HealthStatus(
@@ -132,12 +133,8 @@ class YFinanceProvider(DataProvider):
         def _fetch():
             ticker = yf.Ticker(symbol.upper())
             return {
-                "income_statement": (
-                    ticker.income_stmt.to_dict() if ticker.income_stmt is not None else {}
-                ),
-                "balance_sheet": (
-                    ticker.balance_sheet.to_dict() if ticker.balance_sheet is not None else {}
-                ),
+                "income_statement": (ticker.income_stmt.to_dict() if ticker.income_stmt is not None else {}),
+                "balance_sheet": (ticker.balance_sheet.to_dict() if ticker.balance_sheet is not None else {}),
                 "cash_flow": ticker.cashflow.to_dict() if ticker.cashflow is not None else {},
             }
 
@@ -153,9 +150,7 @@ class YFinanceProvider(DataProvider):
             return {
                 "earnings_history": earnings.to_dict() if earnings is not None else {},
                 "quarterly_earnings": (
-                    ticker.quarterly_earnings.to_dict()
-                    if ticker.quarterly_earnings is not None
-                    else {}
+                    ticker.quarterly_earnings.to_dict() if ticker.quarterly_earnings is not None else {}
                 ),
             }
 
@@ -202,9 +197,7 @@ class YFinanceProvider(DataProvider):
         for row in df.itertuples(index=True):
             timestamp_value = row.Index
             timestamp = (
-                timestamp_value.to_pydatetime()
-                if hasattr(timestamp_value, "to_pydatetime")
-                else timestamp_value
+                timestamp_value.to_pydatetime() if hasattr(timestamp_value, "to_pydatetime") else timestamp_value
             )
             append(
                 NormalizedBar(
@@ -273,9 +266,7 @@ class YFinanceProvider(DataProvider):
         def _fetch():
             ticker = yf.Ticker(symbol.upper())
             return {
-                "major_holders": (
-                    ticker.major_holders.to_dict() if ticker.major_holders is not None else {}
-                ),
+                "major_holders": (ticker.major_holders.to_dict() if ticker.major_holders is not None else {}),
                 "institutional_holders": (
                     ticker.institutional_holders.to_dict(orient="records")
                     if ticker.institutional_holders is not None
@@ -318,9 +309,7 @@ class YFinanceProvider(DataProvider):
             divs = ticker.dividends
             if divs is None or divs.empty:
                 return []
-            return [
-                {"date": str(date.date()), "dividend": float(val)} for date, val in divs.items()
-            ]
+            return [{"date": str(date.date()), "dividend": float(val)} for date, val in divs.items()]
 
         return await asyncio.to_thread(_fetch)
 
