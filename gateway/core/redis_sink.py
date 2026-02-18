@@ -82,7 +82,7 @@ class RedisStreamsSink(DataSink):
         logger.warning(
             "redis_sink_connection_reset",
             operation=operation,
-            error=str(error),
+            error=str(error) or type(error).__name__,
         )
 
     async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
@@ -136,11 +136,16 @@ class RedisStreamsSink(DataSink):
             record_sink_publish(sink=self.name, topic=topic, success=False)
             return False
 
+    BATCH_CHUNK_SIZE = 5_000
+
     async def publish_batch(
         self,
         messages: list[tuple[str, dict[str, Any] | str | bytes]],
     ) -> int:
-        """Publish multiple messages via a Redis pipeline (single round trip).
+        """Publish multiple messages via chunked Redis pipelines.
+
+        Large batches are split into chunks of BATCH_CHUNK_SIZE to prevent
+        pipeline timeouts. Each chunk executes as a separate pipeline call.
 
         Args:
             messages: List of (topic, data) tuples to publish.
@@ -153,9 +158,37 @@ class RedisStreamsSink(DataSink):
 
         await self._ensure_connected()
 
+        total_published = 0
+
+        for chunk_start in range(0, len(messages), self.BATCH_CHUNK_SIZE):
+            chunk = messages[chunk_start : chunk_start + self.BATCH_CHUNK_SIZE]
+            published = await self._publish_chunk(chunk)
+            total_published += published
+
+            # If a chunk fails completely (connection reset), stop sending
+            if published == 0 and len(chunk) > 0:
+                remaining = len(messages) - chunk_start - len(chunk)
+                if remaining > 0:
+                    logger.warning(
+                        "redis_sink_batch_aborted",
+                        published_so_far=total_published,
+                        remaining=remaining,
+                    )
+                    # Record remaining messages as failures
+                    for topic, _ in messages[chunk_start + len(chunk) :]:
+                        record_sink_publish(sink=self.name, topic=topic, success=False)
+                break
+
+        return total_published
+
+    async def _publish_chunk(
+        self,
+        chunk: list[tuple[str, dict[str, Any] | str | bytes]],
+    ) -> int:
+        """Execute a single pipeline chunk. Returns number published."""
         try:
             pipe = self._redis.pipeline(transaction=False)
-            for topic, data in messages:
+            for topic, data in chunk:
                 if isinstance(data, str | bytes):
                     payload = {"data": data}
                 else:
@@ -167,14 +200,13 @@ class RedisStreamsSink(DataSink):
                     approximate=self._approximate,
                 )
 
-            results = await asyncio.wait_for(
-                pipe.execute(),
-                timeout=self._operation_timeout_seconds * 2,
-            )
+            # Dynamic timeout: base + proportional to chunk size
+            timeout = self._operation_timeout_seconds * 2 + (len(chunk) / 1000) * 0.25
+            results = await asyncio.wait_for(pipe.execute(), timeout=timeout)
 
             published = 0
             for i, result in enumerate(results):
-                topic = messages[i][0]
+                topic = chunk[i][0]
                 if isinstance(result, Exception):
                     logger.warning(
                         "redis_sink_batch_item_error",
@@ -187,20 +219,21 @@ class RedisStreamsSink(DataSink):
                     record_sink_publish(sink=self.name, topic=topic, success=True)
 
             logger.debug(
-                "redis_sink_batch_published",
-                total=len(messages),
+                "redis_sink_chunk_published",
+                chunk_size=len(chunk),
                 published=published,
             )
             return published
 
         except Exception as e:
+            error_msg = str(e) or type(e).__name__
             self._reset_connection(operation="publish_batch", error=e)
             logger.warning(
                 "redis_sink_batch_error",
-                count=len(messages),
-                error=str(e),
+                count=len(chunk),
+                error=error_msg,
             )
-            for topic, _ in messages:
+            for topic, _ in chunk:
                 record_sink_publish(sink=self.name, topic=topic, success=False)
             return 0
 

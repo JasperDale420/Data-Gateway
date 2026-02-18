@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.80] - 2026-02-17
+
+### Fixed
+
+- **Redis sink batch timeouts** (`redis_sink.py`): Large backfills (874K+ messages) sent entire batch in a single pipeline with 2s timeout, causing perpetual `redis_sink_connection_reset`. Now chunks into 5,000-message pipelines with dynamic timeout scaling
+- **Empty error strings** (`redis_sink.py`): `asyncio.TimeoutError` has empty `str()` — error logs now fall back to exception type name
+
+## [0.5.79] - 2026-02-17
+
+### Fixed
+
+- **Greek exposure schema alignment**: Updated `NormalizedGreekExposure` to use per-call/per-put split fields (`call_gamma`, `put_gamma`, `call_delta`, `put_delta`, `call_vanna`, `put_vanna`, `call_charm`, `put_charm`) matching the UW API response. Added `dte` field for expiry-level data. Updated all 3 provider methods (`get_greek_exposure`, `get_greek_exposure_by_strike`, `get_greek_exposure_by_expiry`) and `FEED_UNIQUE_FIELDS` in `envelope.py`.
+
 ## [0.5.78] - 2026-02-17
 
 ### Fixed
