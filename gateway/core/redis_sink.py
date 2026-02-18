@@ -82,6 +82,15 @@ class RedisStreamsSink(DataSink):
                 logger.error("redis_sink_import_error", msg="redis package not installed")
                 raise
 
+    @staticmethod
+    async def _close_stale_client(client: Any) -> None:
+        """Close a stale Redis client to release pooled connections."""
+        try:
+            await client.close()
+            logger.debug("redis_sink_stale_client_closed")
+        except Exception:
+            pass
+
     def _create_client(self) -> Any:
         import redis.asyncio as aioredis
 
@@ -95,9 +104,19 @@ class RedisStreamsSink(DataSink):
         return aioredis.Redis(connection_pool=pool)
 
     def _reset_connection(self, operation: str, error: Exception) -> None:
-        """Force reconnect on the next call after a transport/protocol failure."""
+        """Force reconnect on the next call after a transport/protocol failure.
+
+        Closes the old client pool to prevent connection leaks before
+        discarding the reference.
+        """
+        old_client = self._redis
         self._redis = None
         self._connected = False
+        if old_client is not None:
+            try:
+                asyncio.get_event_loop().create_task(self._close_stale_client(old_client))
+            except RuntimeError:
+                pass
         logger.warning(
             "redis_sink_connection_reset",
             operation=operation,
