@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+### Changed
+
+- **Backfill symbol concurrency** (`backfill.py`): Increased `DEFAULT_SYMBOL_CONCURRENCY` from 5 → 10, allowing more parallel symbol fetching within a single backfill job
+
 ## [0.5.82] - 2026-02-18
 
 ### Changed

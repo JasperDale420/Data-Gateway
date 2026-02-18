@@ -31,7 +31,7 @@ PROVIDER_CHUNK_DELAY_MS: dict[str, int] = {
 DEFAULT_CHUNK_DELAY_MS = 300
 
 # Max concurrent symbol fetches within a single backfill job
-DEFAULT_SYMBOL_CONCURRENCY = 5
+DEFAULT_SYMBOL_CONCURRENCY = 10
 
 # Feed weight classification for concurrency scheduling
 # Lightweight feeds complete quickly and can run many in parallel.
