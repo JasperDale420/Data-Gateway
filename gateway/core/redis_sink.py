@@ -57,6 +57,7 @@ class RedisStreamsSink(DataSink):
         self._pool_size = max(1, min(32, int(pool_size)))
         self._redis: Any = None
         self._connected = False
+        self._connect_lock = asyncio.Lock()
 
     @property
     def name(self) -> str:
@@ -68,19 +69,23 @@ class RedisStreamsSink(DataSink):
 
     async def _ensure_connected(self) -> None:
         """Lazy connection to Redis with connection pool."""
-        if self._redis is None:
-            try:
-                self._redis = self._create_client()
-                self._connected = True
-                logger.info(
-                    "redis_sink_connected",
-                    url=self._redis_url[:20] + "...",
-                    pool_size=self._pool_size,
-                    timeout_seconds=self._operation_timeout_seconds,
-                )
-            except ImportError:
-                logger.error("redis_sink_import_error", msg="redis package not installed")
-                raise
+        if self._redis is not None:
+            return
+
+        async with self._connect_lock:
+            if self._redis is None:
+                try:
+                    self._redis = self._create_client()
+                    self._connected = True
+                    logger.info(
+                        "redis_sink_connected",
+                        url=self._redis_url[:20] + "...",
+                        pool_size=self._pool_size,
+                        timeout_seconds=self._operation_timeout_seconds,
+                    )
+                except ImportError:
+                    logger.error("redis_sink_import_error", msg="redis package not installed")
+                    raise
 
     @staticmethod
     async def _close_stale_client(client: Any) -> None:

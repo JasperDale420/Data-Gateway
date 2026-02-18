@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **Redis sink connection pool leak** (`redis_sink.py`): `_reset_connection()` now closes the old Redis client pool before discarding it via a new `_close_stale_client()` background task. Previously, each reconnect created a new 8-connection pool without closing the old one, leaking connections until Redis hit `maxclients` and rejected new connections — triggering a circuit breaker cascade of `data_sink_publish_failed` errors and `data_sink_batch_circuit_open` warnings (5,871 leaked connections observed over 2 hours)
+- **Redis sink connection pool leak**:
+  - `_reset_connection()` now closes the old Redis client pool before discarding it via a new `_close_stale_client()` background task.
+  - Added `asyncio.Lock` to `_ensure_connected` to prevent race conditions where multiple connection pools were created during concurrent reconnects (the primary cause of the 5,871 connection leak).
 - **UW darkpool SDK settlement enum mismatch** (`vendor/unusualwhales_sdk`): Added `CASH = "cash"` to `SingleTradeSettlement` enum — the UW API returns `"cash"` for some darkpool trades but the SDK only defined `"cash_settlement"`, causing recurring `uw_darkpool_recent_sdk_failed` warnings and SDK-to-raw-HTTP fallbacks
 
 ### Changed
