@@ -328,6 +328,8 @@ async def lifespan(app: FastAPI):
         redis_sink = RedisStreamsSink(
             redis_url=settings.data_sink_redis_url,
             max_len=settings.data_sink_max_stream_len,
+            operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
+            pool_size=settings.data_sink_redis_pool_size,
         )
         sink_registry.register(redis_sink)
 
@@ -347,7 +349,10 @@ async def lifespan(app: FastAPI):
     # Configure backfill engine with provider and sink registries
     from gateway.core.backfill import get_backfill_engine
 
-    backfill_engine = get_backfill_engine()
+    backfill_engine = get_backfill_engine(
+        lightweight_concurrency=settings.backfill_lightweight_concurrency,
+        heavyweight_concurrency=settings.backfill_heavyweight_concurrency,
+    )
     backfill_engine.configure(
         provider_registry=registry,
         sink_registry=sink_registry,

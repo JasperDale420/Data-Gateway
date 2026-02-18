@@ -94,8 +94,14 @@ class Settings(BaseSettings):
     data_sink_enabled: bool = False
     data_sink_redis_url: str = Field(default="", alias="GATEWAY_DATA_SINK_REDIS_URL")
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
+    data_sink_operation_timeout_seconds: float = Field(default=5.0, ge=0.5)
+    data_sink_redis_pool_size: int = Field(default=8, ge=1, le=32)
     data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
     data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
+
+    # Backfill concurrency (per-provider, split by feed weight)
+    backfill_lightweight_concurrency: int = Field(default=5, ge=1)
+    backfill_heavyweight_concurrency: int = Field(default=2, ge=1)
 
     # Bulk Jobs
     bulk_results_max_in_memory: int = Field(default=25_000, ge=100)

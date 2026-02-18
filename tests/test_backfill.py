@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gateway.core.backfill import (
+    HEAVYWEIGHT_FEEDS,
     BackfillEngine,
     BackfillJob,
     BackfillRequest,
@@ -444,3 +445,229 @@ def test_get_backfill_engine_returns_singleton() -> None:
         e1 = get_backfill_engine()
         e2 = get_backfill_engine()
         assert e1 is e2
+
+
+# ── Feed Weight Classification Tests ──────────────────────────────────
+
+
+def test_feed_weight_classification() -> None:
+    """Trades-like feeds should be classified as heavyweight."""
+    assert "trades" in HEAVYWEIGHT_FEEDS
+    assert "option_trades" in HEAVYWEIGHT_FEEDS
+    assert "crypto_trades" in HEAVYWEIGHT_FEEDS
+    # Lightweight feeds should not be in HEAVYWEIGHT_FEEDS
+    assert "bars" not in HEAVYWEIGHT_FEEDS
+    assert "quotes" not in HEAVYWEIGHT_FEEDS
+    assert "news" not in HEAVYWEIGHT_FEEDS
+
+
+def test_feed_weighted_semaphores() -> None:
+    """Engine should create separate semaphores for lightweight and heavyweight feeds."""
+    engine = BackfillEngine(
+        lightweight_concurrency=5,
+        heavyweight_concurrency=2,
+    )
+    # Get semaphores for the same provider, different feed weights
+    bars_sem = engine._get_semaphore("alpaca", "bars")
+    trades_sem = engine._get_semaphore("alpaca", "trades")
+
+    # They should be different semaphore objects
+    assert bars_sem is not trades_sem
+
+    # Same weight class should return the same semaphore
+    bars_sem2 = engine._get_semaphore("alpaca", "quotes")
+    assert bars_sem is bars_sem2
+
+    trades_sem2 = engine._get_semaphore("alpaca", "option_trades")
+    assert trades_sem is trades_sem2
+
+
+@pytest.mark.asyncio
+async def test_lightweight_not_blocked_by_heavyweight() -> None:
+    """A running heavyweight job should not block lightweight jobs from starting."""
+    engine = BackfillEngine(
+        lightweight_concurrency=3,
+        heavyweight_concurrency=1,
+    )
+    provider_registry = MagicMock()
+    provider_registry.get.return_value = MagicMock()
+    sink_registry = MagicMock()
+    sink_registry.publish_all = AsyncMock()
+    engine.configure(provider_registry=provider_registry, sink_registry=sink_registry)
+
+    # Acquire the heavyweight semaphore to simulate a running trades job
+    heavyweight_sem = engine._get_semaphore("alpaca", "trades")
+    await heavyweight_sem.acquire()
+
+    # Lightweight semaphore should still be available
+    lightweight_sem = engine._get_semaphore("alpaca", "bars")
+    acquired = lightweight_sem._value > 0
+    assert acquired, "Lightweight semaphore should not be blocked by heavyweight jobs"
+
+    # Release to clean up
+    heavyweight_sem.release()
+
+
+# ── cancel_all / flush / expiry ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_cancels_running_jobs() -> None:
+    engine = _make_engine()
+    req = BackfillRequest(
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
+    )
+    job1 = engine.submit(req)
+    job2 = engine.submit(req)
+
+    cancelled = engine.cancel_all()
+    assert cancelled == 2
+    assert job1.status == BackfillStatus.CANCELLED
+    assert job2.status == BackfillStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_flush_purges_job_history() -> None:
+    engine = _make_engine()
+    req = BackfillRequest(
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
+    )
+    engine.submit(req)
+    engine.submit(req)
+    assert len(engine.list_jobs()) == 2
+
+    purged = engine.flush()
+    assert purged == 2
+    assert len(engine.list_jobs()) == 0
+
+
+def test_stale_job_auto_expiry() -> None:
+    engine = _make_engine()
+    req = BackfillRequest(
+        provider="alpaca",
+        feed="bars",
+        symbols=["AAPL"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
+    )
+    # Manually add a stale completed job (completed 2 hours ago)
+    from gateway.core.backfill import JOB_EXPIRY_SECONDS
+
+    job = BackfillJob(request=req)
+    job.status = BackfillStatus.COMPLETED
+    job.completed_at = datetime.now(UTC) - timedelta(seconds=JOB_EXPIRY_SECONDS + 60)
+    engine._jobs[job.job_id] = job
+
+    # Add a fresh completed job (should NOT be pruned)
+    fresh_job = BackfillJob(request=req)
+    fresh_job.status = BackfillStatus.COMPLETED
+    fresh_job.completed_at = datetime.now(UTC)
+    engine._jobs[fresh_job.job_id] = fresh_job
+
+    assert len(engine.list_jobs()) == 2
+
+    # Trigger prune via submit
+    engine._prune_stale_jobs()
+
+    assert len(engine.list_jobs()) == 1
+    assert engine.get_job(fresh_job.job_id) is not None
+    assert engine.get_job(job.job_id) is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_symbol_processing() -> None:
+    """Symbols within a job should be processed concurrently (up to semaphore limit)."""
+    engine = BackfillEngine(symbol_concurrency=3)
+    provider_registry = MagicMock()
+    provider_registry.get.return_value = MagicMock()
+    sink_registry = MagicMock()
+    sink_registry.publish_all = AsyncMock()
+    engine.configure(provider_registry=provider_registry, sink_registry=sink_registry)
+
+    # Track concurrent execution
+    active_count = 0
+    max_concurrent = 0
+    lock = asyncio.Lock()
+
+    async def tracking_dispatch(*args, **kwargs):
+        nonlocal active_count, max_concurrent
+        async with lock:
+            active_count += 1
+            max_concurrent = max(max_concurrent, active_count)
+        await asyncio.sleep(0.1)
+        async with lock:
+            active_count -= 1
+        return [{"data": "value"}]
+
+    with (
+        patch.dict(
+            "gateway.core.backfill.BACKFILL_DISPATCH",
+            {("alpaca", "bars"): tracking_dispatch},
+        ),
+        patch(
+            "gateway.core.backfill.get_rate_limiter",
+            return_value=MagicMock(acquire=AsyncMock()),
+        ),
+        patch(
+            "gateway.core.backfill.wrap_event",
+            return_value={"event_id": "test", "payload": {}},
+        ),
+    ):
+        req = BackfillRequest(
+            provider="alpaca",
+            feed="bars",
+            symbols=["AAPL", "MSFT", "GOOGL", "AMZN", "META"],
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 1),
+        )
+        job = engine.submit(req)
+        await asyncio.sleep(1.5)
+
+        assert job.status == BackfillStatus.COMPLETED
+        # With concurrency=3, we should see at most 3 symbols running at once
+        assert max_concurrent <= 3
+        # But more than 1 (proving concurrency works)
+        assert max_concurrent > 1
+
+
+# ── New API Endpoint Tests ─────────────────────────────────────────────
+
+
+def test_backfill_api_cancel_all(client, test_api_key) -> None:
+    mock_engine = MagicMock()
+    mock_engine.cancel_all.return_value = 3
+
+    with patch("gateway.api.backfill.get_backfill_engine", return_value=mock_engine):
+        response = client.post(
+            "/api/v1/backfill/cancel-all",
+            headers={"X-Gateway-Key": test_api_key},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["meta"]["cancelled"] == 3
+
+
+def test_backfill_api_flush(client, test_api_key) -> None:
+    mock_engine = MagicMock()
+    mock_engine.flush.return_value = 5
+
+    with patch("gateway.api.backfill.get_backfill_engine", return_value=mock_engine):
+        response = client.delete(
+            "/api/v1/backfill",
+            headers={"X-Gateway-Key": test_api_key},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["meta"]["purged"] == 5

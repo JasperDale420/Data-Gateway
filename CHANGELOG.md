@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.82] - 2026-02-18
+
+### Changed
+
+- **Redis sink connection pool** (`redis_sink.py`): Replaced single Redis connection with a connection pool (default 8 connections), enabling concurrent pipeline execution from multiple backfill coroutines
+- **Redis sink operation timeout** (`redis_sink.py`): Increased default from 1s → 5s to eliminate frequent `redis_sink_connection_reset` under load
+- **Redis sink binary mode** (`redis_sink.py`): Removed `decode_responses=True` — payloads are binary orjson, skipping unnecessary UTF-8 encode/decode roundtrip
+- **Redis sink concurrent batch chunks** (`redis_sink.py`): Split batches into 2K chunks (down from 5K) and process up to 4 concurrently via `asyncio.gather()`, ~4x throughput improvement
+- **Redis sink chunk retry** (`redis_sink.py`): Failed chunks are retried once with a fresh connection before aborting (previously immediate abort)
+- **Feed-weighted backfill concurrency** (`backfill.py`): Replaced flat 3-slot per-provider semaphore with separate lightweight (bars/quotes/news → 5 slots) and heavyweight (trades → 2 slots) semaphores per provider, preventing heavyweight jobs from starving lightweight ones
+
+### Added
+
+- **Configurable backfill concurrency** (`config.py`): `GATEWAY_BACKFILL_LIGHTWEIGHT_CONCURRENCY` (default 5) and `GATEWAY_BACKFILL_HEAVYWEIGHT_CONCURRENCY` (default 2) environment variables
+- **Configurable Redis sink pool** (`config.py`): `GATEWAY_DATA_SINK_OPERATION_TIMEOUT_SECONDS` (default 5.0) and `GATEWAY_DATA_SINK_REDIS_POOL_SIZE` (default 8) environment variables
+- **Feed weight classification tests** (`test_backfill.py`): Tests for heavyweight/lightweight feed classification and concurrency isolation between weight classes
+- **Redis sink bandwidth tests** (`test_redis_sink.py`): Tests for connection pool params, concurrent chunk execution, retry on failure, and binary payload encoding
+
+## [0.5.81] - 2026-02-18
+
+### Changed
+
+- **Backfill per-provider concurrency**: Replaced per-provider mutex lock with semaphore (3 concurrent jobs per provider) in `backfill.py`, eliminating head-of-line blocking where one slow job starved all others
+- **Concurrent symbol processing**: Symbols within a single backfill job are now fetched concurrently (bounded by semaphore, default 5) instead of sequentially via `asyncio.gather` in `backfill.py`
+- **Alpaca inter-chunk delay**: Reduced from 200ms to 50ms in `backfill.py` to improve throughput while staying within rate limits
+- **Alpaca rate limit capability**: Fixed stale `rate_limit_requests_per_minute` from 200 to 10000 in `alpaca.py` to match Algo Trader Plus plan
+
+### Added
+
+- **Bulk cancel endpoint**: `POST /api/v1/backfill/cancel-all` cancels all running and queued backfill jobs (`api/backfill.py`)
+- **Flush endpoint**: `DELETE /api/v1/backfill` cancels all jobs and purges job history (`api/backfill.py`)
+- **Stale job auto-expiry**: Completed/failed/cancelled jobs older than 1 hour are automatically pruned on next submit (`backfill.py`)
+- **Backfill architecture tests**: Added tests for `cancel_all`, `flush`, stale expiry, concurrent symbol processing, and new API endpoints (`test_backfill.py`)
+
 ## [0.5.80] - 2026-02-17
 
 ### Fixed

@@ -25,10 +25,25 @@ DEFAULT_CHUNK_DAYS = 1
 
 # Per-provider delay between chunks to avoid API throttling
 PROVIDER_CHUNK_DELAY_MS: dict[str, int] = {
-    "alpaca": 200,
+    "alpaca": 50,
     "unusual_whales": 500,
 }
 DEFAULT_CHUNK_DELAY_MS = 300
+
+# Max concurrent symbol fetches within a single backfill job
+DEFAULT_SYMBOL_CONCURRENCY = 5
+
+# Feed weight classification for concurrency scheduling
+# Lightweight feeds complete quickly and can run many in parallel.
+# Heavyweight feeds transfer large volumes and need limited concurrency.
+HEAVYWEIGHT_FEEDS = frozenset({"trades", "option_trades", "crypto_trades"})
+
+# Default concurrency per weight class per provider
+DEFAULT_LIGHTWEIGHT_CONCURRENCY = 5
+DEFAULT_HEAVYWEIGHT_CONCURRENCY = 2
+
+# Auto-expire completed/failed/cancelled jobs after this duration (seconds)
+JOB_EXPIRY_SECONDS = 3600
 
 
 class BackfillStatus(str, Enum):
@@ -227,17 +242,27 @@ BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
 class BackfillEngine:
     """Manages backfill jobs: queuing, execution, rate limiting, progress tracking.
 
-    Enforces one running job per provider to prevent API bans.
+    Uses feed-weighted concurrency: lightweight feeds (bars, quotes, news) get
+    higher concurrent slots than heavyweight feeds (trades) to prevent starvation.
     Jobs for different providers can run concurrently.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        symbol_concurrency: int = DEFAULT_SYMBOL_CONCURRENCY,
+        lightweight_concurrency: int = DEFAULT_LIGHTWEIGHT_CONCURRENCY,
+        heavyweight_concurrency: int = DEFAULT_HEAVYWEIGHT_CONCURRENCY,
+    ) -> None:
         self._jobs: dict[str, BackfillJob] = {}
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
-        # Lock per provider: at most one backfill job runs per provider
-        self._provider_locks: dict[str, asyncio.Lock] = {}
+        # Separate semaphores per provider per weight class
+        self._lightweight_semaphores: dict[str, asyncio.Semaphore] = {}
+        self._heavyweight_semaphores: dict[str, asyncio.Semaphore] = {}
         self._sink_registry: Any = None
         self._provider_registry: Any = None
+        self._symbol_concurrency = symbol_concurrency
+        self._lightweight_concurrency = max(1, lightweight_concurrency)
+        self._heavyweight_concurrency = max(1, heavyweight_concurrency)
 
     def configure(
         self,
@@ -248,10 +273,15 @@ class BackfillEngine:
         self._provider_registry = provider_registry
         self._sink_registry = sink_registry
 
-    def _get_lock(self, provider: str) -> asyncio.Lock:
-        if provider not in self._provider_locks:
-            self._provider_locks[provider] = asyncio.Lock()
-        return self._provider_locks[provider]
+    def _get_semaphore(self, provider: str, feed: str) -> asyncio.Semaphore:
+        """Get the appropriate semaphore based on feed weight."""
+        if feed in HEAVYWEIGHT_FEEDS:
+            if provider not in self._heavyweight_semaphores:
+                self._heavyweight_semaphores[provider] = asyncio.Semaphore(self._heavyweight_concurrency)
+            return self._heavyweight_semaphores[provider]
+        if provider not in self._lightweight_semaphores:
+            self._lightweight_semaphores[provider] = asyncio.Semaphore(self._lightweight_concurrency)
+        return self._lightweight_semaphores[provider]
 
     @property
     def supported_feeds(self) -> list[dict[str, str]]:
@@ -260,6 +290,8 @@ class BackfillEngine:
 
     def submit(self, request: BackfillRequest) -> BackfillJob:
         """Validate and queue a new backfill job, then start it in the background."""
+        self._prune_stale_jobs()
+
         # Validate provider
         if not self._provider_registry:
             raise ValueError("BackfillEngine not configured: missing provider registry")
@@ -359,11 +391,45 @@ class BackfillEngine:
         logger.info("backfill_job_cancelled", job_id=job_id)
         return True
 
-    async def _run_job(self, job: BackfillJob) -> None:
-        """Execute a backfill job, respecting per-provider concurrency locks."""
-        lock = self._get_lock(job.request.provider)
+    def cancel_all(self) -> int:
+        """Cancel all running and queued jobs. Returns count of cancelled jobs."""
+        cancelled = 0
+        for job_id in self._jobs:
+            if self.cancel(job_id):
+                cancelled += 1
+        logger.info("backfill_cancel_all", cancelled=cancelled)
+        return cancelled
 
-        async with lock:
+    def flush(self) -> int:
+        """Cancel all jobs and purge job history. Returns count of removed jobs."""
+        self.cancel_all()
+        count = len(self._jobs)
+        self._jobs.clear()
+        self._running_tasks.clear()
+        logger.info("backfill_flushed", purged=count)
+        return count
+
+    def _prune_stale_jobs(self) -> None:
+        """Remove completed/failed/cancelled jobs older than JOB_EXPIRY_SECONDS."""
+        now = datetime.now(UTC)
+        terminal_statuses = {BackfillStatus.COMPLETED, BackfillStatus.FAILED, BackfillStatus.CANCELLED}
+        stale_ids = [
+            jid
+            for jid, job in self._jobs.items()
+            if job.status in terminal_statuses
+            and job.completed_at
+            and (now - job.completed_at).total_seconds() > JOB_EXPIRY_SECONDS
+        ]
+        for jid in stale_ids:
+            del self._jobs[jid]
+        if stale_ids:
+            logger.info("backfill_stale_jobs_pruned", count=len(stale_ids))
+
+    async def _run_job(self, job: BackfillJob) -> None:
+        """Execute a backfill job, respecting feed-weighted concurrency limits."""
+        semaphore = self._get_semaphore(job.request.provider, job.request.feed)
+
+        async with semaphore:
             job.status = BackfillStatus.RUNNING
             job.started_at = datetime.now(UTC)
 
@@ -413,7 +479,7 @@ class BackfillEngine:
             )
 
     async def _execute_job(self, job: BackfillJob) -> None:
-        """Iterate over symbols and date chunks, fetching and publishing data."""
+        """Fetch and publish data for all symbols concurrently (bounded by semaphore)."""
         provider_instance = self._provider_registry.get(job.request.provider)
         if provider_instance is None:
             raise RuntimeError(f"Provider '{job.request.provider}' not available")
@@ -423,18 +489,24 @@ class BackfillEngine:
         rate_limiter = get_rate_limiter()
         delay_ms = PROVIDER_CHUNK_DELAY_MS.get(job.request.provider, DEFAULT_CHUNK_DELAY_MS)
 
-        for sym in job.request.symbols:
-            if job.status == BackfillStatus.CANCELLED:
-                break
-            await self._process_symbol(
-                job,
-                sym,
-                chunks,
-                dispatch_fn,
-                provider_instance,
-                rate_limiter,
-                delay_ms,
-            )
+        sem = asyncio.Semaphore(self._symbol_concurrency)
+
+        async def _bounded_process(sym: str) -> None:
+            async with sem:
+                if job.status == BackfillStatus.CANCELLED:
+                    return
+                await self._process_symbol(
+                    job,
+                    sym,
+                    chunks,
+                    dispatch_fn,
+                    provider_instance,
+                    rate_limiter,
+                    delay_ms,
+                )
+
+        tasks = [asyncio.create_task(_bounded_process(sym)) for sym in job.request.symbols]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _process_symbol(
         self,
@@ -599,9 +671,20 @@ def _normalize_results(results: Any) -> list[dict[str, Any]]:
 _engine: BackfillEngine | None = None
 
 
-def get_backfill_engine() -> BackfillEngine:
-    """Get or create the singleton BackfillEngine."""
+def get_backfill_engine(
+    lightweight_concurrency: int = DEFAULT_LIGHTWEIGHT_CONCURRENCY,
+    heavyweight_concurrency: int = DEFAULT_HEAVYWEIGHT_CONCURRENCY,
+) -> BackfillEngine:
+    """Get or create the singleton BackfillEngine.
+
+    If the engine hasn't been created yet, initializes it with the
+    provided concurrency settings. Subsequent calls return the
+    existing instance regardless of arguments.
+    """
     global _engine
     if _engine is None:
-        _engine = BackfillEngine()
+        _engine = BackfillEngine(
+            lightweight_concurrency=lightweight_concurrency,
+            heavyweight_concurrency=heavyweight_concurrency,
+        )
     return _engine
