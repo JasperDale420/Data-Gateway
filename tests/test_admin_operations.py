@@ -125,7 +125,7 @@ class TestCircuitBreakerManagement:
     def test_list_circuits(self, client: TestClient):
         """GET /admin/circuits returns all registered breakers."""
         registry = get_circuit_registry()
-        asyncio.get_event_loop().run_until_complete(registry.get("alpaca_rest"))
+        asyncio.run(registry.get("alpaca_rest"))
 
         with _override_role("admin"):
             resp = client.get("/api/v1/admin/circuits", headers=_headers())
@@ -139,8 +139,7 @@ class TestCircuitBreakerManagement:
     def test_reset_all_circuits(self, client: TestClient):
         """POST /admin/circuits/reset resets all breakers."""
         registry = get_circuit_registry()
-        loop = asyncio.get_event_loop()
-        breaker = loop.run_until_complete(registry.get("test_breaker"))
+        breaker = asyncio.run(registry.get("test_breaker"))
         breaker.state = CircuitState.OPEN
 
         with _override_role("admin"):
@@ -153,8 +152,7 @@ class TestCircuitBreakerManagement:
     def test_reset_single_circuit(self, client: TestClient):
         """POST /admin/circuits/{name}/reset resets one breaker."""
         registry = get_circuit_registry()
-        loop = asyncio.get_event_loop()
-        breaker = loop.run_until_complete(registry.get("alpaca_rest"))
+        breaker = asyncio.run(registry.get("alpaca_rest"))
         breaker.state = CircuitState.OPEN
 
         with _override_role("admin"):

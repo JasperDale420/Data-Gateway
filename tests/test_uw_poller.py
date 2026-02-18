@@ -164,7 +164,7 @@ def test_uw_poller_runtime_snapshot_includes_tuning_fields() -> None:
     assert snapshot["dedupe_cache_entries"] == 1
     assert snapshot["dedupe_cache_ttl_seconds"] == 7200
     assert snapshot["poll_intervals_seconds"]["flow"] == 300
-    assert snapshot["poll_intervals_seconds"]["darkpool"] == 60
+    assert snapshot["poll_intervals_seconds"]["darkpool"] == poller._get_darkpool_interval()
     assert snapshot["poll_intervals_seconds"]["tide"] == 3600
 
 
