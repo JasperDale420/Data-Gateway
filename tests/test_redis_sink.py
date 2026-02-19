@@ -7,7 +7,6 @@ from typing import Any
 import pytest
 
 from gateway.core.redis_sink import (
-    BATCH_CHUNK_SIZE,
     RedisStreamsSink,
 )
 
@@ -245,8 +244,12 @@ async def test_publish_batch_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_publish_batch_concurrent_chunks() -> None:
+async def test_publish_batch_concurrent_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Multiple batch chunks should execute concurrently, not sequentially."""
+    import gateway.core.redis_sink
+
+    monkeypatch.setattr(gateway.core.redis_sink, "BATCH_CHUNK_SIZE", 10)
+
     pipelines: list[_TimingPipeline] = []
     pipeline_index = 0
 
@@ -265,15 +268,15 @@ async def test_publish_batch_concurrent_chunks() -> None:
     sink._redis = _ConcurrentClient()
     sink._connected = True
 
-    # Create enough messages for 3 chunks (3 * BATCH_CHUNK_SIZE)
+    # Create enough messages for 3 chunks
     chunk_count = 3
-    messages = [("gateway.stream.bars", {"i": i}) for i in range(BATCH_CHUNK_SIZE * chunk_count)]
+    messages = [("gateway.stream.bars", {"i": i}) for i in range(10 * chunk_count)]
 
     start = time.perf_counter()
     result = await sink.publish_batch(messages)
     elapsed = time.perf_counter() - start
 
-    assert result == BATCH_CHUNK_SIZE * chunk_count
+    assert result == 10 * chunk_count
     assert len(pipelines) == chunk_count
 
     # If sequential, would take chunk_count * 0.05 = 0.15s
@@ -368,10 +371,15 @@ async def test_reset_connection_awaits_close() -> None:
             closed = True
 
     sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
-    sink._redis = _TrackingClient()
+    tracking_client = _TrackingClient()
+    sink._redis = tracking_client
     sink._connected = True
 
-    await sink._reset_connection(operation="test", error=RuntimeError("test error"))
+    await sink._reset_connection(
+        operation="test",
+        error=RuntimeError("test error"),
+        failed_client=tracking_client,
+    )
 
     assert closed, "_reset_connection should have awaited close on the old client"
     assert sink._redis is None
@@ -411,3 +419,91 @@ async def test_reconnect_backoff_prevents_tight_loop() -> None:
     assert sink._redis is not None
     # Should have waited at least close to INITIAL_BACKOFF_SECONDS
     assert elapsed >= INITIAL_BACKOFF_SECONDS * 0.8, f"Expected backoff ~{INITIAL_BACKOFF_SECONDS}s, got {elapsed:.3f}s"
+
+
+@pytest.mark.asyncio
+async def test_idempotent_reset_skips_when_client_already_replaced() -> None:
+    """_reset_connection should no-op if self._redis was already swapped out."""
+    closed = False
+
+    class _TrackClose:
+        async def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    old_client = _TrackClose()
+    new_client = _HealthyRedisClient()
+    sink._redis = new_client
+    sink._connected = True
+
+    # Reset referencing the OLD client — should be a no-op
+    await sink._reset_connection(
+        operation="test",
+        error=RuntimeError("stale"),
+        failed_client=old_client,
+    )
+
+    assert sink._redis is new_client, "Should NOT have reset; client was already replaced"
+    assert sink._connected is True
+    assert not closed, "Should NOT have closed — the old client was already gone"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_chunk_reset_does_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When one chunk fails mid-flight, other concurrent chunks must not crash.
+
+    Simulates the race: chunk A's pipeline.execute() raises, triggering
+    _reset_connection (which nulls self._redis).  Chunk B is already past
+    _ensure_connected and holds a local client ref, so it should not see
+    a NoneType error.
+    """
+    import gateway.core.redis_sink
+
+    monkeypatch.setattr(gateway.core.redis_sink, "BATCH_CHUNK_SIZE", 5)
+
+    call_count = 0
+
+    class _RacyPipeline:
+        def __init__(self) -> None:
+            self._cmds: list = []
+
+        def xadd(self, *a: Any, **kw: Any) -> _RacyPipeline:
+            self._cmds.append(1)
+            return self
+
+        async def execute(self) -> list[bytes]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First chunk fails
+                raise ConnectionError("Too many connections")
+            await asyncio.sleep(0.01)
+            return [b"1-0"] * len(self._cmds)
+
+    class _RacyClient:
+        def pipeline(self, transaction: bool = False) -> _RacyPipeline:
+            return _RacyPipeline()
+
+        async def close(self) -> None:
+            pass
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = _RacyClient()
+    sink._connected = True
+
+    async def _noop_ensure() -> None:
+        if sink._redis is None:
+            sink._redis = _RacyClient()
+            sink._connected = True
+
+    monkeypatch.setattr(sink, "_ensure_connected", _noop_ensure)
+
+    # 3 chunks of 5 = 15 messages; chunk A fails, chunks B & C should succeed
+    messages = [("stream.test", {"i": i}) for i in range(15)]
+    result = await sink.publish_batch(messages)
+
+    # At least two chunks should have succeeded (chunk A may recover on retry)
+    assert result >= 10, f"Expected at least 10 published, got {result}"

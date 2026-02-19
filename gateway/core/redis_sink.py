@@ -127,13 +127,27 @@ class RedisStreamsSink(DataSink):
         )
         return aioredis.Redis(connection_pool=pool)
 
-    async def _reset_connection(self, operation: str, error: Exception) -> None:
+    async def _reset_connection(
+        self,
+        operation: str,
+        error: Exception,
+        *,
+        failed_client: Any = None,
+    ) -> None:
         """Force reconnect on the next call after a transport/protocol failure.
 
         Awaits closing the old client pool to prevent connection leaks,
         then sets an exponential backoff cooldown to avoid tight
         reconnect-fail loops.
+
+        If ``failed_client`` is provided, the reset is only performed when
+        ``self._redis`` is still that exact object.  This prevents multiple
+        concurrent chunks from each triggering independent resets when only
+        one is needed.
         """
+        if failed_client is not None and self._redis is not failed_client:
+            return
+
         old_client = self._redis
         self._redis = None
         self._connected = False
@@ -159,6 +173,10 @@ class RedisStreamsSink(DataSink):
             True if successful
         """
         await self._ensure_connected()
+        client = self._redis
+        if client is None:
+            record_sink_publish(sink=self.name, topic=topic, success=False)
+            return False
 
         try:
             if isinstance(data, str):
@@ -169,7 +187,7 @@ class RedisStreamsSink(DataSink):
                 payload = {b"data": orjson.dumps(data, default=str)}
 
             message_id = await asyncio.wait_for(
-                self._redis.xadd(
+                client.xadd(
                     topic,
                     payload,
                     maxlen=self._max_len,
@@ -189,7 +207,7 @@ class RedisStreamsSink(DataSink):
             return True
 
         except Exception as e:
-            await self._reset_connection(operation="publish", error=e)
+            await self._reset_connection(operation="publish", error=e, failed_client=client)
             logger.warning("redis_sink_publish_error", topic=topic, error=str(e))
             record_sink_publish(sink=self.name, topic=topic, success=False)
             return False
@@ -258,8 +276,14 @@ class RedisStreamsSink(DataSink):
         chunk: list[tuple[str, dict[str, Any] | str | bytes]],
     ) -> int:
         """Execute a single pipeline chunk. Returns number published."""
+        client = self._redis
+        if client is None:
+            for topic, _ in chunk:
+                record_sink_publish(sink=self.name, topic=topic, success=False)
+            return 0
+
         try:
-            pipe = self._redis.pipeline(transaction=False)
+            pipe = client.pipeline(transaction=False)
             for topic, data in chunk:
                 if isinstance(data, str):
                     payload = {b"data": data.encode()}
@@ -301,7 +325,11 @@ class RedisStreamsSink(DataSink):
 
         except Exception as e:
             error_msg = str(e) or type(e).__name__
-            await self._reset_connection(operation="publish_batch", error=e)
+            await self._reset_connection(
+                operation="publish_batch",
+                error=e,
+                failed_client=client,
+            )
             logger.warning(
                 "redis_sink_batch_error",
                 count=len(chunk),
@@ -315,10 +343,17 @@ class RedisStreamsSink(DataSink):
         """Check Redis connection health."""
         try:
             await self._ensure_connected()
-            await asyncio.wait_for(self._redis.ping(), timeout=self._operation_timeout_seconds)
+            client = self._redis
+            if client is None:
+                return False
+            await asyncio.wait_for(client.ping(), timeout=self._operation_timeout_seconds)
             return True
         except Exception as e:
-            await self._reset_connection(operation="health_check", error=e)
+            await self._reset_connection(
+                operation="health_check",
+                error=e,
+                failed_client=client,
+            )
             return False
 
     async def close(self) -> None:

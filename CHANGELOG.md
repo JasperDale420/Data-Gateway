@@ -4,7 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Redis sink concurrent chunk race condition** (`redis_sink.py`):
+  - `_reset_connection()` now accepts a `failed_client` parameter and only resets when the failed client is still the active one, preventing cascading resets from concurrent chunks
+  - `_publish_chunk()`, `publish()`, and `health_check()` capture a local client reference before use, preventing `'NoneType' object has no attribute 'pipeline'` crashes when another chunk triggers a reset mid-flight
+
 - **Docker health check deadlock** (`docker-compose.yml`): Changed health check endpoint from `/ping` (returns 401, marking container unhealthy) to `/health` (public endpoint, returns 200)
+- **Redis sink connection leak and reconnect storm** (`redis_sink.py`):
+  - `_reset_connection()` is now `async` and `await`s closing the old Redis client pool before discarding it, preventing fire-and-forget connection leaks
+  - Added exponential reconnect backoff (0.5s initial, capped at 5s) to prevent tight reconnect-fail loops that saturate Redis with "Too many connections" errors
+  - `_ensure_connected()` respects the backoff cooldown before attempting reconnection
+  - Added `asyncio.Lock` to `_ensure_connected` to prevent race conditions where multiple connection pools were created during concurrent reconnects
+- **UW darkpool SDK settlement enum mismatch** (`vendor/unusualwhales_sdk`): Added `CASH = "cash"` to `SingleTradeSettlement` enum — the UW API returns `"cash"` for some darkpool trades but the SDK only defined `"cash_settlement"`, causing recurring `uw_darkpool_recent_sdk_failed` warnings and SDK-to-raw-HTTP fallbacks
+
+### Removed
+
+- **Orphan `sanity.py`** (`gateway/sanity.py`): Deleted standalone FastAPI app with `/ping` endpoint that was never integrated into the main application — its existence caused confusion and contributed to the health check misconfiguration
+
+### Changed
+
+- **Backfill symbol concurrency** (`backfill.py`): Increased `DEFAULT_SYMBOL_CONCURRENCY` from 5 → 10, allowing more parallel symbol fetching within a single backfill job
+
+## [0.5.83] - 2026-02-19
+
+### Added
+
+- **Bulk cancel endpoint**: Add `POST /cancel-all` functionality to `gateway/api/backfill.py` which was missing from API routing.
+- **Flush endpoint**: Add `DELETE /` functionality to `gateway/api/backfill.py` which was missing from API routing.
+
+### Fixed
+
+- **Redis sink concurrency test CPU bottleneck**: Patcher limits `BATCH_CHUNK_SIZE` to 10 in `test_publish_batch_concurrent_chunks` to prevent massive list comprehension payloads from blocking the asyncio runloop and skewing concurrency timing assertions.
+- **Auth test debug calls expectation mismatch**: Updated `test_authenticate_valid_key_logs_debug_not_info` to assert 2 expected logger.debug() calls instead of 1.
 - **Redis sink connection leak and reconnect storm** (`redis_sink.py`):
   - `_reset_connection()` is now `async` and `await`s closing the old Redis client pool before discarding it, preventing fire-and-forget connection leaks
   - Added exponential reconnect backoff (0.5s initial, capped at 5s) to prevent tight reconnect-fail loops that saturate Redis with "Too many connections" errors
