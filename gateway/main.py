@@ -11,13 +11,9 @@ from contextlib import asynccontextmanager, suppress
 
 import orjson
 
-# Use uvloop for better asyncio performance
-try:
-    import uvloop
+# uvloop removed — incompatible with container environment (causes deadlocks).
+# Standard asyncio event loop is used instead.
 
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-except ImportError:
-    pass
 
 # Configure stdlib logging for structlog integration
 logging.basicConfig(

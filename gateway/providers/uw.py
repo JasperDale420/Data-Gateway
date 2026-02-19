@@ -775,22 +775,14 @@ class UnusualWhalesProvider(DataProvider):
                     NormalizedGreekExposure(
                         symbol=symbol.upper(),
                         timestamp=timestamp,
-                        gamma_exposure=Decimal(str(get("gamma_exposure") or get("gex") or 0)),
-                        delta_exposure=(
-                            Decimal(str(get("delta_exposure") or get("dex") or 0))
-                            if get("delta_exposure") or get("dex")
-                            else None
-                        ),
-                        vanna_exposure=(
-                            Decimal(str(get("vanna_exposure") or get("vex") or 0))
-                            if get("vanna_exposure") or get("vex")
-                            else None
-                        ),
-                        charm_exposure=(
-                            Decimal(str(get("charm_exposure") or get("cex") or 0))
-                            if get("charm_exposure") or get("cex")
-                            else None
-                        ),
+                        call_gamma=Decimal(str(get("call_gamma") or 0)),
+                        put_gamma=(Decimal(str(get("put_gamma") or 0)) if get("put_gamma") is not None else None),
+                        call_delta=(Decimal(str(get("call_delta") or 0)) if get("call_delta") is not None else None),
+                        put_delta=(Decimal(str(get("put_delta") or 0)) if get("put_delta") is not None else None),
+                        call_vanna=(Decimal(str(get("call_vanna") or 0)) if get("call_vanna") is not None else None),
+                        put_vanna=(Decimal(str(get("put_vanna") or 0)) if get("put_vanna") is not None else None),
+                        call_charm=(Decimal(str(get("call_charm") or 0)) if get("call_charm") is not None else None),
+                        put_charm=(Decimal(str(get("put_charm") or 0)) if get("put_charm") is not None else None),
                         provider="unusual_whales",
                     )
                 )
@@ -827,8 +819,14 @@ class UnusualWhalesProvider(DataProvider):
                     NormalizedGreekExposure(
                         symbol=symbol.upper(),
                         timestamp=datetime.now(UTC),
-                        gamma_exposure=Decimal(str(get("gamma_exposure") or get("gex") or 0)),
-                        delta_exposure=(Decimal(str(get("delta_exposure") or 0)) if get("delta_exposure") else None),
+                        call_gamma=Decimal(str(get("call_gamma") or 0)),
+                        put_gamma=(Decimal(str(get("put_gamma") or 0)) if get("put_gamma") is not None else None),
+                        call_delta=(Decimal(str(get("call_delta") or 0)) if get("call_delta") is not None else None),
+                        put_delta=(Decimal(str(get("put_delta") or 0)) if get("put_delta") is not None else None),
+                        call_vanna=(Decimal(str(get("call_vanna") or 0)) if get("call_vanna") is not None else None),
+                        put_vanna=(Decimal(str(get("put_vanna") or 0)) if get("put_vanna") is not None else None),
+                        call_charm=(Decimal(str(get("call_charm") or 0)) if get("call_charm") is not None else None),
+                        put_charm=(Decimal(str(get("put_charm") or 0)) if get("put_charm") is not None else None),
                         strike=Decimal(str(get("strike") or 0)),
                         provider="unusual_whales",
                     )
@@ -866,9 +864,16 @@ class UnusualWhalesProvider(DataProvider):
                     NormalizedGreekExposure(
                         symbol=symbol.upper(),
                         timestamp=datetime.now(UTC),
-                        gamma_exposure=Decimal(str(get("gamma_exposure") or get("gex") or 0)),
-                        delta_exposure=(Decimal(str(get("delta_exposure") or 0)) if get("delta_exposure") else None),
+                        call_gamma=Decimal(str(get("call_gamma") or 0)),
+                        put_gamma=(Decimal(str(get("put_gamma") or 0)) if get("put_gamma") is not None else None),
+                        call_delta=(Decimal(str(get("call_delta") or 0)) if get("call_delta") is not None else None),
+                        put_delta=(Decimal(str(get("put_delta") or 0)) if get("put_delta") is not None else None),
+                        call_vanna=(Decimal(str(get("call_vanna") or 0)) if get("call_vanna") is not None else None),
+                        put_vanna=(Decimal(str(get("put_vanna") or 0)) if get("put_vanna") is not None else None),
+                        call_charm=(Decimal(str(get("call_charm") or 0)) if get("call_charm") is not None else None),
+                        put_charm=(Decimal(str(get("put_charm") or 0)) if get("put_charm") is not None else None),
                         expiry=str(get("expiry") or get("expiration_date") or ""),
+                        dte=int(get("dte") or 0) if get("dte") is not None else None,
                         provider="unusual_whales",
                     )
                 )

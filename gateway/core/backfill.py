@@ -263,6 +263,8 @@ class BackfillEngine:
         self._symbol_concurrency = symbol_concurrency
         self._lightweight_concurrency = max(1, lightweight_concurrency)
         self._heavyweight_concurrency = max(1, heavyweight_concurrency)
+        self._instance_id = uuid.uuid4().hex[:8]
+        logger.info("backfill_engine_init", instance_id=self._instance_id)
 
     def configure(
         self,
@@ -353,6 +355,7 @@ class BackfillEngine:
 
         job = BackfillJob(request=request, symbols_progress=symbols_progress)
         self._jobs[job.job_id] = job
+        logger.info("backfill_job_created", instance_id=self._instance_id, job_id=job.job_id, job_obj_id=id(job))
 
         # Kick off in background
         task = asyncio.create_task(self._run_job(job))
@@ -371,7 +374,18 @@ class BackfillEngine:
         return job
 
     def get_job(self, job_id: str) -> BackfillJob | None:
-        return self._jobs.get(job_id)
+        job = self._jobs.get(job_id)
+        if job:
+            logger.debug(
+                "backfill_job_read",
+                instance_id=self._instance_id,
+                job_id=job_id,
+                job_obj_id=id(job),
+                records=job.records_published,
+            )
+        else:
+            logger.warning("backfill_job_not_found", instance_id=self._instance_id, job_id=job_id)
+        return job
 
     def list_jobs(self) -> list[BackfillJob]:
         return list(self._jobs.values())
@@ -435,6 +449,8 @@ class BackfillEngine:
 
             logger.info(
                 "backfill_job_started",
+                instance_id=self._instance_id,
+                job_obj_id=id(job),
                 job_id=job.job_id,
                 provider=job.request.provider,
                 feed=job.request.feed,

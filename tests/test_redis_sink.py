@@ -352,3 +352,62 @@ async def test_publish_string_payload() -> None:
     payload = args[1]
     assert b"data" in payload
     assert isinstance(payload[b"data"], bytes)
+
+
+# ── Async Reset and Backoff Tests ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reset_connection_awaits_close() -> None:
+    """_reset_connection should await close on the old client, not fire-and-forget."""
+    closed = False
+
+    class _TrackingClient:
+        async def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = _TrackingClient()
+    sink._connected = True
+
+    await sink._reset_connection(operation="test", error=RuntimeError("test error"))
+
+    assert closed, "_reset_connection should have awaited close on the old client"
+    assert sink._redis is None
+    assert sink._connected is False
+
+
+@pytest.mark.asyncio
+async def test_reconnect_backoff_prevents_tight_loop() -> None:
+    """After a reset, _ensure_connected should respect the backoff cooldown."""
+    from gateway.core.redis_sink import INITIAL_BACKOFF_SECONDS
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = None
+    sink._connected = False
+
+    created_count = 0
+
+    def _counting_create() -> Any:
+        nonlocal created_count
+        created_count += 1
+        return _HealthyRedisClient()
+
+    sink._create_client = _counting_create
+
+    # Trigger a reset to set cooldown
+    await sink._reset_connection(operation="test", error=RuntimeError("boom"))
+
+    assert sink._reconnect_cooldown_until > 0
+    assert sink._backoff_seconds == INITIAL_BACKOFF_SECONDS * 2
+
+    # _ensure_connected should sleep until cooldown expires, then reconnect
+    start = time.perf_counter()
+    await sink._ensure_connected()
+    elapsed = time.perf_counter() - start
+
+    assert created_count == 1
+    assert sink._redis is not None
+    # Should have waited at least close to INITIAL_BACKOFF_SECONDS
+    assert elapsed >= INITIAL_BACKOFF_SECONDS * 0.8, f"Expected backoff ~{INITIAL_BACKOFF_SECONDS}s, got {elapsed:.3f}s"

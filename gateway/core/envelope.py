@@ -211,7 +211,7 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
     "forex": [("pair", None, ""), ("bid", None, 0), ("ask", None, 0)],
     "fundamentals": [("symbol", None, ""), ("market_cap", None, 0)],
     # EOD per-ticker UW feeds
-    "greek_exposure": [("symbol", None, ""), ("gamma_exposure", None, 0)],
+    "greek_exposure": [("symbol", None, ""), ("call_gamma", None, 0)],
     "iv_rank": [("symbol", None, ""), ("iv_rank", None, 0)],
     "oi_change": [("symbol", None, ""), ("date", None, ""), ("call_oi_change", None, 0)],
     "historic_option_volume": [

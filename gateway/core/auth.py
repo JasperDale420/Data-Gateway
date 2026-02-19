@@ -105,6 +105,7 @@ class ClientAuthenticator:
         Returns Client if valid, None if invalid.
         Checks plaintext keys first, then hashed keys.
         """
+        logger.debug("auth_check_start", key_prefix=api_key[:4] if api_key else "none")
         audit = get_audit_logger()
 
         # Check plaintext keys (dev mode)

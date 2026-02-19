@@ -13,6 +13,9 @@ RUN groupadd -r gateway && \
 COPY vendor/unusualwhales_sdk/ /tmp/unusualwhales_sdk/
 RUN pip install --no-cache-dir /tmp/unusualwhales_sdk/ && rm -rf /tmp/unusualwhales_sdk/
 
+# Install curl for healthchecks and debugging
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 # Copy pyproject.toml first to cache dependency installation
 COPY pyproject.toml README.md ./
 
@@ -21,6 +24,7 @@ COPY pyproject.toml README.md ./
 RUN mkdir -p gateway && \
     echo '"""Stub for dependency resolution."""' > gateway/__init__.py && \
     pip install --no-cache-dir . && \
+    pip uninstall -y uvloop || true && \
     rm -rf gateway
 
 # Copy gateway source and reinstall package only (deps already installed above)

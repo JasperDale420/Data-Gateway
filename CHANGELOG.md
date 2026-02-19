@@ -4,10 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **Redis sink connection pool leak**:
-  - `_reset_connection()` now closes the old Redis client pool before discarding it via a new `_close_stale_client()` background task.
-  - Added `asyncio.Lock` to `_ensure_connected` to prevent race conditions where multiple connection pools were created during concurrent reconnects (the primary cause of the 5,871 connection leak).
+- **Docker health check deadlock** (`docker-compose.yml`): Changed health check endpoint from `/ping` (returns 401, marking container unhealthy) to `/health` (public endpoint, returns 200)
+- **Redis sink connection leak and reconnect storm** (`redis_sink.py`):
+  - `_reset_connection()` is now `async` and `await`s closing the old Redis client pool before discarding it, preventing fire-and-forget connection leaks
+  - Added exponential reconnect backoff (0.5s initial, capped at 5s) to prevent tight reconnect-fail loops that saturate Redis with "Too many connections" errors
+  - `_ensure_connected()` respects the backoff cooldown before attempting reconnection
+  - Added `asyncio.Lock` to `_ensure_connected` to prevent race conditions where multiple connection pools were created during concurrent reconnects
 - **UW darkpool SDK settlement enum mismatch** (`vendor/unusualwhales_sdk`): Added `CASH = "cash"` to `SingleTradeSettlement` enum — the UW API returns `"cash"` for some darkpool trades but the SDK only defined `"cash_settlement"`, causing recurring `uw_darkpool_recent_sdk_failed` warnings and SDK-to-raw-HTTP fallbacks
+
+### Removed
+
+- **Orphan `sanity.py`** (`gateway/sanity.py`): Deleted standalone FastAPI app with `/ping` endpoint that was never integrated into the main application — its existence caused confusion and contributed to the health check misconfiguration
 
 ### Changed
 

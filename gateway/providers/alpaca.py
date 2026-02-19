@@ -87,7 +87,7 @@ class AlpacaProvider(DataProvider):
             supports_historical=True,
             max_symbols_per_request=1000,
             max_historical_range_days=365,
-            rate_limit_requests_per_minute=200,
+            rate_limit_requests_per_minute=10000,
             supports_adjusted_prices=True,
             supports_extended_hours=True,
             supported_timeframes=["1Min", "5Min", "15Min", "30Min", "1Hour", "1Day"],

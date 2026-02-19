@@ -227,16 +227,21 @@ class NormalizedNewsArticle(BaseModel):
 
 
 class NormalizedGreekExposure(BaseModel):
-    """Greek exposure (GEX/DEX/VEX) data."""
+    """Greek exposure (GEX/DEX/VEX) data — split by call/put per UW API."""
 
     symbol: str
     timestamp: datetime
-    gamma_exposure: Decimal
-    delta_exposure: Decimal | None = None
-    vanna_exposure: Decimal | None = None
-    charm_exposure: Decimal | None = None
+    call_gamma: Decimal
+    put_gamma: Decimal | None = None
+    call_delta: Decimal | None = None
+    put_delta: Decimal | None = None
+    call_vanna: Decimal | None = None
+    put_vanna: Decimal | None = None
+    call_charm: Decimal | None = None
+    put_charm: Decimal | None = None
     strike: Decimal | None = None  # For strike-level data
     expiry: str | None = None  # For expiry-level data
+    dte: int | None = None  # For expiry-level data
     provider: str = "unusual_whales"
 
 

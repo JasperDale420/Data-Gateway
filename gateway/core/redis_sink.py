@@ -8,6 +8,7 @@ batch chunks in parallel with retry logic.
 """
 
 import asyncio
+import time
 from typing import Any
 
 import orjson
@@ -23,6 +24,8 @@ DEFAULT_POOL_SIZE = 8
 BATCH_CHUNK_SIZE = 2_000
 MAX_CONCURRENT_CHUNKS = 4
 CHUNK_RETRY_ATTEMPTS = 1
+INITIAL_BACKOFF_SECONDS = 0.5
+MAX_BACKOFF_SECONDS = 5.0
 
 
 class RedisStreamsSink(DataSink):
@@ -58,6 +61,8 @@ class RedisStreamsSink(DataSink):
         self._redis: Any = None
         self._connected = False
         self._connect_lock = asyncio.Lock()
+        self._reconnect_cooldown_until: float = 0.0
+        self._backoff_seconds: float = INITIAL_BACKOFF_SECONDS
 
     @property
     def name(self) -> str:
@@ -68,15 +73,29 @@ class RedisStreamsSink(DataSink):
         return True
 
     async def _ensure_connected(self) -> None:
-        """Lazy connection to Redis with connection pool."""
+        """Lazy connection to Redis with connection pool.
+
+        Respects a reconnect cooldown set by ``_reset_connection`` to avoid
+        tight reconnect-fail loops that saturate Redis with connections.
+        """
         if self._redis is not None:
             return
+
+        now = time.monotonic()
+        if now < self._reconnect_cooldown_until:
+            remaining = self._reconnect_cooldown_until - now
+            logger.debug(
+                "redis_sink_reconnect_cooldown",
+                wait_seconds=round(remaining, 2),
+            )
+            await asyncio.sleep(remaining)
 
         async with self._connect_lock:
             if self._redis is None:
                 try:
                     self._redis = self._create_client()
                     self._connected = True
+                    self._backoff_seconds = INITIAL_BACKOFF_SECONDS
                     logger.info(
                         "redis_sink_connected",
                         url=self._redis_url[:20] + "...",
@@ -108,25 +127,26 @@ class RedisStreamsSink(DataSink):
         )
         return aioredis.Redis(connection_pool=pool)
 
-    def _reset_connection(self, operation: str, error: Exception) -> None:
+    async def _reset_connection(self, operation: str, error: Exception) -> None:
         """Force reconnect on the next call after a transport/protocol failure.
 
-        Closes the old client pool to prevent connection leaks before
-        discarding the reference.
+        Awaits closing the old client pool to prevent connection leaks,
+        then sets an exponential backoff cooldown to avoid tight
+        reconnect-fail loops.
         """
         old_client = self._redis
         self._redis = None
         self._connected = False
         if old_client is not None:
-            try:
-                asyncio.get_event_loop().create_task(self._close_stale_client(old_client))
-            except RuntimeError:
-                pass
+            await self._close_stale_client(old_client)
+        self._reconnect_cooldown_until = time.monotonic() + self._backoff_seconds
         logger.warning(
             "redis_sink_connection_reset",
             operation=operation,
             error=str(error) or type(error).__name__,
+            backoff_seconds=round(self._backoff_seconds, 2),
         )
+        self._backoff_seconds = min(self._backoff_seconds * 2, MAX_BACKOFF_SECONDS)
 
     async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
         """Publish data to a Redis Stream.
@@ -169,7 +189,7 @@ class RedisStreamsSink(DataSink):
             return True
 
         except Exception as e:
-            self._reset_connection(operation="publish", error=e)
+            await self._reset_connection(operation="publish", error=e)
             logger.warning("redis_sink_publish_error", topic=topic, error=str(e))
             record_sink_publish(sink=self.name, topic=topic, success=False)
             return False
@@ -281,7 +301,7 @@ class RedisStreamsSink(DataSink):
 
         except Exception as e:
             error_msg = str(e) or type(e).__name__
-            self._reset_connection(operation="publish_batch", error=e)
+            await self._reset_connection(operation="publish_batch", error=e)
             logger.warning(
                 "redis_sink_batch_error",
                 count=len(chunk),
@@ -298,7 +318,7 @@ class RedisStreamsSink(DataSink):
             await asyncio.wait_for(self._redis.ping(), timeout=self._operation_timeout_seconds)
             return True
         except Exception as e:
-            self._reset_connection(operation="health_check", error=e)
+            await self._reset_connection(operation="health_check", error=e)
             return False
 
     async def close(self) -> None:
