@@ -217,6 +217,16 @@ async def _alpaca_news(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) ->
     return await p.get_news(symbols=[sym], start=s, end=e, include_content=True)
 
 
+async def _uw_market_tide(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # sym is ignored — market tide is market-wide. Date filters by chunk start.
+    return await p.get_market_tide(date_str=s.strftime("%Y-%m-%d"))
+
+
+async def _uw_sector_tide(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # sym is the GICS sector name (e.g. "Technology"). Date filters by chunk start.
+    return await p.get_sector_tide(sector=sym, date_str=s.strftime("%Y-%m-%d"))
+
+
 BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     # Alpaca
     ("alpaca", "bars"): _alpaca_bars,
@@ -236,6 +246,8 @@ BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     ("unusual_whales", "institutions"): _uw_institutions,
     ("unusual_whales", "greek_exposure"): _uw_greeks,
     ("unusual_whales", "earnings"): _uw_earnings,
+    ("unusual_whales", "market_tide"): _uw_market_tide,
+    ("unusual_whales", "sector_tide"): _uw_sector_tide,
 }
 
 
@@ -580,7 +592,7 @@ class BackfillEngine:
                 sp.chunks_complete += 1
                 return
 
-            items = _normalize_results(results)
+            items = await asyncio.to_thread(_normalize_results, results)
             published = await self._publish_items(
                 items=items,
                 provider=job.request.provider,
