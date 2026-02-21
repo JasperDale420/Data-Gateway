@@ -507,7 +507,7 @@ async def create_bulk_options_job(
     if not provider:
         if settings.allow_stub_data:
             # Allow stub behavior if explicitly enabled
-            job_id = f"bulk-opt-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            job_id = f"bulk-opt-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
             return BulkJobCreatedResponse(
                 job_id=job_id,
                 status="accepted",

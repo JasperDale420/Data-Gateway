@@ -17,7 +17,7 @@ import msgpack
 import orjson
 import structlog
 import websockets
-from websockets.client import WebSocketClientProtocol
+from websockets.asyncio.client import ClientConnection
 
 from gateway.core.envelope import fast_wrap_streaming_event
 from gateway.core.metrics import (
@@ -381,7 +381,7 @@ class UpstreamConnection:
         self.max_delay = max_delay
         self.max_retries = max_retries
 
-        self._ws: WebSocketClientProtocol | None = None
+        self._ws: ClientConnection | None = None
         self._authenticated = False
         self._running = False
         self._receive_task: asyncio.Task | None = None

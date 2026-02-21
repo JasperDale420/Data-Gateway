@@ -1227,3 +1227,6 @@ All notable changes to this project will be documented in this file.
 - **WebSocket endpoint**: `/ws` with auth handshake and timeout
 - **Structured logging**: structlog with JSON output
 - **Test suite**: pytest fixtures and unit tests for core components
+
+## 2026-02-21
+- chore: workspace sync checkpoint and gitignore audit (2026-02-21)

@@ -64,6 +64,19 @@ async def _async_log_response(response: httpx.Response) -> None:
     _log_response(response)
 
 
+def _merge_event_hooks(
+    defaults: dict[str, list],
+    overrides: dict[str, list] | None,
+) -> dict[str, list]:
+    """Merge caller-provided event hooks with the default logging hooks."""
+    if not overrides:
+        return defaults
+    merged: dict[str, list] = {}
+    for key in {*defaults, *overrides}:
+        merged[key] = defaults.get(key, []) + overrides.get(key, [])
+    return merged
+
+
 def create_http_client(
     base_url: str = "",
     timeout: float | httpx.Timeout = DEFAULT_TIMEOUT,
@@ -71,12 +84,17 @@ def create_http_client(
     **kwargs: Any,
 ) -> httpx.Client:
     """Create a configured synchronous httpx.Client with standard defaults."""
+    caller_hooks = kwargs.pop("event_hooks", None)
+    hooks = _merge_event_hooks(
+        {"request": [_log_request], "response": [_log_response]},
+        caller_hooks,
+    )
     return httpx.Client(
         base_url=base_url,
         timeout=timeout,
         headers=headers or {},
         follow_redirects=True,
-        event_hooks={"request": [_log_request], "response": [_log_response]},
+        event_hooks=hooks,
         **kwargs,
     )
 
@@ -88,12 +106,17 @@ def create_async_http_client(
     **kwargs: Any,
 ) -> httpx.AsyncClient:
     """Create a configured asynchronous httpx.AsyncClient with standard defaults."""
+    caller_hooks = kwargs.pop("event_hooks", None)
+    hooks = _merge_event_hooks(
+        {"request": [_async_log_request], "response": [_async_log_response]},
+        caller_hooks,
+    )
     return httpx.AsyncClient(
         base_url=base_url,
         timeout=timeout,
         headers=headers or {},
         follow_redirects=True,
-        event_hooks={"request": [_async_log_request], "response": [_async_log_response]},
+        event_hooks=hooks,
         **kwargs,
     )
 
