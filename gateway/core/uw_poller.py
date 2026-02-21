@@ -424,7 +424,7 @@ class UWPoller:
 
     async def _poll_loop(self) -> None:
         """Main polling loop."""
-        from gateway.api.deps import get_sink_registry
+        from gateway.core.globals import get_sink_registry
 
         # Base loop tick — must be <= smallest poll interval
         base_interval = BASE_LOOP_INTERVAL

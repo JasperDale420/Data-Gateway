@@ -52,7 +52,7 @@ from gateway.api import (
     yf_router,
 )
 from gateway.api.admin import attach_error_buffer_handler
-from gateway.api.deps import get_connection_manager, set_multiplexer, set_registry
+from gateway.api.deps import get_connection_manager
 from gateway.api.errors import gateway_http_exception_handler
 from gateway.api.metrics import router as metrics_router
 from gateway.api.middleware import (
@@ -65,6 +65,7 @@ from gateway.api.middleware import (
     SecurityHeadersMiddleware,
 )
 from gateway.config import get_settings
+from gateway.core.globals import set_multiplexer, set_registry
 from gateway.core.metrics import (
     init_metrics,
     init_uptime,
@@ -315,9 +316,9 @@ async def lifespan(app: FastAPI):
     # Initialize data sink for Heber integration
     sink_registry = None
     if settings.data_sink_enabled and settings.data_sink_redis_url:
-        from gateway.api.deps import set_sink_registry
         from gateway.core.cache import RedisCache
         from gateway.core.data_sink import DataSinkRegistry
+        from gateway.core.globals import set_sink_registry
         from gateway.core.redis_sink import RedisStreamsSink
 
         sink_registry = DataSinkRegistry()

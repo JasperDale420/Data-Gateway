@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Architecture violation `core → api` import** (`core/uw_poller.py`, `api/deps.py`): Extracted singleton state management (provider registry, stream multiplexer, data sink registry) from `api/deps.py` into new `core/globals.py`. `uw_poller` and `main.py` now import from `core.globals`; `deps.py` re-exports for backward compatibility. All 4 `import-linter` contracts now pass.
+
+### Fixed
+
 - **Redis sink concurrent chunk race condition** (`redis_sink.py`):
   - `_reset_connection()` now accepts a `failed_client` parameter and only resets when the failed client is still the active one, preventing cascading resets from concurrent chunks
   - `_publish_chunk()`, `publish()`, and `health_check()` capture a local client reference before use, preventing `'NoneType' object has no attribute 'pipeline'` crashes when another chunk triggers a reset mid-flight

@@ -372,8 +372,13 @@ class CacheMiddleware:
             await self.app(scope, receive, send)
             return
 
-        request = Request(scope)
         path = scope["path"]
+        # Skip caching for dynamic endpoints
+        if path.startswith("/api/v1/backfill"):
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
         is_public = self._is_public_path(path)
         request.state.cache_public = is_public
 

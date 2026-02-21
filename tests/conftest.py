@@ -6,18 +6,19 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+import gateway.core.globals as _globals_module
 from gateway.api.deps import (
     get_authenticator,
     get_cache,
     get_connection_manager,
     get_registry,
     get_sink_registry,
-    set_sink_registry,
 )
 from gateway.config import Settings, get_settings
 from gateway.core.auth import ClientAuthenticator
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
+from gateway.core.globals import set_sink_registry
 from gateway.main import app
 
 DEFAULT_TEST_API_KEY = "gw_test_dev_key_67890"  # pragma: allowlist secret
@@ -128,7 +129,6 @@ def test_registry():
 @pytest.fixture(autouse=True)
 def override_deps(test_settings, test_authenticator, test_cache, test_connection_manager, test_registry):
     """Override FastAPI dependencies with test instances."""
-    import gateway.api.deps as _deps_module
 
     # Clear LRU caches so require_api_key picks up the test authenticator
     get_authenticator.cache_clear()
@@ -143,8 +143,8 @@ def override_deps(test_settings, test_authenticator, test_cache, test_connection
     # Nullify the multiplexer so WebSocket subscribe uses stub responses
     # instead of hitting real Alpaca upstream (the lifespan creates a real
     # multiplexer because it calls get_settings() directly, bypassing DI).
-    _original_mux = _deps_module._multiplexer
-    _deps_module._multiplexer = None
+    _original_mux = _globals_module._multiplexer
+    _globals_module._multiplexer = None
 
     app.dependency_overrides[get_settings] = lambda: test_settings
     app.dependency_overrides[get_authenticator] = lambda: test_authenticator
@@ -157,7 +157,7 @@ def override_deps(test_settings, test_authenticator, test_cache, test_connection
     app.dependency_overrides.clear()
     # Restore original sink registry, multiplexer, and clear caches
     set_sink_registry(_original_sink)
-    _deps_module._multiplexer = _original_mux
+    _globals_module._multiplexer = _original_mux
     get_authenticator.cache_clear()
     get_cache.cache_clear()
     get_connection_manager.cache_clear()

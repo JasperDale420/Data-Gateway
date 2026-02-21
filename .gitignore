@@ -75,3 +75,6 @@ perf-junit.xml
 perf-output.txt
 perf-summary.json
 perf-history-report.json
+
+# Aider
+.aider*
