@@ -234,7 +234,8 @@ class RedisCache:
         """Get value from Redis cache."""
         try:
             await self._ensure_connected()
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
             value = await self._redis.get(f"{self.KEY_PREFIX}{key}")
             if value is not None:
                 self._stats.hits += 1
@@ -250,7 +251,8 @@ class RedisCache:
         """Set value in Redis cache with TTL."""
         try:
             await self._ensure_connected()
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
 
             serialized = json.dumps(value, default=str)
             await self._redis.setex(
@@ -272,7 +274,8 @@ class RedisCache:
             return {}
         try:
             await self._ensure_connected()
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
 
             prefixed = [f"{self.KEY_PREFIX}{k}" for k in keys]
             values = await self._redis.mget(prefixed)
@@ -307,7 +310,8 @@ class RedisCache:
             return 0
         try:
             await self._ensure_connected()
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
 
             effective_ttl = ttl or self.default_ttl
             pipe = self._redis.pipeline(transaction=False)
@@ -326,7 +330,8 @@ class RedisCache:
         """Delete key from Redis cache."""
         try:
             await self._ensure_connected()
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
             result = await self._redis.delete(f"{self.KEY_PREFIX}{key}")
             return result > 0
         except Exception as e:
@@ -337,7 +342,8 @@ class RedisCache:
         """Check if key exists in Redis cache."""
         try:
             await self._ensure_connected()
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
             return await self._redis.exists(f"{self.KEY_PREFIX}{key}") > 0
         except Exception:
             return False

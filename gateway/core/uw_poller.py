@@ -479,7 +479,8 @@ class UWPoller:
 
     async def _poll_flow_alerts(self, sink_registry, limit: int) -> None:
         """Poll and publish flow alerts with deduplication."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         try:
             alerts = await self._provider.get_flow_alerts(limit=limit)
             out_of_order = 0
@@ -530,7 +531,8 @@ class UWPoller:
 
     async def _poll_darkpool(self, sink_registry, limit: int) -> None:
         """Poll and publish darkpool trades with deduplication."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         try:
             trades = await self._provider.get_darkpool_recent(limit=limit)
             out_of_order = 0
@@ -581,7 +583,8 @@ class UWPoller:
         we fetch all tides and take the last 5 to avoid missing data.
         Deduplication ensures we don't republish overlapping records.
         """
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         try:
             tides = await self._provider.get_market_tide()
 
@@ -636,7 +639,8 @@ class UWPoller:
 
         Runs hourly on same schedule as market tide.
         """
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         total_published = 0
         total_duplicates = 0
         total_out_of_order = 0
@@ -725,8 +729,10 @@ class UWPoller:
 
     async def _poll_eod_snapshots(self, sink_registry) -> None:
         """Orchestrate all EOD per-ticker polls with bounded concurrency."""
-        assert self._provider is not None
-        assert self._ticker_universe is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
+        if self._ticker_universe is None:
+            raise RuntimeError("Ticker universe not initialized for EOD polling")
 
         # Refresh dynamic tickers from screener
         await self._ticker_universe.refresh_dynamic(self._provider)
@@ -806,7 +812,8 @@ class UWPoller:
 
     async def _poll_eod_greek_exposure(self, sink_registry, ticker: str) -> int:
         """Poll Greek exposure for a single ticker."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_greek_exposure(ticker)
         if not results:
             return 0
@@ -831,7 +838,8 @@ class UWPoller:
 
     async def _poll_eod_iv_rank(self, sink_registry, ticker: str) -> int:
         """Poll IV rank for a single ticker."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         result = await self._provider.get_iv_rank(ticker)
         if not result:
             return 0
@@ -853,7 +861,8 @@ class UWPoller:
 
     async def _poll_eod_oi_change(self, sink_registry, ticker: str) -> int:
         """Poll OI change for a single ticker."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_oi_change(ticker)
         if not results:
             return 0
@@ -878,7 +887,8 @@ class UWPoller:
 
     async def _poll_eod_option_volume(self, sink_registry, ticker: str) -> int:
         """Poll historic option volume for a single ticker."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_historic_option_volume(ticker)
         if not results:
             return 0
@@ -903,7 +913,8 @@ class UWPoller:
 
     async def _poll_eod_short_interest(self, sink_registry, ticker: str) -> int:
         """Poll short interest for a single ticker."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_short_interest(ticker)
         if not results:
             return 0
@@ -928,7 +939,8 @@ class UWPoller:
 
     async def _poll_eod_short_volume(self, sink_registry, ticker: str) -> int:
         """Poll short volume for a single ticker."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_short_volume(ticker)
         if not results:
             return 0
@@ -953,7 +965,8 @@ class UWPoller:
 
     async def _poll_eod_ftds(self, sink_registry, ticker: str) -> int:
         """Poll FTDs for a single ticker."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_ftds(ticker)
         if not results:
             return 0
@@ -978,7 +991,8 @@ class UWPoller:
 
     async def _poll_eod_congress_trades(self, sink_registry) -> int:
         """Poll congress trades (market-wide, no ticker needed)."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_congress_trades(limit=200)
         if not results:
             return 0
@@ -1003,7 +1017,8 @@ class UWPoller:
 
     async def _poll_eod_insiders(self, sink_registry) -> int:
         """Poll insider trades (market-wide, no ticker needed)."""
-        assert self._provider is not None
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_insiders(limit=200)
         if not results:
             return 0
