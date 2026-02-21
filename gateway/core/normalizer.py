@@ -63,6 +63,8 @@ class NormalizedQuote:
     ask_size: int
     bid_exchange: str | None = None
     ask_exchange: str | None = None
+    conditions: list[str] = field(default_factory=list)
+    tape: str | None = None
     provider: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +77,8 @@ class NormalizedQuote:
             "ask_size": self.ask_size,
             "bid_exchange": self.bid_exchange,
             "ask_exchange": self.ask_exchange,
+            "conditions": self.conditions,
+            "tape": self.tape,
             "provider": self.provider,
         }
 
@@ -91,6 +95,7 @@ class NormalizedTrade:
     exchange: str | None = None
     conditions: list[str] = field(default_factory=list)
     tape: str | None = None
+    taker_side: str | None = None
     provider: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -103,6 +108,7 @@ class NormalizedTrade:
             "exchange": self.exchange,
             "conditions": self.conditions,
             "tape": self.tape,
+            "taker_side": self.taker_side,
             "provider": self.provider,
         }
 
@@ -169,11 +175,7 @@ class DataNormalizer:
             low=self._to_decimal(raw.get("l", raw.get("low"))),
             close=self._to_decimal(raw.get("c", raw.get("close"))),
             volume=self._to_int(raw.get("v", raw.get("volume", 0))),
-            vwap=(
-                self._to_decimal(raw.get("vw", raw.get("vwap")))
-                if raw.get("vw") or raw.get("vwap")
-                else None
-            ),
+            vwap=(self._to_decimal(raw.get("vw", raw.get("vwap"))) if raw.get("vw") or raw.get("vwap") else None),
             trade_count=raw.get("n", raw.get("trade_count")),
             provider="alpaca",
             timeframe=raw.get("timeframe", "1Min"),
@@ -182,7 +184,7 @@ class DataNormalizer:
     def _normalize_alpaca_quote(self, raw: dict[str, Any]) -> NormalizedQuote:
         """Normalize Alpaca quote format.
 
-        Alpaca uses: S, t, bp, ap, bs, as, bx, ax
+        Alpaca uses: S, t, bp, ap, bs, as, bx, ax, c, z
         """
         return NormalizedQuote(
             symbol=raw.get("S", raw.get("symbol", "")),
@@ -193,13 +195,15 @@ class DataNormalizer:
             ask_size=int(raw.get("as", raw.get("ask_size", 0))),
             bid_exchange=raw.get("bx", raw.get("bid_exchange")),
             ask_exchange=raw.get("ax", raw.get("ask_exchange")),
+            conditions=raw.get("c", raw.get("conditions", [])) or [],
+            tape=raw.get("z", raw.get("tape")),
             provider="alpaca",
         )
 
     def _normalize_alpaca_trade(self, raw: dict[str, Any]) -> NormalizedTrade:
         """Normalize Alpaca trade format.
 
-        Alpaca uses: S, t, p, s, i, x, c, z
+        Alpaca uses: S, t, p, s, i, x, c, z, tks
         """
         return NormalizedTrade(
             symbol=raw.get("S", raw.get("symbol", "")),
@@ -210,6 +214,7 @@ class DataNormalizer:
             exchange=raw.get("x", raw.get("exchange")),
             conditions=raw.get("c", raw.get("conditions", [])) or [],
             tape=raw.get("z", raw.get("tape")),
+            taker_side=raw.get("tks", raw.get("taker_side")),
             provider="alpaca",
         )
 
@@ -244,19 +249,13 @@ class DataNormalizer:
         """Normalize bar with common field name guessing."""
         return NormalizedBar(
             symbol=raw.get("symbol", raw.get("S", "")),
-            timestamp=self._parse_timestamp(
-                raw.get("timestamp", raw.get("t", raw.get("time", raw.get("datetime"))))
-            ),
+            timestamp=self._parse_timestamp(raw.get("timestamp", raw.get("t", raw.get("time", raw.get("datetime"))))),
             open=self._to_decimal(raw.get("open", raw.get("o", 0))),
             high=self._to_decimal(raw.get("high", raw.get("h", 0))),
             low=self._to_decimal(raw.get("low", raw.get("l", 0))),
             close=self._to_decimal(raw.get("close", raw.get("c", 0))),
             volume=int(raw.get("volume", raw.get("v", 0))),
-            vwap=(
-                self._to_decimal(raw.get("vwap", raw.get("vw")))
-                if raw.get("vwap") or raw.get("vw")
-                else None
-            ),
+            vwap=(self._to_decimal(raw.get("vwap", raw.get("vw"))) if raw.get("vwap") or raw.get("vw") else None),
             trade_count=raw.get("trade_count", raw.get("n")),
             provider=provider,
             timeframe=raw.get("timeframe", "1Min"),
@@ -271,6 +270,8 @@ class DataNormalizer:
             ask_price=self._to_decimal(raw.get("ask_price", raw.get("ask", raw.get("ap", 0)))),
             bid_size=int(raw.get("bid_size", raw.get("bs", 0))),
             ask_size=int(raw.get("ask_size", raw.get("as", 0))),
+            conditions=raw.get("conditions", raw.get("c", [])) or [],
+            tape=raw.get("tape", raw.get("z")),
             provider=provider,
         )
 
@@ -284,6 +285,8 @@ class DataNormalizer:
             trade_id=raw.get("trade_id", raw.get("id", raw.get("i"))),
             exchange=raw.get("exchange", raw.get("x")),
             conditions=raw.get("conditions", raw.get("c", [])) or [],
+            tape=raw.get("tape", raw.get("z")),
+            taker_side=raw.get("taker_side", raw.get("tks")),
             provider=provider,
         )
 
