@@ -225,7 +225,7 @@ class ProviderRateLimitManager:
                 alpaca_limits.requests_per_second = settings.alpaca_rate_limit_per_second
                 alpaca_limits.market_data_per_minute = settings.alpaca_rate_limit_per_minute
         except Exception:
-            pass  # Fall back to hardcoded defaults if settings unavailable
+            logger.debug("rate_limiter_settings_unavailable_using_defaults", exc_info=True)
 
         for provider, limits in PROVIDER_LIMITS.items():
             per_second = None
@@ -386,7 +386,7 @@ class EndpointRateLimitConfig:
 class _ClientWindowBucket:
     """Tracks per-client request timestamps for sliding window enforcement."""
 
-    timestamps: deque = field(default_factory=deque)
+    timestamps: deque[float] = field(default_factory=deque)
 
 
 class EndpointRateLimiter:
