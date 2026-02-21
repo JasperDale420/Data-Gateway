@@ -36,6 +36,7 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
+from gateway.core.http_client import create_async_http_client
 from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
@@ -110,7 +111,7 @@ class AlpacaProvider(DataProvider):
             )
 
         # Create HTTP client for Market Data API
-        self._client = httpx.AsyncClient(
+        self._client = create_async_http_client(
             base_url=self._base_url,
             headers={
                 "APCA-API-KEY-ID": self._api_key,

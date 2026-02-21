@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import structlog
 
+from gateway.core.http_client import create_async_http_client
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 
@@ -64,7 +65,7 @@ class SECProvider(DataProvider):
         user_agent_env = config.get("user_agent_env", "SEC_USER_AGENT")
         user_agent = os.environ.get(user_agent_env, DEFAULT_SEC_USER_AGENT)
 
-        self._client = httpx.AsyncClient(
+        self._client = create_async_http_client(
             headers={"User-Agent": user_agent},
             timeout=30.0,
             event_hooks=httpx_event_hooks("sec"),
@@ -217,12 +218,8 @@ class SECProvider(DataProvider):
                 {
                     "form": form,
                     "filing_date": filing_dates[i] if i < len(filing_dates) else None,
-                    "accession_number": (
-                        accession_numbers[i] if i < len(accession_numbers) else None
-                    ),
-                    "primary_document": (
-                        primary_documents[i] if i < len(primary_documents) else None
-                    ),
+                    "accession_number": (accession_numbers[i] if i < len(accession_numbers) else None),
+                    "primary_document": (primary_documents[i] if i < len(primary_documents) else None),
                     "description": descriptions[i] if i < len(descriptions) else None,
                 }
             )
@@ -272,9 +269,7 @@ class SECProvider(DataProvider):
                     {
                         "form": forms[i],
                         "filing_date": filing_dates[i] if i < len(filing_dates) else None,
-                        "accession_number": (
-                            accession_numbers[i] if i < len(accession_numbers) else None
-                        ),
+                        "accession_number": (accession_numbers[i] if i < len(accession_numbers) else None),
                     }
                 )
 
@@ -294,9 +289,7 @@ class SECProvider(DataProvider):
 
         cik_formatted = self._format_cik(cik)
 
-        response = await self._client.get(
-            f"{SEC_BASE_URL}/api/xbrl/companyfacts/CIK{cik_formatted}.json"
-        )
+        response = await self._client.get(f"{SEC_BASE_URL}/api/xbrl/companyfacts/CIK{cik_formatted}.json")
         response.raise_for_status()
         data = response.json()
 
@@ -349,9 +342,7 @@ class SECProvider(DataProvider):
         if not self._client:
             raise RuntimeError("Provider not initialized")
 
-        response = await self._client.get(
-            f"{SEC_BASE_URL}/api/xbrl/frames/{taxonomy}/{concept}/{unit}/{period}.json"
-        )
+        response = await self._client.get(f"{SEC_BASE_URL}/api/xbrl/frames/{taxonomy}/{concept}/{unit}/{period}.json")
         response.raise_for_status()
         data = response.json()
 
@@ -417,9 +408,7 @@ class SECProvider(DataProvider):
                     {
                         "cik": source.get("ciks", [None])[0] if source.get("ciks") else None,
                         "company_name": (
-                            source.get("display_names", [None])[0]
-                            if source.get("display_names")
-                            else None
+                            source.get("display_names", [None])[0] if source.get("display_names") else None
                         ),
                         "form": source.get("form"),
                         "filing_date": source.get("file_date"),

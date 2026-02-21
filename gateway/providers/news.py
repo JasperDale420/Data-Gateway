@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import structlog
 
+from gateway.core.http_client import create_async_http_client
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 
@@ -52,7 +53,7 @@ class NewsProvider(DataProvider):
                 api_key_env=api_key_env,
             )
 
-        self._client = httpx.AsyncClient(
+        self._client = create_async_http_client(
             base_url=self._base_url,
             timeout=30.0,
             headers={"X-Api-Key": self._api_key},

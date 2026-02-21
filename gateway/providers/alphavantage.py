@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import structlog
 
+from gateway.core.http_client import create_async_http_client
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
@@ -71,7 +72,7 @@ class AlphaVantageProvider(DataProvider):
             logger.warning("alphavantage_api_key_not_set", env_var=api_key_env)
             return
 
-        self._client = httpx.AsyncClient(
+        self._client = create_async_http_client(
             timeout=30.0,
             event_hooks=httpx_event_hooks("alphavantage"),
         )

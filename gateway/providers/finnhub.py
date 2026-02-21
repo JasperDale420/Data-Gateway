@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 import structlog
 
+from gateway.core.http_client import create_async_http_client
 from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
@@ -65,7 +66,7 @@ class FinnhubProvider(DataProvider):
                     fallback=self._quotes_max_concurrency,
                 )
 
-        self._client = httpx.AsyncClient(
+        self._client = create_async_http_client(
             base_url=self._base_url,
             timeout=30.0,
             params={"token": self._api_key},
