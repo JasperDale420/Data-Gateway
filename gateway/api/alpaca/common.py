@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+# Query description constants
+import structlog
 from fastapi import Depends, HTTPException
 
 from gateway.api.deps import (
@@ -17,7 +19,8 @@ from gateway.core.cache import HybridCache, InMemoryCache
 from gateway.core.metrics import record_route_cache
 from gateway.core.registry import ProviderRegistry
 
-# Query description constants
+logger = structlog.get_logger(__name__)
+
 DESC_BAR_TIMEFRAME = "Bar timeframe"
 DESC_START_TIME = "Start time (ISO 8601)"
 DESC_END_TIME = "End time (ISO 8601)"
@@ -72,8 +75,9 @@ async def execute_alpaca_provider_call(
         return await provider_call(provider)
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}") from e
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 async def execute_alpaca_cached_call(

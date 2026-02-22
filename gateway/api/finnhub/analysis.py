@@ -1,5 +1,6 @@
 """Finnhub analysis endpoints - sentiment, upgrade/downgrade."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.finnhub.common import (
@@ -15,6 +16,8 @@ from gateway.api.finnhub.common import (
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -51,8 +54,9 @@ async def get_insider_sentiment(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/upgrade-downgrade/{symbol}", response_model=SuccessResponse)
@@ -87,8 +91,9 @@ async def get_upgrade_downgrade(
             "data": {"symbol": symbol.upper(), "history": data},
             "meta": {"count": len(data), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/social-sentiment/{symbol}", response_model=SuccessResponse)
@@ -123,8 +128,9 @@ async def get_social_sentiment(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/support-resistance/{symbol}", response_model=SuccessResponse)
@@ -160,8 +166,9 @@ async def get_support_resistance(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/patterns/{symbol}", response_model=SuccessResponse)
@@ -197,5 +204,6 @@ async def get_pattern_recognition(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

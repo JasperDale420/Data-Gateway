@@ -1,5 +1,6 @@
 """Finnhub forex endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.finnhub.common import (
@@ -16,6 +17,8 @@ from gateway.api.finnhub.common import (
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -52,8 +55,9 @@ async def get_forex_rates(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/forex/exchanges", response_model=SuccessResponse)
@@ -87,8 +91,9 @@ async def get_forex_exchanges(
             "data": {"exchanges": exchanges},
             "meta": {"count": len(exchanges), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/forex/symbols", response_model=SuccessResponse)
@@ -124,8 +129,9 @@ async def get_forex_symbols(
             "data": data,
             "meta": {"count": len(symbols), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/forex/candles/{symbol}", response_model=SuccessResponse)
@@ -158,9 +164,7 @@ async def get_forex_candles(
         start_dt = datetime.fromisoformat(start) if start else None
         end_dt = datetime.fromisoformat(end) if end else None
 
-        data = await provider.get_forex_candles(
-            symbol, resolution=resolution, start=start_dt, end=end_dt
-        )
+        data = await provider.get_forex_candles(symbol, resolution=resolution, start=start_dt, end=end_dt)
         await cache.set(key, data, ttl=300)
         record_route_cache("finnhub_forex_candles", "miss", "finnhub")
         return {
@@ -168,5 +172,6 @@ async def get_forex_candles(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

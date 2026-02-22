@@ -1,5 +1,6 @@
 """Finnhub news endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.finnhub.common import (
@@ -16,6 +17,8 @@ from gateway.api.finnhub.common import (
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -58,8 +61,9 @@ async def get_company_news(
             "data": data,
             "meta": {"count": len(articles), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/news/market/{category}", response_model=SuccessResponse)
@@ -95,5 +99,6 @@ async def get_market_news(
             "data": data,
             "meta": {"count": len(articles), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

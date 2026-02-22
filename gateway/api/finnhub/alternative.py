@@ -1,5 +1,6 @@
 """Finnhub alternative data endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.finnhub.common import (
@@ -16,6 +17,8 @@ from gateway.api.finnhub.common import (
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -51,8 +54,9 @@ async def get_fda_calendar(
             "data": data,
             "meta": {"count": len(data), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/congress-trading", response_model=SuccessResponse)
@@ -93,8 +97,9 @@ async def get_congress_trading(
             "data": data,
             "meta": {"count": len(data), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/lobbying/{symbol}", response_model=SuccessResponse)
@@ -134,8 +139,9 @@ async def get_lobbying(
             "data": {"symbol": symbol.upper(), "lobbying": data},
             "meta": {"count": len(data), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/usa-spending/{symbol}", response_model=SuccessResponse)
@@ -175,5 +181,6 @@ async def get_usa_spending(
             "data": {"symbol": symbol.upper(), "spending": data},
             "meta": {"count": len(data), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

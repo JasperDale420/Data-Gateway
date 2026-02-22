@@ -1,5 +1,6 @@
 """Finnhub mutual fund endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from gateway.api.finnhub.common import (
@@ -15,6 +16,8 @@ from gateway.api.finnhub.common import (
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -51,8 +54,9 @@ async def get_mutual_fund_profile(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/mutual-fund/{symbol}/holdings", response_model=SuccessResponse)
@@ -87,8 +91,9 @@ async def get_mutual_fund_holdings(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/mutual-fund/{symbol}/sector", response_model=SuccessResponse)
@@ -123,5 +128,6 @@ async def get_mutual_fund_sector(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

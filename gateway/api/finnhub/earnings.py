@@ -1,5 +1,6 @@
 """Finnhub earnings, estimates, and recommendations endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.finnhub.common import (
@@ -16,6 +17,8 @@ from gateway.api.finnhub.common import (
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -56,8 +59,9 @@ async def get_earnings_calendar(
             "data": earnings,
             "meta": {"count": len(earnings), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/recommendations/{symbol}", response_model=SuccessResponse)
@@ -92,8 +96,9 @@ async def get_recommendations(
             "data": recs,
             "meta": {"count": len(recs), "cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/estimates/eps/{symbol}", response_model=SuccessResponse)
@@ -129,8 +134,9 @@ async def get_eps_estimates(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/estimates/revenue/{symbol}", response_model=SuccessResponse)
@@ -166,8 +172,9 @@ async def get_revenue_estimates(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/estimates/ebit/{symbol}", response_model=SuccessResponse)
@@ -203,8 +210,9 @@ async def get_ebit_estimates(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/estimates/ebitda/{symbol}", response_model=SuccessResponse)
@@ -240,8 +248,9 @@ async def get_ebitda_estimates(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/price-target/{symbol}", response_model=SuccessResponse)
@@ -276,5 +285,6 @@ async def get_price_target(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

@@ -1,5 +1,6 @@
 """Finnhub ETF and index endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from gateway.api.finnhub.common import (
@@ -15,6 +16,8 @@ from gateway.api.finnhub.common import (
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -51,8 +54,9 @@ async def get_etf_profile(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/etf/{symbol}/holdings", response_model=SuccessResponse)
@@ -87,8 +91,9 @@ async def get_etf_holdings(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/etf/{symbol}/sector", response_model=SuccessResponse)
@@ -123,8 +128,9 @@ async def get_etf_sector(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/etf/{symbol}/country", response_model=SuccessResponse)
@@ -159,8 +165,9 @@ async def get_etf_country(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/index/{symbol}/constituents", response_model=SuccessResponse)
@@ -195,8 +202,9 @@ async def get_index_constituents(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/index/{symbol}/historical", response_model=SuccessResponse)
@@ -231,5 +239,6 @@ async def get_index_historical(
             "data": data,
             "meta": {"cached": False, "provider": "finnhub"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

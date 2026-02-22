@@ -57,8 +57,9 @@ async def get_company_info(
         data = await provider.get_company_info(cik)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "sec"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/company/ticker/{ticker}", response_model=SuccessResponse)
@@ -85,16 +86,15 @@ async def get_company_by_ticker(
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "sec"}}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/filings/{cik}", response_model=SuccessResponse)
 async def get_filings(
     cik: str,
-    form_type: str | None = Query(
-        default=None, description="Filter by form type (10-K, 10-Q, 8-K, etc)"
-    ),
+    form_type: str | None = Query(default=None, description="Filter by form type (10-K, 10-Q, 8-K, etc)"),
     limit: int = Query(default=100, le=500, ge=1, description="Max filings to return"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -120,8 +120,9 @@ async def get_filings(
             "data": data,
             "meta": {"count": len(filings), "cached": False, "provider": "sec"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/filings/{cik}/{form_type}", response_model=SuccessResponse)
@@ -153,8 +154,9 @@ async def get_filings_by_type(
             "data": data,
             "meta": {"count": len(filings), "cached": False, "provider": "sec"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/13f/{cik}", response_model=SuccessResponse)
@@ -184,8 +186,9 @@ async def get_13f_holdings(
             "data": data,
             "meta": {"count": len(filings), "cached": False, "provider": "sec"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/insiders/{cik}", response_model=SuccessResponse)
@@ -216,8 +219,9 @@ async def get_insider_trades(
             "data": data,
             "meta": {"count": len(filings), "cached": False, "provider": "sec"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/facts/{cik}", response_model=SuccessResponse)
@@ -242,8 +246,9 @@ async def get_company_facts(
         data = await provider.get_company_facts(cik)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "sec"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -275,8 +280,9 @@ async def get_company_concept(
         data = await provider.get_company_concept(cik, taxonomy=taxonomy, concept=concept)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "sec"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/frames/{concept}/{period}", response_model=SuccessResponse)
@@ -301,17 +307,16 @@ async def get_xbrl_frames(
 
     try:
         await require_provider_rate_limit("sec")
-        data = await provider.get_xbrl_frames(
-            taxonomy=taxonomy, concept=concept, unit=unit, period=period
-        )
+        data = await provider.get_xbrl_frames(taxonomy=taxonomy, concept=concept, unit=unit, period=period)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {
             "success": True,
             "data": data,
             "meta": {"count": len(data.get("data", [])), "cached": False, "provider": "sec"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/search", response_model=SuccessResponse)
@@ -343,5 +348,6 @@ async def search_filings(
             "data": data,
             "meta": {"count": len(results), "cached": False, "provider": "sec"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alpaca.common import (
@@ -18,6 +19,8 @@ from gateway.api.alpaca.common import (
 )
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -70,8 +73,9 @@ async def get_stock_bars(
             },
         }
 
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/stocks/{symbol}/quotes", response_model=SuccessResponse)
@@ -101,8 +105,9 @@ async def get_stock_quotes(
 
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/stocks/{symbol}/trades", response_model=SuccessResponse)
@@ -145,8 +150,9 @@ async def get_stock_trades(
             },
         }
 
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/stocks/{symbol}/snapshot", response_model=SuccessResponse)
@@ -184,8 +190,9 @@ async def get_stock_snapshot(
             "meta": {"provider": "alpaca"},
         }
 
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/stocks/bars/latest", response_model=SuccessResponse)
@@ -208,8 +215,9 @@ async def get_latest_bars(
             "data": [b.model_dump(mode="json") for b in bars],
             "meta": {"count": len(bars), "provider": "alpaca"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/stocks/trades/latest", response_model=SuccessResponse)
@@ -232,8 +240,9 @@ async def get_latest_trades(
             "data": [t.model_dump(mode="json") for t in trades],
             "meta": {"count": len(trades), "provider": "alpaca"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/stocks/quotes", response_model=SuccessResponse)
@@ -259,8 +268,9 @@ async def get_historical_quotes(
             "data": [q.model_dump(mode="json") for q in quotes],
             "meta": {"count": len(quotes), "provider": "alpaca"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/stocks/snapshots", response_model=SuccessResponse)
@@ -283,8 +293,9 @@ async def get_snapshots(
             "data": snapshots,
             "meta": {"count": len(snapshots), "provider": "alpaca"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/stocks/auctions", response_model=SuccessResponse)
@@ -310,5 +321,6 @@ async def get_auctions(
             "data": auctions,
             "meta": {"count": len(auctions), "provider": "alpaca"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

@@ -69,8 +69,9 @@ async def get_ticker_info(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/info", response_model=SuccessResponse)
@@ -99,8 +100,9 @@ async def get_company_info(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/financials", response_model=SuccessResponse)
@@ -129,8 +131,9 @@ async def get_financials(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/earnings", response_model=SuccessResponse)
@@ -159,16 +162,15 @@ async def get_earnings(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/history", response_model=SuccessResponse)
 async def get_history(
     symbol: str,
-    period: str = Query(
-        default="1mo", description="1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max"
-    ),
+    period: str = Query(default="1mo", description="1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max"),
     interval: str = Query(default="1d", description="1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo"),
     start: str | None = Query(default=None, description="Start date (YYYY-MM-DD)"),
     end: str | None = Query(default=None, description="End date (YYYY-MM-DD)"),
@@ -190,9 +192,7 @@ async def get_history(
 
         async def _fetch():
             await require_provider_rate_limit("yfinance")
-            bars = await provider.get_history(
-                symbol, period=period, interval=interval, start=start, end=end
-            )
+            bars = await provider.get_history(symbol, period=period, interval=interval, start=start, end=end)
             return {
                 "symbol": symbol.upper(),
                 "period": period,
@@ -207,8 +207,9 @@ async def get_history(
             "data": data,
             "meta": {"count": len(data.get("bars", [])), "cached": False, "provider": "yfinance"},
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/options", response_model=SuccessResponse)
@@ -246,8 +247,9 @@ async def get_options(
                 "provider": "yfinance",
             },
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/options/{expiration}", response_model=SuccessResponse)
@@ -278,8 +280,9 @@ async def get_options_chain(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/recommendations", response_model=SuccessResponse)
@@ -317,8 +320,9 @@ async def get_recommendations(
                 "provider": "yfinance",
             },
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/holders", response_model=SuccessResponse)
@@ -349,8 +353,9 @@ async def get_holders(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/calendar", response_model=SuccessResponse)
@@ -381,8 +386,9 @@ async def get_calendar(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -425,8 +431,9 @@ async def get_dividends(
                 "provider": "yfinance",
             },
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/splits", response_model=SuccessResponse)
@@ -464,8 +471,9 @@ async def get_splits(
                 "provider": "yfinance",
             },
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/actions", response_model=SuccessResponse)
@@ -495,8 +503,9 @@ async def get_actions(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/news", response_model=SuccessResponse)
@@ -534,8 +543,9 @@ async def get_news(
                 "provider": "yfinance",
             },
         }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/sustainability", response_model=SuccessResponse)
@@ -565,8 +575,9 @@ async def get_sustainability(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/ticker/{symbol}/major-holders", response_model=SuccessResponse)
@@ -596,5 +607,6 @@ async def get_major_holders(
         data = await _dedupe(cache_key, _fetch)
         await cache.set(cache_key, data, ttl=CACHE_TTL)
         return {"success": True, "data": data, "meta": {"cached": False, "provider": "yfinance"}}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
