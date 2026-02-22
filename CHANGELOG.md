@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+### Fixed
+
+- **TOCTOU race in DataSinkRegistry dedup** (`data_sink.py`, `cache.py`): Replaced `get()`→`set()` dedup pattern with atomic `set_nx()` (Redis `SET NX EX`). Eliminates race window where two coroutines could both publish the same event.
+- **Mutable set view in SubscriptionManager** (`stream.py`): `get_clients_for_symbol_view()` now returns `frozenset` instead of raw mutable `set` reference, preventing accidental mutation of the subscription index during async fanout dispatch.
+
 ### Audit
 
 - **Dead code audit — flagged 3 orphaned API modules** (`replay.py`, `quality.py`, `symbology.py`, `__init__.py`): Cross-repo Sourcegraph audit found zero external consumers across all Empire repos for `/api/v1/replay/*`, `/quality/*`, and `/api/v1/symbology/*` endpoints. Added `TODO(audit-2026-02)` comments to module docstrings and import lines. Cerberus and Heber have their own local replay/quality implementations.

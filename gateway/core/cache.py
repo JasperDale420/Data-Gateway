@@ -326,6 +326,33 @@ class RedisCache:
             logger.warning("redis_cache_set_many_error", count=len(items), error=str(e))
             return 0
 
+    async def set_nx(self, key: str, value: Any, ttl: int | None = None) -> bool:
+        """Atomically set key only if it does not exist (SET NX EX).
+
+        Returns True if the key was set (first caller wins), False if it already
+        exists. Uses a single Redis SET command with NX and EX flags so there is
+        no TOCTOU window between checking and setting.
+        """
+        try:
+            await self._ensure_connected()
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
+
+            serialized = json.dumps(value, default=str)
+            result = await self._redis.set(
+                f"{self.KEY_PREFIX}{key}",
+                serialized,
+                nx=True,
+                ex=ttl or self.default_ttl,
+            )
+            if result:
+                self._stats.sets += 1
+                return True
+            return False
+        except Exception as e:
+            logger.warning("redis_cache_set_nx_error", key=key, error=str(e))
+            return False
+
     async def delete(self, key: str) -> bool:
         """Delete key from Redis cache."""
         try:

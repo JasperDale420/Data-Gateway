@@ -338,9 +338,13 @@ class SubscriptionManager:
         """Get all clients subscribed to a symbol for a data type (returns copy)."""
         return list(self.get_clients_for_symbol_view(symbol, data_type))
 
-    def get_clients_for_symbol_view(self, symbol: str, data_type: str) -> set[str]:
-        """Get raw set of clients subscribed to a symbol (zero-copy view)."""
-        return self._index.get(data_type, {}).get(symbol, set())
+    def get_clients_for_symbol_view(self, symbol: str, data_type: str) -> frozenset[str]:
+        """Get clients subscribed to a symbol as an immutable snapshot.
+
+        Returns a frozenset to prevent accidental mutation of the internal
+        subscription index during async fanout dispatch.
+        """
+        return frozenset(self._index.get(data_type, {}).get(symbol, set()))
 
     def _aggregate(self) -> tuple[set[str], set[str], set[str], set[str]]:
         """Compute union of all client subscriptions."""

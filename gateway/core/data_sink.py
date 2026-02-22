@@ -137,8 +137,10 @@ class DataSinkRegistry:
                 self._dedup_stats["checked"] += 1
                 cache_key = f"dedup:publish:{event_id}"
                 try:
-                    cached = await self._dedup_cache.get(cache_key)
-                    if cached is not None:
+                    # Atomic set-if-not-exists: first caller wins, no TOCTOU race.
+                    # set_nx returns True if key was newly set, False if it existed.
+                    is_new = await self._dedup_cache.set_nx(cache_key, "1", ttl=self.DEDUP_TTL_SECONDS)
+                    if not is_new:
                         self._dedup_stats["deduplicated"] += 1
                         logger.debug(
                             "publish_deduplicated",
@@ -146,9 +148,6 @@ class DataSinkRegistry:
                             topic=topic,
                         )
                         return  # Skip duplicate
-
-                    # Mark as published
-                    await self._dedup_cache.set(cache_key, "1", ttl=self.DEDUP_TTL_SECONDS)
                 except Exception as e:
                     # On cache error, proceed with publish (fail open)
                     logger.warning(
