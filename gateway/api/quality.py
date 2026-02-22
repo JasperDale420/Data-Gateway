@@ -1,6 +1,10 @@
 """Data Quality API endpoints.
 
 Per-symbol quality metrics as specified in PRD (lines 918-984).
+
+TODO(audit-2026-02): Zero external consumers found across all Empire repos.
+Heber and Orion each have their own local quality modules. Endpoints are
+mostly stub/mock implementations. Consider removing if no consumer is planned.
 """
 
 from datetime import date
@@ -10,7 +14,7 @@ from pydantic import BaseModel
 
 from gateway.api.deps import require_api_key
 from gateway.config import get_settings
-from gateway.core.quality import get_quality_analyzer
+from gateway.core.quality import QualityIssue, get_quality_analyzer
 from gateway.schemas import SuccessResponse
 
 router = APIRouter(

@@ -1,6 +1,10 @@
 """Historical Replay API endpoints.
 
 Implements replay session management and WebSocket streaming as specified in PRD.
+
+TODO(audit-2026-02): Zero external consumers found across all Empire repos.
+Cerberus uses its own local replay_provider.py. Consider removing this module
+if no consumer is planned.
 """
 
 import asyncio

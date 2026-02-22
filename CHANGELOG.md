@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+### Audit
+
+- **Dead code audit — flagged 3 orphaned API modules** (`replay.py`, `quality.py`, `symbology.py`, `__init__.py`): Cross-repo Sourcegraph audit found zero external consumers across all Empire repos for `/api/v1/replay/*`, `/quality/*`, and `/api/v1/symbology/*` endpoints. Added `TODO(audit-2026-02)` comments to module docstrings and import lines. Cerberus and Heber have their own local replay/quality implementations.
+
 ### Fixed
 
 - **Architecture violation `core → api` import** (`core/uw_poller.py`, `api/deps.py`): Extracted singleton state management (provider registry, stream multiplexer, data sink registry) from `api/deps.py` into new `core/globals.py`. `uw_poller` and `main.py` now import from `core.globals`; `deps.py` re-exports for backward compatibility. All 4 `import-linter` contracts now pass.
@@ -1229,4 +1233,5 @@ All notable changes to this project will be documented in this file.
 - **Test suite**: pytest fixtures and unit tests for core components
 
 ## 2026-02-21
+
 - chore: workspace sync checkpoint and gitignore audit (2026-02-21)

@@ -1,6 +1,10 @@
 """Symbology API endpoints.
 
 Symbol resolution and format conversion as specified in PRD (lines 459-523).
+
+TODO(audit-2026-02): Zero external consumers found across all Empire repos.
+Atlas references OCC symbology concepts but never calls this Gateway API.
+Consider removing if no consumer is planned.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
