@@ -18,6 +18,16 @@ from gateway.core.corporate_actions import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _enable_stub_data(monkeypatch):
+    """Corporate unit tests use built-in stub fixtures."""
+
+    class _Settings:
+        allow_stub_data = True
+
+    monkeypatch.setattr("gateway.core.corporate_actions.get_settings", lambda: _Settings())
+
+
 class TestCorporateAction:
     """Test CorporateAction dataclass."""
 

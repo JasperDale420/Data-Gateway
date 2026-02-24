@@ -118,7 +118,8 @@ class ReplaySession:
 
     session_id: str
     config: ReplayConfig
-    client_id: str
+    # Optional for backward compatibility in unit tests/direct usage.
+    client_id: str = "anonymous"
     state: ReplayState = ReplayState.PENDING
 
     # Progress tracking
@@ -240,7 +241,9 @@ class ReplaySessionManager:
         """Check whether a data loader is configured."""
         return self._data_loader is not None
 
-    async def create_session(self, config: ReplayConfig, client_id: str) -> ReplaySession:
+    async def create_session(
+        self, config: ReplayConfig, client_id: str = "anonymous"
+    ) -> ReplaySession:
         """Create a new replay session.
 
         Args:

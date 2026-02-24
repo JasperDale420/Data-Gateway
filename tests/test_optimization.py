@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from gateway.api.middleware import CacheMiddleware
 from gateway.core.envelope import wrap_event
+from tests.conftest import TEST_API_KEY
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 1: EventEnvelope Serialization Optimization
@@ -73,14 +74,15 @@ def test_cache_middleware_header_preservation():
     client = TestClient(app)
 
     # 1. First request (Cache MISS)
-    response1 = client.get("/test-headers")
+    auth_headers = {"X-Gateway-Key": TEST_API_KEY}
+    response1 = client.get("/test-headers", headers=auth_headers)
     assert response1.status_code == 200
     assert response1.headers["X-Gateway-Cache"] == "MISS"
     assert response1.headers["X-Custom-Header"] == "Preserved"
     assert "Strict-Transport-Security" in response1.headers
 
     # 2. Second request (Cache HIT)
-    response2 = client.get("/test-headers")
+    response2 = client.get("/test-headers", headers=auth_headers)
     assert response2.status_code == 200
     assert response2.headers["X-Gateway-Cache"] == "HIT"
 

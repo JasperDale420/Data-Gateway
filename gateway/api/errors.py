@@ -72,9 +72,18 @@ def normalize_http_exception(
     return error, legacy_detail
 
 
-async def gateway_http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    """Render all HTTPExceptions with the gateway's stable error contract."""
-    error, legacy_detail = normalize_http_exception(exc.status_code, exc.detail)
+async def gateway_http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Render HTTPExceptions with the gateway's stable error contract."""
+    if isinstance(exc, HTTPException):
+        status_code = exc.status_code
+        detail = exc.detail
+        headers = exc.headers
+    else:
+        status_code = 500
+        detail = "Internal server error"
+        headers = None
+
+    error, legacy_detail = normalize_http_exception(status_code, detail)
     payload: dict[str, Any] = {
         "success": False,
         "error": error,
@@ -83,7 +92,7 @@ async def gateway_http_exception_handler(request: Request, exc: HTTPException) -
     }
 
     return JSONResponse(
-        status_code=exc.status_code,
+        status_code=status_code,
         content=payload,
-        headers=exc.headers,
+        headers=headers,
     )

@@ -153,7 +153,9 @@ class TestSymbologyEndpointsValidation:
         )
         assert response.status_code == 200
         data = response.json()
-        assert "valid" in data
+        assert "success" in data
+        assert "data" in data
+        assert "valid" in data["data"]
 
     def test_symbology_batch(self, client: TestClient, auth_headers: dict):
         """POST /api/v1/symbology/batch returns valid response."""

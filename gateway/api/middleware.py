@@ -310,7 +310,9 @@ class CacheMiddleware(BaseHTTPMiddleware):
         if not is_public:
             api_key = request.headers.get("X-Gateway-Key")
             if not api_key:
-                return await call_next(request)
+                response = await call_next(request)
+                response.headers["X-Gateway-Cache"] = "BYPASS"
+                return response
             auth_error = await self._ensure_authenticated(request, api_key)
             if auth_error is not None:
                 return auth_error

@@ -34,6 +34,13 @@ All notable changes to this project will be documented in this file.
 
 - **YFinance history conversion performance**: Use `itertuples()` to avoid per-row Series allocations when building `NormalizedBar` history results, reducing CPU overhead for large historical ranges.
 
+### Fixed
+
+- **Replay backward compatibility in tests/tools**: Restored optional `client_id` defaults on replay session creation helpers to keep existing direct call sites working.
+- **Cache middleware observability**: Unauthenticated non-public GET requests now return `X-Gateway-Cache: BYPASS` for explicit cache behavior visibility.
+- **HTTP exception handler typing**: Broadened handler signature compatibility with Starlette exception handler expectations while preserving normalized gateway error responses.
+- **Contract validation tests**: Updated endpoint/corporate/cache optimization tests to match current wrapped response shapes and auth-aware cache flow.
+
 ## [0.5.5] - 2026-02-04
 
 ### Fixed
