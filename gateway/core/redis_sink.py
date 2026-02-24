@@ -144,23 +144,33 @@ class RedisStreamsSink(DataSink):
         ``self._redis`` is still that exact object.  This prevents multiple
         concurrent chunks from each triggering independent resets when only
         one is needed.
+
+        Acquires ``_connect_lock`` to serialize against ``_ensure_connected``
+        and other concurrent ``_reset_connection`` calls, preventing multiple
+        independent pool creations which would leak connections.
         """
         if failed_client is not None and self._redis is not failed_client:
             return
 
-        old_client = self._redis
-        self._redis = None
-        self._connected = False
-        if old_client is not None:
-            await self._close_stale_client(old_client)
-        self._reconnect_cooldown_until = time.monotonic() + self._backoff_seconds
-        logger.warning(
-            "redis_sink_connection_reset",
-            operation=operation,
-            error=str(error) or type(error).__name__,
-            backoff_seconds=round(self._backoff_seconds, 2),
-        )
-        self._backoff_seconds = min(self._backoff_seconds * 2, MAX_BACKOFF_SECONDS)
+        async with self._connect_lock:
+            # Re-check after acquiring the lock — another coroutine may have
+            # already reset a different (or the same) client while we waited.
+            if failed_client is not None and self._redis is not failed_client:
+                return
+
+            old_client = self._redis
+            self._redis = None
+            self._connected = False
+            if old_client is not None:
+                await self._close_stale_client(old_client)
+            self._reconnect_cooldown_until = time.monotonic() + self._backoff_seconds
+            logger.warning(
+                "redis_sink_connection_reset",
+                operation=operation,
+                error=str(error) or type(error).__name__,
+                backoff_seconds=round(self._backoff_seconds, 2),
+            )
+            self._backoff_seconds = min(self._backoff_seconds * 2, MAX_BACKOFF_SECONDS)
 
     async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
         """Publish data to a Redis Stream.

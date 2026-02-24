@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **HTTP client event_hooks conflict** (`http_client.py`): `create_async_http_client` and `create_http_client` now merge caller-provided `event_hooks` (e.g., metrics hooks from providers) with the default logging hooks via a new `_merge_event_hooks()` helper. Previously, providers passing `event_hooks` through `**kwargs` caused `TypeError: httpx.AsyncClient() got multiple values for keyword argument 'event_hooks'`, crashing all 5 providers (alpaca, finnhub, alphavantage, news, sec) on startup.
+- **Redis sink connection leak race condition** (`redis_sink.py`): `_reset_connection()` now acquires `_connect_lock` and re-checks `failed_client` identity inside the lock. Previously, concurrent publish chunks could each trigger independent resets without coordination, orphaning old connection pools and leaking connections (observed 266 open connections vs. the expected pool max of 8).
+
+### Fixed
+
 - **TOCTOU race in DataSinkRegistry dedup** (`data_sink.py`, `cache.py`): Replaced `get()`→`set()` dedup pattern with atomic `set_nx()` (Redis `SET NX EX`). Eliminates race window where two coroutines could both publish the same event.
 - **Mutable set view in SubscriptionManager** (`stream.py`): `get_clients_for_symbol_view()` now returns `frozenset` instead of raw mutable `set` reference, preventing accidental mutation of the subscription index during async fanout dispatch.
 
