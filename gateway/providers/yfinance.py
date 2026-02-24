@@ -187,16 +187,18 @@ class YFinanceProvider(DataProvider):
         df = await asyncio.to_thread(_fetch)
 
         results = []
-        for timestamp, row in df.iterrows():
+        symbol_upper = symbol.upper()
+        # PERF: itertuples avoids per-row Series allocation from iterrows.
+        for row in df.itertuples():
             results.append(
                 NormalizedBar(
-                    symbol=symbol.upper(),
-                    timestamp=timestamp.to_pydatetime(),
-                    open=Decimal(str(row["Open"])),
-                    high=Decimal(str(row["High"])),
-                    low=Decimal(str(row["Low"])),
-                    close=Decimal(str(row["Close"])),
-                    volume=int(row["Volume"]),
+                    symbol=symbol_upper,
+                    timestamp=row.Index.to_pydatetime(),
+                    open=Decimal(str(row.Open)),
+                    high=Decimal(str(row.High)),
+                    low=Decimal(str(row.Low)),
+                    close=Decimal(str(row.Close)),
+                    volume=int(row.Volume),
                     provider="yfinance",
                     timeframe=interval,
                 )
