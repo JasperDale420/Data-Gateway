@@ -108,9 +108,17 @@ class RedisStreamsSink(DataSink):
 
     @staticmethod
     async def _close_stale_client(client: Any) -> None:
-        """Close a stale Redis client to release pooled connections."""
+        """Close a stale Redis client and disconnect the underlying pool.
+
+        Calling ``client.close()`` releases the client handle but the
+        ``ConnectionPool`` may keep idle TCP sockets open.  Explicitly
+        disconnecting the pool ensures every socket is closed immediately.
+        """
         try:
             await client.close()
+            pool = getattr(client, "connection_pool", None)
+            if pool is not None:
+                await pool.disconnect()
             logger.debug("redis_sink_stale_client_closed")
         except Exception:
             pass
