@@ -54,7 +54,14 @@ class DataGatewayClient:
             return None
         try:
             config = yaml.safe_load(path.read_text()) or {}
-        except Exception:
+        except Exception as e:
+            import structlog
+
+            structlog.get_logger().warning(
+                "gateway_yaml_parse_failed",
+                path=str(path),
+                error=str(e),
+            )
             return None
 
         for entry in config.get("clients", []):
