@@ -76,5 +76,9 @@ perf-output.txt
 perf-summary.json
 perf-history-report.json
 
+# Sonar scanner output
+.scannerwork/
+sonar_scan.log
+
 # Aider
 .aider*
