@@ -602,8 +602,8 @@ class UpstreamConnection:
             )
             try:
                 ws.transport.abort()
-            except Exception:
-                pass
+            except Exception as abort_err:
+                logger.debug("websocket_abort_failed", error=str(abort_err), exc_info=True)
         except Exception as e:
             logger.warning(
                 "websocket_close_error",
