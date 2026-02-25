@@ -82,3 +82,4 @@ sonar_scan.log
 
 # Aider
 .aider*
+.env
