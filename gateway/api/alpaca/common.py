@@ -59,6 +59,9 @@ async def get_alpaca_provider(
     return provider
 
 
+import httpx
+
+
 async def execute_alpaca_provider_call(
     *,
     registry: ProviderRegistry,
@@ -75,6 +78,10 @@ async def execute_alpaca_provider_call(
         return await provider_call(provider)
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")

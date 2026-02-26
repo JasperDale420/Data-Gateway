@@ -4,6 +4,7 @@ import base64
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -206,7 +207,15 @@ async def execute_uw_cached(
 
     provider = get_uw_provider(registry)
     await require_provider_rate_limit("unusual_whales")
-    result = await fetcher(provider)
+    try:
+        result = await fetcher(provider)
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
     response = build_response(result)
     await cache.set(cache_key, response, ttl=ttl)
     return response

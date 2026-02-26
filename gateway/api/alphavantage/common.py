@@ -5,6 +5,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import httpx
 import structlog
 from fastapi import Depends, HTTPException
 
@@ -137,9 +138,16 @@ async def execute_av_cached(
     await require_provider_rate_limit("alphavantage")
     try:
         result = await fetcher(provider)
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except RuntimeError as e:
         _translate_provider_error(e)
         raise
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
     cached_value = cache_transform(result)
     if cache_enabled:
         await cache.set(cache_key_value, cached_value, ttl=ttl)
