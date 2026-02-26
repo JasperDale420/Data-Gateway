@@ -198,6 +198,53 @@ def test_submit_rejects_wildcard_symbol() -> None:
         engine.submit(req)
 
 
+def test_submit_rejects_stock_symbols_for_alpaca_crypto_feed() -> None:
+    engine = _make_engine()
+    req = BackfillRequest(
+        provider="alpaca",
+        feed="crypto_bars",
+        symbols=["AAPL", "MSFT"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
+    )
+
+    fake_task = MagicMock()
+
+    def _fake_create_task(coro):
+        coro.close()
+        return fake_task
+
+    with (
+        patch("gateway.core.backfill.asyncio.create_task", side_effect=_fake_create_task),
+        pytest.raises(ValueError, match="Invalid symbols for alpaca feed 'crypto_bars'"),
+    ):
+        engine.submit(req)
+
+
+def test_submit_accepts_valid_crypto_symbols_for_alpaca_crypto_feed() -> None:
+    engine = _make_engine()
+    req = BackfillRequest(
+        provider="alpaca",
+        feed="crypto_bars",
+        symbols=["btc/usd", "eth/usdt"],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
+    )
+
+    fake_task = MagicMock()
+
+    def _fake_create_task(coro):
+        coro.close()
+        return fake_task
+
+    with patch("gateway.core.backfill.asyncio.create_task", side_effect=_fake_create_task):
+        job = engine.submit(req)
+    assert job.request.symbols == ["BTC/USD", "ETH/USDT"]
+
+    # Cleanup: cancel the background task
+    engine.cancel(job.job_id)
+
+
 @pytest.mark.asyncio
 async def test_submit_creates_job_with_correct_structure() -> None:
     engine = _make_engine()

@@ -15,8 +15,10 @@ from pydantic import BaseModel, Field
 
 from gateway.core.envelope import wrap_event
 from gateway.core.rate_limiter import ProviderRateLimitManager, get_rate_limiter
+from gateway.core.security import InputValidator
 
 logger = structlog.get_logger()
+_INPUT_VALIDATOR = InputValidator()
 
 HEBER_EVENTS_TOPIC = "heber:events"
 
@@ -41,6 +43,7 @@ HEAVYWEIGHT_FEEDS = frozenset({"trades", "option_trades", "crypto_trades"})
 # Default concurrency per weight class per provider
 DEFAULT_LIGHTWEIGHT_CONCURRENCY = 5
 DEFAULT_HEAVYWEIGHT_CONCURRENCY = 2
+ALPACA_CRYPTO_FEEDS = frozenset({"crypto_bars", "crypto_trades"})
 
 # Auto-expire completed/failed/cancelled jobs after this duration (seconds)
 JOB_EXPIRY_SECONDS = 3600
@@ -352,6 +355,25 @@ class BackfillEngine:
 
         if not normalized_symbols:
             raise ValueError("symbols must include at least one valid symbol")
+
+        if request.provider == "alpaca" and request.feed in ALPACA_CRYPTO_FEEDS:
+            invalid_crypto_symbols = [
+                symbol
+                for symbol in normalized_symbols
+                if _INPUT_VALIDATOR.validate_symbol(symbol, symbol_type="crypto") is not None
+            ]
+            if invalid_crypto_symbols:
+                logger.warning(
+                    "backfill_invalid_crypto_symbols",
+                    provider=request.provider,
+                    feed=request.feed,
+                    invalid_symbols=invalid_crypto_symbols,
+                    total_symbols=len(normalized_symbols),
+                )
+                raise ValueError(
+                    f"Invalid symbols for alpaca feed '{request.feed}': {invalid_crypto_symbols}. "
+                    "Expected crypto pairs like ['BTC/USD', 'ETH/USD']."
+                )
 
         request.symbols = normalized_symbols
 

@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alpaca.common import (
@@ -16,9 +17,38 @@ from gateway.api.alpaca.common import (
     require_api_key,
 )
 from gateway.core.registry import ProviderRegistry
+from gateway.core.security import InputValidator
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
+logger = structlog.get_logger(__name__)
+_INPUT_VALIDATOR = InputValidator()
+
+
+def _validate_crypto_pair_or_raise(pair: str) -> str:
+    """Validate and normalize a crypto pair string."""
+    normalized_pair = pair.strip().upper()
+    error = _INPUT_VALIDATOR.validate_symbol(normalized_pair, symbol_type="crypto")
+    if error is not None:
+        logger.warning(
+            "alpaca_invalid_crypto_pair",
+            pair=pair,
+            normalized_pair=normalized_pair,
+            error_code=error.code,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid crypto pair format: '{pair}'. Expected format like BTC/USD.",
+        )
+    return normalized_pair
+
+
+def _validate_crypto_pairs_or_raise(pairs: list[str]) -> list[str]:
+    """Validate and normalize a list of crypto pairs."""
+    normalized_pairs = [_validate_crypto_pair_or_raise(pair) for pair in pairs]
+    if not normalized_pairs:
+        raise HTTPException(status_code=400, detail="At least one crypto pair is required.")
+    return normalized_pairs
 
 
 @router.get("/crypto/{pair:path}/bars", response_model=SuccessResponse)
@@ -32,10 +62,11 @@ async def get_crypto_bars(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical bars for a crypto pair (e.g., BTC/USD)."""
+    normalized_pair = _validate_crypto_pair_or_raise(pair)
     bars = await execute_alpaca_provider_call(
         registry=registry,
         provider_call=lambda provider: provider.get_crypto_bars(
-            pair=pair.upper(),
+            pair=normalized_pair,
             timeframe=timeframe,
             start=start,
             end=end,
@@ -46,7 +77,7 @@ async def get_crypto_bars(
     return {
         "success": True,
         "data": {
-            "pair": pair.upper(),
+            "pair": normalized_pair,
             "timeframe": timeframe,
             "bars": [bar.model_dump() for bar in bars],
         },
@@ -64,10 +95,11 @@ async def get_crypto_trades(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical trades for a crypto pair."""
+    normalized_pair = _validate_crypto_pair_or_raise(pair)
     trades = await execute_alpaca_provider_call(
         registry=registry,
         provider_call=lambda provider: provider.get_crypto_trades(
-            pair=pair.upper(),
+            pair=normalized_pair,
             start=start,
             end=end,
             limit=limit,
@@ -77,7 +109,7 @@ async def get_crypto_trades(
     return {
         "success": True,
         "data": {
-            "pair": pair.upper(),
+            "pair": normalized_pair,
             "trades": [trade.model_dump() for trade in trades],
         },
         "meta": {"count": len(trades), "provider": "alpaca"},
@@ -91,9 +123,10 @@ async def get_crypto_quotes(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest quote for a crypto pair."""
+    normalized_pair = _validate_crypto_pair_or_raise(pair)
     quote = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: provider.get_crypto_quotes(pair=pair.upper()),
+        provider_call=lambda provider: provider.get_crypto_quotes(pair=normalized_pair),
     )
 
     if not quote:
@@ -113,9 +146,10 @@ async def get_crypto_snapshot(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get current snapshot for a crypto pair."""
+    normalized_pair = _validate_crypto_pair_or_raise(pair)
     snapshot = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: provider.get_crypto_snapshot(pair=pair.upper()),
+        provider_call=lambda provider: provider.get_crypto_snapshot(pair=normalized_pair),
     )
 
     return {
@@ -132,9 +166,10 @@ async def get_crypto_orderbook(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get crypto orderbook for a trading pair."""
+    normalized_pair = _validate_crypto_pair_or_raise(pair)
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: provider.get_crypto_orderbook(pair=pair.upper()),
+        provider_call=lambda provider: provider.get_crypto_orderbook(pair=normalized_pair),
     )
 
     # Handle both dict and NormalizedOrderbook
@@ -147,7 +182,7 @@ async def get_crypto_orderbook(
         "success": True,
         "data": data_dict,
         "meta": {
-            "pair": pair.upper(),
+            "pair": normalized_pair,
             "provider": "alpaca",
         },
     }
@@ -160,7 +195,7 @@ async def get_crypto_latest_bars(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest bars for crypto pairs."""
-    pairs_list = parse_comma_values(pairs, uppercase=True)
+    pairs_list = _validate_crypto_pairs_or_raise(parse_comma_values(pairs, uppercase=True, drop_empty=True))
     data = await execute_alpaca_provider_call(
         registry=registry,
         provider_call=lambda provider: provider.get_crypto_latest_bars(pairs_list),
@@ -179,7 +214,7 @@ async def get_crypto_latest_trades(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest trades for crypto pairs."""
-    pairs_list = parse_comma_values(pairs, uppercase=True)
+    pairs_list = _validate_crypto_pairs_or_raise(parse_comma_values(pairs, uppercase=True, drop_empty=True))
     data = await execute_alpaca_provider_call(
         registry=registry,
         provider_call=lambda provider: provider.get_crypto_latest_trades(pairs_list),

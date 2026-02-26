@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Alpaca crypto symbol validation and error-log storm prevention** (`backfill.py`, `crypto.py`, `test_backfill.py`, `test_alpaca_crypto_router.py`):
+  - Backfill jobs for Alpaca `crypto_bars`/`crypto_trades` now validate symbol format at submit time and reject stock tickers with a clear `400`-style error message before any upstream call.
+  - Alpaca crypto REST routes now validate pair format (`BASE/QUOTE`, e.g., `BTC/USD`) before provider execution, returning HTTP 400 for invalid input.
+  - Added regression tests to prevent reintroducing invalid-symbol upstream request loops.
+
 - **HTTP client event_hooks conflict** (`http_client.py`): `create_async_http_client` and `create_http_client` now merge caller-provided `event_hooks` (e.g., metrics hooks from providers) with the default logging hooks via a new `_merge_event_hooks()` helper. Previously, providers passing `event_hooks` through `**kwargs` caused `TypeError: httpx.AsyncClient() got multiple values for keyword argument 'event_hooks'`, crashing all 5 providers (alpaca, finnhub, alphavantage, news, sec) on startup.
 - **Redis sink connection leak race condition** (`redis_sink.py`): `_reset_connection()` now acquires `_connect_lock` and re-checks `failed_client` identity inside the lock. Previously, concurrent publish chunks could each trigger independent resets without coordination, orphaning old connection pools and leaking connections (observed 266 open connections vs. the expected pool max of 8).
 - **Redis sink pool disconnect on reset** (`redis_sink.py`): `_close_stale_client()` now calls `connection_pool.disconnect()` after `client.close()` to force-release all idle TCP sockets from leaked pools.
