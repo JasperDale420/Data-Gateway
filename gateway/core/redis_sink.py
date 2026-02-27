@@ -20,7 +20,7 @@ from gateway.core.metrics import record_sink_publish
 logger = structlog.get_logger()
 
 DEFAULT_OPERATION_TIMEOUT_SECONDS = 5.0
-DEFAULT_POOL_SIZE = 8
+DEFAULT_POOL_SIZE = 64
 BATCH_CHUNK_SIZE = 2_000
 MAX_CONCURRENT_CHUNKS = 4
 CHUNK_RETRY_ATTEMPTS = 1
@@ -57,7 +57,7 @@ class RedisStreamsSink(DataSink):
         self._max_len = max_len
         self._approximate = approximate_trim
         self._operation_timeout_seconds = max(0.5, float(operation_timeout_seconds))
-        self._pool_size = max(1, min(32, int(pool_size)))
+        self._pool_size = max(1, min(64, int(pool_size)))
         self._redis: Any = None
         self._connected = False
         self._connect_lock = asyncio.Lock()
