@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import structlog
 
-from gateway.core.http_client import create_async_http_client
+from gateway.core.http_client import create_async_http_client, http_retry
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
@@ -85,6 +85,7 @@ class AlphaVantageProvider(DataProvider):
             self._client = None
         logger.info("alphavantage_provider_shutdown")
 
+    @http_retry
     async def health_check(self) -> HealthStatus:
         """Health check - test API connectivity."""
         if not self._api_key:
@@ -140,6 +141,7 @@ class AlphaVantageProvider(DataProvider):
             raise RuntimeError(API_KEY_NOT_SET)
         return self._client
 
+    @http_retry
     async def _fetch_json(self, params: dict[str, Any]) -> dict[str, Any]:
         """Fetch JSON payload with shared request + provider rate-limit-note handling."""
         client = self._ensure_ready()
@@ -191,6 +193,7 @@ class AlphaVantageProvider(DataProvider):
         """Return True when provider error indicates rate limiting."""
         return "rate limit exceeded" in str(error).lower()
 
+    @http_retry
     async def _fetch_with_premium_fallback(
         self,
         *,
@@ -236,6 +239,7 @@ class AlphaVantageProvider(DataProvider):
     # Quote Methods
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_quote(self, symbol: str) -> NormalizedQuote | None:
         """Get real-time quote using GLOBAL_QUOTE endpoint."""
         try:
@@ -267,10 +271,12 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_quote_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_quotes(self, symbols: list[str]) -> list[NormalizedQuote]:
         """Get quotes for multiple symbols."""
         semaphore = asyncio.Semaphore(self._quotes_max_concurrency)
 
+        @http_retry
         async def _fetch_quote(symbol: str) -> NormalizedQuote | None:
             async with semaphore:
                 try:
@@ -286,6 +292,7 @@ class AlphaVantageProvider(DataProvider):
     # Time Series / Historical Bars
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_intraday(
         self,
         symbol: str,
@@ -348,6 +355,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_intraday_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_daily(
         self,
         symbol: str,
@@ -406,6 +414,7 @@ class AlphaVantageProvider(DataProvider):
                 logger.error("alphavantage_daily_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_weekly(
         self, symbol: str, adjusted: bool = True, max_points: int | None = None
     ) -> list[NormalizedBar]:
@@ -460,6 +469,7 @@ class AlphaVantageProvider(DataProvider):
     # Fundamentals
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_company_overview(self, symbol: str) -> dict[str, Any]:
         """Get company overview (fundamentals, ratios, etc)."""
         try:
@@ -512,6 +522,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_overview_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_earnings(self, symbol: str) -> dict[str, Any]:
         """Get earnings data (annual and quarterly)."""
         try:
@@ -534,6 +545,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_earnings_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_income_statement(self, symbol: str) -> dict[str, Any]:
         """Get income statement data."""
         try:
@@ -556,6 +568,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_income_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_balance_sheet(self, symbol: str) -> dict[str, Any]:
         """Get balance sheet data."""
         try:
@@ -578,6 +591,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_balance_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_cash_flow(self, symbol: str) -> dict[str, Any]:
         """Get cash flow statement data."""
         try:
@@ -604,6 +618,7 @@ class AlphaVantageProvider(DataProvider):
     # Time Series Extended
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_monthly(
         self, symbol: str, adjusted: bool = True, max_points: int | None = None
     ) -> list[NormalizedBar]:
@@ -687,6 +702,7 @@ class AlphaVantageProvider(DataProvider):
     # Technical Indicators (Generic method for all indicators)
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_technical_indicator(
         self,
         symbol: str,
@@ -745,6 +761,7 @@ class AlphaVantageProvider(DataProvider):
             raise
 
     # Convenience methods for common indicators
+    @http_retry
     async def get_sma(
         self,
         symbol: str,
@@ -758,6 +775,7 @@ class AlphaVantageProvider(DataProvider):
             symbol, "SMA", interval, time_period, series_type, max_points=max_points
         )
 
+    @http_retry
     async def get_ema(
         self,
         symbol: str,
@@ -771,6 +789,7 @@ class AlphaVantageProvider(DataProvider):
             symbol, "EMA", interval, time_period, series_type, max_points=max_points
         )
 
+    @http_retry
     async def get_rsi(
         self,
         symbol: str,
@@ -784,6 +803,7 @@ class AlphaVantageProvider(DataProvider):
             symbol, "RSI", interval, time_period, series_type, max_points=max_points
         )
 
+    @http_retry
     async def get_macd(
         self,
         symbol: str,
@@ -796,6 +816,7 @@ class AlphaVantageProvider(DataProvider):
             symbol, "MACD", interval, series_type=series_type, max_points=max_points
         )
 
+    @http_retry
     async def get_bbands(
         self,
         symbol: str,
@@ -809,28 +830,33 @@ class AlphaVantageProvider(DataProvider):
             symbol, "BBANDS", interval, time_period, series_type, max_points=max_points
         )
 
+    @http_retry
     async def get_stoch(self, symbol: str, interval: str = "daily", max_points: int = 100) -> dict[str, Any]:
         """Stochastic Oscillator."""
         return await self.get_technical_indicator(symbol, "STOCH", interval, max_points=max_points)
 
+    @http_retry
     async def get_adx(
         self, symbol: str, interval: str = "daily", time_period: int = 14, max_points: int = 100
     ) -> dict[str, Any]:
         """Average Directional Index."""
         return await self.get_technical_indicator(symbol, "ADX", interval, time_period, max_points=max_points)
 
+    @http_retry
     async def get_cci(
         self, symbol: str, interval: str = "daily", time_period: int = 20, max_points: int = 100
     ) -> dict[str, Any]:
         """Commodity Channel Index."""
         return await self.get_technical_indicator(symbol, "CCI", interval, time_period, max_points=max_points)
 
+    @http_retry
     async def get_atr(
         self, symbol: str, interval: str = "daily", time_period: int = 14, max_points: int = 100
     ) -> dict[str, Any]:
         """Average True Range."""
         return await self.get_technical_indicator(symbol, "ATR", interval, time_period, max_points=max_points)
 
+    @http_retry
     async def get_obv(self, symbol: str, interval: str = "daily", max_points: int = 100) -> dict[str, Any]:
         """On Balance Volume."""
         return await self.get_technical_indicator(symbol, "OBV", interval, max_points=max_points)
@@ -839,6 +865,7 @@ class AlphaVantageProvider(DataProvider):
     # Forex
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_forex_rate(self, from_currency: str, to_currency: str) -> dict[str, Any]:
         """Get real-time exchange rate."""
         try:
@@ -864,6 +891,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_forex_rate_failed", error=str(e))
             raise
 
+    @http_retry
     async def get_forex_daily(self, from_symbol: str, to_symbol: str, max_points: int = 100) -> list[dict[str, Any]]:
         """Get daily forex time series."""
         try:
@@ -896,6 +924,7 @@ class AlphaVantageProvider(DataProvider):
     # Crypto
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_crypto_rating(self, symbol: str) -> dict[str, Any]:
         """Get crypto rating/health index."""
         try:
@@ -913,6 +942,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_crypto_rating_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_crypto_daily(self, symbol: str, market: str = "USD", max_points: int = 100) -> list[dict[str, Any]]:
         """Get daily crypto time series."""
         try:
@@ -946,6 +976,7 @@ class AlphaVantageProvider(DataProvider):
     # Economic Indicators
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_economic_indicator(self, indicator: str, interval: str = "annual") -> dict[str, Any]:
         """Get economic indicator data.
 
@@ -985,6 +1016,7 @@ class AlphaVantageProvider(DataProvider):
             return []
         return [dict(row) for row in rows]
 
+    @http_retry
     async def get_earnings_calendar(self, symbol: str | None = None, horizon: str = "3month") -> list[dict[str, Any]]:
         """Get earnings calendar.
 
@@ -1011,6 +1043,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_earnings_calendar_failed", error=str(e))
             raise
 
+    @http_retry
     async def get_ipo_calendar(self) -> list[dict[str, Any]]:
         """Get upcoming IPO calendar."""
         client = self._ensure_ready()
@@ -1027,6 +1060,7 @@ class AlphaVantageProvider(DataProvider):
             logger.error("alphavantage_ipo_calendar_failed", error=str(e))
             raise
 
+    @http_retry
     async def get_listing_status(self, state: str = "active", date: str | None = None) -> list[dict[str, Any]]:
         """Get listing status (active or delisted).
 

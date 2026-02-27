@@ -171,6 +171,18 @@ async def _alpaca_option_trades(p: Any, sym: str, s: datetime, e: datetime, **kw
     return await p.get_option_trades([sym], s, e)
 
 
+async def _alpaca_option_bars(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    return await p.get_option_bars(contracts=[sym], timeframe=kw.get("timeframe", "1Day"), start=s, end=e)
+
+
+async def _alpaca_option_quotes(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    return await p.get_historical_option_quotes(contracts=[sym], start=s, end=e)
+
+
+async def _alpaca_crypto_quotes(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    return await p.get_historical_crypto_quotes(pair=sym, start=s, end=e)
+
+
 async def _alpaca_crypto_bars(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
     return await p.get_crypto_bars(sym, kw.get("timeframe", "1Day"), s, e)
 
@@ -236,8 +248,11 @@ BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     ("alpaca", "trades"): _alpaca_trades,
     ("alpaca", "quotes"): _alpaca_quotes,
     ("alpaca", "option_trades"): _alpaca_option_trades,
+    ("alpaca", "option_bars"): _alpaca_option_bars,
+    ("alpaca", "option_quotes"): _alpaca_option_quotes,
     ("alpaca", "crypto_bars"): _alpaca_crypto_bars,
     ("alpaca", "crypto_trades"): _alpaca_crypto_trades,
+    ("alpaca", "crypto_quotes"): _alpaca_crypto_quotes,
     ("alpaca", "news"): _alpaca_news,
     # Unusual Whales
     ("unusual_whales", "flow_alerts"): _uw_flow,

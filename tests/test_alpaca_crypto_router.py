@@ -80,23 +80,25 @@ async def test_get_crypto_bars_threads_query_params(
 
 
 @pytest.mark.asyncio
-async def test_get_crypto_quotes_raises_404_when_missing(
+async def test_get_crypto_latest_quotes_threads_pairs_to_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
     async def _fake_execute(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
-        return None
+        return {"BTC/USD": _ModelLike({"bid_price": 1.0})}
 
     monkeypatch.setattr(crypto, "execute_alpaca_provider_call", _fake_execute)
 
-    with pytest.raises(HTTPException) as exc:
-        await crypto.get_crypto_quotes(
-            pair="btc/usd",
-            client=cast(Any, SimpleNamespace(id="test-client")),
-            registry=cast(ProviderRegistry, _FakeRegistry({"alpaca": object()})),
-        )
+    response = await crypto.get_crypto_latest_quotes(
+        pairs="btc/usd",
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
 
-    assert exc.value.status_code == 404
-    assert exc.value.detail == "No quote found for btc/usd"
+    assert response["data"]["BTC/USD"].model_dump() == {"bid_price": 1.0}
+    assert response["meta"]["count"] == 1
 
 
 @pytest.mark.asyncio

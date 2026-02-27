@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import structlog
 
-from gateway.core.http_client import create_async_http_client
+from gateway.core.http_client import create_async_http_client, http_retry
 from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
@@ -81,6 +81,7 @@ class FinnhubProvider(DataProvider):
             self._client = None
         logger.info("finnhub_provider_shutdown")
 
+    @http_retry
     async def health_check(self) -> HealthStatus:
         """Health check - test API connectivity."""
         if not self._api_key:
@@ -120,6 +121,7 @@ class FinnhubProvider(DataProvider):
     # Quote Methods
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_quote(self, symbol: str) -> NormalizedQuote | None:
         """Get real-time quote for a symbol."""
         if not self._client:
@@ -148,6 +150,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_quote_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_quotes(self, symbols: list[str]) -> list[NormalizedQuote]:
         """Get quotes for multiple symbols."""
         record_provider_quote_batch_size(self.name, len(symbols))
@@ -171,6 +174,7 @@ class FinnhubProvider(DataProvider):
     # Historical Bars
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_bars(
         self,
         symbols: list[str] | str,
@@ -295,6 +299,7 @@ class FinnhubProvider(DataProvider):
     # Company Profile & Fundamentals
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_company_profile(self, symbol: str) -> dict[str, Any]:
         """Get company profile information."""
         if not self._client:
@@ -329,6 +334,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_profile_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_financials(self, symbol: str) -> dict[str, Any]:
         """Get basic financials (52-week high/low, beta, etc)."""
         if not self._client:
@@ -364,6 +370,7 @@ class FinnhubProvider(DataProvider):
     # News
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_news(
         self,
         symbol: str,
@@ -415,6 +422,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_news_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_market_news(self, category: str = "general") -> list[dict[str, Any]]:
         """Get general market news.
 
@@ -458,6 +466,7 @@ class FinnhubProvider(DataProvider):
     # Earnings & Calendar
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_earnings_calendar(
         self,
         start: datetime | None = None,
@@ -506,6 +515,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_earnings_calendar_failed", error=str(e))
             raise
 
+    @http_retry
     async def get_recommendation_trends(self, symbol: str) -> list[dict[str, Any]]:
         """Get analyst recommendation trends."""
         if not self._client:
@@ -540,6 +550,7 @@ class FinnhubProvider(DataProvider):
     # Stock Estimates
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_eps_estimates(self, symbol: str, freq: str = "quarterly") -> dict[str, Any]:
         """Get EPS estimates for a symbol.
 
@@ -568,6 +579,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_eps_estimates_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_revenue_estimates(self, symbol: str, freq: str = "quarterly") -> dict[str, Any]:
         """Get revenue estimates for a symbol."""
         if not self._client:
@@ -591,6 +603,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_revenue_estimates_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_ebit_estimates(self, symbol: str, freq: str = "quarterly") -> dict[str, Any]:
         """Get EBIT estimates for a symbol."""
         if not self._client:
@@ -614,6 +627,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_ebit_estimates_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_ebitda_estimates(self, symbol: str, freq: str = "quarterly") -> dict[str, Any]:
         """Get EBITDA estimates for a symbol."""
         if not self._client:
@@ -637,6 +651,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_ebitda_estimates_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_price_target(self, symbol: str) -> dict[str, Any]:
         """Get analyst price target for a symbol."""
         if not self._client:
@@ -667,6 +682,7 @@ class FinnhubProvider(DataProvider):
     # Stock Fundamentals Extended
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_peers(self, symbol: str) -> list[str]:
         """Get peer companies for a symbol."""
         if not self._client:
@@ -684,6 +700,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_peers_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_metrics(self, symbol: str, metric: str = "all") -> dict[str, Any]:
         """Get key financial metrics for a symbol."""
         if not self._client:
@@ -707,6 +724,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_metrics_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_executives(self, symbol: str) -> list[dict[str, Any]]:
         """Get company executives and compensation."""
         if not self._client:
@@ -736,6 +754,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_executives_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_ownership(self, symbol: str, limit: int = 20) -> dict[str, Any]:
         """Get institutional ownership data."""
         if not self._client:
@@ -758,6 +777,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_ownership_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_fund_ownership(self, symbol: str, limit: int = 20) -> dict[str, Any]:
         """Get mutual fund and ETF ownership data."""
         if not self._client:
@@ -780,6 +800,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_fund_ownership_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_insider_transactions(
         self, symbol: str, start: datetime | None = None, end: datetime | None = None
     ) -> list[dict[str, Any]]:
@@ -822,6 +843,7 @@ class FinnhubProvider(DataProvider):
     # Stock Analysis
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_insider_sentiment(self, symbol: str) -> dict[str, Any]:
         """Get aggregate insider sentiment."""
         if not self._client:
@@ -844,6 +866,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_insider_sentiment_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_upgrade_downgrade(self, symbol: str) -> list[dict[str, Any]]:
         """Get analyst upgrade/downgrade history."""
         if not self._client:
@@ -861,6 +884,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_upgrade_downgrade_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_social_sentiment(self, symbol: str) -> dict[str, Any]:
         """Get social media sentiment."""
         if not self._client:
@@ -882,6 +906,7 @@ class FinnhubProvider(DataProvider):
     # ETFs
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_etf_profile(self, symbol: str) -> dict[str, Any]:
         """Get ETF profile."""
         if not self._client:
@@ -899,6 +924,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_etf_profile_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_etf_holdings(self, symbol: str) -> dict[str, Any]:
         """Get ETF holdings."""
         if not self._client:
@@ -916,6 +942,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_etf_holdings_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_etf_sector_exposure(self, symbol: str) -> dict[str, Any]:
         """Get ETF sector exposure."""
         if not self._client:
@@ -933,6 +960,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_etf_sector_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_etf_country_exposure(self, symbol: str) -> dict[str, Any]:
         """Get ETF country exposure."""
         if not self._client:
@@ -954,6 +982,7 @@ class FinnhubProvider(DataProvider):
     # Indices
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_index_constituents(self, symbol: str) -> dict[str, Any]:
         """Get index constituents."""
         if not self._client:
@@ -971,6 +1000,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_index_constituents_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_index_historical_constituents(self, symbol: str) -> dict[str, Any]:
         """Get historical index constituent changes."""
         if not self._client:
@@ -992,6 +1022,7 @@ class FinnhubProvider(DataProvider):
     # Technical Analysis
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_support_resistance(self, symbol: str, resolution: str = "D") -> dict[str, Any]:
         """Get support/resistance levels."""
         if not self._client:
@@ -1009,6 +1040,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_support_resistance_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_pattern_recognition(self, symbol: str, resolution: str = "D") -> dict[str, Any]:
         """Get recognized chart patterns."""
         if not self._client:
@@ -1030,6 +1062,7 @@ class FinnhubProvider(DataProvider):
     # Forex
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_forex_rates(self, base: str = "USD") -> dict[str, Any]:
         """Get all forex rates for a base currency."""
         if not self._client:
@@ -1047,6 +1080,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_forex_rates_failed", base=base, error=str(e))
             raise
 
+    @http_retry
     async def get_forex_exchanges(self) -> list[str]:
         """List supported forex exchanges."""
         if not self._client:
@@ -1061,6 +1095,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_forex_exchanges_failed", error=str(e))
             raise
 
+    @http_retry
     async def get_forex_symbols(self, exchange: str) -> list[dict[str, Any]]:
         """Get forex symbols for an exchange."""
         if not self._client:
@@ -1078,6 +1113,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_forex_symbols_failed", exchange=exchange, error=str(e))
             raise
 
+    @http_retry
     async def get_forex_candles(
         self,
         symbol: str,
@@ -1115,6 +1151,7 @@ class FinnhubProvider(DataProvider):
     # Crypto
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_crypto_exchanges(self) -> list[str]:
         """List supported crypto exchanges."""
         if not self._client:
@@ -1129,6 +1166,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_crypto_exchanges_failed", error=str(e))
             raise
 
+    @http_retry
     async def get_crypto_symbols(self, exchange: str) -> list[dict[str, Any]]:
         """Get crypto symbols for an exchange."""
         if not self._client:
@@ -1146,6 +1184,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_crypto_symbols_failed", exchange=exchange, error=str(e))
             raise
 
+    @http_retry
     async def get_crypto_candles(
         self,
         symbol: str,
@@ -1179,6 +1218,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_crypto_candles_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_crypto_profile(self, symbol: str) -> dict[str, Any]:
         """Get crypto profile/metadata."""
         if not self._client:
@@ -1200,6 +1240,7 @@ class FinnhubProvider(DataProvider):
     # Mutual Funds
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_mutual_fund_profile(self, symbol: str) -> dict[str, Any]:
         """Get mutual fund profile."""
         if not self._client:
@@ -1217,6 +1258,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_mf_profile_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_mutual_fund_holdings(self, symbol: str) -> dict[str, Any]:
         """Get mutual fund holdings."""
         if not self._client:
@@ -1234,6 +1276,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_mf_holdings_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_mutual_fund_sector(self, symbol: str) -> dict[str, Any]:
         """Get mutual fund sector exposure."""
         if not self._client:
@@ -1255,6 +1298,7 @@ class FinnhubProvider(DataProvider):
     # Alternative Data
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_fda_calendar(self) -> list[dict[str, Any]]:
         """Get FDA drug approval calendar."""
         if not self._client:
@@ -1269,6 +1313,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_fda_calendar_failed", error=str(e))
             raise
 
+    @http_retry
     async def get_congress_trading(
         self, symbol: str | None = None, start: datetime | None = None, end: datetime | None = None
     ) -> list[dict[str, Any]]:
@@ -1293,6 +1338,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_congress_trading_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_lobbying(
         self, symbol: str, start: datetime | None = None, end: datetime | None = None
     ) -> list[dict[str, Any]]:
@@ -1315,6 +1361,7 @@ class FinnhubProvider(DataProvider):
             logger.error("finnhub_lobbying_failed", symbol=symbol, error=str(e))
             raise
 
+    @http_retry
     async def get_usa_spending(
         self, symbol: str, start: datetime | None = None, end: datetime | None = None
     ) -> list[dict[str, Any]]:

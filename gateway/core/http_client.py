@@ -27,7 +27,7 @@ import structlog
 from tenacity import (
     before_sleep_log,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -35,6 +35,21 @@ from tenacity import (
 logger = structlog.get_logger(__name__)
 
 DEFAULT_TIMEOUT = 30.0
+
+
+def _should_retry_http_error(exc: BaseException) -> bool:
+    """Determine if an HTTP exception should trigger a retry."""
+    if isinstance(exc, httpx.TransportError | httpx.TimeoutException):
+        return True
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        # 429 Too Many Requests
+        # 502 Bad Gateway
+        # 503 Service Unavailable
+        # 504 Gateway Timeout
+        return exc.response.status_code in {429, 502, 503, 504}
+
+    return False
 
 
 def _log_request(request: httpx.Request) -> None:
@@ -142,7 +157,7 @@ def raise_for_status(response: httpx.Response) -> None:
 http_retry = retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
-    retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
+    retry=retry_if_exception(_should_retry_http_error),
     before_sleep=before_sleep_log(logger, logging.WARNING),  # type: ignore[arg-type]
     reraise=True,
 )

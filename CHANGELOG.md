@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Provider Error Masking** (`gateway/api/finnhub/*.py`, `gateway/api/yf.py`, `gateway/api/sec.py`): Refactored Finnhub, Yahoo Finance, and SEC routers to utilize centralized execution wrappers (`execute_finnhub_cached`, `execute_yf_cached`, `execute_sec_cached`). This ensures that `httpx.HTTPStatusError` exceptions correctly bubble up to the client instead of being masked as generic 502 Bad Gateway errors.
+- **Redis Sink Connection Pool Exhaustion** (`gateway/core/redis_sink.py`): Replaced `aioredis.ConnectionPool` with `aioredis.BlockingConnectionPool` and configured a timeout (`socket_timeout`). This prevents immediate `ConnectionError: Too many connections` exceptions when burst traffic (e.g., 256 concurrent tasks) momentarily exceeds the `max_connections` limit.
+
 - **Alpaca crypto symbol validation and error-log storm prevention** (`backfill.py`, `crypto.py`, `test_backfill.py`, `test_alpaca_crypto_router.py`):
   - Backfill jobs for Alpaca `crypto_bars`/`crypto_trades` now validate symbol format at submit time and reject stock tickers with a clear `400`-style error message before any upstream call.
   - Alpaca crypto REST routes now validate pair format (`BASE/QUOTE`, e.g., `BTC/USD`) before provider execution, returning HTTP 400 for invalid input.

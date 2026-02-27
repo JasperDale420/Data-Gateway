@@ -157,6 +157,36 @@ async def get_option_quotes(
     }
 
 
+@router.get("/options/{contract}/quotes/historical", response_model=SuccessResponse)
+async def get_historical_option_quotes(
+    contract: str,
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
+    limit: int = Query(default=10000, le=10000),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get historical quotes for an option contract."""
+    quotes = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_historical_option_quotes(
+            contracts=[contract.upper()],
+            start=start,
+            end=end,
+            limit=limit,
+        ),
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "contract": contract.upper(),
+            "quotes": [quote.model_dump() for quote in quotes],
+        },
+        "meta": {"count": len(quotes), "provider": "alpaca"},
+    }
+
+
 @router.get("/options/quotes", response_model=SuccessResponse)
 async def get_option_quotes_batch(
     symbols: str = Query(..., description="Comma-separated option contracts"),

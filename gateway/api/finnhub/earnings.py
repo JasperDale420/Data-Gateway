@@ -1,19 +1,18 @@
 """Finnhub earnings, estimates, and recommendations endpoints."""
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from gateway.api.finnhub.common import (
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
     datetime,
+    execute_finnhub_cached,
     get_cache,
     get_registry,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
@@ -32,36 +31,25 @@ async def get_earnings_calendar(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get earnings calendar."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:earnings", start, end)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_earnings_calendar", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
+    async def fetcher(provider):
         start_dt = datetime.fromisoformat(start) if start else None
         end_dt = datetime.fromisoformat(end) if end else None
+        return await provider.get_earnings_calendar(start=start_dt, end=end_dt)
 
-        earnings = await provider.get_earnings_calendar(start=start_dt, end=end_dt)
-        await cache.set(key, earnings, ttl=3600)
-        record_route_cache("finnhub_earnings_calendar", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": earnings,
-            "meta": {"count": len(earnings), "cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+        miss_meta_builder=lambda orig, xform: {"count": len(orig)},
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_earnings_calendar", status, "finnhub")
+    return response
 
 
 @router.get("/recommendations/{symbol}", response_model=SuccessResponse)
@@ -72,33 +60,23 @@ async def get_recommendations(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get analyst recommendation trends."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:recommendations", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_recommendations", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        recs = await provider.get_recommendation_trends(symbol)
-        await cache.set(key, recs, ttl=3600)
-        record_route_cache("finnhub_recommendations", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": recs,
-            "meta": {"count": len(recs), "cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_recommendation_trends(symbol)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+        miss_meta_builder=lambda orig, xform: {"count": len(orig)},
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_recommendations", status, "finnhub")
+    return response
 
 
 @router.get("/estimates/eps/{symbol}", response_model=SuccessResponse)
@@ -110,33 +88,22 @@ async def get_eps_estimates(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get EPS estimates for a symbol."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:eps-estimates", symbol.upper(), freq)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_eps_estimates", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_eps_estimates(symbol, freq=freq)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_eps_estimates", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_eps_estimates(symbol, freq=freq)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_eps_estimates", status, "finnhub")
+    return response
 
 
 @router.get("/estimates/revenue/{symbol}", response_model=SuccessResponse)
@@ -148,33 +115,22 @@ async def get_revenue_estimates(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get revenue estimates for a symbol."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:revenue-estimates", symbol.upper(), freq)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_revenue_estimates", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_revenue_estimates(symbol, freq=freq)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_revenue_estimates", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_revenue_estimates(symbol, freq=freq)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_revenue_estimates", status, "finnhub")
+    return response
 
 
 @router.get("/estimates/ebit/{symbol}", response_model=SuccessResponse)
@@ -186,33 +142,22 @@ async def get_ebit_estimates(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get EBIT estimates for a symbol."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:ebit-estimates", symbol.upper(), freq)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_ebit_estimates", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_ebit_estimates(symbol, freq=freq)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_ebit_estimates", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_ebit_estimates(symbol, freq=freq)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_ebit_estimates", status, "finnhub")
+    return response
 
 
 @router.get("/estimates/ebitda/{symbol}", response_model=SuccessResponse)
@@ -224,33 +169,22 @@ async def get_ebitda_estimates(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get EBITDA estimates for a symbol."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:ebitda-estimates", symbol.upper(), freq)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_ebitda_estimates", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_ebitda_estimates(symbol, freq=freq)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_ebitda_estimates", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_ebitda_estimates(symbol, freq=freq)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_ebitda_estimates", status, "finnhub")
+    return response
 
 
 @router.get("/price-target/{symbol}", response_model=SuccessResponse)
@@ -261,30 +195,19 @@ async def get_price_target(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get analyst price target for a symbol."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:price-target", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_price_target", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_price_target(symbol)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_price_target", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_price_target(symbol)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_price_target", status, "finnhub")
+    return response

@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -73,6 +74,10 @@ async def get_stock_bars(
             },
         }
 
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
@@ -105,6 +110,10 @@ async def get_stock_quotes(
 
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
@@ -150,6 +159,10 @@ async def get_stock_trades(
             },
         }
 
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
@@ -190,6 +203,10 @@ async def get_stock_snapshot(
             "meta": {"provider": "alpaca"},
         }
 
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
@@ -215,6 +232,10 @@ async def get_latest_bars(
             "data": [b.model_dump(mode="json") for b in bars],
             "meta": {"count": len(bars), "provider": "alpaca"},
         }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
@@ -240,6 +261,10 @@ async def get_latest_trades(
             "data": [t.model_dump(mode="json") for t in trades],
             "meta": {"count": len(trades), "provider": "alpaca"},
         }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
@@ -268,6 +293,10 @@ async def get_historical_quotes(
             "data": [q.model_dump(mode="json") for q in quotes],
             "meta": {"count": len(quotes), "provider": "alpaca"},
         }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
@@ -293,6 +322,10 @@ async def get_snapshots(
             "data": snapshots,
             "meta": {"count": len(snapshots), "provider": "alpaca"},
         }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
@@ -321,6 +354,10 @@ async def get_auctions(
             "data": auctions,
             "meta": {"count": len(auctions), "provider": "alpaca"},
         }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
         logger.error("provider_request_failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")

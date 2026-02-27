@@ -46,6 +46,12 @@ class _HealthyPipeline:
     def __init__(self) -> None:
         self._commands: list[tuple[Any, ...]] = []
 
+    async def __aenter__(self) -> _HealthyPipeline:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        pass
+
     def xadd(self, *args: Any, **kwargs: Any) -> _HealthyPipeline:
         self._commands.append((args, kwargs))
         return self
@@ -70,6 +76,12 @@ class _FailThenSucceedPipeline:
         self._commands: list[tuple[Any, ...]] = []
         self._call_count = 0
 
+    async def __aenter__(self) -> _FailThenSucceedPipeline:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        pass
+
     def xadd(self, *args: Any, **kwargs: Any) -> _FailThenSucceedPipeline:
         self._commands.append((args, kwargs))
         return self
@@ -87,6 +99,12 @@ class _FailingPipeline:
     def __init__(self) -> None:
         self._commands: list[tuple[Any, ...]] = []
 
+    async def __aenter__(self) -> _FailingPipeline:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        pass
+
     def xadd(self, *args: Any, **kwargs: Any) -> _FailingPipeline:
         self._commands.append((args, kwargs))
         return self
@@ -102,6 +120,12 @@ class _TimingPipeline:
         self._commands: list[tuple[Any, ...]] = []
         self._delay = delay
         self.executed_at: float | None = None
+
+    async def __aenter__(self) -> _TimingPipeline:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        pass
 
     def xadd(self, *args: Any, **kwargs: Any) -> _TimingPipeline:
         self._commands.append((args, kwargs))
@@ -469,6 +493,12 @@ async def test_concurrent_chunk_reset_does_not_crash(
     class _RacyPipeline:
         def __init__(self) -> None:
             self._cmds: list = []
+
+        async def __aenter__(self) -> _RacyPipeline:
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            pass
 
         def xadd(self, *a: Any, **kw: Any) -> _RacyPipeline:
             self._cmds.append(1)

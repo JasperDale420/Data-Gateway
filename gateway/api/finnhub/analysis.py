@@ -1,18 +1,17 @@
 """Finnhub analysis endpoints - sentiment, upgrade/downgrade."""
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from gateway.api.finnhub.common import (
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
+    execute_finnhub_cached,
     get_cache,
     get_registry,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
@@ -30,33 +29,22 @@ async def get_insider_sentiment(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get aggregate insider sentiment."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:insider-sentiment", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_insider_sentiment", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_insider_sentiment(symbol)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_insider_sentiment", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_insider_sentiment(symbol)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_insider_sentiment", status, "finnhub")
+    return response
 
 
 @router.get("/upgrade-downgrade/{symbol}", response_model=SuccessResponse)
@@ -67,33 +55,27 @@ async def get_upgrade_downgrade(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get analyst upgrade/downgrade history."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:upgrade-downgrade", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_upgrade_downgrade", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_upgrade_downgrade(symbol)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_upgrade_downgrade", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": {"symbol": symbol.upper(), "history": data},
-            "meta": {"count": len(data), "cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_upgrade_downgrade(symbol)
+
+    def cache_transform(data):
+        return {"symbol": symbol.upper(), "history": data}
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+        cache_transform=cache_transform,
+        miss_meta_builder=lambda orig, xform: {"count": len(orig)},
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_upgrade_downgrade", status, "finnhub")
+    return response
 
 
 @router.get("/social-sentiment/{symbol}", response_model=SuccessResponse)
@@ -104,33 +86,22 @@ async def get_social_sentiment(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get social media sentiment."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:social-sentiment", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_social_sentiment", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_social_sentiment(symbol)
-        await cache.set(key, data, ttl=1800)
-        record_route_cache("finnhub_social_sentiment", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_social_sentiment(symbol)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=1800,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_social_sentiment", status, "finnhub")
+    return response
 
 
 @router.get("/support-resistance/{symbol}", response_model=SuccessResponse)
@@ -142,33 +113,22 @@ async def get_support_resistance(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get support/resistance levels."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:support-resistance", symbol.upper(), resolution)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_support_resistance", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_support_resistance(symbol, resolution=resolution)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_support_resistance", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_support_resistance(symbol, resolution=resolution)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_support_resistance", status, "finnhub")
+    return response
 
 
 @router.get("/patterns/{symbol}", response_model=SuccessResponse)
@@ -180,30 +140,19 @@ async def get_pattern_recognition(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get recognized chart patterns."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:patterns", symbol.upper(), resolution)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_pattern_recognition", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_pattern_recognition(symbol, resolution=resolution)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_pattern_recognition", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    async def fetcher(provider):
+        return await provider.get_pattern_recognition(symbol, resolution=resolution)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_pattern_recognition", status, "finnhub")
+    return response

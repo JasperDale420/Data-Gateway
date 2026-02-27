@@ -115,7 +115,14 @@ class RedisStreamsSink(DataSink):
         disconnecting the pool ensures every socket is closed immediately.
         """
         try:
-            await client.close()
+            if hasattr(client, "aclose"):
+                await client.aclose()
+            else:
+                await client.close()
+        except Exception as e:
+            logger.debug("redis_sink_close_client_error", error=str(e))
+
+        try:
             pool = getattr(client, "connection_pool", None)
             if pool is not None:
                 await pool.disconnect()
@@ -126,9 +133,10 @@ class RedisStreamsSink(DataSink):
     def _create_client(self) -> Any:
         import redis.asyncio as aioredis
 
-        pool = aioredis.ConnectionPool.from_url(
+        pool = aioredis.BlockingConnectionPool.from_url(
             self._redis_url,
             max_connections=self._pool_size,
+            timeout=self._operation_timeout_seconds,
             decode_responses=False,
             socket_connect_timeout=self._operation_timeout_seconds,
             socket_timeout=self._operation_timeout_seconds,
@@ -301,24 +309,24 @@ class RedisStreamsSink(DataSink):
             return 0
 
         try:
-            pipe = client.pipeline(transaction=False)
-            for topic, data in chunk:
-                if isinstance(data, str):
-                    payload = {b"data": data.encode()}
-                elif isinstance(data, bytes):
-                    payload = {b"data": data}
-                else:
-                    payload = {b"data": orjson.dumps(data, default=str)}
-                pipe.xadd(
-                    topic,
-                    payload,
-                    maxlen=self._max_len,
-                    approximate=self._approximate,
-                )
+            async with client.pipeline(transaction=False) as pipe:
+                for topic, data in chunk:
+                    if isinstance(data, str):
+                        payload = {b"data": data.encode()}
+                    elif isinstance(data, bytes):
+                        payload = {b"data": data}
+                    else:
+                        payload = {b"data": orjson.dumps(data, default=str)}
+                    pipe.xadd(
+                        topic,
+                        payload,
+                        maxlen=self._max_len,
+                        approximate=self._approximate,
+                    )
 
-            # Timeout scales with chunk size: base + proportional
-            timeout = self._operation_timeout_seconds + (len(chunk) / 500) * 0.5
-            results = await asyncio.wait_for(pipe.execute(), timeout=timeout)
+                # Timeout scales with chunk size: base + proportional
+                timeout = self._operation_timeout_seconds + (len(chunk) / 500) * 0.5
+                results = await asyncio.wait_for(pipe.execute(), timeout=timeout)
 
             published = 0
             for i, result in enumerate(results):

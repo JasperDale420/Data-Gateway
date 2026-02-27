@@ -5,16 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.finnhub.common import (
     CACHE_TTL,
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
     datetime,
+    execute_finnhub_cached,
     get_cache,
     get_registry,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
@@ -32,39 +31,29 @@ async def get_quote(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get real-time quote for a symbol."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:quote", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_quote", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
+    async def fetcher(provider):
         quote = await provider.get_quote(symbol)
         if not quote:
             raise HTTPException(status_code=404, detail=f"No data for symbol: {symbol}")
+        return quote
 
-        data = quote.model_dump(mode="json")
-        await cache.set(key, data, ttl=CACHE_TTL)
-        record_route_cache("finnhub_quote", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except HTTPException:
-        raise
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    def cache_transform(quote):
+        return quote.model_dump(mode="json")
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=CACHE_TTL,
+        fetcher=fetcher,
+        cache_transform=cache_transform,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_quote", status, "finnhub")
+    return response
 
 
 @router.get("/bars/{symbol}", response_model=SuccessResponse)
@@ -78,38 +67,31 @@ async def get_bars(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get historical OHLCV bars."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:bars", symbol.upper(), resolution, start, end)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_bars", "hit", "finnhub")
+
+    start_dt = datetime.fromisoformat(start) if start else None
+    end_dt = datetime.fromisoformat(end) if end else None
+
+    async def fetcher(provider):
+        return await provider.get_bars(symbol, resolution=resolution, start=start_dt, end=end_dt)
+
+    def cache_transform(bars):
         return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
-
-    try:
-        await require_provider_rate_limit("finnhub")
-        start_dt = datetime.fromisoformat(start) if start else None
-        end_dt = datetime.fromisoformat(end) if end else None
-
-        bars = await provider.get_bars(symbol, resolution=resolution, start=start_dt, end=end_dt)
-        data = {
             "symbol": symbol.upper(),
             "resolution": resolution,
             "bars": [bar.model_dump(mode="json") for bar in bars],
         }
-        await cache.set(key, data, ttl=300)
-        record_route_cache("finnhub_bars", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(bars), "cached": False, "provider": "finnhub"},
-        }
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=300,
+        fetcher=fetcher,
+        cache_transform=cache_transform,
+        miss_meta_builder=lambda orig, xform: {"count": len(orig)},
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_bars", status, "finnhub")
+    return response

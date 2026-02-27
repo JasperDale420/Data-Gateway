@@ -116,46 +116,72 @@ async def get_crypto_trades(
     }
 
 
-@router.get("/crypto/{pair:path}/quotes", response_model=SuccessResponse)
-async def get_crypto_quotes(
-    pair: str,
+@router.get("/crypto/quotes/latest", response_model=SuccessResponse)
+async def get_crypto_latest_quotes(
+    pairs: str = Query(..., description="Comma-separated crypto pairs"),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Get latest quote for a crypto pair."""
-    normalized_pair = _validate_crypto_pair_or_raise(pair)
-    quote = await execute_alpaca_provider_call(
+    """Get latest quotes for crypto pairs."""
+    pairs_list = _validate_crypto_pairs_or_raise(parse_comma_values(pairs, uppercase=True, drop_empty=True))
+    data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: provider.get_crypto_quotes(pair=normalized_pair),
+        provider_call=lambda provider: provider.get_crypto_quotes(pairs_list),
     )
-
-    if not quote:
-        raise HTTPException(status_code=404, detail=f"No quote found for {pair}")
-
     return {
         "success": True,
-        "data": quote.model_dump(),
-        "meta": {"provider": "alpaca"},
+        "data": data,
+        "meta": {"count": len(data), "provider": "alpaca"},
     }
 
 
-@router.get("/crypto/{pair:path}/snapshot", response_model=SuccessResponse)
-async def get_crypto_snapshot(
+@router.get("/crypto/{pair:path}/quotes/historical", response_model=SuccessResponse)
+async def get_historical_crypto_quotes(
     pair: str,
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
+    limit: int = Query(default=10000, le=10000),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Get current snapshot for a crypto pair."""
+    """Get historical quotes for a crypto pair."""
     normalized_pair = _validate_crypto_pair_or_raise(pair)
-    snapshot = await execute_alpaca_provider_call(
+    quotes = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: provider.get_crypto_snapshot(pair=normalized_pair),
+        provider_call=lambda provider: provider.get_historical_crypto_quotes(
+            pair=normalized_pair,
+            start=start,
+            end=end,
+            limit=limit,
+        ),
     )
 
     return {
         "success": True,
-        "data": snapshot,
-        "meta": {"provider": "alpaca"},
+        "data": {
+            "pair": normalized_pair,
+            "quotes": [quote.model_dump() for quote in quotes],
+        },
+        "meta": {"count": len(quotes), "provider": "alpaca"},
+    }
+
+
+@router.get("/crypto/snapshots", response_model=SuccessResponse)
+async def get_crypto_snapshots(
+    pairs: str = Query(..., description="Comma-separated crypto pairs"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get current snapshot for crypto pairs."""
+    pairs_list = _validate_crypto_pairs_or_raise(parse_comma_values(pairs, uppercase=True, drop_empty=True))
+    data = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_crypto_snapshots(pairs_list),
+    )
+    return {
+        "success": True,
+        "data": data,
+        "meta": {"count": len(data), "provider": "alpaca"},
     }
 
 
