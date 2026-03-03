@@ -60,6 +60,7 @@ async def get_alpaca_provider(
 
 
 import httpx
+from alpaca.common.exceptions import APIError
 
 
 async def execute_alpaca_provider_call(
@@ -78,6 +79,10 @@ async def execute_alpaca_provider_call(
         return await provider_call(provider)
     except HTTPException:
         raise
+    except APIError as e:
+        status_code = getattr(e, "status_code", 400)
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Alpaca API Error: {str(e)}")
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("provider_request_failed", exc_info=True, status_code=status_code)
