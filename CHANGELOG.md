@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.7] - 2026-03-03
+
+### Fixed
+
+- **Stream reconnect non-recoverable auth handling**: `UpstreamConnection` now detects account-level auth failures like `"connection limit exceeded"`, logs `non_recoverable_error`, and stops reconnect loops immediately instead of exhausting retries.
+- **WebSocket slot cleanup before reconnect**: Reconnect path now closes the active upstream socket before retrying, reducing stale Alpaca connection slot collisions after disconnect/failure.
+- **Reconnect loop termination on retry exhaustion**: `_reconnect_with_backoff()` now marks the connection as not running after max retries to avoid noisy retry churn.
+- **HTTPException handler typing compatibility**: Updated `gateway_http_exception_handler` signature/cast so FastAPI exception registration type-checks cleanly under `mypy`.
+
+### Added
+
+- **Reconnect regression coverage**: Added `tests/test_stream_reconnect.py` with async tests for:
+  - immediate stop on non-recoverable auth failures
+  - websocket close before reconnect attempts
+  - stop behavior after max retry exhaustion
+
 ## [0.5.6] - 2026-02-05
 
 ### Added

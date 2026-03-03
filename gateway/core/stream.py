@@ -299,6 +299,9 @@ class UpstreamConnection:
     and reconnection with exponential backoff.
     """
 
+    # Account-level auth failures that should stop reconnect loops immediately.
+    _NON_RECOVERABLE_ERRORS = ("connection limit exceeded",)
+
     def __init__(
         self,
         stream_type: AlpacaStreamType,
@@ -502,34 +505,39 @@ class UpstreamConnection:
             except asyncio.CancelledError:
                 logger.debug("receive_task_cancelled", stream=self.stream_type.value)
 
-        # Aggressively close WebSocket connection
-        if self._ws:
+        await self._close_ws(reason="Gateway shutdown")
+
+    async def _close_ws(self, reason: str = "Gateway reconnecting") -> None:
+        """Close active websocket and release upstream connection slot."""
+        if not self._ws:
+            return
+
+        ws = self._ws
+        self._ws = None
+        self._authenticated = False
+
+        try:
+            await asyncio.wait_for(
+                ws.close(code=1000, reason=reason),
+                timeout=3.0,
+            )
+            logger.info("websocket_closed_gracefully", stream=self.stream_type.value)
+        except TimeoutError:
+            logger.warning(
+                "websocket_close_timeout",
+                stream=self.stream_type.value,
+                action="forcing_close",
+            )
             try:
-                # Send explicit close frame with normal closure code
-                await asyncio.wait_for(
-                    self._ws.close(code=1000, reason="Gateway shutdown"),
-                    timeout=3.0,
-                )
-                logger.info("websocket_closed_gracefully", stream=self.stream_type.value)
-            except TimeoutError:
-                logger.warning(
-                    "websocket_close_timeout",
-                    stream=self.stream_type.value,
-                    action="forcing_close",
-                )
-                # Force close the underlying socket
-                try:
-                    self._ws.transport.abort()
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.warning(
-                    "websocket_close_error",
-                    stream=self.stream_type.value,
-                    error=str(e),
-                )
-            finally:
-                self._ws = None
+                ws.transport.abort()
+            except Exception as abort_err:
+                logger.debug("websocket_abort_failed", error=str(abort_err), exc_info=True)
+        except Exception as e:
+            logger.warning(
+                "websocket_close_error",
+                stream=self.stream_type.value,
+                error=str(e),
+            )
 
     async def _connect_and_run(self) -> None:
         """Main connection loop with reconnection."""
@@ -557,10 +565,15 @@ class UpstreamConnection:
                 logger.exception("connection_error", stream=self.stream_type.value)
 
             self._authenticated = False
-            self._ws = None
+            await self._close_ws()
 
             if self._running:
                 await self._reconnect_with_backoff()
+
+    def _is_non_recoverable_error(self, error_message: str) -> bool:
+        """Return True when reconnect errors indicate account-level failure."""
+        normalized = error_message.lower()
+        return any(msg in normalized for msg in self._NON_RECOVERABLE_ERRORS)
 
     async def _receive_loop(self) -> None:
         """Receive and dispatch messages.
@@ -614,14 +627,29 @@ class UpstreamConnection:
                 return
 
             except Exception as e:
+                error_msg = str(e)
+                if self._is_non_recoverable_error(error_msg):
+                    logger.error(
+                        "non_recoverable_error",
+                        stream=self.stream_type.value,
+                        error=error_msg,
+                        hint=(
+                            "Check for stale connections or competing applications using the "
+                            "same Alpaca credentials."
+                        ),
+                    )
+                    self._running = False
+                    return
+
                 logger.warning(
                     "reconnect_failed",
                     stream=self.stream_type.value,
                     attempt=attempt + 1,
-                    error=str(e),
+                    error=error_msg,
                 )
 
         logger.error("max_retries_exceeded", stream=self.stream_type.value)
+        self._running = False
 
 
 class StreamMultiplexer:

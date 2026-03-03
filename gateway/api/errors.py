@@ -3,7 +3,7 @@
 Converts FastAPI HTTPException payloads into a stable gateway error envelope.
 """
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -72,9 +72,10 @@ def normalize_http_exception(
     return error, legacy_detail
 
 
-async def gateway_http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+async def gateway_http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Render all HTTPExceptions with the gateway's stable error contract."""
-    error, legacy_detail = normalize_http_exception(exc.status_code, exc.detail)
+    http_exc = cast(HTTPException, exc)
+    error, legacy_detail = normalize_http_exception(http_exc.status_code, http_exc.detail)
     payload: dict[str, Any] = {
         "success": False,
         "error": error,
@@ -83,7 +84,7 @@ async def gateway_http_exception_handler(request: Request, exc: HTTPException) -
     }
 
     return JSONResponse(
-        status_code=exc.status_code,
+        status_code=http_exc.status_code,
         content=payload,
-        headers=exc.headers,
+        headers=http_exc.headers,
     )
