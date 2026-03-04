@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Documentation baseline files**: Added `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/RUNBOOK.md`, and `docs/API_REFERENCE.md` to align with Empire documentation standards.
+
+### Changed
+
+- **Doc navigation updates**: Updated `README.md` and `CONTRIBUTING.md` links to use `docs/` entry points and replaced stale `CLAUDE.MD` guidance with `AGENTS.md`.
+
 ## [0.5.6] - 2026-02-05
 
 ### Added

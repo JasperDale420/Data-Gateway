@@ -126,7 +126,7 @@ pytest tests/test_websocket.py -v
 
 4. Update documentation:
    - Add entry to CHANGELOG.md under `## [Unreleased]`
-   - Update API_REFERENCE.md if adding endpoints
+   - Update docs/API_REFERENCE.md if adding endpoints
    - Update README.md if changing user-facing features
 
 5. Open PR with description
@@ -155,12 +155,15 @@ docs: update README with WebSocket feed examples
 ## Documentation
 
 - **README.md**: User-facing overview and quickstart
-- **API_REFERENCE.md**: Complete endpoint reference
+- **docs/API_REFERENCE.md**: API reference entry point
+- **docs/ARCHITECTURE.md**: System design and data flow
+- **docs/RUNBOOK.md**: Operations runbook
 - **CHANGELOG.md**: Version history (keep updated!)
 - **PRD.md**: Product specification (source of truth)
+- **AGENTS.md**: Project-specific AI agent instructions
 
 ## Getting Help
 
 - Check existing issues for similar problems
 - Review PRD.md for specification questions
-- Check CLAUDE.MD for codebase context
+- Check AGENTS.md for codebase context

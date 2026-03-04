@@ -129,8 +129,15 @@ curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/pr
 curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/feeds
 ```
 
-See [API_REFERENCE.md](API_REFERENCE.md) for complete documentation.
+See [docs/API_REFERENCE.md](docs/API_REFERENCE.md) for complete documentation.
 Provider route contracts are generated from live routes in [PROVIDER_ENDPOINT_CONTRACT.md](PROVIDER_ENDPOINT_CONTRACT.md) via `python scripts/generate_provider_contract.py`.
+
+## Documentation Map
+
+- [AGENTS.md](AGENTS.md) - Project-specific coding agent instructions
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System components and data flow
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) - Startup, health checks, and incident response
+- [docs/API_REFERENCE.md](docs/API_REFERENCE.md) - API reference entry point
 
 ## WebSocket Streaming
 
