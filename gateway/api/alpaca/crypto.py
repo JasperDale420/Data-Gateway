@@ -12,8 +12,11 @@ from gateway.api.alpaca.common import (
     ERR_PROVIDER_NOT_AVAILABLE,
     Client,
     get_registry,
+    map_alpaca_exception,
+    parse_crypto_pairs_or_400,
     require_api_key,
     require_provider_rate_limit,
+    validate_crypto_pair_or_400,
 )
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
@@ -32,6 +35,7 @@ async def get_crypto_bars(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical bars for a crypto pair (e.g., BTC/USD)."""
+    normalized_pair = validate_crypto_pair_or_400(pair)
     provider = registry.get("alpaca")
 
     if not provider:
@@ -40,7 +44,7 @@ async def get_crypto_bars(
     try:
         await require_provider_rate_limit("alpaca")
         bars = await provider.get_crypto_bars(
-            pair=pair.upper(),
+            pair=normalized_pair,
             timeframe=timeframe,
             start=start,
             end=end,
@@ -50,7 +54,7 @@ async def get_crypto_bars(
         return {
             "success": True,
             "data": {
-                "pair": pair.upper(),
+                "pair": normalized_pair,
                 "timeframe": timeframe,
                 "bars": [bar.model_dump(mode="json") for bar in bars],
             },
@@ -58,7 +62,7 @@ async def get_crypto_bars(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/crypto/{pair}/trades", response_model=SuccessResponse)
@@ -71,6 +75,7 @@ async def get_crypto_trades(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get historical trades for a crypto pair."""
+    normalized_pair = validate_crypto_pair_or_400(pair)
     provider = registry.get("alpaca")
 
     if not provider:
@@ -79,7 +84,7 @@ async def get_crypto_trades(
     try:
         await require_provider_rate_limit("alpaca")
         trades = await provider.get_crypto_trades(
-            pair=pair.upper(),
+            pair=normalized_pair,
             start=start,
             end=end,
             limit=limit,
@@ -88,14 +93,14 @@ async def get_crypto_trades(
         return {
             "success": True,
             "data": {
-                "pair": pair.upper(),
+                "pair": normalized_pair,
                 "trades": [trade.model_dump(mode="json") for trade in trades],
             },
             "meta": {"count": len(trades), "provider": "alpaca"},
         }
 
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/crypto/{pair}/quotes", response_model=SuccessResponse)
@@ -105,6 +110,7 @@ async def get_crypto_quotes(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get latest quote for a crypto pair."""
+    normalized_pair = validate_crypto_pair_or_400(pair)
     provider = registry.get("alpaca")
 
     if not provider:
@@ -112,10 +118,10 @@ async def get_crypto_quotes(
 
     try:
         await require_provider_rate_limit("alpaca")
-        quote = await provider.get_crypto_quotes(pair=pair.upper())
+        quote = await provider.get_crypto_quotes(pair=normalized_pair)
 
         if not quote:
-            raise HTTPException(status_code=404, detail=f"No quote found for {pair}")
+            raise HTTPException(status_code=404, detail=f"No quote found for {normalized_pair}")
 
         return {
             "success": True,
@@ -126,7 +132,7 @@ async def get_crypto_quotes(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/crypto/{pair}/snapshot", response_model=SuccessResponse)
@@ -136,6 +142,7 @@ async def get_crypto_snapshot(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get current snapshot for a crypto pair."""
+    normalized_pair = validate_crypto_pair_or_400(pair)
     provider = registry.get("alpaca")
 
     if not provider:
@@ -143,7 +150,7 @@ async def get_crypto_snapshot(
 
     try:
         await require_provider_rate_limit("alpaca")
-        snapshot = await provider.get_crypto_snapshot(pair=pair.upper())
+        snapshot = await provider.get_crypto_snapshot(pair=normalized_pair)
 
         return {
             "success": True,
@@ -152,7 +159,7 @@ async def get_crypto_snapshot(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/crypto/{pair}/orderbook", response_model=SuccessResponse)
@@ -162,6 +169,7 @@ async def get_crypto_orderbook(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get crypto orderbook for a trading pair."""
+    normalized_pair = validate_crypto_pair_or_400(pair)
     provider = registry.get("alpaca")
 
     if not provider:
@@ -169,7 +177,7 @@ async def get_crypto_orderbook(
 
     try:
         await require_provider_rate_limit("alpaca")
-        data = await provider.get_crypto_orderbook(pair=pair.upper())
+        data = await provider.get_crypto_orderbook(pair=normalized_pair)
 
         # Handle both dict and NormalizedOrderbook
         if hasattr(data, "model_dump"):
@@ -181,13 +189,13 @@ async def get_crypto_orderbook(
             "success": True,
             "data": data_dict,
             "meta": {
-                "pair": pair.upper(),
+                "pair": normalized_pair,
                 "provider": "alpaca",
             },
         }
 
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/crypto/bars/latest", response_model=SuccessResponse)
@@ -203,7 +211,7 @@ async def get_crypto_latest_bars(
 
     try:
         await require_provider_rate_limit("alpaca")
-        pairs_list = [p.strip().upper() for p in pairs.split(",")]
+        pairs_list = parse_crypto_pairs_or_400(pairs)
         data = await provider.get_crypto_latest_bars(pairs_list)
         return {
             "success": True,
@@ -211,7 +219,7 @@ async def get_crypto_latest_bars(
             "meta": {"count": len(data), "provider": "alpaca"},
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/crypto/trades/latest", response_model=SuccessResponse)
@@ -227,7 +235,7 @@ async def get_crypto_latest_trades(
 
     try:
         await require_provider_rate_limit("alpaca")
-        pairs_list = [p.strip().upper() for p in pairs.split(",")]
+        pairs_list = parse_crypto_pairs_or_400(pairs)
         data = await provider.get_crypto_latest_trades(pairs_list)
         return {
             "success": True,
@@ -235,4 +243,4 @@ async def get_crypto_latest_trades(
             "meta": {"count": len(data), "provider": "alpaca"},
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e

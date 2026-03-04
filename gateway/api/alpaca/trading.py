@@ -10,6 +10,7 @@ from gateway.api.alpaca.common import (
     ERR_PROVIDER_NOT_AVAILABLE,
     Client,
     get_registry,
+    map_alpaca_exception,
     require_api_key,
     require_provider_rate_limit,
 )
@@ -34,7 +35,7 @@ async def get_account(
         data = await asyncio.to_thread(provider.get_account)
         return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.post("/orders", response_model=SuccessResponse)
@@ -76,7 +77,7 @@ async def create_order(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/orders", response_model=SuccessResponse)
@@ -113,7 +114,7 @@ async def get_orders(
             "meta": {"count": len(data), "provider": "alpaca"},
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/orders/{order_id}", response_model=SuccessResponse)
@@ -132,7 +133,7 @@ async def get_order(
         data = await asyncio.to_thread(provider.get_order, order_id)
         return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/orders:by_client_order_id", response_model=SuccessResponse)
@@ -151,7 +152,7 @@ async def get_order_by_client_id(
         data = await asyncio.to_thread(provider.get_order_by_client_id, client_order_id)
         return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.patch("/orders/{order_id}", response_model=SuccessResponse)
@@ -183,7 +184,7 @@ async def replace_order(
         )
         return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.delete("/orders/{order_id}", response_model=SuccessResponse)
@@ -206,7 +207,7 @@ async def cancel_order(
             "meta": {"provider": "alpaca"},
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.delete("/orders", response_model=SuccessResponse)
@@ -228,7 +229,7 @@ async def cancel_all_orders(
             "meta": {"count": len(data), "provider": "alpaca"},
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/positions", response_model=SuccessResponse)
@@ -250,7 +251,7 @@ async def get_positions(
             "meta": {"count": len(data), "provider": "alpaca"},
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/positions/{symbol}", response_model=SuccessResponse)
@@ -269,7 +270,7 @@ async def get_position(
         data = await asyncio.to_thread(provider.get_position, symbol)
         return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.delete("/positions/{symbol}", response_model=SuccessResponse)
@@ -290,7 +291,7 @@ async def close_position(
         data = await asyncio.to_thread(provider.close_position, symbol, qty, percentage)
         return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.delete("/positions", response_model=SuccessResponse)
@@ -313,7 +314,7 @@ async def close_all_positions(
             "meta": {"count": len(data), "provider": "alpaca"},
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/portfolio/history", response_model=SuccessResponse)
@@ -339,7 +340,7 @@ async def get_portfolio_history(
         )
         return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/assets", response_model=SuccessResponse)
@@ -368,7 +369,7 @@ async def get_assets(
             "meta": {"count": len(data), "provider": "alpaca"},
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/assets/{symbol}", response_model=SuccessResponse)
@@ -387,7 +388,7 @@ async def get_asset(
         data = await asyncio.to_thread(provider.get_asset, symbol)
         return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/clock", response_model=SuccessResponse)
@@ -405,7 +406,7 @@ async def get_clock(
         data = await asyncio.to_thread(provider.get_clock)
         return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e
 
 
 @router.get("/calendar", response_model=SuccessResponse)
@@ -429,4 +430,4 @@ async def get_calendar(
             "meta": {"count": len(data), "provider": "alpaca"},
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+        raise map_alpaca_exception(e) from e

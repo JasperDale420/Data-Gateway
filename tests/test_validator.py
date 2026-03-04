@@ -66,6 +66,21 @@ class TestValidateBar:
         assert result.valid is False
         assert ValidationErrorCodes.FUTURE_TIMESTAMP in result.error_codes
 
+    def test_small_future_timestamp_within_tolerance_passes(self, validator: DataValidator) -> None:
+        """Small clock skew in future timestamps should be accepted."""
+        near_future = datetime.now(UTC) + timedelta(milliseconds=100)
+        bar = {
+            "symbol": "AAPL",
+            "timestamp": near_future.isoformat(),
+            "open": 100,
+            "high": 105,
+            "low": 99,
+            "close": 102,
+            "volume": 1000,
+        }
+        result = validator.validate_bar(bar)
+        assert result.valid is True
+
     def test_negative_price_rejected(self, validator: DataValidator) -> None:
         """Negative prices should be rejected with GW-E7002."""
         bar = {
@@ -220,6 +235,22 @@ class TestValidateQuote:
         assert result.valid is False
         assert ValidationErrorCodes.INVALID_PRICE in result.error_codes
 
+    def test_small_future_quote_timestamp_within_tolerance_passes(
+        self, validator: DataValidator
+    ) -> None:
+        """Quote timestamps with tiny future skew should pass."""
+        near_future = datetime.now(UTC) + timedelta(milliseconds=100)
+        quote = {
+            "symbol": "AAPL",
+            "timestamp": near_future.isoformat(),
+            "bid_price": 185.50,
+            "ask_price": 185.55,
+            "bid_size": 100,
+            "ask_size": 200,
+        }
+        result = validator.validate_quote(quote)
+        assert result.valid is True
+
 
 class TestValidateTrade:
     """Tests for trade validation."""
@@ -244,6 +275,20 @@ class TestValidateTrade:
         result = validator.validate_trade(trade)
         assert result.valid is False
         assert ValidationErrorCodes.INVALID_PRICE in result.error_codes
+
+    def test_small_future_trade_timestamp_within_tolerance_passes(
+        self, validator: DataValidator
+    ) -> None:
+        """Trade timestamps with tiny future skew should pass."""
+        near_future = datetime.now(UTC) + timedelta(milliseconds=100)
+        trade = {
+            "symbol": "AAPL",
+            "timestamp": near_future.isoformat(),
+            "price": 185.50,
+            "size": 100,
+        }
+        result = validator.validate_trade(trade)
+        assert result.valid is True
 
 
 class TestSymbolPatterns:

@@ -7,10 +7,19 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **Documentation baseline files**: Added `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/RUNBOOK.md`, and `docs/API_REFERENCE.md` to align with Empire documentation standards.
+- **Alpaca error-mapping regression tests**: Added `tests/test_alpaca_route_error_mapping.py` to lock in `403/400` behavior for provider business rejects and malformed order IDs.
+- **Validator skew tolerance tests**: Added coverage in `tests/test_validator.py` for small future timestamp skew acceptance on bars, quotes, and trades.
 
 ### Changed
 
 - **Doc navigation updates**: Updated `README.md` and `CONTRIBUTING.md` links to use `docs/` entry points and replaced stale `CLAUDE.MD` guidance with `AGENTS.md`.
+- **Data validator timestamp tolerance**: Added a `250ms` future timestamp tolerance in `gateway/core/validator.py` to reduce false positive `GW-E7001` rejects caused by small clock drift.
+
+### Fixed
+
+- **Alpaca route status mapping**: Updated Alpaca API handlers to preserve actionable provider/client failures (for example `403` business rejects) instead of flattening them into `502`.
+- **Malformed order ID handling**: Alpaca trading routes now map malformed UUID order IDs to `400` (`GW-E8001`) for clear client-side correction.
+- **Crypto endpoint input validation**: Alpaca crypto routes now validate pair format early and reject invalid symbols (for example stock tickers on crypto endpoints) before provider calls.
 
 ## [0.5.6] - 2026-02-05
 

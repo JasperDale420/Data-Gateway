@@ -6,7 +6,7 @@ as specified in the PRD Data Validation section.
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -90,6 +90,7 @@ class DataValidator:
     STOCK_PATTERN = re.compile(r"^[A-Z]{1,5}$")
     OCC_OPTION_PATTERN = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
     CRYPTO_PATTERN = re.compile(r"^[A-Z]{2,10}/[A-Z]{2,10}$")
+    FUTURE_TIMESTAMP_TOLERANCE = timedelta(milliseconds=250)
 
     def validate_bar(self, bar: dict[str, Any]) -> ValidationResult:
         """Validate bar/OHLCV data.
@@ -120,7 +121,7 @@ class DataValidator:
         # Timestamp validation (GW-E7001)
         if timestamp:
             ts = self._parse_timestamp(timestamp)
-            if ts and ts > datetime.now(UTC):
+            if ts and ts > (datetime.now(UTC) + self.FUTURE_TIMESTAMP_TOLERANCE):
                 result.add_error(
                     ValidationErrorCodes.FUTURE_TIMESTAMP,
                     f"Future timestamp: {timestamp}",
@@ -219,7 +220,7 @@ class DataValidator:
         # Timestamp validation
         if timestamp:
             ts = self._parse_timestamp(timestamp)
-            if ts and ts > datetime.now(UTC):
+            if ts and ts > (datetime.now(UTC) + self.FUTURE_TIMESTAMP_TOLERANCE):
                 result.add_error(
                     ValidationErrorCodes.FUTURE_TIMESTAMP,
                     f"Future timestamp: {timestamp}",
@@ -277,7 +278,7 @@ class DataValidator:
         # Timestamp validation
         if timestamp:
             ts = self._parse_timestamp(timestamp)
-            if ts and ts > datetime.now(UTC):
+            if ts and ts > (datetime.now(UTC) + self.FUTURE_TIMESTAMP_TOLERANCE):
                 result.add_error(
                     ValidationErrorCodes.FUTURE_TIMESTAMP,
                     f"Future timestamp: {timestamp}",
