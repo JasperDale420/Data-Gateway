@@ -723,6 +723,11 @@ CANONICAL_ROUTE_FEEDS = [
         "unusual_whales",
         "greek_exposure",
     ),
+    (
+        re.compile(r"^/api/v1/uw/darkpool/[^/]+$"),
+        "unusual_whales",
+        "darkpool",
+    ),
 ]
 
 # Paths to skip envelope wrapping (health, metrics, admin, etc)
@@ -1036,6 +1041,9 @@ class EventEnvelopeMiddleware:
             return isinstance(payload, list) and len(payload) > 0
 
         if path.startswith("/api/v1/uw/gex/") and feed == "greek_exposure":
+            return isinstance(payload, list) and len(payload) > 0
+
+        if path.startswith("/api/v1/uw/darkpool/") and feed == "darkpool":
             return isinstance(payload, list) and len(payload) > 0
 
         return False
