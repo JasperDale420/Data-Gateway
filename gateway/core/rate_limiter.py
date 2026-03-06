@@ -24,7 +24,7 @@ import structlog
 logger = structlog.get_logger()
 
 
-class RateLimitExceeded(Exception):
+class RateLimitExceeded(Exception):  # noqa: N818
     """Raised when provider rate limit is exceeded."""
 
     def __init__(self, provider: str, retry_after: int, message: str = ""):
@@ -358,7 +358,7 @@ def get_provider_limits(provider: str) -> ProviderLimits | None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class EndpointRateLimitExceeded(Exception):
+class EndpointRateLimitExceeded(Exception):  # noqa: N818
     """Raised when an endpoint-level rate limit is exceeded."""
 
     def __init__(self, endpoint: str, retry_after: float, message: str = ""):

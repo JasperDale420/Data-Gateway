@@ -6,7 +6,7 @@ as specified in the PRD Data Validation section.
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -311,7 +311,8 @@ class DataValidator:
 
     def _is_future_timestamp(self, timestamp: Any, *, now_utc: datetime) -> bool:
         ts = self._parse_timestamp(timestamp)
-        return ts is not None and ts > now_utc
+        # Allow up to 5 seconds of clock drift for future timestamps
+        return ts is not None and ts > (now_utc + timedelta(seconds=5))
 
     def _parse_timestamp(self, ts: Any) -> datetime | None:
         """Parse timestamp to datetime."""

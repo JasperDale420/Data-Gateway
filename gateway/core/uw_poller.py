@@ -10,6 +10,7 @@ Features:
 """
 
 import asyncio
+import contextlib
 from collections import OrderedDict
 from datetime import UTC, datetime, time
 from time import monotonic as _monotonic
@@ -181,9 +182,7 @@ class UWPoller:
 
     def _is_duplicate(self, event_id: str) -> bool:
         """Check if event has already been seen."""
-        if event_id in self._seen_ids:
-            return True
-        return False
+        return event_id in self._seen_ids
 
     def _mark_seen(self, event_id: str) -> None:
         """Mark event as seen (appends to end of OrderedDict)."""
@@ -291,7 +290,7 @@ class UWPoller:
         # Mark all successfully-published items as seen and batch Redis dedup SETs
         if published > 0:
             redis_items: list[tuple[str, Any]] = []
-            for envelope, event_id, cache_key in to_publish[:published]:
+            for _envelope, event_id, cache_key in to_publish[:published]:
                 if event_id:
                     self._mark_seen(event_id)
                     if self._redis_dedupe is not None and cache_key:
@@ -414,10 +413,8 @@ class UWPoller:
         self._running = False
         if self._task:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         if self._provider:
             await self._provider.shutdown()
         logger.info("uw_poller_stopped", cached_ids=len(self._seen_ids))
@@ -722,10 +719,7 @@ class UWPoller:
             return False
 
         # Must be a trading day
-        if not self._calendar.is_trading_day(now_et.date()):
-            return False
-
-        return True
+        return self._calendar.is_trading_day(now_et.date())
 
     async def _poll_eod_snapshots(self, sink_registry) -> None:
         """Orchestrate all EOD per-ticker polls with bounded concurrency."""

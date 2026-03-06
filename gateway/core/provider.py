@@ -36,9 +36,7 @@ class ProviderCapabilities:
     supports_extended_hours: bool = False
 
     # Timeframes (for bars)
-    supported_timeframes: list[str] = field(
-        default_factory=lambda: ["1Min", "5Min", "15Min", "1Hour", "1Day"]
-    )
+    supported_timeframes: list[str] = field(default_factory=lambda: ["1Min", "5Min", "15Min", "1Hour", "1Day"])
 
 
 @dataclass
@@ -144,15 +142,15 @@ class DataProvider(ABC):
     # Optional Lifecycle Hooks
     # ─────────────────────────────────────────────────────────────────
 
-    async def on_client_connect(self, client_id: str) -> None:
+    async def on_client_connect(self, client_id: str) -> None:  # noqa: B027
         """Called when a new client connects. Use for per-client setup."""
         pass
 
-    async def on_client_disconnect(self, client_id: str) -> None:
+    async def on_client_disconnect(self, client_id: str) -> None:  # noqa: B027
         """Called when a client disconnects. Use for cleanup."""
         pass
 
-    async def on_subscription_change(
+    async def on_subscription_change(  # noqa: B027
         self,
         added: list[str],
         removed: list[str],

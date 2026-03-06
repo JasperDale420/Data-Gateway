@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.deps import get_cache, require_api_key, require_provider_rate_limit
@@ -13,6 +15,8 @@ from gateway.providers.news import NewsProvider
 from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/api/v1/news", tags=["news"])
+
+logger = structlog.get_logger(__name__)
 
 # Module-level provider instance
 _provider: NewsProvider | None = None
@@ -81,12 +85,22 @@ async def get_articles(
         record_route_cache("news_articles", "miss", "query")
         return {"success": True, "data": result, "cached": False}
 
+    except httpx.HTTPStatusError as e:
+        logger.error("news_request_failed", route="get_articles", status_code=e.response.status_code, error=str(e))
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail={
+                "error_code": f"GW-E{e.response.status_code}",
+                "message": f"Upstream provider error: {e.response.status_code}",
+            },
+        )
     except RuntimeError as e:
         raise HTTPException(
             status_code=503,
             detail={"error_code": "GW-E5002", "message": str(e)},
         )
     except Exception as e:
+        logger.error("news_request_failed", route="get_articles", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error_code": "GW-E5003", "message": f"Failed to fetch articles: {e}"},
@@ -133,6 +147,15 @@ async def get_article(
             status_code=501,
             detail={"error_code": "GW-E5010", "message": str(e)},
         )
+    except httpx.HTTPStatusError as e:
+        logger.error("news_request_failed", route="get_article", status_code=e.response.status_code, error=str(e))
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail={
+                "error_code": f"GW-E{e.response.status_code}",
+                "message": f"Upstream provider error: {e.response.status_code}",
+            },
+        )
     except HTTPException:
         raise
     except RuntimeError as e:
@@ -141,6 +164,7 @@ async def get_article(
             detail={"error_code": "GW-E5002", "message": str(e)},
         )
     except Exception as e:
+        logger.error("news_request_failed", route="get_article", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error_code": "GW-E5005", "message": f"Failed to fetch article: {e}"},
@@ -177,12 +201,22 @@ async def get_sentiment(
         record_route_cache("news_sentiment", "miss", "symbol")
         return {"success": True, "data": result, "cached": False}
 
+    except httpx.HTTPStatusError as e:
+        logger.error("news_request_failed", route="get_sentiment", status_code=e.response.status_code, error=str(e))
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail={
+                "error_code": f"GW-E{e.response.status_code}",
+                "message": f"Upstream provider error: {e.response.status_code}",
+            },
+        )
     except RuntimeError as e:
         raise HTTPException(
             status_code=503,
             detail={"error_code": "GW-E5002", "message": str(e)},
         )
     except Exception as e:
+        logger.error("news_request_failed", route="get_sentiment", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error_code": "GW-E5006", "message": f"Failed to fetch sentiment: {e}"},

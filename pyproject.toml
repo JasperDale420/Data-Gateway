@@ -9,6 +9,8 @@ authors = [
     {name = "Empire Trading", email = "dev@empire.trading"}
 ]
 dependencies = [
+    "empire-core",
+    "empire-schemas",
     "fastapi[standard]>=0.115.0",
     "uvicorn>=0.32.0",
     "websockets>=13.0",
@@ -16,14 +18,14 @@ dependencies = [
     "pydantic-settings>=2.0",
     "cachetools>=5.3",
     "httpx>=0.27",
-    "structlog>=24.0",
+    "structlog>=24.1.0",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "redis>=5.0",
     "prometheus-client>=0.20",
     "psutil>=5.9",
     "yfinance>=0.2",
-    "alpaca-py>=0.28",
+    "alpaca-py>=0.34",
     "msgpack>=1.0",
     "orjson>=3.9",
     # "uvloop>=0.19",
@@ -141,3 +143,7 @@ exclude_lines = [
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
+
+[tool.uv.sources]
+empire-core = { path = "../empire-core", editable = true }
+empire-schemas = { path = "../empire-schemas", editable = true }

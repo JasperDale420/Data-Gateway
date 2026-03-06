@@ -741,7 +741,7 @@ class AlphaVantageProvider(DataProvider):
 
             # Find the technical analysis key
             ta_key = None
-            for key in data.keys():
+            for key in data:
                 if "Technical Analysis" in key:
                     ta_key = key
                     break

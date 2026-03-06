@@ -234,7 +234,7 @@ class RedisStreamsSink(DataSink):
 
         except Exception as e:
             await self._reset_connection(operation="publish", error=e, failed_client=client)
-            logger.warning("redis_sink_publish_error", topic=topic, error=str(e))
+            logger.warning("redis_sink_publish_error", topic=topic, error=str(e) or type(e).__name__)
             record_sink_publish(sink=self.name, topic=topic, success=False)
             return False
 

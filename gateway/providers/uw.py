@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from time import perf_counter
-from typing import Any
+from typing import Any, TypeVar
 
 import structlog
 from unusualwhales.types import UNSET, Unset
@@ -35,7 +35,10 @@ DEFAULT_UW_MAX_INFLIGHT_CALLS = 32
 TZ_UTC_SUFFIX = "+00:00"
 
 
-def _or_unset[T](value: T | None) -> T | Unset:
+T = TypeVar("T")
+
+
+def _or_unset(value: T | None) -> T | Unset:
     """Convert None to UNSET for SDK compatibility."""
     return UNSET if value is None else value
 
@@ -335,7 +338,7 @@ class UnusualWhalesProvider(DataProvider):
                 logger.warning("uw_darkpool_recent_upstream_unavailable", status_code=status_code, error=str(e))
             else:
                 logger.error("uw_darkpool_recent_raw_failed", error=str(e))
-            return []
+            raise
 
         data_items = payload.get("data") if isinstance(payload, dict) else payload
         if not isinstance(data_items, list):
@@ -387,7 +390,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_flow_alerts_failed", error=str(e), exc_info=True)
-            return []
+            raise
 
     async def get_ticker_flow(
         self,
@@ -446,7 +449,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_ticker_flow_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_darkpool_recent(
         self,
@@ -542,7 +545,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_darkpool_ticker_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_market_tide(
         self,
@@ -576,7 +579,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_market_tide_failed", error=str(e))
-            return []
+            raise
 
     async def get_institutions(
         self,
@@ -587,7 +590,7 @@ class UnusualWhalesProvider(DataProvider):
         """Get 13F institutional holdings for a ticker."""
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import institution
@@ -632,13 +635,13 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_institutions_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_congress_trades(self, symbol: str | None = None, limit: int = 100) -> list[dict]:
         """Get congressional trades, optionally filtered by ticker."""
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import congress
@@ -677,13 +680,13 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_congress_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_insiders(self, symbol: str | None = None, limit: int = 100) -> list[dict]:
         """Get insider transactions, optionally filtered by ticker."""
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import market
@@ -738,7 +741,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_insiders_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 1: Greek Exposure (GEX)
@@ -750,7 +753,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
@@ -792,7 +795,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_greek_exposure_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_greek_exposure_by_strike(self, symbol: str, date_str: str | None = None) -> list:
         """Get Greek exposure by strike price for a ticker."""
@@ -800,7 +803,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
@@ -837,7 +840,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_greek_exposure_strike_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_greek_exposure_by_expiry(self, symbol: str, date_str: str | None = None) -> list:
         """Get Greek exposure by expiration date for a ticker."""
@@ -845,7 +848,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
@@ -883,7 +886,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_greek_exposure_expiry_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 1: Earnings Calendar
@@ -895,7 +898,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import earnings
@@ -929,7 +932,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_earnings_premarket_failed", error=str(e))
-            return []
+            raise
 
     async def get_earnings_afterhours(self, date_str: str | None = None) -> list:
         """Get afterhours earnings for a date."""
@@ -937,7 +940,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import earnings
@@ -971,7 +974,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_earnings_afterhours_failed", error=str(e))
-            return []
+            raise
 
     async def get_earnings_ticker(self, symbol: str) -> list:
         """Get historical earnings for a specific ticker."""
@@ -979,7 +982,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import earnings
@@ -1013,7 +1016,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_earnings_ticker_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # Raw earnings methods for Heber integration (return all UW fields)
     async def get_raw_earnings_premarket(self, date_str: str | None = None, limit: int = 50) -> list[dict]:
@@ -1295,7 +1298,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import screener
@@ -1327,7 +1330,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_stock_screener_failed", error=str(e))
-            return []
+            raise
 
     async def get_hottest_chains(self, limit: int = 20) -> list:
         """Get hottest option chains/contracts."""
@@ -1335,7 +1338,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import screener
@@ -1372,7 +1375,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_hottest_chains_failed", error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 2: Options Analytics
@@ -1384,7 +1387,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
@@ -1422,7 +1425,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_net_premium_ticks_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_max_pain(self, symbol: str, expiry: str | None = None) -> list:
         """Get max pain data for a ticker."""
@@ -1430,7 +1433,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
@@ -1460,7 +1463,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_max_pain_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_iv_rank(self, symbol: str, date_str: str | None = None) -> NormalizedIVRank | None:
         """Get IV rank for a ticker.
@@ -1472,7 +1475,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return None
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             # The SDK response parser for this endpoint is incompatible with
@@ -1523,9 +1526,10 @@ class UnusualWhalesProvider(DataProvider):
                     status_code=status_code,
                     error=str(e),
                 )
+                return None  # Keep returning None for 422 specifically
             else:
                 logger.error("uw_iv_rank_failed", symbol=symbol, error=str(e))
-            return None
+                raise
 
     async def get_oi_change(self, symbol: str, date_str: str | None = None) -> list:
         """Get OI change data for a ticker."""
@@ -1533,7 +1537,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
@@ -1565,7 +1569,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_oi_change_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 2: ETF Analytics
@@ -1577,7 +1581,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import etfs as etf
@@ -1607,7 +1611,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_etf_holdings_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_etf_exposure(self, symbol: str) -> list:
         """Get ETF exposure for a stock (which ETFs hold it)."""
@@ -1615,7 +1619,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import etfs as etf
@@ -1645,7 +1649,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_etf_exposure_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_etf_flows(self, symbol: str) -> list:
         """Get ETF inflow/outflow data."""
@@ -1653,7 +1657,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import etfs as etf
@@ -1685,7 +1689,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_etf_flows_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 2: Shorts Data
@@ -1697,7 +1701,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import shorts
@@ -1734,7 +1738,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_short_interest_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_ftds(self, symbol: str) -> list:
         """Get failures to deliver data."""
@@ -1742,7 +1746,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import shorts
@@ -1774,7 +1778,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_ftds_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_short_volume(self, symbol: str) -> list:
         """Get short volume data."""
@@ -1782,7 +1786,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import shorts
@@ -1811,7 +1815,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_short_volume_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 3: Volatility Analytics
@@ -1823,7 +1827,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
@@ -1854,7 +1858,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_iv_term_structure_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_realized_volatility(self, symbol: str) -> NormalizedVolatilityStats | None:
         """Get realized volatility for a ticker."""
@@ -1862,7 +1866,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return None
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
@@ -1888,7 +1892,7 @@ class UnusualWhalesProvider(DataProvider):
                 ),
                 realized_vol_60d=(
                     Decimal(str(get("realized_vol_60d") or get("rv_60") or 0))
-                    if get("realized_vol_60d") or get("rv_60")
+                    if get("realized_60d") or get("rv_60")
                     else None
                 ),
                 realized_vol_90d=(
@@ -1904,7 +1908,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_realized_volatility_failed", symbol=symbol, error=str(e))
-            return None
+            raise
 
     async def get_volatility_stats(self, symbol: str) -> NormalizedVolatilityStats | None:
         """Get volatility stats for a ticker."""
@@ -1912,7 +1916,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return None
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import stock
@@ -1946,7 +1950,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_volatility_stats_failed", symbol=symbol, error=str(e))
-            return None
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 3: Seasonality
@@ -1958,7 +1962,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import seasonality
@@ -1989,7 +1993,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_market_seasonality_failed", error=str(e))
-            return []
+            raise
 
     async def get_monthly_returns(self, symbol: str) -> list:
         """Get monthly returns for a ticker."""
@@ -1997,7 +2001,7 @@ class UnusualWhalesProvider(DataProvider):
 
         if not self._client:
             logger.warning("uw_client_not_initialized")
-            return []
+            raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
             from unusualwhales.api import seasonality
@@ -2032,7 +2036,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_monthly_returns_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 5: Options Data
@@ -2054,7 +2058,7 @@ class UnusualWhalesProvider(DataProvider):
             )
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2079,7 +2083,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_historic_option_volume_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_intraday_option_data(self, contract_id: str, date_str: str | None = None) -> list[dict[str, Any]]:
         """Get intraday 1-min OHLC for an option contract."""
@@ -2097,7 +2101,7 @@ class UnusualWhalesProvider(DataProvider):
             )
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2119,7 +2123,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_intraday_option_data_failed", contract=contract_id, error=str(e))
-            return []
+            raise
 
     async def get_options_screener(
         self, min_volume: int | None = None, min_premium: float | None = None, limit: int = 50
@@ -2139,7 +2143,7 @@ class UnusualWhalesProvider(DataProvider):
             )
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data[:limit]:
@@ -2169,7 +2173,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_options_screener_failed", error=str(e))
-            return []
+            raise
 
     async def get_iv_surface(self, symbol: str) -> list[dict[str, Any]]:
         """Get implied volatility surface for a ticker."""
@@ -2186,7 +2190,7 @@ class UnusualWhalesProvider(DataProvider):
             )
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2218,7 +2222,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_iv_surface_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 6: Market Intelligence
@@ -2251,7 +2255,7 @@ class UnusualWhalesProvider(DataProvider):
             )
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2275,7 +2279,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_off_lit_levels_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_recent_congress_trades(self, limit: int = 50) -> list[dict[str, Any]]:
         """Get recent congressional trades across all tickers."""
@@ -2288,7 +2292,7 @@ class UnusualWhalesProvider(DataProvider):
             response = await self._call_sync(congress.get_trades.sync, client=self._client)
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data[:limit]:
@@ -2311,7 +2315,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_recent_congress_trades_failed", error=str(e))
-            return []
+            raise
 
     async def get_nope(self, symbol: str) -> dict[str, Any]:
         """Get NOPE (Net Options Pricing Effect) for a ticker."""
@@ -2324,7 +2328,7 @@ class UnusualWhalesProvider(DataProvider):
             response = await self._call_sync(stock.get_nope.sync, client=self._client, ticker=symbol.upper())
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, dict) else {}
+                return {}
 
             get = data.get if isinstance(data, dict) else lambda k, d=None: getattr(data, k, d)
 
@@ -2341,7 +2345,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_nope_failed", symbol=symbol, error=str(e))
-            return {}
+            raise
 
     async def get_put_call_ratio(self, symbol: str) -> list[dict[str, Any]]:
         """Get historical put/call ratio for a ticker."""
@@ -2354,7 +2358,7 @@ class UnusualWhalesProvider(DataProvider):
             response = await self._call_sync(stock.get_put_call_ratio.sync, client=self._client, ticker=symbol.upper())
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2378,7 +2382,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_put_call_ratio_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 7: Flow Analytics
@@ -2397,7 +2401,7 @@ class UnusualWhalesProvider(DataProvider):
             )
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2423,7 +2427,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_spot_exposures_strike_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_flow_per_strike(self, symbol: str, date_str: str | None = None) -> list[dict[str, Any]]:
         """Get flow data aggregated by strike price."""
@@ -2447,7 +2451,7 @@ class UnusualWhalesProvider(DataProvider):
             )
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2469,7 +2473,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_flow_per_strike_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_flow_per_expiry(self, symbol: str, date_str: str | None = None) -> list[dict[str, Any]]:
         """Get flow data aggregated by expiration date."""
@@ -2493,7 +2497,7 @@ class UnusualWhalesProvider(DataProvider):
             )
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2515,7 +2519,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_flow_per_expiry_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_greek_flow(self, symbol: str) -> list[dict[str, Any]]:
         """Get greek flow data for a ticker."""
@@ -2528,7 +2532,7 @@ class UnusualWhalesProvider(DataProvider):
             response = await self._call_sync(stock.get_greek_flow.sync, client=self._client, ticker=symbol.upper())
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2549,7 +2553,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_greek_flow_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_net_flow_expiry(self) -> list[dict[str, Any]]:
         """Get net premium flow by expiration category."""
@@ -2562,7 +2566,7 @@ class UnusualWhalesProvider(DataProvider):
             response = await self._call_sync(market.get_net_flow_by_expiry.sync, client=self._client)
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2583,7 +2587,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_net_flow_expiry_failed", error=str(e))
-            return []
+            raise
 
     async def get_interpolated_iv(self, symbol: str) -> list[dict[str, Any]]:
         """Get interpolated implied volatility for a ticker."""
@@ -2596,7 +2600,7 @@ class UnusualWhalesProvider(DataProvider):
             response = await self._call_sync(stock.get_interpolated_iv.sync, client=self._client, ticker=symbol.upper())
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2620,7 +2624,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_interpolated_iv_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 8: Market Intelligence
@@ -2644,7 +2648,7 @@ class UnusualWhalesProvider(DataProvider):
             )
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data:
@@ -2667,7 +2671,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_economic_calendar_failed", error=str(e))
-            return []
+            raise
 
     async def get_sector_tide(self, sector: str, date_str: str | None = None) -> list[dict]:
         """Get market tide for a specific sector.
@@ -2718,7 +2722,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_sector_tide_failed", sector=sector, error=str(e))
-            return []
+            raise
 
     async def get_top_net_impact(self, limit: int = 20) -> dict[str, list[dict[str, Any]]]:
         """Get top tickers by net premium (bullish and bearish)."""
@@ -2731,7 +2735,7 @@ class UnusualWhalesProvider(DataProvider):
             response = await self._call_sync(market.get_top_net_premium.sync, client=self._client)
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, dict) else {}
+                return {"bullish": [], "bearish": []}
 
             bullish = []
             bearish = []
@@ -2761,7 +2765,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_top_net_impact_failed", error=str(e))
-            return {"bullish": [], "bearish": []}
+            raise
 
     async def get_custom_alerts(
         self, _min_premium: float | None = None, _min_volume: int | None = None, limit: int = 50
@@ -2776,7 +2780,7 @@ class UnusualWhalesProvider(DataProvider):
             response = await self._call_sync(alerts.get_alerts.sync, client=self._client)
             data = self._get_data_safe(response)
             if not data:
-                data = response if isinstance(response, list) else []
+                return []
 
             results = []
             for item in data[:limit]:
@@ -2799,7 +2803,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_custom_alerts_failed", error=str(e))
-            return []
+            raise
 
     async def get_market_correlations(
         self, start_date: str | None = None, end_date: str | None = None
@@ -2836,7 +2840,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_market_correlations_failed", error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 9: Final Gaps
@@ -2891,7 +2895,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_etf_tide_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_option_volume_levels(self, symbol: str) -> list[dict[str, Any]]:
         """Get option volume levels per price."""
@@ -2926,7 +2930,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_option_volume_levels_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     async def get_full_tape(self, _date_str: str) -> list[dict[str, Any]]:
         """Get full options trade tape for a date."""
@@ -2973,7 +2977,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_volume_profile_failed", contract=contract_id, error=str(e))
-            return []
+            raise
 
     async def get_greek_flow_expiry(self, symbol: str) -> list[dict[str, Any]]:
         """Get greek flow data aggregated by expiration."""
@@ -3009,7 +3013,7 @@ class UnusualWhalesProvider(DataProvider):
 
         except Exception as e:
             logger.error("uw_greek_flow_expiry_failed", symbol=symbol, error=str(e))
-            return []
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Normalization Helpers

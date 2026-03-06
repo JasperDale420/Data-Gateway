@@ -552,9 +552,7 @@ def _has_provider_permission(client: Any, provider: str) -> bool:
         return True
     if provider == "uw" and "unusual_whales" in allowed:
         return True
-    if provider == "yf" and "yfinance" in allowed:
-        return True
-    return False
+    return bool(provider == "yf" and "yfinance" in allowed)
 
 
 def _normalize_feed_permission(feed: str) -> str:

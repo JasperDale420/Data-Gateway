@@ -564,17 +564,13 @@ def _looks_like_id(s: str) -> bool:
     if len(s) > 8 and any(c.isdigit() for c in s):
         return True
     # Pure numbers
-    if s.isdigit() and len(s) > 4:
-        return True
-    return False
+    return bool(s.isdigit() and len(s) > 4)
 
 
 def _looks_like_date(s: str) -> bool:
     """Check if string looks like a date."""
     # YYYY-MM-DD format
-    if len(s) == 10 and s[4] == "-" and s[7] == "-":
-        return True
-    return False
+    return bool(len(s) == 10 and s[4] == "-" and s[7] == "-")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

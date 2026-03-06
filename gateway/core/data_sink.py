@@ -52,7 +52,7 @@ class DataSink(ABC):
         """Whether the sink records publish metrics internally."""
         return False
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027
         """Close the sink connection. Override if cleanup is needed."""
         pass
 

@@ -1,6 +1,7 @@
 """SEC EDGAR API endpoints for filings and company data."""
 
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 import httpx
 import structlog
@@ -40,7 +41,10 @@ def _cache_key(prefix: str, *args) -> str:
     return ":".join(parts)
 
 
-async def execute_sec_cached[T](
+T = TypeVar("T")
+
+
+async def execute_sec_cached(
     provider_method: Callable[[], Awaitable[T]],
     cache: InMemoryCache,
     cache_key: str,

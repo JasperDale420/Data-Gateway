@@ -205,8 +205,8 @@ class AlpacaProvider(DataProvider):
         params: dict[str, Any] = {
             "symbols": symbols_param,
             "timeframe": self._convert_timeframe(timeframe),
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
+            "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": kwargs.get("feed", self._feed),
             "adjustment": kwargs.get("adjustment", "split"),
             "limit": kwargs.get("limit", 10000),
@@ -292,8 +292,8 @@ class AlpacaProvider(DataProvider):
 
         params: dict[str, str | int] = {
             "symbols": symbols_param,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
+            "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": self._feed,
             "limit": request_limit,
         }
@@ -403,8 +403,8 @@ class AlpacaProvider(DataProvider):
 
         params: dict[str, str | int] = {
             "symbols": symbols_param,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
+            "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": self._feed,
             "limit": request_limit,
         }
@@ -480,9 +480,9 @@ class AlpacaProvider(DataProvider):
         symbols_param = ",".join(symbols)
         params: dict[str, Any] = {"symbols": symbols_param, "feed": self._feed, "limit": limit}
         if start:
-            params["start"] = start.isoformat()
+            params["start"] = start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat()
         if end:
-            params["end"] = end.isoformat()
+            params["end"] = end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat()
 
         try:
             response = await self._client.get("/v2/stocks/auctions", params=params)
@@ -588,8 +588,8 @@ class AlpacaProvider(DataProvider):
         params: dict[str, str | int] = {
             "symbols": symbols_param,
             "timeframe": self._convert_timeframe(timeframe),
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
+            "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "limit": limit,
         }
 
@@ -678,9 +678,9 @@ class AlpacaProvider(DataProvider):
             "limit": request_limit,
         }
         if start:
-            params["start"] = start.isoformat()
+            params["start"] = start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat()
         if end:
-            params["end"] = end.isoformat()
+            params["end"] = end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat()
 
         try:
             while True:
@@ -728,9 +728,9 @@ class AlpacaProvider(DataProvider):
         symbols_param = ",".join(contracts)
         params: dict[str, Any] = {"symbols": symbols_param, "feed": "indicative", "limit": limit}
         if start:
-            params["start"] = start.isoformat()
+            params["start"] = start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat()
         if end:
-            params["end"] = end.isoformat()
+            params["end"] = end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat()
 
         try:
             response = await self._client.get("/v1beta1/options/trades", params=params)
@@ -849,9 +849,7 @@ class AlpacaProvider(DataProvider):
             return False
         if strike_lte is not None and strike > Decimal(str(strike_lte)):
             return False
-        if option_type and contract_option_type != option_type.lower():
-            return False
-        return True
+        return not (option_type and contract_option_type != option_type.lower())
 
     def _normalize_option_contract(
         self,
@@ -1817,7 +1815,7 @@ class AlpacaProvider(DataProvider):
             return data
 
         except APIError as e:
-            logger.error("alpaca_order_create_error", error=str(e))
+            logger.warning("alpaca_order_create_error", error=str(e))
             raise
 
     def get_orders(

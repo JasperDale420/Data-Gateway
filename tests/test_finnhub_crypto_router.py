@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+from gateway.api.finnhub import common as finnhub_common
 from gateway.api.finnhub import crypto
 from gateway.core.registry import ProviderRegistry
 
@@ -48,9 +49,7 @@ class _FakeProvider:
         start: datetime | None,
         end: datetime | None,
     ) -> dict[str, Any]:
-        self.candles_calls.append(
-            {"symbol": symbol, "resolution": resolution, "start": start, "end": end}
-        )
+        self.candles_calls.append({"symbol": symbol, "resolution": resolution, "start": start, "end": end})
         return {"symbol": symbol, "candles": []}
 
 
@@ -95,7 +94,7 @@ async def test_crypto_candles_emits_cache_miss_telemetry_and_caches(
     def _record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:
         cache_events.append((route, status, cache_mode))
 
-    monkeypatch.setattr(crypto, "require_provider_rate_limit", _rate_limit)
+    monkeypatch.setattr(finnhub_common, "require_provider_rate_limit", _rate_limit)
     monkeypatch.setattr(crypto, "record_route_cache", _record_route_cache)
 
     response = await crypto.get_crypto_candles(
@@ -109,8 +108,6 @@ async def test_crypto_candles_emits_cache_miss_telemetry_and_caches(
     )
 
     assert response["meta"]["cached"] is False
-    assert provider.candles_calls == [
-        {"symbol": "BINANCE:BTCUSDT", "resolution": "D", "start": None, "end": None}
-    ]
+    assert provider.candles_calls == [{"symbol": "BINANCE:BTCUSDT", "resolution": "D", "start": None, "end": None}]
     assert cache.set_calls
     assert cache_events == [("finnhub_crypto_candles", "miss", "finnhub")]

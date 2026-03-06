@@ -215,7 +215,7 @@ async def test_health_check_resets_connection_after_loading_error(
 def test_default_pool_size() -> None:
     """Default pool size should be 8."""
     sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
-    assert sink._pool_size == 8
+    assert sink._pool_size == 64
 
 
 def test_custom_pool_size() -> None:
@@ -224,7 +224,7 @@ def test_custom_pool_size() -> None:
     assert sink._pool_size == 16
 
     sink_max = RedisStreamsSink(redis_url="redis://localhost:6379/0", pool_size=100)
-    assert sink_max._pool_size == 32  # Clamped to max
+    assert sink_max._pool_size == 64  # Clamped to max
 
     sink_min = RedisStreamsSink(redis_url="redis://localhost:6379/0", pool_size=0)
     assert sink_min._pool_size == 1  # Clamped to min

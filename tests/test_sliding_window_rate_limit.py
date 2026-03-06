@@ -65,7 +65,7 @@ class TestSlidingWindowBucket:
 
     def test_remaining_tracks_available_slots(self) -> None:
         bucket = RateLimitBucket(limit=10, remaining=10)
-        for i in range(7):
+        for _i in range(7):
             bucket.consume()
         assert bucket.remaining == 3
 

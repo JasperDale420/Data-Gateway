@@ -83,3 +83,12 @@ sonar_scan.log
 # Aider
 .aider*
 .env
+
+# Axon knowledge graph cache
+.axon/
+
+# Large log files
+gateway_errors_24h.log
+
+# Agent output files
+.agents/
