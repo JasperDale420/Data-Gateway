@@ -130,9 +130,12 @@ class UWPoller:
         # Darkpool tracks its own polling time (adaptive interval)
         self._last_darkpool_poll: datetime | None = None
 
-        # Market/sector tide polls hourly since API returns full day's data
+        # Market tide polls hourly since API returns full day's data
         self._last_tide_poll: datetime | None = None
         self._tide_interval = MARKET_TIDE_POLL_INTERVAL
+
+        # Sector tide has its own independent timer
+        self._last_sector_tide_poll: datetime | None = None
 
     def _is_market_hours(self) -> bool:
         """Check if market is currently open (cached for 30s)."""
@@ -309,6 +312,13 @@ class UWPoller:
         elapsed = (datetime.now(UTC) - self._last_tide_poll).total_seconds()
         return elapsed >= self._tide_interval
 
+    def _should_poll_sector_tide(self) -> bool:
+        """Check if enough time has passed to poll sector tide again."""
+        if self._last_sector_tide_poll is None:
+            return True
+        elapsed = (datetime.now(UTC) - self._last_sector_tide_poll).total_seconds()
+        return elapsed >= self._tide_interval
+
     def _should_poll_flow(self) -> bool:
         """Check if enough time has passed to poll flow alerts again (every 5 minutes)."""
         if self._last_flow_poll is None:
@@ -457,10 +467,11 @@ class UWPoller:
                         await self._poll_market_tide(sink_registry)
                         self._last_tide_poll = datetime.now(UTC)
 
-                # Poll sector tides (hourly, same schedule as market tide)
-                if self.sector_tide_enabled and self._should_poll_tide():
+                # Poll sector tides (hourly, independent timer from market tide)
+                if self.sector_tide_enabled and self._should_poll_sector_tide():
                     if self._is_market_hours():
                         await self._poll_sector_tides(sink_registry)
+                        self._last_sector_tide_poll = datetime.now(UTC)
 
                 # EOD snapshot polling (once per trading day after market close)
                 if self.eod_enabled and self._should_poll_eod():

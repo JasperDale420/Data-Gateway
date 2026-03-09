@@ -110,3 +110,47 @@ async def test_get_stock_snapshot_fetches_quotes_and_bars_concurrently(
     assert response["data"]["symbol"] == "AAPL"
     # Snapshot calls get_quotes and get_bars sequentially in current impl
     assert provider.max_inflight >= 1
+
+
+@pytest.mark.asyncio
+async def test_get_stock_bars_normalizes_naive_datetime_to_utc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Naive datetime query params must be converted to UTC-aware before reaching provider."""
+    captured_kwargs: list[dict[str, Any]] = {}
+
+    class _CapturingProvider:
+        async def get_bars(self, **kwargs: Any) -> list[_ModelLike]:
+            captured_kwargs.update(kwargs)
+            return [_ModelLike(1)]
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _noop_rate_limit(*_args, **_kwargs):
+        pass
+
+    monkeypatch.setattr(alpaca_common, "require_provider_rate_limit", _noop_rate_limit)
+
+    # Pass naive datetimes (no tzinfo) — simulates what FastAPI does when
+    # a client sends ?start=2026-01-14T00:00:00 without timezone
+    naive_start = datetime(2026, 1, 14, 0, 0)
+    naive_end = datetime(2026, 3, 9, 0, 0)
+
+    response = await stock.get_stock_bars(
+        symbol="SPY",
+        timeframe="1Day",
+        start=naive_start,
+        end=naive_end,
+        limit=50,
+        feed="sip",
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    # The start/end passed to provider must be timezone-aware
+    assert captured_kwargs["start"].tzinfo is not None
+    assert captured_kwargs["end"].tzinfo is not None
+    assert captured_kwargs["start"].tzinfo == UTC
+    assert captured_kwargs["end"].tzinfo == UTC

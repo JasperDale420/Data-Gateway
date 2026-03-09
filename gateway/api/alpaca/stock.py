@@ -49,6 +49,12 @@ async def get_stock_bars(
     if not start:
         start = end - timedelta(hours=24)
 
+    # Ensure timezone-aware datetimes (Alpaca rejects naive timestamps)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+
     try:
         await require_provider_rate_limit("alpaca", block=True)
         bars = await provider.get_bars(
@@ -138,6 +144,12 @@ async def get_stock_trades(
         end = datetime.now(UTC)
     if not start:
         start = end - timedelta(hours=1)
+
+    # Ensure timezone-aware datetimes (Alpaca rejects naive timestamps)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
@@ -283,6 +295,12 @@ async def get_historical_quotes(
     provider = registry.get("alpaca")
     if not provider:
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
+
+    # Ensure timezone-aware datetimes (Alpaca rejects naive timestamps)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
 
     try:
         await require_provider_rate_limit("alpaca", block=True)

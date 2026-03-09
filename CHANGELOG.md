@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **UW sector tide never polled** (`gateway/core/uw_poller.py`): Sector tide shared `_should_poll_tide()` and `_last_tide_poll` with market tide, so after market tide polled and set the timer, sector tide's check always returned `False`. Added independent `_last_sector_tide_poll` field and `_should_poll_sector_tide()` method so both feeds poll on their own hourly cadence.
+- **Alpaca 400 Bad Request on naive datetime params** (`gateway/api/alpaca/stock.py`): FastAPI parses query datetime params without timezone when the client omits it (e.g., `?start=2026-01-14T00:00:00`). Added UTC normalization in `get_stock_bars`, `get_stock_trades`, and `get_historical_quotes` before passing to the provider.
+
+### Fixed
+
 - **Provider Error Masking** (`gateway/api/finnhub/*.py`, `gateway/api/yf.py`, `gateway/api/sec.py`): Refactored Finnhub, Yahoo Finance, and SEC routers to utilize centralized execution wrappers (`execute_finnhub_cached`, `execute_yf_cached`, `execute_sec_cached`). This ensures that `httpx.HTTPStatusError` exceptions correctly bubble up to the client instead of being masked as generic 502 Bad Gateway errors.
 - **Redis Sink Connection Pool Exhaustion** (`gateway/core/redis_sink.py`): Replaced `aioredis.ConnectionPool` with `aioredis.BlockingConnectionPool` and configured a timeout (`socket_timeout`). This prevents immediate `ConnectionError: Too many connections` exceptions when burst traffic (e.g., 256 concurrent tasks) momentarily exceeds the `max_connections` limit.
 
