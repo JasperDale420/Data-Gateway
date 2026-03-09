@@ -50,18 +50,19 @@ MARKET_TIDE_POLL_INTERVAL = 3600  # 1 hour (API returns full day's data)
 PREMARKET_START = time(4, 0)  # 4:00 AM ET
 AFTERHOURS_END = time(20, 0)  # 8:00 PM ET
 
-# GICS Sectors for sector tide polling
+# Sector names for sector tide polling — must match UW SDK Sector enum values exactly.
+# See: vendor/unusualwhales_sdk/unusualwhales/models/sector.py
 GICS_SECTORS = [
-    "Technology",
-    "Healthcare",
-    "Financial",
-    "Consumer Cyclical",
+    "Basic Materials",
     "Communication Services",
-    "Industrials",
+    "Consumer Cyclical",
     "Consumer Defensive",
     "Energy",
-    "Basic Materials",
+    "Financial Services",
+    "Healthcare",
+    "Industrials",
     "Real Estate",
+    "Technology",
     "Utilities",
 ]
 
