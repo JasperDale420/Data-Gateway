@@ -24,8 +24,10 @@ COPY pyproject.toml README.md ./
 RUN mkdir -p gateway && \
     echo '"""Stub for dependency resolution."""' > gateway/__init__.py && \
     pip install --no-cache-dir . && \
-    pip uninstall -y uvloop || true && \
     rm -rf gateway
+
+# Remove uvloop if pulled in as a transitive dep (incompatible with container)
+RUN pip uninstall -y uvloop 2>/dev/null || true
 
 # Copy gateway source and reinstall package only (deps already installed above)
 COPY gateway/ gateway/

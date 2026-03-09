@@ -9,8 +9,6 @@ authors = [
     {name = "Empire Trading", email = "dev@empire.trading"}
 ]
 dependencies = [
-    "empire-core",
-    "empire-schemas",
     "fastapi[standard]>=0.115.0",
     "uvicorn>=0.32.0",
     "websockets>=13.0",
@@ -28,7 +26,6 @@ dependencies = [
     "alpaca-py>=0.34",
     "msgpack>=1.0",
     "orjson>=3.9",
-    # "uvloop>=0.19",
     # unusualwhales SDK is installed separately in Docker via copied local package
 ]
 
@@ -36,12 +33,18 @@ dependencies = [
 packages = ["gateway"]
 
 [project.optional-dependencies]
+local = [
+    # These are local-only packages resolved by uv via [tool.uv.sources].
+    # They are NOT available on PyPI and must not be in core dependencies
+    # or Docker builds will fail silently.
+    "empire-core",
+    "empire-schemas",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=4.0",
     "ruff>=0.5",
-
     "pyright>=1.1",
     "pre-commit>=4.0",
     "bandit[toml]>=1.8",
