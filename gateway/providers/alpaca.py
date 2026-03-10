@@ -886,9 +886,20 @@ class AlpacaProvider(DataProvider):
         from gateway.schemas import NormalizedOptionContract
 
         try:
+
+            def _decimal_or_none(value: Any) -> Decimal | None:
+                return Decimal(str(value)) if value is not None else None
+
+            def _first_present(*values: Any) -> Any:
+                for value in values:
+                    if value is not None:
+                        return value
+                return None
+
             quote = snapshot.get("latestQuote", {})
             trade = snapshot.get("latestTrade", {})
             greeks = snapshot.get("greeks", {})
+            day = snapshot.get("day", {})
             parsed = parsed_contract or self._parse_occ_contract(contract_symbol)
             if parsed is None:
                 logger.warning(
@@ -901,6 +912,18 @@ class AlpacaProvider(DataProvider):
             expiration = str(parsed["expiration"])
             strike = Decimal(parsed["strike"])
             option_type = str(parsed["option_type"])
+            volume = _first_present(snapshot.get("volume"), day.get("volume"), day.get("v"))
+            open_interest = _first_present(snapshot.get("open_interest"), snapshot.get("openInterest"))
+            underlying_price = _first_present(
+                snapshot.get("underlying_price"),
+                snapshot.get("underlyingPrice"),
+                snapshot.get("underlying_asset_price"),
+                snapshot.get("underlyingAssetPrice"),
+            )
+            implied_volatility = _first_present(
+                snapshot.get("impliedVolatility"),
+                snapshot.get("implied_volatility"),
+            )
 
             return NormalizedOptionContract(
                 contract_symbol=contract_symbol,
@@ -911,13 +934,14 @@ class AlpacaProvider(DataProvider):
                 bid=Decimal(str(quote.get("bp", 0))),
                 ask=Decimal(str(quote.get("ap", 0))),
                 last=Decimal(str(trade.get("p", 0))),
-                volume=int(snapshot.get("open_interest", 0)),
-                open_interest=int(snapshot.get("open_interest", 0)),
-                delta=Decimal(str(greeks.get("delta", 0))) if greeks.get("delta") else None,
-                gamma=Decimal(str(greeks.get("gamma", 0))) if greeks.get("gamma") else None,
-                theta=Decimal(str(greeks.get("theta", 0))) if greeks.get("theta") else None,
-                vega=Decimal(str(greeks.get("vega", 0))) if greeks.get("vega") else None,
-                iv=(Decimal(str(snapshot.get("impliedVolatility", 0))) if snapshot.get("impliedVolatility") else None),
+                volume=int(volume or 0),
+                open_interest=int(open_interest or 0),
+                underlying_price=_decimal_or_none(underlying_price),
+                delta=_decimal_or_none(greeks.get("delta")),
+                gamma=_decimal_or_none(greeks.get("gamma")),
+                theta=_decimal_or_none(greeks.get("theta")),
+                vega=_decimal_or_none(greeks.get("vega")),
+                iv=_decimal_or_none(implied_volatility),
                 provider="alpaca",
                 timestamp=datetime.now(UTC),
             )

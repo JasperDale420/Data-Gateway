@@ -291,17 +291,14 @@ class OptionCaptureService:
             "subscribed_contracts": len(self._subscribed_contracts),
             "last_cycle": {
                 "status": self._last_cycle_status,
-                "completed_at": (
-                    self._last_cycle_completed_at.isoformat() if self._last_cycle_completed_at else None
-                ),
+                "completed_at": (self._last_cycle_completed_at.isoformat() if self._last_cycle_completed_at else None),
                 "published": self._last_published,
                 "failed_symbols": list(self._last_failed_symbols),
                 "skipped_market_closed": self._last_skipped_market_closed,
             },
             "websocket": dict(self._ws_event_counts),
             "symbols": {
-                symbol: self._render_symbol_runtime_snapshot(symbol=symbol, now=current_time)
-                for symbol in self.symbols
+                symbol: self._render_symbol_runtime_snapshot(symbol=symbol, now=current_time) for symbol in self.symbols
             },
         }
 
@@ -389,6 +386,7 @@ class OptionCaptureService:
         call_open_interest: list[float] = []
         put_open_interest: list[float] = []
         atm_candidates: list[tuple[float, float]] = []
+        underlying_price: float | None = None
 
         for contract in sorted(contracts, key=lambda item: self._contract_symbol(item)):
             serialized = self._serialize_contract(contract)
@@ -401,6 +399,9 @@ class OptionCaptureService:
             ts_value = _parse_timestamp(serialized.get("timestamp"))
             if ts_value is not None:
                 timestamps.append(ts_value.astimezone(UTC))
+
+            if underlying_price is None:
+                underlying_price = _to_float(serialized.get("underlying_price"))
 
             option_type = str(serialized.get("option_type", "")).lower()
             volume = _to_float(serialized.get("volume")) or 0.0
@@ -424,6 +425,7 @@ class OptionCaptureService:
         return {
             "timestamp": snapshot_ts,
             "underlying": symbol,
+            "underlying_price": underlying_price,
             "expiry": nearest_expiry,
             "chain_json": {"data": {"contracts": serialized_contracts}},
             "total_call_volume": float(sum(call_volumes)),
@@ -491,9 +493,7 @@ class OptionCaptureService:
     @staticmethod
     def _estimate_atm_strike(contracts: list[dict[str, Any]]) -> float | None:
         filtered = sorted(
-            strike
-            for strike in (_to_float(contract.get("strike")) for contract in contracts)
-            if strike is not None
+            strike for strike in (_to_float(contract.get("strike")) for contract in contracts) if strike is not None
         )
         if not filtered:
             return None

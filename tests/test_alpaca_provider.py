@@ -35,7 +35,9 @@ def _option_chain_payload() -> dict[str, Any]:
     return {
         "snapshots": {
             "AAPL250117C00200000": {
+                "volume": 17,
                 "open_interest": 42,
+                "underlyingPrice": 198.45,
                 "latestQuote": {"bp": 1.2, "ap": 1.3},
                 "latestTrade": {"p": 1.25},
                 "greeks": {"delta": 0.51, "gamma": 0.02},
@@ -138,6 +140,21 @@ async def test_get_option_snapshot_contracts_normalizes_full_snapshot_without_li
     assert fake_client.last_params == {"feed": "indicative"}
     assert contracts[0].contract_symbol == "AAPL250117C00200000"
     assert contracts[0].underlying == "AAPL"
+
+
+@pytest.mark.asyncio
+async def test_get_option_snapshot_contracts_maps_volume_open_interest_and_underlying_price() -> None:
+    provider = AlpacaProvider()
+    fake_client = _FakeClient(_option_chain_payload())
+    provider._client = cast(Any, fake_client)
+
+    contracts = await provider.get_option_snapshot_contracts("aapl")
+
+    assert len(contracts) == 1
+    contract = contracts[0]
+    assert contract.volume == 17
+    assert contract.open_interest == 42
+    assert float(contract.underlying_price) == pytest.approx(198.45)
 
 
 @pytest.mark.asyncio

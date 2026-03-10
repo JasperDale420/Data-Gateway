@@ -4,12 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Option chain snapshot payload contract** (`gateway/core/option_capture.py`, `gateway/schemas/__init__.py`): Added optional `underlying_price` to normalized option contracts and publish it at the top level of `option_chain_snapshot` envelopes so downstream storage and replay do not need to infer spot from per-contract prices.
 - **Option capture quality telemetry** (`gateway/core/option_capture.py`, `gateway/core/metrics.py`, `gateway/api/admin.py`): Added per-symbol snapshot quality stats for contract count, Greeks coverage, IV coverage, non-zero open-interest coverage, bid/ask coverage, snapshot age, and websocket add/remove counts. These now show up in the option capture runtime snapshot for admin status and in Prometheus metrics.
 - **OPRA-first option streaming** (`gateway/config.py`, `gateway/core/stream.py`, `gateway/main.py`, `docker-compose.yml`): Added `stream_options_feed` / `GATEWAY_STREAM_OPTIONS_FEED` with `opra` as the default, and pass the configured options feed into the Alpaca multiplexer at startup.
 - **Budgeted option websocket universe** (`gateway/config.py`, `gateway/core/option_capture.py`): Added `option_capture_ws_contract_limit_per_symbol` with a default budget of 40 contracts per underlying. Full chain snapshots still land in Heber, while websocket `quotes`/`trades` subscriptions are capped to the nearest-expiry, near-ATM, tighter-spread, more-liquid contracts per symbol.
 
 ### Fixed
 
+- **Alpaca option snapshot normalization** (`gateway/providers/alpaca.py`, `tests/test_alpaca_provider.py`): Fixed `volume` being populated from `open_interest`, added fallback parsing for snapshot `volume`, `openInterest`, and `underlyingPrice`, and stopped dropping zero-valued Greeks or IV when Alpaca returns `0.0`.
 - **Invalid option websocket bars subscriptions** (`gateway/core/option_capture.py`, `gateway/core/stream.py`): The option capture service no longer subscribes to option `bars`, and the upstream options connection now strips any accidental option `bars` subscriptions before sending to Alpaca. Alpaca option websockets support `quotes` and `trades`, not `bars`.
 - **Stream Timestamp serialization crash** (`gateway/core/stream.py`): All WebSocket streaming messages (800K+/day) failed with `Type is not JSON serializable: Timestamp` because `orjson.dumps` could not serialize `msgpack.Timestamp` objects from the OPRA options stream. Added `_orjson_default` fallback handler that converts `pandas.Timestamp` (`.isoformat()`) and `msgpack.Timestamp` (`.to_datetime().isoformat()`) to ISO 8601 strings.
 
