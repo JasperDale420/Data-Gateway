@@ -1224,6 +1224,7 @@ All notable changes to this project will be documented in this file.
 - feat: add a minute-based Alpaca option capture service for `SPY`, `QQQ`, and `IWM`
 - feat: publish authoritative `alpaca/option_chain_snapshot` envelopes to the Heber sink while keeping option tape subscriptions in sync through the existing multiplexer
 - feat: add `option_capture_*` settings and a full-snapshot Alpaca provider helper for normalized option contracts
+- ops: enable the option capture service in the default Docker Compose gateway stack
 - test: cover market-hours gating, per-symbol snapshot publishing, partial-failure handling, websocket subscription reconciliation, and full-snapshot normalization
 
 ## [0.2.0] - 2026-01-14

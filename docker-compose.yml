@@ -15,6 +15,12 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.)
       - GATEWAY_UW_EOD_ENABLED=true
+      # Enable minute-level Alpaca option chain capture for Heber replay.
+      - GATEWAY_OPTION_CAPTURE_ENABLED=true
+      - GATEWAY_OPTION_CAPTURE_SYMBOLS=SPY,QQQ,IWM
+      - GATEWAY_OPTION_CAPTURE_INTERVAL_SECONDS=60
+      - GATEWAY_OPTION_CAPTURE_MARKET_HOURS_ONLY=true
+      - GATEWAY_OPTION_CAPTURE_WS_ENABLED=true
     env_file:
       - .env
     volumes:
