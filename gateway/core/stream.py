@@ -40,6 +40,21 @@ MESSAGE_TYPE_TO_DATA_TYPE = {
 _VALIDATABLE_FEEDS = frozenset({"bars", "quotes", "trades"})
 
 
+def _orjson_default(obj: Any) -> str:
+    """Fallback serializer for orjson.dumps.
+
+    Handles non-serializable types that Alpaca's WebSocket SDK may include
+    in raw event dicts:
+    - pandas.Timestamp, datetime — have .isoformat()
+    - msgpack.Timestamp (OPRA options stream) — has .to_datetime()
+    """
+    if hasattr(obj, "isoformat"):
+        return obj.isoformat()
+    if hasattr(obj, "to_datetime"):
+        return obj.to_datetime().isoformat()
+    raise TypeError(f"Type is not JSON serializable: {type(obj).__name__}")
+
+
 class SequenceTracker:
     """Per-symbol, per-feed sequence counter for gap detection (PRD §Sequence Numbers).
 
@@ -1109,7 +1124,7 @@ class StreamMultiplexer:
         # Serialize once if we are going to broadcast
         # envelope is a dict here, we can serialize it to string once for efficiency
         # This matches what we did for RedisSink optimization
-        envelope_json = orjson.dumps(envelope)
+        envelope_json = orjson.dumps(envelope, default=_orjson_default)
 
         if self._on_broadcast:
             # Efficient O(1) loop-level broadcast via ConnectionManager

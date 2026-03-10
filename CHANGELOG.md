@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Stream Timestamp serialization crash** (`gateway/core/stream.py`): All WebSocket streaming messages (800K+/day) failed with `Type is not JSON serializable: Timestamp` because `orjson.dumps` could not serialize `msgpack.Timestamp` objects from the OPRA options stream. Added `_orjson_default` fallback handler that converts `pandas.Timestamp` (`.isoformat()`) and `msgpack.Timestamp` (`.to_datetime().isoformat()`) to ISO 8601 strings.
+
 - **UW sector tide never polled** (`gateway/core/uw_poller.py`): Sector tide shared `_should_poll_tide()` and `_last_tide_poll` with market tide, so after market tide polled and set the timer, sector tide's check always returned `False`. Added independent `_last_sector_tide_poll` field and `_should_poll_sector_tide()` method so both feeds poll on their own hourly cadence.
 - **Alpaca 400 Bad Request on naive datetime params** (`gateway/api/alpaca/stock.py`): FastAPI parses query datetime params without timezone when the client omits it (e.g., `?start=2026-01-14T00:00:00`). Added UTC normalization in `get_stock_bars`, `get_stock_trades`, and `get_historical_quotes` before passing to the provider.
 
