@@ -126,6 +126,21 @@ async def test_get_option_chain_applies_custom_limit_bounds() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_option_snapshot_contracts_normalizes_full_snapshot_without_limit() -> None:
+    provider = AlpacaProvider()
+    fake_client = _FakeClient(_option_chain_payload())
+    provider._client = cast(Any, fake_client)
+
+    contracts = await provider.get_option_snapshot_contracts("aapl")
+
+    assert len(contracts) == 1
+    assert fake_client.last_path == "/v1beta1/options/snapshots/AAPL"
+    assert fake_client.last_params == {"feed": "indicative"}
+    assert contracts[0].contract_symbol == "AAPL250117C00200000"
+    assert contracts[0].underlying == "AAPL"
+
+
+@pytest.mark.asyncio
 async def test_get_trades_applies_limit_bounds() -> None:
     provider = AlpacaProvider()
     fake_client = _FakeClient({"trades": {}})

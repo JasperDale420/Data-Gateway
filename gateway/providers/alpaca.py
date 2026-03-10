@@ -802,6 +802,31 @@ class AlpacaProvider(DataProvider):
             logger.error("alpaca_option_snapshots_error", status=e.response.status_code)
             raise
 
+    async def get_option_snapshot_contracts(self, underlying: str) -> list:
+        """Get the latest full underlying snapshot as normalized option contracts."""
+        from gateway.schemas import NormalizedOptionContract
+
+        snapshots = await self.get_option_snapshots(underlying)
+        results: list[NormalizedOptionContract] = []
+        for contract_symbol, snapshot in snapshots.items():
+            parsed_contract = self._parse_occ_contract(contract_symbol)
+            if parsed_contract is None:
+                continue
+            contract = self._normalize_option_contract(
+                contract_symbol,
+                snapshot,
+                parsed_contract=parsed_contract,
+            )
+            if contract:
+                results.append(contract)
+
+        logger.info(
+            "alpaca_option_snapshot_contracts_fetched",
+            underlying=underlying,
+            contracts=len(results),
+        )
+        return results
+
     @staticmethod
     def _parse_occ_contract(contract_symbol: str) -> dict[str, Any] | None:
         """Parse OCC option contract symbol into components."""

@@ -396,6 +396,24 @@ async def lifespan(app: FastAPI):
             eod_enabled=settings.uw_eod_enabled,
         )
 
+    option_capture_service = None
+    if settings.option_capture_enabled:
+        from gateway.core.option_capture import start_option_capture_service
+
+        option_capture_service = await start_option_capture_service(
+            registry=registry,
+            multiplexer=multiplexer,
+            sink_registry=sink_registry,
+            settings=settings,
+        )
+        logger.info(
+            "option_capture_initialized",
+            symbols=settings.option_capture_symbol_list,
+            interval_seconds=settings.option_capture_interval_seconds,
+            market_hours_only=settings.option_capture_market_hours_only,
+            websocket_enabled=settings.option_capture_ws_enabled,
+        )
+
     yield
 
     # ── PRD §Graceful Shutdown: 8-step sequence ────────────────────────────
@@ -418,6 +436,11 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(drain_seconds)
 
     # Step 4: Unsubscribe upstream / stop multiplexer
+    if option_capture_service:
+        from gateway.core.option_capture import stop_option_capture_service
+
+        await stop_option_capture_service()
+
     if multiplexer:
         logger.info("multiplexer_shutdown_starting")
         try:

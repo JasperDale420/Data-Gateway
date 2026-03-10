@@ -274,6 +274,9 @@ def wrap_event(
     source: str = "websocket",
     stream_type: str | None = None,
     ts_ingest: datetime | None = None,
+    instrument_type_override: str | None = None,
+    instrument_key_override: str | None = None,
+    symbol_override: str | None = None,
 ) -> dict:
     """Wrap a normalized event in an EventEnvelope.
 
@@ -295,7 +298,14 @@ def wrap_event(
         payload = dict(event)
 
     # Extract symbol - handle various field names
-    symbol = payload.get("symbol") or payload.get("S") or payload.get("underlying") or payload.get("ticker") or ""
+    symbol = (
+        symbol_override
+        or payload.get("symbol")
+        or payload.get("S")
+        or payload.get("underlying")
+        or payload.get("ticker")
+        or ""
+    )
     if not isinstance(symbol, str):
         symbol = str(symbol) if not isinstance(symbol, dict) else ""
 
@@ -323,11 +333,11 @@ def wrap_event(
         ts_ingest = datetime.now(UTC)
 
     # Infer instrument type
-    instrument_type = _infer_instrument_type(feed, symbol, payload)
+    instrument_type = instrument_type_override or _infer_instrument_type(feed, symbol, payload)
 
     # Generate instrument key
     contract_symbol = payload.get("contract_symbol") or payload.get("contract")
-    instrument_key = make_instrument_key(symbol, instrument_type, contract_symbol)
+    instrument_key = instrument_key_override or make_instrument_key(symbol, instrument_type, contract_symbol)
 
     # Extract unique fields for event ID
     unique_fields = _extract_unique_fields(feed, payload)

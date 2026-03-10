@@ -118,6 +118,14 @@ class Settings(BaseSettings):
     uw_dynamic_ticker_count: int = Field(default=20, ge=0)
     uw_eod_concurrency: int = Field(default=5, ge=1, le=20)
 
+    # Alpaca option chain capture
+    option_capture_enabled: bool = False
+    option_capture_symbols: str = "SPY,QQQ,IWM"
+    option_capture_interval_seconds: int = Field(default=60, ge=1)
+    option_capture_market_hours_only: bool = True
+    option_capture_snapshot_timeout_seconds: float = Field(default=10.0, ge=0.5)
+    option_capture_ws_enabled: bool = True
+
     # Replay
     replay_messages_max_in_memory: int = Field(default=50_000, ge=100)
     replay_messages_spool_to_disk: bool = True
@@ -125,6 +133,17 @@ class Settings(BaseSettings):
     # Endpoint Rate Limits (PRD 7.5.3)
     bulk_rate_limit_per_hour: int = Field(default=10, ge=1)
     replay_max_concurrent_sessions: int = Field(default=5, ge=1)
+
+    @property
+    def option_capture_symbol_list(self) -> list[str]:
+        """Parse configured option capture symbols into a stable uppercase list."""
+        symbols: list[str] = []
+        for raw_symbol in self.option_capture_symbols.split(","):
+            symbol = raw_symbol.strip().upper()
+            if not symbol or symbol in symbols:
+                continue
+            symbols.append(symbol)
+        return symbols
 
 
 @lru_cache
