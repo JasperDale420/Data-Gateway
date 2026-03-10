@@ -167,6 +167,12 @@ def test_option_capture_settings_parse_symbol_csv() -> None:
     assert settings.option_capture_symbol_list == ["SPY", "QQQ", "IWM"]
 
 
+def test_option_capture_settings_default_to_opra_feed() -> None:
+    settings = Settings()
+
+    assert settings.stream_options_feed == "opra"
+
+
 @pytest.mark.asyncio
 async def test_run_cycle_skips_when_market_is_closed() -> None:
     provider = _FakeAlpacaProvider({"SPY": [_contract("SPY260310C00500000")]})
@@ -232,9 +238,9 @@ async def test_run_cycle_publishes_one_snapshot_envelope_per_symbol() -> None:
 
     assert len(multiplexer.subscribe_calls) == 1
     subscribe_call = multiplexer.subscribe_calls[0]
-    assert subscribe_call["bars"] == ["QQQ260310C00450000", "SPY260310C00500000", "SPY260310P00500000"]
-    assert subscribe_call["quotes"] == subscribe_call["bars"]
-    assert subscribe_call["trades"] == subscribe_call["bars"]
+    assert subscribe_call["bars"] == []
+    assert subscribe_call["quotes"] == ["QQQ260310C00450000", "SPY260310C00500000", "SPY260310P00500000"]
+    assert subscribe_call["trades"] == subscribe_call["quotes"]
 
 
 @pytest.mark.asyncio
@@ -288,6 +294,10 @@ async def test_run_cycle_reconciles_websocket_contract_subscriptions() -> None:
 
     assert summary["published"] == 1
     assert len(multiplexer.subscribe_calls) == 2
-    assert multiplexer.subscribe_calls[-1]["bars"] == ["SPY260310C00505000"]
+    assert multiplexer.subscribe_calls[-1]["bars"] == []
+    assert multiplexer.subscribe_calls[-1]["quotes"] == ["SPY260310C00505000"]
+    assert multiplexer.subscribe_calls[-1]["trades"] == ["SPY260310C00505000"]
     assert len(multiplexer.unsubscribe_calls) == 1
-    assert multiplexer.unsubscribe_calls[0]["bars"] == ["SPY260310C00500000"]
+    assert multiplexer.unsubscribe_calls[0]["bars"] == []
+    assert multiplexer.unsubscribe_calls[0]["quotes"] == ["SPY260310C00500000"]
+    assert multiplexer.unsubscribe_calls[0]["trades"] == ["SPY260310C00500000"]

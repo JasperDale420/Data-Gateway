@@ -388,6 +388,7 @@ class UpstreamConnection:
         api_key: str,
         api_secret: str,
         on_message: Callable[[dict[str, Any]], Awaitable[None]],
+        endpoint: str | None = None,
         base_delay: float = 1.0,
         max_delay: float = 16.0,
         max_retries: int = 10,
@@ -396,6 +397,7 @@ class UpstreamConnection:
         self.api_key = api_key
         self.api_secret = api_secret
         self.on_message = on_message
+        self.endpoint = endpoint or self.stream_type.endpoint
         self.base_delay = base_delay
         self.max_delay = max_delay
         self.max_retries = max_retries
@@ -433,7 +435,7 @@ class UpstreamConnection:
         # Close existing connection to release Alpaca's connection slot
         await self._close_ws()
 
-        endpoint = self.stream_type.endpoint
+        endpoint = self.endpoint
         logger.info("connecting_upstream", stream=self.stream_type.value, endpoint=endpoint)
 
         self._ws = await websockets.connect(
@@ -510,6 +512,8 @@ class UpstreamConnection:
             logger.warning("subscribe_not_connected", stream=self.stream_type.value)
             return
 
+        bars, quotes, trades, news = self._sanitize_subscription_request(bars, quotes, trades, news)
+
         msg: dict[str, Any] = {"action": "subscribe"}
         if bars:
             msg["bars"] = list(bars)
@@ -542,6 +546,8 @@ class UpstreamConnection:
         if not self.is_connected:
             return
 
+        bars, quotes, trades, news = self._sanitize_subscription_request(bars, quotes, trades, news)
+
         msg: dict[str, Any] = {"action": "unsubscribe"}
         if bars:
             msg["bars"] = list(bars)
@@ -562,6 +568,22 @@ class UpstreamConnection:
                 trades=list(trades) if trades else [],
                 news=list(news) if news else [],
             )
+
+    def _sanitize_subscription_request(
+        self,
+        bars: set[str] | None,
+        quotes: set[str] | None,
+        trades: set[str] | None,
+        news: set[str] | None,
+    ) -> tuple[set[str] | None, set[str] | None, set[str] | None, set[str] | None]:
+        if self.stream_type == AlpacaStreamType.OPTIONS and bars:
+            logger.warning(
+                "options_stream_ignoring_bars_subscription",
+                count=len(bars),
+                hint="Alpaca options websocket supports quotes and trades, not bars",
+            )
+            bars = None
+        return bars, quotes, trades, news
 
     async def start(self) -> None:
         """Start the connection and receive loop."""
@@ -761,6 +783,7 @@ class StreamMultiplexer:
         api_secret: str,
         on_data: Callable[[str, str, dict[str, Any]], Awaitable[None]],
         use_iex: bool = False,
+        options_feed: str = "opra",
         lazy_connect: bool = True,
         fanout_max_inflight: int = DEFAULT_FANOUT_MAX_INFLIGHT,
         fanout_batch_size: int = DEFAULT_FANOUT_BATCH_SIZE,
@@ -773,6 +796,7 @@ class StreamMultiplexer:
             api_secret: Alpaca API secret
             on_data: Callback for data messages (client_id, data_type, message)
             use_iex: Use IEX feed instead of SIP for stocks
+            options_feed: Alpaca options stream feed (`opra` or `indicative`)
             lazy_connect: If True, only connect to streams when first client subscribes
             fanout_max_inflight: Max concurrent callback deliveries per fanout batch.
             fanout_batch_size: Number of clients to dispatch per gather batch.
@@ -781,6 +805,9 @@ class StreamMultiplexer:
         self.api_key = api_key
         self.api_secret = api_secret
         self.on_data = on_data
+        self._options_feed = str(options_feed or "opra").strip().lower()
+        if self._options_feed not in {"opra", "indicative"}:
+            raise ValueError("options_feed must be 'opra' or 'indicative'")
         self._lazy_connect = lazy_connect
         self._fanout_max_inflight = max(1, fanout_max_inflight)
         self._fanout_client_batch_size = max(1, fanout_batch_size)
@@ -803,6 +830,7 @@ class StreamMultiplexer:
                 stream_type=AlpacaStreamType.OPTIONS,
                 api_key=api_key,
                 api_secret=api_secret,
+                endpoint=f"wss://stream.data.alpaca.markets/v1beta1/{self._options_feed}",
                 on_message=lambda m: self._handle_message(AlpacaStreamType.OPTIONS, m),
             ),
             AlpacaStreamType.CRYPTO: UpstreamConnection(

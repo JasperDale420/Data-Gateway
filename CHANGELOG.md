@@ -2,8 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### Changed
+
+- **OPRA-first option streaming** (`gateway/config.py`, `gateway/core/stream.py`, `gateway/main.py`, `docker-compose.yml`): Added `stream_options_feed` / `GATEWAY_STREAM_OPTIONS_FEED` with `opra` as the default, and pass the configured options feed into the Alpaca multiplexer at startup.
+
 ### Fixed
 
+- **Invalid option websocket bars subscriptions** (`gateway/core/option_capture.py`, `gateway/core/stream.py`): The option capture service no longer subscribes to option `bars`, and the upstream options connection now strips any accidental option `bars` subscriptions before sending to Alpaca. Alpaca option websockets support `quotes` and `trades`, not `bars`.
 - **Stream Timestamp serialization crash** (`gateway/core/stream.py`): All WebSocket streaming messages (800K+/day) failed with `Type is not JSON serializable: Timestamp` because `orjson.dumps` could not serialize `msgpack.Timestamp` objects from the OPRA options stream. Added `_orjson_default` fallback handler that converts `pandas.Timestamp` (`.isoformat()`) and `msgpack.Timestamp` (`.to_datetime().isoformat()`) to ISO 8601 strings.
 
 - **UW sector tide never polled** (`gateway/core/uw_poller.py`): Sector tide shared `_should_poll_tide()` and `_last_tide_poll` with market tide, so after market tide polled and set the timer, sector tide's check always returned `False`. Added independent `_last_sector_tide_poll` field and `_should_poll_sector_tide()` method so both feeds poll on their own hourly cadence.

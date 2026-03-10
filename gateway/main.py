@@ -302,6 +302,7 @@ async def lifespan(app: FastAPI):
             api_secret=settings.alpaca_secret_key,
             on_data=_on_stream_data,
             use_iex=settings.stream_use_iex,
+            options_feed=settings.stream_options_feed,
             lazy_connect=settings.stream_lazy_connect,
             fanout_max_inflight=settings.stream_fanout_max_inflight,
             fanout_batch_size=settings.stream_fanout_batch_size,
@@ -309,7 +310,11 @@ async def lifespan(app: FastAPI):
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()
-        logger.info("multiplexer_initialized", lazy_connect=settings.stream_lazy_connect)
+        logger.info(
+            "multiplexer_initialized",
+            lazy_connect=settings.stream_lazy_connect,
+            options_feed=settings.stream_options_feed,
+        )
     else:
         logger.warning("multiplexer_skipped", reason="Missing Alpaca credentials")
 

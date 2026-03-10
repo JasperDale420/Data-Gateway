@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +47,7 @@ class Settings(BaseSettings):
 
     # Streaming
     stream_use_iex: bool = False  # Use IEX instead of SIP for stocks
+    stream_options_feed: str = "opra"  # Options stream feed: opra or indicative
     stream_lazy_connect: bool = True  # Connect to streams on-demand for efficiency
     stream_reconnect_max_retries: int = Field(default=10, ge=1)
     stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
@@ -144,6 +145,14 @@ class Settings(BaseSettings):
                 continue
             symbols.append(symbol)
         return symbols
+
+    @field_validator("stream_options_feed", mode="before")
+    @classmethod
+    def _normalize_stream_options_feed(cls, value: str) -> str:
+        normalized = str(value or "opra").strip().lower()
+        if normalized not in {"opra", "indicative"}:
+            raise ValueError("stream_options_feed must be 'opra' or 'indicative'")
+        return normalized
 
 
 @lru_cache

@@ -281,7 +281,6 @@ class OptionCaptureService:
             response = await self._multiplexer.client_subscribe(
                 CAPTURE_CLIENT_ID,
                 AlpacaStreamType.OPTIONS,
-                bars=to_add,
                 quotes=to_add,
                 trades=to_add,
             )
@@ -293,7 +292,6 @@ class OptionCaptureService:
             response = await self._multiplexer.client_unsubscribe(
                 CAPTURE_CLIENT_ID,
                 AlpacaStreamType.OPTIONS,
-                bars=to_remove,
                 quotes=to_remove,
                 trades=to_remove,
             )
