@@ -416,8 +416,11 @@ class OptionCaptureService:
 
     @staticmethod
     def _estimate_atm_strike(contracts: list[dict[str, Any]]) -> float | None:
-        strikes = sorted(_to_float(contract.get("strike")) for contract in contracts)
-        filtered = [strike for strike in strikes if strike is not None]
+        filtered = sorted(
+            strike
+            for strike in (_to_float(contract.get("strike")) for contract in contracts)
+            if strike is not None
+        )
         if not filtered:
             return None
         middle = len(filtered) // 2
