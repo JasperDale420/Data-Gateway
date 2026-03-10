@@ -18,6 +18,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Pre-commit** (`detect-secrets`): ignore `logs/` directories during secret scans to prevent generated log artifacts from causing false positives.
+
 - **Provider Error Masking** (`gateway/api/finnhub/*.py`, `gateway/api/yf.py`, `gateway/api/sec.py`): Refactored Finnhub, Yahoo Finance, and SEC routers to utilize centralized execution wrappers (`execute_finnhub_cached`, `execute_yf_cached`, `execute_sec_cached`). This ensures that `httpx.HTTPStatusError` exceptions correctly bubble up to the client instead of being masked as generic 502 Bad Gateway errors.
 - **Redis Sink Connection Pool Exhaustion** (`gateway/core/redis_sink.py`): Replaced `aioredis.ConnectionPool` with `aioredis.BlockingConnectionPool` and configured a timeout (`socket_timeout`). This prevents immediate `ConnectionError: Too many connections` exceptions when burst traffic (e.g., 256 concurrent tasks) momentarily exceeds the `max_connections` limit.
 
