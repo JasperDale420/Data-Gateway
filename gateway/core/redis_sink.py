@@ -9,6 +9,7 @@ batch chunks in parallel with retry logic.
 
 import asyncio
 import time
+from collections import deque
 from typing import Any
 
 import orjson
@@ -26,6 +27,19 @@ MAX_CONCURRENT_CHUNKS = 4
 CHUNK_RETRY_ATTEMPTS = 1
 INITIAL_BACKOFF_SECONDS = 0.5
 MAX_BACKOFF_SECONDS = 5.0
+
+# Retry settings for single publish operations.
+# Previously, a single transient failure (timeout, connection reset) would
+# immediately reset the connection and return False, causing the circuit
+# breaker to count it as a failure.  With retries, transient blips are
+# absorbed before they cascade into circuit-open events.
+PUBLISH_RETRY_ATTEMPTS = 3
+PUBLISH_RETRY_BACKOFF_BASE = 0.1  # seconds — doubles each attempt (0.1, 0.2, 0.4)
+
+# Failed event buffer: events that exhaust all retries are held here
+# and drained on the next successful reconnect.  The deque maxlen caps
+# memory usage — at ~1 KB/event, 10 000 events ≈ 10 MB.
+FAILED_EVENT_BUFFER_CAPACITY = 10_000
 
 
 class RedisStreamsSink(DataSink):
@@ -64,6 +78,12 @@ class RedisStreamsSink(DataSink):
         self._reconnect_cooldown_until: float = 0.0
         self._backoff_seconds: float = INITIAL_BACKOFF_SECONDS
 
+        # Failed event buffer — holds (topic, payload_bytes) for events that
+        # exhausted all retries.  Drained automatically on reconnect.
+        self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=FAILED_EVENT_BUFFER_CAPACITY)
+        self._drain_lock = asyncio.Lock()
+        self._buffer_stats = {"buffered": 0, "drained": 0, "evicted": 0}
+
     @property
     def name(self) -> str:
         return "redis_streams"
@@ -90,9 +110,11 @@ class RedisStreamsSink(DataSink):
             )
             await asyncio.sleep(remaining)
 
+        is_reconnect = False
         async with self._connect_lock:
             if self._redis is None:
                 try:
+                    is_reconnect = self._reconnect_cooldown_until > 0
                     self._redis = self._create_client()
                     self._connected = True
                     self._backoff_seconds = INITIAL_BACKOFF_SECONDS
@@ -101,10 +123,15 @@ class RedisStreamsSink(DataSink):
                         url=self._redis_url[:20] + "...",
                         pool_size=self._pool_size,
                         timeout_seconds=self._operation_timeout_seconds,
+                        buffered_events=len(self._failed_buffer),
                     )
                 except ImportError:
                     logger.error("redis_sink_import_error", msg="redis package not installed")
                     raise
+
+        # After reconnect, drain any buffered events (outside the lock)
+        if is_reconnect and self._failed_buffer:
+            asyncio.create_task(self._drain_buffer())
 
     @staticmethod
     async def _close_stale_client(client: Any) -> None:
@@ -180,16 +207,121 @@ class RedisStreamsSink(DataSink):
             if old_client is not None:
                 await self._close_stale_client(old_client)
             self._reconnect_cooldown_until = time.monotonic() + self._backoff_seconds
+            error_desc = str(error) if str(error) else type(error).__name__
             logger.warning(
                 "redis_sink_connection_reset",
                 operation=operation,
-                error=str(error) or type(error).__name__,
+                error=error_desc,
                 backoff_seconds=round(self._backoff_seconds, 2),
             )
             self._backoff_seconds = min(self._backoff_seconds * 2, MAX_BACKOFF_SECONDS)
 
+    def _buffer_failed_event(self, topic: str, payload: bytes) -> None:
+        """Buffer a failed event for retry on reconnect.
+
+        Uses a bounded deque so oldest events are evicted if the buffer fills.
+        """
+        was_full = len(self._failed_buffer) == (self._failed_buffer.maxlen or FAILED_EVENT_BUFFER_CAPACITY)
+        self._failed_buffer.append((topic, payload))
+        self._buffer_stats["buffered"] += 1
+        if was_full:
+            self._buffer_stats["evicted"] += 1
+            logger.warning(
+                "redis_sink_buffer_eviction",
+                buffer_size=len(self._failed_buffer),
+                total_evicted=self._buffer_stats["evicted"],
+            )
+
+    async def _drain_buffer(self) -> None:
+        """Drain buffered failed events after a successful reconnect.
+
+        Called from _ensure_connected after re-establishing a connection.
+        Uses a pipeline to send all buffered events efficiently.
+        Events that fail during drain are re-buffered (up to one attempt).
+        """
+        if not self._failed_buffer:
+            return
+
+        if not self._drain_lock.locked():
+            async with self._drain_lock:
+                await self._do_drain()
+
+    async def _do_drain(self) -> None:
+        """Execute the actual drain.  Separated for lock clarity."""
+        if not self._failed_buffer:
+            return
+
+        client = self._redis
+        if client is None:
+            return
+
+        # Snapshot and clear — events that fail drain get re-appended
+        events = list(self._failed_buffer)
+        self._failed_buffer.clear()
+
+        logger.info(
+            "redis_sink_buffer_drain_start",
+            count=len(events),
+        )
+
+        drained = 0
+        re_buffer: list[tuple[str, bytes]] = []
+
+        # Drain in pipeline chunks for efficiency
+        for i in range(0, len(events), BATCH_CHUNK_SIZE):
+            chunk = events[i : i + BATCH_CHUNK_SIZE]
+            try:
+                async with client.pipeline(transaction=False) as pipe:
+                    for topic, payload_bytes in chunk:
+                        pipe.xadd(
+                            topic,
+                            {b"data": payload_bytes},
+                            maxlen=self._max_len,
+                            approximate=self._approximate,
+                        )
+                    timeout = self._operation_timeout_seconds + (len(chunk) / 500) * 0.5
+                    results = await asyncio.wait_for(pipe.execute(), timeout=timeout)
+
+                for j, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        re_buffer.append(chunk[j])
+                    else:
+                        drained += 1
+            except Exception as e:
+                error_desc = str(e) if str(e) else type(e).__name__
+                logger.warning(
+                    "redis_sink_buffer_drain_chunk_error",
+                    chunk_size=len(chunk),
+                    error=error_desc,
+                )
+                re_buffer.extend(chunk)
+
+        # Re-buffer events that failed during drain
+        for item in re_buffer:
+            self._failed_buffer.append(item)
+
+        self._buffer_stats["drained"] += drained
+        logger.info(
+            "redis_sink_buffer_drain_complete",
+            drained=drained,
+            re_buffered=len(re_buffer),
+            buffer_remaining=len(self._failed_buffer),
+        )
+
+    def get_buffer_stats(self) -> dict[str, int]:
+        """Return failed event buffer statistics."""
+        return {
+            **self._buffer_stats,
+            "buffer_size": len(self._failed_buffer),
+            "buffer_capacity": self._failed_buffer.maxlen or FAILED_EVENT_BUFFER_CAPACITY,
+        }
+
     async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
-        """Publish data to a Redis Stream.
+        """Publish data to a Redis Stream with automatic retry.
+
+        Retries up to PUBLISH_RETRY_ATTEMPTS times with exponential backoff
+        before declaring failure.  This absorbs transient connection blips
+        and prevents them from cascading into circuit breaker trips.
 
         Args:
             topic: Stream name (e.g., 'gateway.stream.bars')
@@ -198,45 +330,87 @@ class RedisStreamsSink(DataSink):
         Returns:
             True if successful
         """
-        await self._ensure_connected()
-        client = self._redis
-        if client is None:
-            record_sink_publish(sink=self.name, topic=topic, success=False)
-            return False
+        if isinstance(data, str):
+            payload = {b"data": data.encode()}
+        elif isinstance(data, bytes):
+            payload = {b"data": data}
+        else:
+            payload = {b"data": orjson.dumps(data, default=str)}
 
-        try:
-            if isinstance(data, str):
-                payload = {b"data": data.encode()}
-            elif isinstance(data, bytes):
-                payload = {b"data": data}
-            else:
-                payload = {b"data": orjson.dumps(data, default=str)}
+        last_error: Exception | None = None
 
-            message_id = await asyncio.wait_for(
-                client.xadd(
-                    topic,
-                    payload,
-                    maxlen=self._max_len,
-                    approximate=self._approximate,
-                ),
-                timeout=self._operation_timeout_seconds,
-            )
+        for attempt in range(PUBLISH_RETRY_ATTEMPTS):
+            await self._ensure_connected()
+            client = self._redis
+            if client is None:
+                # Could not reconnect — count as a failed attempt
+                last_error = last_error or ConnectionError("redis_not_connected")
+                if attempt < PUBLISH_RETRY_ATTEMPTS - 1:
+                    await asyncio.sleep(PUBLISH_RETRY_BACKOFF_BASE * (2**attempt))
+                continue
 
-            logger.debug(
-                "redis_sink_published",
-                topic=topic,
-                message_id=message_id.decode() if isinstance(message_id, bytes) else str(message_id),
-                event_id=data.get("event_id", "unknown") if isinstance(data, dict) else "unknown",
-            )
+            try:
+                message_id = await asyncio.wait_for(
+                    client.xadd(
+                        topic,
+                        payload,
+                        maxlen=self._max_len,
+                        approximate=self._approximate,
+                    ),
+                    timeout=self._operation_timeout_seconds,
+                )
 
-            record_sink_publish(sink=self.name, topic=topic, success=True)
-            return True
+                if attempt > 0:
+                    logger.info(
+                        "redis_sink_publish_retry_success",
+                        topic=topic,
+                        attempt=attempt + 1,
+                    )
 
-        except Exception as e:
-            await self._reset_connection(operation="publish", error=e, failed_client=client)
-            logger.warning("redis_sink_publish_error", topic=topic, error=str(e) or type(e).__name__)
-            record_sink_publish(sink=self.name, topic=topic, success=False)
-            return False
+                logger.debug(
+                    "redis_sink_published",
+                    topic=topic,
+                    message_id=message_id.decode() if isinstance(message_id, bytes) else str(message_id),
+                    event_id=data.get("event_id", "unknown") if isinstance(data, dict) else "unknown",
+                )
+
+                record_sink_publish(sink=self.name, topic=topic, success=True)
+                return True
+
+            except Exception as e:
+                last_error = e
+                error_desc = str(e) if str(e) else type(e).__name__
+                await self._reset_connection(operation="publish", error=e, failed_client=client)
+
+                if attempt < PUBLISH_RETRY_ATTEMPTS - 1:
+                    backoff = PUBLISH_RETRY_BACKOFF_BASE * (2**attempt)
+                    logger.debug(
+                        "redis_sink_publish_retrying",
+                        topic=topic,
+                        attempt=attempt + 1,
+                        max_attempts=PUBLISH_RETRY_ATTEMPTS,
+                        backoff_seconds=round(backoff, 3),
+                        error=error_desc,
+                    )
+                    await asyncio.sleep(backoff)
+
+        # All retries exhausted — buffer the event for drain on reconnect
+        error_desc = (
+            str(last_error)
+            if last_error and str(last_error)
+            else (type(last_error).__name__ if last_error else "unknown")
+        )
+        self._buffer_failed_event(topic, payload[b"data"])
+        logger.warning(
+            "redis_sink_publish_error",
+            topic=topic,
+            error=error_desc,
+            attempts=PUBLISH_RETRY_ATTEMPTS,
+            buffered=True,
+            buffer_size=len(self._failed_buffer),
+        )
+        record_sink_publish(sink=self.name, topic=topic, success=False)
+        return False
 
     async def publish_batch(
         self,
@@ -350,7 +524,7 @@ class RedisStreamsSink(DataSink):
             return published
 
         except Exception as e:
-            error_msg = str(e) or type(e).__name__
+            error_msg = str(e) if str(e) else type(e).__name__
             await self._reset_connection(
                 operation="publish_batch",
                 error=e,

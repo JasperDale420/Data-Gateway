@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from typing import Any
 
 import pytest
@@ -144,22 +145,31 @@ class _TimingPipeline:
 async def test_publish_resets_connection_after_loading_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """All retry attempts should fail when _ensure_connected always provides
+    a loading client, and the event should be buffered (not lost)."""
     sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
-    sink._redis = _LoadingRedisClient()
-    sink._connected = True
+
+    # Ensure ALL retry attempts get the loading client
+    async def _loading_ensure() -> None:
+        sink._redis = _LoadingRedisClient()
+        sink._connected = True
+
+    monkeypatch.setattr(sink, "_ensure_connected", _loading_ensure)
 
     published = await sink.publish("gateway.stream.bars", {"event_id": "evt-1"})
 
     assert published is False
-    assert sink._redis is None
+    # Event should be buffered after all retries exhausted
+    assert len(sink._failed_buffer) == 1
 
+    # Now switch to healthy client — next publish should succeed
     healthy_client = _HealthyRedisClient()
 
-    async def _fake_ensure_connected() -> None:
+    async def _healthy_ensure() -> None:
         sink._redis = healthy_client
         sink._connected = True
 
-    monkeypatch.setattr(sink, "_ensure_connected", _fake_ensure_connected)
+    monkeypatch.setattr(sink, "_ensure_connected", _healthy_ensure)
 
     published_retry = await sink.publish("gateway.stream.bars", {"event_id": "evt-2"})
 
@@ -168,19 +178,31 @@ async def test_publish_resets_connection_after_loading_error(
 
 
 @pytest.mark.asyncio
-async def test_publish_uses_bounded_operation_timeout() -> None:
+async def test_publish_uses_bounded_operation_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each retry attempt should respect the operation timeout rather than
+    waiting for the full slow client delay."""
     sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
-    sink._redis = _SlowRedisClient()
-    sink._connected = True
     sink._operation_timeout_seconds = 0.02
+
+    # Ensure ALL retry attempts get a slow client that exceeds the timeout
+    async def _slow_ensure() -> None:
+        sink._redis = _SlowRedisClient()
+        sink._connected = True
+
+    monkeypatch.setattr(sink, "_ensure_connected", _slow_ensure)
 
     start = time.perf_counter()
     published = await sink.publish("gateway.stream.bars", {"event_id": "evt-1"})
     elapsed = time.perf_counter() - start
 
     assert published is False
-    assert elapsed < 0.06
-    assert sink._redis is None
+    # With 3 retries: each times out at 0.02s, plus backoff (0.1 + 0.2)
+    # Total ~0.36s, well under what 3 * 0.08s (no timeout) would take
+    assert elapsed < 1.0
+    # Event should be buffered
+    assert len(sink._failed_buffer) == 1
 
 
 @pytest.mark.asyncio
@@ -537,3 +559,321 @@ async def test_concurrent_chunk_reset_does_not_crash(
 
     # At least two chunks should have succeeded (chunk A may recover on retry)
     assert result >= 10, f"Expected at least 10 published, got {result}"
+
+
+# ── Publish Retry Tests ──────────────────────────────────────────────
+
+
+class _FailNTimesClient:
+    """Client that raises on the first N xadd calls, then succeeds."""
+
+    def __init__(self, fail_count: int = 1) -> None:
+        self._fail_count = fail_count
+        self._call_count = 0
+        self.messages: list[tuple[Any, Any]] = []
+
+    async def xadd(self, *args: Any, **kwargs: Any) -> bytes:
+        self._call_count += 1
+        if self._call_count <= self._fail_count:
+            raise ConnectionError("Connection reset by peer")
+        self.messages.append((args, kwargs))
+        return b"1-0"
+
+    async def close(self) -> None:
+        return None
+
+
+class _AlwaysFailingClient:
+    """Client that always raises on xadd."""
+
+    async def xadd(self, *args: Any, **kwargs: Any) -> bytes:
+        raise ConnectionError("Connection refused")
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_publish_retries_on_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Publish should retry and succeed after a transient failure."""
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    # The client that will succeed on the 2nd call
+    good_client = _HealthyRedisClient()
+    clients_iter = iter([_AlwaysFailingClient(), good_client])
+
+    async def _cycle_ensure() -> None:
+        try:
+            sink._redis = next(clients_iter)
+        except StopIteration:
+            sink._redis = good_client
+        sink._connected = True
+
+    monkeypatch.setattr(sink, "_ensure_connected", _cycle_ensure)
+
+    published = await sink.publish("gateway.stream.bars", {"symbol": "AAPL"})
+
+    assert published is True
+    assert len(good_client.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_publish_buffers_event_after_all_retries_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After all retries fail, event should be buffered (not lost)."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+
+    async def _always_fail_ensure() -> None:
+        sink._redis = _AlwaysFailingClient()
+        sink._connected = True
+
+    monkeypatch.setattr(sink, "_ensure_connected", _always_fail_ensure)
+
+    assert len(sink._failed_buffer) == 0
+
+    published = await sink.publish("gateway.stream.bars", {"symbol": "AAPL", "close": 150.0})
+
+    assert published is False
+    assert len(sink._failed_buffer) == 1
+
+    # The buffered event should contain the serialized payload
+    topic, payload_bytes = sink._failed_buffer[0]
+    assert topic == "gateway.stream.bars"
+    assert isinstance(payload_bytes, bytes)
+    assert b"AAPL" in payload_bytes
+
+    # Buffer stats should reflect the buffered event
+    stats = sink.get_buffer_stats()
+    assert stats["buffered"] == 1
+    assert stats["buffer_size"] == 1
+
+
+@pytest.mark.asyncio
+async def test_publish_retry_does_not_buffer_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Successful publish (even after retries) should NOT buffer."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = _HealthyRedisClient()
+    sink._connected = True
+
+    async def _noop_ensure() -> None:
+        if sink._redis is None:
+            sink._redis = _HealthyRedisClient()
+            sink._connected = True
+
+    monkeypatch.setattr(sink, "_ensure_connected", _noop_ensure)
+
+    published = await sink.publish("gateway.stream.bars", {"symbol": "AAPL"})
+
+    assert published is True
+    assert len(sink._failed_buffer) == 0
+    assert sink.get_buffer_stats()["buffered"] == 0
+
+
+# ── Failed Event Buffer Tests ────────────────────────────────────────
+
+
+def test_buffer_failed_event_adds_to_deque() -> None:
+    """_buffer_failed_event should add event to the deque."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+
+    sink._buffer_failed_event("gateway.stream.bars", b'{"symbol":"AAPL"}')
+    sink._buffer_failed_event("gateway.stream.quotes", b'{"symbol":"MSFT"}')
+
+    assert len(sink._failed_buffer) == 2
+    assert sink._buffer_stats["buffered"] == 2
+    assert sink._buffer_stats["evicted"] == 0
+
+    # Verify ordering
+    topic1, payload1 = sink._failed_buffer[0]
+    assert topic1 == "gateway.stream.bars"
+    topic2, payload2 = sink._failed_buffer[1]
+    assert topic2 == "gateway.stream.quotes"
+
+
+def test_buffer_evicts_oldest_when_full() -> None:
+    """Buffer should evict oldest events when capacity is reached."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    # Override to a small capacity for testing
+    sink._failed_buffer = deque(maxlen=3)
+
+    for i in range(3):
+        sink._buffer_failed_event(f"topic.{i}", f"payload_{i}".encode())
+
+    assert len(sink._failed_buffer) == 3
+    assert sink._buffer_stats["evicted"] == 0
+
+    # Adding one more should evict the oldest
+    sink._buffer_failed_event("topic.3", b"payload_3")
+
+    assert len(sink._failed_buffer) == 3
+    assert sink._buffer_stats["evicted"] == 1
+
+    # Oldest event (topic.0) should be gone
+    topics = [t for t, _ in sink._failed_buffer]
+    assert "topic.0" not in topics
+    assert topics == ["topic.1", "topic.2", "topic.3"]
+
+
+def test_get_buffer_stats_accurate() -> None:
+    """get_buffer_stats should return accurate current statistics."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+
+    stats = sink.get_buffer_stats()
+    assert stats["buffered"] == 0
+    assert stats["drained"] == 0
+    assert stats["evicted"] == 0
+    assert stats["buffer_size"] == 0
+    assert stats["buffer_capacity"] == 10_000  # FAILED_EVENT_BUFFER_CAPACITY
+
+    sink._buffer_failed_event("t", b"p1")
+    sink._buffer_failed_event("t", b"p2")
+
+    stats = sink.get_buffer_stats()
+    assert stats["buffered"] == 2
+    assert stats["buffer_size"] == 2
+
+
+# ── Buffer Drain Tests ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_drain_buffer_sends_events_via_pipeline() -> None:
+    """_do_drain should send all buffered events through a Redis pipeline."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    client = _HealthyRedisClient()
+    sink._redis = client
+    sink._connected = True
+
+    # Manually populate buffer
+    sink._failed_buffer.append(("gateway.stream.bars", b'{"symbol":"AAPL"}'))
+    sink._failed_buffer.append(("gateway.stream.bars", b'{"symbol":"MSFT"}'))
+    sink._failed_buffer.append(("gateway.stream.quotes", b'{"symbol":"GOOG"}'))
+
+    await sink._do_drain()
+
+    # Buffer should be empty after successful drain
+    assert len(sink._failed_buffer) == 0
+    assert sink._buffer_stats["drained"] == 3
+
+
+@pytest.mark.asyncio
+async def test_drain_buffer_rebuffers_on_pipeline_failure() -> None:
+    """Events that fail during drain should be re-buffered."""
+
+    class _FailingDrainClient:
+        def pipeline(self, transaction: bool = False) -> _FailingPipeline:
+            return _FailingPipeline()
+
+        async def close(self) -> None:
+            pass
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = _FailingDrainClient()
+    sink._connected = True
+
+    # Populate buffer
+    sink._failed_buffer.append(("topic.a", b"payload_a"))
+    sink._failed_buffer.append(("topic.b", b"payload_b"))
+
+    await sink._do_drain()
+
+    # Failed events should be re-buffered
+    assert len(sink._failed_buffer) == 2
+    assert sink._buffer_stats["drained"] == 0
+
+
+@pytest.mark.asyncio
+async def test_drain_buffer_no_op_when_empty() -> None:
+    """Drain should be a no-op when buffer is empty."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = _HealthyRedisClient()
+    sink._connected = True
+
+    await sink._do_drain()
+
+    assert sink._buffer_stats["drained"] == 0
+
+
+@pytest.mark.asyncio
+async def test_drain_buffer_no_op_when_disconnected() -> None:
+    """Drain should be a no-op when not connected."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = None
+    sink._connected = False
+
+    sink._failed_buffer.append(("topic", b"payload"))
+
+    await sink._do_drain()
+
+    # Event should remain in buffer (not lost, not drained)
+    assert len(sink._failed_buffer) == 1
+    assert sink._buffer_stats["drained"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ensure_connected_triggers_drain_on_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After reconnect, _ensure_connected should schedule buffer drain."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+
+    # Simulate a prior connection reset (sets cooldown)
+    sink._reconnect_cooldown_until = time.monotonic() - 1  # already expired
+    sink._redis = None
+    sink._connected = False
+
+    # Put an event in the buffer
+    sink._failed_buffer.append(("gateway.stream.bars", b'{"symbol":"AAPL"}'))
+
+    drain_called = False
+    original_drain = sink._drain_buffer
+
+    async def _track_drain() -> None:
+        nonlocal drain_called
+        drain_called = True
+        await original_drain()
+
+    monkeypatch.setattr(sink, "_drain_buffer", _track_drain)
+    monkeypatch.setattr(sink, "_create_client", lambda: _HealthyRedisClient())
+
+    await sink._ensure_connected()
+
+    # Give the background task a moment to run
+    await asyncio.sleep(0.05)
+
+    assert sink._redis is not None
+    assert sink._connected is True
+    # Drain should have been triggered as a background task
+    assert drain_called
+
+
+# ── String Payload Buffering ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_publish_buffers_string_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """String payloads should also be correctly buffered on failure."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+
+    async def _always_fail_ensure() -> None:
+        sink._redis = _AlwaysFailingClient()
+        sink._connected = True
+
+    monkeypatch.setattr(sink, "_ensure_connected", _always_fail_ensure)
+
+    published = await sink.publish("gateway.stream.bars", '{"symbol": "AAPL"}')
+
+    assert published is False
+    assert len(sink._failed_buffer) == 1
+
+    topic, payload_bytes = sink._failed_buffer[0]
+    assert topic == "gateway.stream.bars"
+    # String payload should be encoded to bytes
+    assert payload_bytes == b'{"symbol": "AAPL"}'

@@ -157,6 +157,25 @@ class DataSinkRegistry:
                     )
 
         for sink in self._sinks:
+            # Check circuit state BEFORE creating fire-and-forget task.
+            # Previously, the check happened inside _safe_publish, meaning
+            # events queued during a burst would still spawn tasks that
+            # immediately hit CircuitOpenError.  Checking here prevents
+            # wasted task creation and noisy error logs.
+            try:
+                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+                if breaker.state == CircuitState.OPEN:
+                    logger.debug(
+                        "data_sink_circuit_open_skip",
+                        sink=sink.name,
+                        topic=topic,
+                    )
+                    if not sink.record_publish_metrics:
+                        record_sink_publish(sink=sink.name, topic=topic, success=False)
+                    continue
+            except Exception:
+                pass  # If breaker lookup fails, proceed with publish
+
             acquired = await self._try_acquire_sink_slot(sink.name)
             if not acquired:
                 self._publish_stats["dropped_backpressure"] += 1
