@@ -179,6 +179,26 @@ def test_option_capture_settings_parse_ws_contract_limit() -> None:
     assert settings.option_capture_ws_contract_limit_per_symbol == 24
 
 
+def test_option_capture_runtime_snapshot_defaults_before_any_cycles() -> None:
+    service = OptionCaptureService(
+        alpaca_provider=_FakeAlpacaProvider({"SPY": [_contract("SPY260310C00500000")]}),
+        multiplexer=_FakeMultiplexer(),
+        sink_registry=_FakeSinkRegistry(),
+        symbols=["SPY"],
+        calendar=_FakeCalendar(open_now=True),
+    )
+
+    snapshot = service.get_runtime_snapshot()
+
+    assert snapshot["running"] is False
+    assert snapshot["last_cycle"]["status"] == "idle"
+    assert snapshot["last_cycle"]["completed_at"] is None
+    assert snapshot["symbols"]["SPY"]["snapshot_contracts"] == 0
+    assert snapshot["symbols"]["SPY"]["snapshot_age_seconds"] is None
+    assert snapshot["websocket"]["contracts_added"] == 0
+    assert snapshot["websocket"]["contracts_removed"] == 0
+
+
 @pytest.mark.asyncio
 async def test_run_cycle_skips_when_market_is_closed() -> None:
     provider = _FakeAlpacaProvider({"SPY": [_contract("SPY260310C00500000")]})
@@ -377,3 +397,57 @@ async def test_run_cycle_applies_budget_per_symbol_not_global() -> None:
         "SPY260310C00500000",
         "SPY260310P00500000",
     ]
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_updates_quality_runtime_snapshot() -> None:
+    provider = _FakeAlpacaProvider(
+        {
+            "SPY": [
+                _contract("SPY260310C00500000", underlying="SPY"),
+                _contract("SPY260310P00500000", underlying="SPY", option_type="put"),
+                _FakeContract(
+                    contract_symbol="SPY260310C00510000",
+                    underlying="SPY",
+                    expiration="2026-03-10",
+                    strike=510.0,
+                    option_type="call",
+                    bid=0.0,
+                    ask=0.0,
+                    last=1.25,
+                    volume=0,
+                    open_interest=0,
+                    delta=None,
+                    gamma=None,
+                    theta=None,
+                    vega=None,
+                    iv=None,
+                    timestamp=datetime(2026, 3, 10, 14, 30, tzinfo=UTC),
+                ),
+            ],
+        }
+    )
+    service = OptionCaptureService(
+        alpaca_provider=provider,
+        multiplexer=_FakeMultiplexer(),
+        sink_registry=_FakeSinkRegistry(),
+        symbols=["SPY"],
+        option_ws_contract_limit_per_symbol=2,
+        calendar=_FakeCalendar(open_now=True),
+    )
+
+    await service.run_cycle(now=datetime(2026, 3, 10, 14, 31, tzinfo=UTC))
+
+    snapshot = service.get_runtime_snapshot(now=datetime(2026, 3, 10, 14, 36, tzinfo=UTC))
+    spy = snapshot["symbols"]["SPY"]
+    assert snapshot["last_cycle"]["status"] == "success"
+    assert snapshot["last_cycle"]["published"] == 1
+    assert spy["snapshot_contracts"] == 3
+    assert spy["ws_tracked_contracts"] == 2
+    assert spy["greeks_coverage_ratio"] == pytest.approx(2 / 3)
+    assert spy["iv_coverage_ratio"] == pytest.approx(2 / 3)
+    assert spy["nonzero_open_interest_ratio"] == pytest.approx(2 / 3)
+    assert spy["bid_ask_coverage_ratio"] == pytest.approx(2 / 3)
+    assert spy["snapshot_age_seconds"] == pytest.approx(300.0)
+    assert snapshot["websocket"]["subscribe_calls"] == 1
+    assert snapshot["websocket"]["contracts_added"] == 2

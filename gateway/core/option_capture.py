@@ -13,6 +13,11 @@ import structlog
 from gateway.config import Settings, get_settings
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
+from gateway.core.metrics import (
+    record_option_capture_cycle,
+    record_option_capture_symbol_metrics,
+    record_option_capture_ws_update,
+)
 from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
 
@@ -112,6 +117,20 @@ class OptionCaptureService:
         self._last_bucket: int | None = None
         self._symbol_contracts: dict[str, set[str]] = {}
         self._subscribed_contracts: set[str] = set()
+        self._last_cycle_completed_at: datetime | None = None
+        self._last_cycle_status: str = "idle"
+        self._last_published: int = 0
+        self._last_failed_symbols: list[str] = []
+        self._last_skipped_market_closed: bool = False
+        self._symbol_capture_quality: dict[str, dict[str, Any]] = {
+            symbol: self._empty_symbol_snapshot() for symbol in self.symbols
+        }
+        self._ws_event_counts: dict[str, int] = {
+            "subscribe_calls": 0,
+            "unsubscribe_calls": 0,
+            "contracts_added": 0,
+            "contracts_removed": 0,
+        }
 
     @classmethod
     def from_settings(
@@ -172,6 +191,12 @@ class OptionCaptureService:
         current_time = now or self._now_fn()
         if self.market_hours_only and not self._calendar.is_market_open(current_time):
             logger.debug("option_capture_skipped_market_closed", timestamp=current_time.isoformat())
+            self._last_cycle_completed_at = current_time
+            self._last_cycle_status = "skipped_market_closed"
+            self._last_published = 0
+            self._last_failed_symbols = []
+            self._last_skipped_market_closed = True
+            record_option_capture_cycle(published=0, failed_symbols=0, skipped_market_closed=True)
             return CaptureCycleSummary(published=0, failed_symbols=[], skipped_market_closed=True).to_dict()
 
         envelopes: list[dict[str, Any]] = []
@@ -187,6 +212,10 @@ class OptionCaptureService:
                     raise RuntimeError("empty_snapshot")
 
                 payload = self._build_snapshot_payload(symbol=symbol, contracts=contracts)
+                ws_contracts = self._select_ws_contract_symbols(
+                    contracts,
+                    as_of_date=current_time.date(),
+                )
                 envelopes.append(
                     wrap_event(
                         event=payload,
@@ -199,9 +228,22 @@ class OptionCaptureService:
                         symbol_override=symbol,
                     )
                 )
-                self._symbol_contracts[symbol] = self._select_ws_contract_symbols(
-                    contracts,
-                    as_of_date=current_time.date(),
+                self._symbol_contracts[symbol] = ws_contracts
+                symbol_quality = self._build_symbol_quality_snapshot(
+                    payload=payload,
+                    ws_tracked_contracts=len(ws_contracts),
+                    as_of=current_time,
+                )
+                self._symbol_capture_quality[symbol] = symbol_quality
+                record_option_capture_symbol_metrics(
+                    symbol=symbol,
+                    snapshot_contracts=int(symbol_quality["snapshot_contracts"]),
+                    ws_tracked_contracts=int(symbol_quality["ws_tracked_contracts"]),
+                    snapshot_age_seconds=float(symbol_quality["snapshot_age_seconds"] or 0.0),
+                    greeks_coverage_ratio=float(symbol_quality["greeks_coverage_ratio"]),
+                    iv_coverage_ratio=float(symbol_quality["iv_coverage_ratio"]),
+                    nonzero_open_interest_ratio=float(symbol_quality["nonzero_open_interest_ratio"]),
+                    bid_ask_coverage_ratio=float(symbol_quality["bid_ask_coverage_ratio"]),
                 )
             except Exception as exc:
                 failed_symbols.append(symbol)
@@ -216,6 +258,17 @@ class OptionCaptureService:
         if self.websocket_enabled:
             await self._reconcile_ws_subscriptions()
 
+        self._last_cycle_completed_at = current_time
+        self._last_cycle_status = "partial_failure" if failed_symbols else "success"
+        self._last_published = published
+        self._last_failed_symbols = list(failed_symbols)
+        self._last_skipped_market_closed = False
+        record_option_capture_cycle(
+            published=published,
+            failed_symbols=len(failed_symbols),
+            skipped_market_closed=False,
+        )
+
         logger.info(
             "option_capture_cycle_complete",
             symbols=self.symbols,
@@ -224,17 +277,32 @@ class OptionCaptureService:
         )
         return CaptureCycleSummary(published=published, failed_symbols=failed_symbols).to_dict()
 
-    def get_runtime_snapshot(self) -> dict[str, Any]:
+    def get_runtime_snapshot(self, *, now: datetime | None = None) -> dict[str, Any]:
         """Expose lightweight runtime state for admin surfaces."""
+        current_time = now or self._now_fn()
         return {
             "running": self._running,
-            "symbols": self.symbols,
+            "configured_symbols": self.symbols,
             "interval_seconds": self.interval_seconds,
             "market_hours_only": self.market_hours_only,
             "websocket_enabled": self.websocket_enabled,
             "ws_contract_limit_per_symbol": self.option_ws_contract_limit_per_symbol,
             "tracked_contracts": sum(len(contracts) for contracts in self._symbol_contracts.values()),
             "subscribed_contracts": len(self._subscribed_contracts),
+            "last_cycle": {
+                "status": self._last_cycle_status,
+                "completed_at": (
+                    self._last_cycle_completed_at.isoformat() if self._last_cycle_completed_at else None
+                ),
+                "published": self._last_published,
+                "failed_symbols": list(self._last_failed_symbols),
+                "skipped_market_closed": self._last_skipped_market_closed,
+            },
+            "websocket": dict(self._ws_event_counts),
+            "symbols": {
+                symbol: self._render_symbol_runtime_snapshot(symbol=symbol, now=current_time)
+                for symbol in self.symbols
+            },
         }
 
     async def _run_loop(self) -> None:
@@ -294,6 +362,9 @@ class OptionCaptureService:
             if response.get("status") != "ok":
                 raise RuntimeError(f"option_capture_subscribe_failed: {response}")
             self._subscribed_contracts.update(to_add)
+            self._ws_event_counts["subscribe_calls"] += 1
+            self._ws_event_counts["contracts_added"] += len(to_add)
+            record_option_capture_ws_update(added=len(to_add))
 
         if to_remove:
             response = await self._multiplexer.client_unsubscribe(
@@ -305,6 +376,9 @@ class OptionCaptureService:
             if response.get("status") != "ok":
                 raise RuntimeError(f"option_capture_unsubscribe_failed: {response}")
             self._subscribed_contracts.difference_update(to_remove)
+            self._ws_event_counts["unsubscribe_calls"] += 1
+            self._ws_event_counts["contracts_removed"] += len(to_remove)
+            record_option_capture_ws_update(removed=len(to_remove))
 
     def _build_snapshot_payload(self, *, symbol: str, contracts: list[Any]) -> dict[str, Any]:
         serialized_contracts: list[dict[str, Any]] = []
@@ -429,6 +503,73 @@ class OptionCaptureService:
         return (filtered[middle - 1] + filtered[middle]) / 2.0
 
     @staticmethod
+    def _empty_symbol_snapshot() -> dict[str, Any]:
+        return {
+            "snapshot_contracts": 0,
+            "ws_tracked_contracts": 0,
+            "snapshot_timestamp": None,
+            "snapshot_age_seconds": None,
+            "greeks_coverage_ratio": 0.0,
+            "iv_coverage_ratio": 0.0,
+            "nonzero_open_interest_ratio": 0.0,
+            "bid_ask_coverage_ratio": 0.0,
+        }
+
+    def _build_symbol_quality_snapshot(
+        self,
+        *,
+        payload: dict[str, Any],
+        ws_tracked_contracts: int,
+        as_of: datetime,
+    ) -> dict[str, Any]:
+        contracts = list(payload.get("chain_json", {}).get("data", {}).get("contracts", []))
+        total_contracts = len(contracts)
+        if total_contracts <= 0:
+            return self._empty_symbol_snapshot()
+
+        snapshot_timestamp = _parse_timestamp(payload.get("timestamp"))
+        greeks_present = 0
+        iv_present = 0
+        nonzero_open_interest = 0
+        bid_ask_present = 0
+        for contract in contracts:
+            delta = _to_float(contract.get("delta"))
+            gamma = _to_float(contract.get("gamma"))
+            theta = _to_float(contract.get("theta"))
+            vega = _to_float(contract.get("vega"))
+            if delta is not None and gamma is not None and theta is not None and vega is not None:
+                greeks_present += 1
+            if _to_float(contract.get("iv")) is not None:
+                iv_present += 1
+            if (_to_float(contract.get("open_interest")) or 0.0) > 0:
+                nonzero_open_interest += 1
+            if (_to_float(contract.get("bid")) or 0.0) > 0 and (_to_float(contract.get("ask")) or 0.0) > 0:
+                bid_ask_present += 1
+
+        snapshot_age_seconds = None
+        if snapshot_timestamp is not None:
+            snapshot_age_seconds = max(0.0, (as_of - snapshot_timestamp.astimezone(UTC)).total_seconds())
+
+        return {
+            "snapshot_contracts": total_contracts,
+            "ws_tracked_contracts": max(0, ws_tracked_contracts),
+            "snapshot_timestamp": snapshot_timestamp.isoformat() if snapshot_timestamp else None,
+            "snapshot_age_seconds": snapshot_age_seconds,
+            "greeks_coverage_ratio": greeks_present / total_contracts,
+            "iv_coverage_ratio": iv_present / total_contracts,
+            "nonzero_open_interest_ratio": nonzero_open_interest / total_contracts,
+            "bid_ask_coverage_ratio": bid_ask_present / total_contracts,
+        }
+
+    def _render_symbol_runtime_snapshot(self, *, symbol: str, now: datetime) -> dict[str, Any]:
+        snapshot = dict(self._symbol_capture_quality.get(symbol, self._empty_symbol_snapshot()))
+        snapshot_ts = _parse_timestamp(snapshot.get("snapshot_timestamp"))
+        snapshot["snapshot_age_seconds"] = (
+            max(0.0, (now - snapshot_ts.astimezone(UTC)).total_seconds()) if snapshot_ts is not None else None
+        )
+        return snapshot
+
+    @staticmethod
     def _contract_symbol(contract: Any) -> str:
         if hasattr(contract, "contract_symbol"):
             return str(contract.contract_symbol)
@@ -452,6 +593,37 @@ _option_capture_service: OptionCaptureService | None = None
 def get_option_capture_service() -> OptionCaptureService | None:
     """Return the global option capture service."""
     return _option_capture_service
+
+
+def get_option_capture_runtime_snapshot() -> dict[str, Any]:
+    """Return option capture runtime state for admin surfaces."""
+    service = get_option_capture_service()
+    if service is None:
+        return {
+            "running": False,
+            "configured_symbols": [],
+            "interval_seconds": None,
+            "market_hours_only": None,
+            "websocket_enabled": None,
+            "ws_contract_limit_per_symbol": None,
+            "tracked_contracts": 0,
+            "subscribed_contracts": 0,
+            "last_cycle": {
+                "status": "idle",
+                "completed_at": None,
+                "published": 0,
+                "failed_symbols": [],
+                "skipped_market_closed": False,
+            },
+            "websocket": {
+                "subscribe_calls": 0,
+                "unsubscribe_calls": 0,
+                "contracts_added": 0,
+                "contracts_removed": 0,
+            },
+            "symbols": {},
+        }
+    return service.get_runtime_snapshot()
 
 
 async def start_option_capture_service(

@@ -239,6 +239,37 @@ def test_provider_quote_batch_snapshot_includes_calibration_guidance() -> None:
     assert any("max_symbols" in hint for hint in derived["recommendations"])
 
 
+def test_option_capture_snapshot_tracks_quality_and_websocket_updates() -> None:
+    before = metrics.get_option_capture_snapshot()
+    before_cycles = int(before["cycles"].get("count", 0))
+    before_added = int(before["websocket"].get("contracts_added", 0))
+
+    metrics.record_option_capture_cycle(published=2, failed_symbols=1, skipped_market_closed=False)
+    metrics.record_option_capture_symbol_metrics(
+        symbol="SPY",
+        snapshot_contracts=48,
+        ws_tracked_contracts=24,
+        snapshot_age_seconds=30.0,
+        greeks_coverage_ratio=0.75,
+        iv_coverage_ratio=0.8,
+        nonzero_open_interest_ratio=0.5,
+        bid_ask_coverage_ratio=0.9,
+    )
+    metrics.record_option_capture_ws_update(added=6, removed=2)
+
+    after = metrics.get_option_capture_snapshot()
+    assert int(after["cycles"]["count"]) == before_cycles + 1
+    assert int(after["cycles"]["published"]) >= 2
+    assert int(after["cycles"]["failed_symbols"]) >= 1
+    assert int(after["websocket"]["contracts_added"]) == before_added + 6
+    assert after["symbols"]["SPY"]["snapshot_contracts"] == 48
+    assert after["symbols"]["SPY"]["ws_tracked_contracts"] == 24
+    assert after["symbols"]["SPY"]["greeks_coverage_ratio"] == 0.75
+    assert after["symbols"]["SPY"]["iv_coverage_ratio"] == 0.8
+    assert after["symbols"]["SPY"]["nonzero_open_interest_ratio"] == 0.5
+    assert after["symbols"]["SPY"]["bid_ask_coverage_ratio"] == 0.9
+
+
 def test_stream_sink_dispatch_snapshot_includes_calibration_guidance() -> None:
     before = metrics.get_stream_sink_dispatch_snapshot()
     before_scheduled = int(before["events"].get("scheduled", 0))

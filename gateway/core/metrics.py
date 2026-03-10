@@ -199,6 +199,46 @@ STREAM_FANOUT_LIMIT = Gauge(
     ["limit_type"],  # max_inflight, batch_size
 )
 
+OPTION_CAPTURE_CYCLES = Counter(
+    "gateway_option_capture_cycles_total",
+    "Option capture cycle outcomes",
+    ["status"],  # success, partial_failure, skipped_market_closed
+)
+
+OPTION_CAPTURE_SNAPSHOTS_PUBLISHED = Counter(
+    "gateway_option_capture_snapshots_published_total",
+    "Option chain snapshots published to the sink",
+)
+
+OPTION_CAPTURE_FAILED_SYMBOLS = Counter(
+    "gateway_option_capture_failed_symbols_total",
+    "Option capture symbol failures across cycles",
+)
+
+OPTION_CAPTURE_SYMBOL_CONTRACTS = Gauge(
+    "gateway_option_capture_symbol_contracts",
+    "Contracts seen and tracked by option capture",
+    ["symbol", "kind"],  # snapshot_contracts, ws_tracked_contracts
+)
+
+OPTION_CAPTURE_QUALITY_RATIO = Gauge(
+    "gateway_option_capture_quality_ratio",
+    "Option capture field coverage ratios",
+    ["symbol", "metric"],  # greeks_coverage, iv_coverage, nonzero_open_interest, bid_ask_coverage
+)
+
+OPTION_CAPTURE_SNAPSHOT_AGE = Gauge(
+    "gateway_option_capture_snapshot_age_seconds",
+    "Age of the latest snapshot payload observed for each underlying",
+    ["symbol"],
+)
+
+OPTION_CAPTURE_WS_EVENTS = Counter(
+    "gateway_option_capture_ws_events_total",
+    "Option capture websocket subscription updates",
+    ["event"],  # subscribe_calls, unsubscribe_calls, contracts_added, contracts_removed
+)
+
 _STREAM_SINK_DISPATCH_SNAPSHOT: dict[str, Any] = {
     "limits": {"max_inflight_publish": 1, "max_pending_tasks": 1},
     "pending_tasks": 0,
@@ -209,6 +249,17 @@ _STREAM_FANOUT_SNAPSHOT: dict[str, Any] = {
     "limits": {"max_inflight": 1, "batch_size": 1},
     "events": {},
     "batches": {"count": 0, "total_clients": 0, "max_batch_size": 0},
+}
+
+_OPTION_CAPTURE_SNAPSHOT: dict[str, Any] = {
+    "cycles": {"count": 0, "published": 0, "failed_symbols": 0, "skipped_market_closed": 0},
+    "websocket": {
+        "subscribe_calls": 0,
+        "unsubscribe_calls": 0,
+        "contracts_added": 0,
+        "contracts_removed": 0,
+    },
+    "symbols": {},
 }
 
 _PROVIDER_HEALTH_CHECK_SNAPSHOT: dict[str, dict[str, Any]] = {}
@@ -791,6 +842,90 @@ def get_stream_fanout_snapshot() -> dict[str, Any]:
         "recommendations": recommendations,
     }
     return snapshot
+
+
+def record_option_capture_cycle(*, published: int, failed_symbols: int, skipped_market_closed: bool) -> None:
+    """Record option capture cycle outcome counters and snapshot totals."""
+    status = "skipped_market_closed" if skipped_market_closed else "partial_failure" if failed_symbols else "success"
+    OPTION_CAPTURE_CYCLES.labels(status=status).inc()
+    OPTION_CAPTURE_SNAPSHOTS_PUBLISHED.inc(max(0, published))
+    OPTION_CAPTURE_FAILED_SYMBOLS.inc(max(0, failed_symbols))
+
+    cycles = _OPTION_CAPTURE_SNAPSHOT["cycles"]
+    if isinstance(cycles, dict):
+        cycles["count"] = int(cycles.get("count", 0)) + 1
+        cycles["published"] = int(cycles.get("published", 0)) + max(0, published)
+        cycles["failed_symbols"] = int(cycles.get("failed_symbols", 0)) + max(0, failed_symbols)
+        if skipped_market_closed:
+            cycles["skipped_market_closed"] = int(cycles.get("skipped_market_closed", 0)) + 1
+
+
+def record_option_capture_symbol_metrics(
+    *,
+    symbol: str,
+    snapshot_contracts: int,
+    ws_tracked_contracts: int,
+    snapshot_age_seconds: float,
+    greeks_coverage_ratio: float,
+    iv_coverage_ratio: float,
+    nonzero_open_interest_ratio: float,
+    bid_ask_coverage_ratio: float,
+) -> None:
+    """Record per-symbol option capture quality gauges and admin snapshot state."""
+    safe_symbol = symbol.strip().upper()
+    OPTION_CAPTURE_SYMBOL_CONTRACTS.labels(symbol=safe_symbol, kind="snapshot_contracts").set(
+        max(0, snapshot_contracts)
+    )
+    OPTION_CAPTURE_SYMBOL_CONTRACTS.labels(symbol=safe_symbol, kind="ws_tracked_contracts").set(
+        max(0, ws_tracked_contracts)
+    )
+    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="greeks_coverage").set(
+        max(0.0, min(1.0, greeks_coverage_ratio))
+    )
+    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="iv_coverage").set(
+        max(0.0, min(1.0, iv_coverage_ratio))
+    )
+    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="nonzero_open_interest").set(
+        max(0.0, min(1.0, nonzero_open_interest_ratio))
+    )
+    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="bid_ask_coverage").set(
+        max(0.0, min(1.0, bid_ask_coverage_ratio))
+    )
+    OPTION_CAPTURE_SNAPSHOT_AGE.labels(symbol=safe_symbol).set(max(0.0, snapshot_age_seconds))
+
+    symbols = _OPTION_CAPTURE_SNAPSHOT["symbols"]
+    if isinstance(symbols, dict):
+        symbols[safe_symbol] = {
+            "snapshot_contracts": max(0, snapshot_contracts),
+            "ws_tracked_contracts": max(0, ws_tracked_contracts),
+            "snapshot_age_seconds": max(0.0, snapshot_age_seconds),
+            "greeks_coverage_ratio": max(0.0, min(1.0, greeks_coverage_ratio)),
+            "iv_coverage_ratio": max(0.0, min(1.0, iv_coverage_ratio)),
+            "nonzero_open_interest_ratio": max(0.0, min(1.0, nonzero_open_interest_ratio)),
+            "bid_ask_coverage_ratio": max(0.0, min(1.0, bid_ask_coverage_ratio)),
+        }
+
+
+def record_option_capture_ws_update(*, added: int = 0, removed: int = 0) -> None:
+    """Record websocket add/remove activity for option capture."""
+    websocket = _OPTION_CAPTURE_SNAPSHOT["websocket"]
+    if added > 0:
+        OPTION_CAPTURE_WS_EVENTS.labels(event="subscribe_calls").inc()
+        OPTION_CAPTURE_WS_EVENTS.labels(event="contracts_added").inc(added)
+        if isinstance(websocket, dict):
+            websocket["subscribe_calls"] = int(websocket.get("subscribe_calls", 0)) + 1
+            websocket["contracts_added"] = int(websocket.get("contracts_added", 0)) + added
+    if removed > 0:
+        OPTION_CAPTURE_WS_EVENTS.labels(event="unsubscribe_calls").inc()
+        OPTION_CAPTURE_WS_EVENTS.labels(event="contracts_removed").inc(removed)
+        if isinstance(websocket, dict):
+            websocket["unsubscribe_calls"] = int(websocket.get("unsubscribe_calls", 0)) + 1
+            websocket["contracts_removed"] = int(websocket.get("contracts_removed", 0)) + removed
+
+
+def get_option_capture_snapshot() -> dict[str, Any]:
+    """Return option capture telemetry snapshot for tests and admin surfaces."""
+    return deepcopy(_OPTION_CAPTURE_SNAPSHOT)
 
 
 def httpx_event_hooks(provider: str) -> dict[str, list]:

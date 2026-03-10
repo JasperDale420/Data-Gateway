@@ -224,6 +224,16 @@ async def test_get_status_includes_stream_tuning_summary_and_uw_poller_runtime(
             "poll_intervals_seconds": {"flow": 300, "darkpool": 60, "tide": 3600},
         },
     )
+    monkeypatch.setattr(
+        admin,
+        "_get_option_capture_runtime_snapshot",
+        lambda: {
+            "running": True,
+            "symbols": {"SPY": {"snapshot_contracts": 48, "greeks_coverage_ratio": 0.92}},
+            "last_cycle": {"status": "success"},
+            "websocket": {"contracts_added": 12},
+        },
+    )
 
     response = await admin.get_status(
         client=cast(Client, SimpleNamespace(id="test-client")),
@@ -247,8 +257,10 @@ async def test_get_status_includes_stream_tuning_summary_and_uw_poller_runtime(
     assert summary["suggested_env"]["GATEWAY_STREAM_FANOUT_MAX_INFLIGHT"] == 125
     assert summary["suggested_env"]["GATEWAY_STREAM_FANOUT_BATCH_SIZE"] == 40
     assert response["data"]["uw_poller_runtime"]["running"] is True
+    assert response["data"]["option_capture_runtime"]["running"] is True
     assert response["data"]["status_sections"]["stream_tuning_summary"] is True
     assert response["data"]["status_sections"]["uw_poller_runtime"] is True
+    assert response["data"]["status_sections"]["option_capture_runtime"] is True
 
 
 @pytest.mark.asyncio
@@ -262,6 +274,11 @@ async def test_get_status_can_skip_stream_tuning_summary_and_uw_poller_runtime(
         "_get_uw_poller_runtime_snapshot",
         lambda: {"running": True},
     )
+    monkeypatch.setattr(
+        admin,
+        "_get_option_capture_runtime_snapshot",
+        lambda: {"running": True},
+    )
 
     response = await admin.get_status(
         client=cast(Client, SimpleNamespace(id="test-client")),
@@ -271,12 +288,15 @@ async def test_get_status_can_skip_stream_tuning_summary_and_uw_poller_runtime(
         include_provider_health=False,
         include_stream_tuning_summary=False,
         include_uw_poller_runtime=False,
+        include_option_capture_runtime=False,
     )
 
     assert "stream_tuning_summary" not in response["data"]
     assert "uw_poller_runtime" not in response["data"]
+    assert "option_capture_runtime" not in response["data"]
     assert response["data"]["status_sections"]["stream_tuning_summary"] is False
     assert response["data"]["status_sections"]["uw_poller_runtime"] is False
+    assert response["data"]["status_sections"]["option_capture_runtime"] is False
 
 
 @pytest.mark.asyncio
