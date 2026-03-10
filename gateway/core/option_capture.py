@@ -90,6 +90,7 @@ class OptionCaptureService:
         market_hours_only: bool = True,
         snapshot_timeout_seconds: float = 10.0,
         websocket_enabled: bool = True,
+        option_ws_contract_limit_per_symbol: int = 40,
         calendar: SupportsMarketHours | None = None,
         now_fn: Any | None = None,
         loop_sleep_seconds: float = DEFAULT_LOOP_SLEEP_SECONDS,
@@ -102,6 +103,7 @@ class OptionCaptureService:
         self.market_hours_only = market_hours_only
         self.snapshot_timeout_seconds = max(0.5, float(snapshot_timeout_seconds))
         self.websocket_enabled = websocket_enabled
+        self.option_ws_contract_limit_per_symbol = max(1, int(option_ws_contract_limit_per_symbol))
         self._calendar = calendar or TradingCalendar()
         self._now_fn = now_fn or (lambda: datetime.now(UTC))
         self._loop_sleep_seconds = max(0.1, float(loop_sleep_seconds))
@@ -129,6 +131,7 @@ class OptionCaptureService:
             market_hours_only=settings.option_capture_market_hours_only,
             snapshot_timeout_seconds=settings.option_capture_snapshot_timeout_seconds,
             websocket_enabled=settings.option_capture_ws_enabled,
+            option_ws_contract_limit_per_symbol=settings.option_capture_ws_contract_limit_per_symbol,
         )
 
     async def start(self) -> None:
@@ -196,7 +199,10 @@ class OptionCaptureService:
                         symbol_override=symbol,
                     )
                 )
-                self._symbol_contracts[symbol] = self._extract_contract_symbols(contracts)
+                self._symbol_contracts[symbol] = self._select_ws_contract_symbols(
+                    contracts,
+                    as_of_date=current_time.date(),
+                )
             except Exception as exc:
                 failed_symbols.append(symbol)
                 logger.warning(
@@ -226,6 +232,7 @@ class OptionCaptureService:
             "interval_seconds": self.interval_seconds,
             "market_hours_only": self.market_hours_only,
             "websocket_enabled": self.websocket_enabled,
+            "ws_contract_limit_per_symbol": self.option_ws_contract_limit_per_symbol,
             "tracked_contracts": sum(len(contracts) for contracts in self._symbol_contracts.values()),
             "subscribed_contracts": len(self._subscribed_contracts),
         }
@@ -352,13 +359,71 @@ class OptionCaptureService:
             "atm_iv": float(atm_iv) if atm_iv is not None else None,
         }
 
-    @staticmethod
-    def _extract_contract_symbols(contracts: list[Any]) -> set[str]:
+    def _select_ws_contract_symbols(self, contracts: list[Any], *, as_of_date: date) -> set[str]:
+        ranked_contracts: list[dict[str, Any]] = []
+        for contract in contracts:
+            symbol = self._contract_symbol(contract)
+            if not symbol:
+                continue
+            ranked_contracts.append(self._serialize_contract(contract))
+
+        atm_strike = self._estimate_atm_strike(ranked_contracts)
+        ranked_contracts.sort(
+            key=lambda contract: self._ws_contract_rank(
+                contract,
+                as_of_date=as_of_date,
+                atm_strike=atm_strike,
+            )
+        )
         return {
-            OptionCaptureService._contract_symbol(contract)
-            for contract in contracts
-            if OptionCaptureService._contract_symbol(contract)
+            self._contract_symbol(contract)
+            for contract in ranked_contracts[: self.option_ws_contract_limit_per_symbol]
+            if self._contract_symbol(contract)
         }
+
+    def _ws_contract_rank(
+        self,
+        contract: dict[str, Any],
+        *,
+        as_of_date: date,
+        atm_strike: float | None,
+    ) -> tuple[int, float, float, float, float, float, str]:
+        expiry = _parse_date(contract.get("expiration"))
+        dte = max(0, (expiry - as_of_date).days) if expiry is not None else 3650
+
+        strike = _to_float(contract.get("strike"))
+        strike_distance = abs(strike - atm_strike) if strike is not None and atm_strike is not None else 10_000.0
+
+        delta = _to_float(contract.get("delta"))
+        delta_distance = abs(abs(delta) - 0.5) if delta is not None else 10.0
+
+        bid = _to_float(contract.get("bid")) or 0.0
+        ask = _to_float(contract.get("ask")) or 0.0
+        mid = (bid + ask) / 2.0 if bid > 0 and ask > 0 else 0.0
+        spread_pct = ((ask - bid) / mid) if mid > 0 else 10.0
+
+        open_interest = _to_float(contract.get("open_interest")) or 0.0
+        volume = _to_float(contract.get("volume")) or 0.0
+        return (
+            dte,
+            strike_distance,
+            delta_distance,
+            spread_pct,
+            -open_interest,
+            -volume,
+            self._contract_symbol(contract),
+        )
+
+    @staticmethod
+    def _estimate_atm_strike(contracts: list[dict[str, Any]]) -> float | None:
+        strikes = sorted(_to_float(contract.get("strike")) for contract in contracts)
+        filtered = [strike for strike in strikes if strike is not None]
+        if not filtered:
+            return None
+        middle = len(filtered) // 2
+        if len(filtered) % 2:
+            return filtered[middle]
+        return (filtered[middle - 1] + filtered[middle]) / 2.0
 
     @staticmethod
     def _contract_symbol(contract: Any) -> str:

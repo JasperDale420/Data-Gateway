@@ -173,6 +173,12 @@ def test_option_capture_settings_default_to_opra_feed() -> None:
     assert settings.stream_options_feed == "opra"
 
 
+def test_option_capture_settings_parse_ws_contract_limit() -> None:
+    settings = Settings(option_capture_ws_contract_limit_per_symbol=24)
+
+    assert settings.option_capture_ws_contract_limit_per_symbol == 24
+
+
 @pytest.mark.asyncio
 async def test_run_cycle_skips_when_market_is_closed() -> None:
     provider = _FakeAlpacaProvider({"SPY": [_contract("SPY260310C00500000")]})
@@ -301,3 +307,73 @@ async def test_run_cycle_reconciles_websocket_contract_subscriptions() -> None:
     assert multiplexer.unsubscribe_calls[0]["bars"] == []
     assert multiplexer.unsubscribe_calls[0]["quotes"] == ["SPY260310C00500000"]
     assert multiplexer.unsubscribe_calls[0]["trades"] == ["SPY260310C00500000"]
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_limits_websocket_contracts_per_symbol_but_keeps_full_snapshot() -> None:
+    provider = _FakeAlpacaProvider(
+        {
+            "SPY": [
+                _contract("SPY260310C00500000", strike=500.0),
+                _contract("SPY260310P00500000", strike=500.0, option_type="put"),
+                _contract("SPY260310C00510000", strike=510.0),
+                _contract("SPY260310P00490000", strike=490.0, option_type="put"),
+            ],
+        }
+    )
+    sink_registry = _FakeSinkRegistry()
+    multiplexer = _FakeMultiplexer()
+    service = OptionCaptureService(
+        alpaca_provider=provider,
+        multiplexer=multiplexer,
+        sink_registry=sink_registry,
+        symbols=["SPY"],
+        option_ws_contract_limit_per_symbol=2,
+        calendar=_FakeCalendar(open_now=True),
+    )
+
+    summary = await service.run_cycle(now=datetime(2026, 3, 10, 14, 31, tzinfo=UTC))
+
+    assert summary["published"] == 1
+    assert len(sink_registry.published) == 1
+    envelope = sink_registry.published[0][1]
+    assert len(envelope["payload"]["chain_json"]["data"]["contracts"]) == 4
+    assert multiplexer.subscribe_calls[0]["quotes"] == ["SPY260310C00500000", "SPY260310P00500000"]
+    assert multiplexer.subscribe_calls[0]["trades"] == ["SPY260310C00500000", "SPY260310P00500000"]
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_applies_budget_per_symbol_not_global() -> None:
+    provider = _FakeAlpacaProvider(
+        {
+            "SPY": [
+                _contract("SPY260310C00500000", underlying="SPY", strike=500.0),
+                _contract("SPY260310P00500000", underlying="SPY", strike=500.0, option_type="put"),
+                _contract("SPY260310C00510000", underlying="SPY", strike=510.0),
+            ],
+            "QQQ": [
+                _contract("QQQ260310C00450000", underlying="QQQ", strike=450.0),
+                _contract("QQQ260310P00450000", underlying="QQQ", strike=450.0, option_type="put"),
+                _contract("QQQ260310C00460000", underlying="QQQ", strike=460.0),
+            ],
+        }
+    )
+    sink_registry = _FakeSinkRegistry()
+    multiplexer = _FakeMultiplexer()
+    service = OptionCaptureService(
+        alpaca_provider=provider,
+        multiplexer=multiplexer,
+        sink_registry=sink_registry,
+        symbols=["SPY", "QQQ"],
+        option_ws_contract_limit_per_symbol=2,
+        calendar=_FakeCalendar(open_now=True),
+    )
+
+    await service.run_cycle(now=datetime(2026, 3, 10, 14, 31, tzinfo=UTC))
+
+    assert multiplexer.subscribe_calls[0]["quotes"] == [
+        "QQQ260310C00450000",
+        "QQQ260310P00450000",
+        "SPY260310C00500000",
+        "SPY260310P00500000",
+    ]

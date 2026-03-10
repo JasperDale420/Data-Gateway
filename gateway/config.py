@@ -126,6 +126,7 @@ class Settings(BaseSettings):
     option_capture_market_hours_only: bool = True
     option_capture_snapshot_timeout_seconds: float = Field(default=10.0, ge=0.5)
     option_capture_ws_enabled: bool = True
+    option_capture_ws_contract_limit_per_symbol: int = Field(default=40, ge=1)
 
     # Replay
     replay_messages_max_in_memory: int = Field(default=50_000, ge=100)
