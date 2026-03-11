@@ -62,6 +62,7 @@ class AlpacaProvider(DataProvider):
         self._secret_key: str = ""
         self._base_url: str = DATA_BASE_URL
         self._feed: str = "sip"
+        self._options_feed: str = "opra"
         self._client: httpx.AsyncClient | None = None  # Market Data (HTTP)
         self._trading_client: TradingClient | None = None  # Trading API (SDK)
         self._paper: bool = False
@@ -96,12 +97,17 @@ class AlpacaProvider(DataProvider):
 
     async def initialize(self, config: dict[str, Any]) -> None:
         """Initialize with credentials from environment."""
+        from gateway.config import get_settings
+
         api_key_env = config.get("api_key_env", "APCA_API_KEY_ID")
         secret_key_env = config.get("secret_key_env", "APCA_API_SECRET_KEY")
 
         self._api_key = os.environ.get(api_key_env, "")
         self._secret_key = os.environ.get(secret_key_env, "")
         self._feed = config.get("feed", "sip")
+        self._options_feed = self._normalize_options_feed(
+            config.get("options_feed", get_settings().stream_options_feed)
+        )
 
         if not self._api_key or not self._secret_key:
             logger.warning(
@@ -135,7 +141,12 @@ class AlpacaProvider(DataProvider):
         else:
             self._trading_client = None
 
-        logger.info("alpaca_provider_initialized", feed=self._feed, paper=self._paper)
+        logger.info(
+            "alpaca_provider_initialized",
+            feed=self._feed,
+            options_feed=self._options_feed,
+            paper=self._paper,
+        )
 
     async def shutdown(self) -> None:
         """Close connections."""
@@ -519,7 +530,7 @@ class AlpacaProvider(DataProvider):
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         request_limit = max(1, min(limit, 1000)) if limit is not None else 1000
-        params: dict[str, Any] = {"feed": "indicative", "limit": request_limit}
+        params: dict[str, Any] = {"feed": self._options_feed, "limit": request_limit}
 
         results: list[NormalizedOptionContract] = []
 
@@ -633,7 +644,7 @@ class AlpacaProvider(DataProvider):
         try:
             response = await self._client.get(
                 "/v1beta1/options/quotes/latest",
-                params={"symbols": symbols_param, "feed": "indicative"},
+                params={"symbols": symbols_param, "feed": self._options_feed},
             )
             response.raise_for_status()
             data = response.json()
@@ -674,7 +685,7 @@ class AlpacaProvider(DataProvider):
 
         params: dict[str, str | int] = {
             "symbols": symbols_param,
-            "feed": "indicative",
+            "feed": self._options_feed,
             "limit": request_limit,
         }
         if start:
@@ -726,7 +737,7 @@ class AlpacaProvider(DataProvider):
 
         results: list[NormalizedTrade] = []
         symbols_param = ",".join(contracts)
-        params: dict[str, Any] = {"symbols": symbols_param, "feed": "indicative", "limit": limit}
+        params: dict[str, Any] = {"symbols": symbols_param, "feed": self._options_feed, "limit": limit}
         if start:
             params["start"] = start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat()
         if end:
@@ -761,7 +772,7 @@ class AlpacaProvider(DataProvider):
         try:
             response = await self._client.get(
                 "/v1beta1/options/trades/latest",
-                params={"symbols": symbols_param, "feed": "indicative"},
+                params={"symbols": symbols_param, "feed": self._options_feed},
             )
             response.raise_for_status()
             data = response.json()
@@ -786,7 +797,7 @@ class AlpacaProvider(DataProvider):
         try:
             response = await self._client.get(
                 f"/v1beta1/options/snapshots/{underlying.upper()}",
-                params={"feed": "indicative"},
+                params={"feed": self._options_feed},
             )
             response.raise_for_status()
             data = response.json()
@@ -941,6 +952,7 @@ class AlpacaProvider(DataProvider):
                 gamma=_decimal_or_none(greeks.get("gamma")),
                 theta=_decimal_or_none(greeks.get("theta")),
                 vega=_decimal_or_none(greeks.get("vega")),
+                rho=_decimal_or_none(greeks.get("rho")),
                 iv=_decimal_or_none(implied_volatility),
                 provider="alpaca",
                 timestamp=datetime.now(UTC),
@@ -1297,7 +1309,7 @@ class AlpacaProvider(DataProvider):
         include_content: bool = False,
     ) -> list:
         """Fetch news articles from Alpaca."""
-        from gateway.schemas import NormalizedNewsArticle
+        from gateway.schemas import NormalizedNewsArticle, NormalizedNewsImage
 
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
@@ -1320,6 +1332,25 @@ class AlpacaProvider(DataProvider):
             data = response.json()
 
             for article in data.get("news", []):
+                # Parse images array from Alpaca response
+                raw_images = article.get("images", [])
+                images = [
+                    NormalizedNewsImage(
+                        url=img.get("url", ""),
+                        size=img.get("size"),
+                    )
+                    for img in raw_images
+                    if isinstance(img, dict) and img.get("url")
+                ]
+
+                # Parse updated_at if present
+                updated_at = None
+                if article.get("updated_at"):
+                    try:
+                        updated_at = self._parse_timestamp(article["updated_at"])
+                    except (ValueError, TypeError):
+                        pass
+
                 results.append(
                     NormalizedNewsArticle(
                         article_id=str(article.get("id", "")),
@@ -1330,7 +1361,9 @@ class AlpacaProvider(DataProvider):
                         source=article.get("source", "unknown"),
                         author=article.get("author"),
                         published_at=self._parse_timestamp(article.get("created_at", "")),
+                        updated_at=updated_at,
                         symbols=article.get("symbols", []),
+                        images=images,
                         provider="alpaca",
                     )
                 )
@@ -1472,7 +1505,13 @@ class AlpacaProvider(DataProvider):
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list:
-        """Get corporate actions (splits, dividends, etc.) for symbols."""
+        """Get corporate actions (splits, dividends, mergers, etc.) for symbols.
+
+        Alpaca API response structure: {"corporate_actions": {<type>: [...]}, "next_page_token": ...}
+        Types: reverse_splits, forward_splits, unit_splits, cash_dividends, stock_dividends,
+               cash_mergers, stock_mergers, stock_and_cash_mergers, redemptions, spin_offs,
+               rights_distributions, name_changes, worthless_removals
+        """
         from gateway.schemas import NormalizedCorporateAction
 
         if not self._client:
@@ -1484,31 +1523,23 @@ class AlpacaProvider(DataProvider):
         if types:
             params["types"] = ",".join(types)
         if start:
-            params["start"] = start.isoformat()
+            params["start"] = start.strftime("%Y-%m-%d") if isinstance(start, datetime) else start
         if end:
-            params["end"] = end.isoformat()
+            params["end"] = end.strftime("%Y-%m-%d") if isinstance(end, datetime) else end
 
         try:
-            response = await self._client.get("/v1beta1/corporate-actions", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v1/corporate-actions", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            # Process different action types
-            for action_type in ["dividends", "splits", "mergers", "spinoffs"]:
-                for action in data.get(action_type, []):
-                    symbol = action.get("symbol", "")
-                    results.append(
-                        NormalizedCorporateAction(
-                            symbol=symbol,
-                            action_type=action_type.rstrip("s"),  # "dividends" -> "dividend"
-                            ex_date=action.get("ex_date", ""),
-                            record_date=action.get("record_date"),
-                            payable_date=action.get("payable_date"),
-                            amount=(Decimal(str(action.get("cash_amount", 0))) if action.get("cash_amount") else None),
-                            ratio=action.get("new_rate") or action.get("ratio"),
-                            provider="alpaca",
-                        )
-                    )
+                ca_data = data.get("corporate_actions", {})
+                results.extend(self._parse_corporate_actions(ca_data))
+
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
 
             logger.info("alpaca_corporate_actions_fetched", count=len(results))
 
@@ -1519,6 +1550,269 @@ class AlpacaProvider(DataProvider):
                 error=str(e),
             )
             raise
+
+        return results
+
+    def _parse_corporate_actions(self, ca_data: dict[str, Any]) -> list:
+        """Parse all corporate action types from Alpaca API response."""
+        from gateway.schemas import NormalizedCorporateAction
+
+        results: list[NormalizedCorporateAction] = []
+
+        def _dec(val: Any) -> Decimal | None:
+            return Decimal(str(val)) if val is not None else None
+
+        # Reverse splits
+        for action in ca_data.get("reverse_splits", []):
+            ratio_str = None
+            if action.get("new_rate") is not None and action.get("old_rate") is not None:
+                ratio_str = f"{action['new_rate']}:{action['old_rate']}"
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("symbol", ""),
+                    action_type="reverse_split",
+                    ex_date=action.get("ex_date"),
+                    record_date=action.get("record_date"),
+                    payable_date=action.get("payable_date"),
+                    process_date=action.get("process_date"),
+                    new_rate=_dec(action.get("new_rate")),
+                    old_rate=_dec(action.get("old_rate")),
+                    ratio=ratio_str,
+                    old_cusip=action.get("old_cusip"),
+                    new_cusip=action.get("new_cusip"),
+                    provider="alpaca",
+                )
+            )
+
+        # Forward splits
+        for action in ca_data.get("forward_splits", []):
+            ratio_str = None
+            if action.get("new_rate") is not None and action.get("old_rate") is not None:
+                ratio_str = f"{action['new_rate']}:{action['old_rate']}"
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("symbol", ""),
+                    action_type="forward_split",
+                    ex_date=action.get("ex_date"),
+                    record_date=action.get("record_date"),
+                    payable_date=action.get("payable_date"),
+                    process_date=action.get("process_date"),
+                    due_bill_redemption_date=action.get("due_bill_redemption_date"),
+                    new_rate=_dec(action.get("new_rate")),
+                    old_rate=_dec(action.get("old_rate")),
+                    ratio=ratio_str,
+                    cusip=action.get("cusip"),
+                    provider="alpaca",
+                )
+            )
+
+        # Unit splits
+        for action in ca_data.get("unit_splits", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("old_symbol", ""),
+                    action_type="unit_split",
+                    process_date=action.get("process_date"),
+                    effective_date=action.get("effective_date"),
+                    payable_date=action.get("payable_date"),
+                    new_rate=_dec(action.get("new_rate")),
+                    old_rate=_dec(action.get("old_rate")),
+                    old_symbol=action.get("old_symbol"),
+                    old_cusip=action.get("old_cusip"),
+                    new_symbol=action.get("new_symbol"),
+                    new_cusip=action.get("new_cusip"),
+                    alternate_symbol=action.get("alternate_symbol"),
+                    alternate_cusip=action.get("alternate_cusip"),
+                    alternate_rate=_dec(action.get("alternate_rate")),
+                    provider="alpaca",
+                )
+            )
+
+        # Cash dividends
+        for action in ca_data.get("cash_dividends", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("symbol", ""),
+                    action_type="cash_dividend",
+                    ex_date=action.get("ex_date"),
+                    record_date=action.get("record_date"),
+                    payable_date=action.get("payable_date"),
+                    process_date=action.get("process_date"),
+                    amount=_dec(action.get("rate")),
+                    cusip=action.get("cusip"),
+                    special=action.get("special"),
+                    foreign=action.get("foreign"),
+                    provider="alpaca",
+                )
+            )
+
+        # Stock dividends
+        for action in ca_data.get("stock_dividends", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("symbol", ""),
+                    action_type="stock_dividend",
+                    ex_date=action.get("ex_date"),
+                    record_date=action.get("record_date"),
+                    payable_date=action.get("payable_date"),
+                    process_date=action.get("process_date"),
+                    amount=_dec(action.get("rate")),
+                    cusip=action.get("cusip"),
+                    provider="alpaca",
+                )
+            )
+
+        # Cash mergers
+        for action in ca_data.get("cash_mergers", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("acquiree_symbol", ""),
+                    action_type="cash_merger",
+                    process_date=action.get("process_date"),
+                    effective_date=action.get("effective_date"),
+                    payable_date=action.get("payable_date"),
+                    amount=_dec(action.get("rate")),
+                    acquirer_symbol=action.get("acquirer_symbol"),
+                    acquirer_cusip=action.get("acquirer_cusip"),
+                    acquiree_symbol=action.get("acquiree_symbol"),
+                    acquiree_cusip=action.get("acquiree_cusip"),
+                    provider="alpaca",
+                )
+            )
+
+        # Stock mergers
+        for action in ca_data.get("stock_mergers", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("acquiree_symbol", ""),
+                    action_type="stock_merger",
+                    process_date=action.get("process_date"),
+                    effective_date=action.get("effective_date"),
+                    payable_date=action.get("payable_date"),
+                    acquirer_symbol=action.get("acquirer_symbol"),
+                    acquirer_cusip=action.get("acquirer_cusip"),
+                    acquirer_rate=_dec(action.get("acquirer_rate")),
+                    acquiree_symbol=action.get("acquiree_symbol"),
+                    acquiree_cusip=action.get("acquiree_cusip"),
+                    acquiree_rate=_dec(action.get("acquiree_rate")),
+                    provider="alpaca",
+                )
+            )
+
+        # Stock and cash mergers
+        for action in ca_data.get("stock_and_cash_mergers", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("acquiree_symbol", ""),
+                    action_type="stock_and_cash_merger",
+                    process_date=action.get("process_date"),
+                    effective_date=action.get("effective_date"),
+                    payable_date=action.get("payable_date"),
+                    cash_rate=_dec(action.get("cash_rate")),
+                    acquirer_symbol=action.get("acquirer_symbol"),
+                    acquirer_cusip=action.get("acquirer_cusip"),
+                    acquirer_rate=_dec(action.get("acquirer_rate")),
+                    acquiree_symbol=action.get("acquiree_symbol"),
+                    acquiree_cusip=action.get("acquiree_cusip"),
+                    acquiree_rate=_dec(action.get("acquiree_rate")),
+                    provider="alpaca",
+                )
+            )
+
+        # Redemptions
+        for action in ca_data.get("redemptions", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("symbol", ""),
+                    action_type="redemption",
+                    process_date=action.get("process_date"),
+                    payable_date=action.get("payable_date"),
+                    amount=_dec(action.get("rate")),
+                    cusip=action.get("cusip"),
+                    provider="alpaca",
+                )
+            )
+
+        # Spin-offs
+        for action in ca_data.get("spin_offs", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("source_symbol", ""),
+                    action_type="spin_off",
+                    ex_date=action.get("ex_date"),
+                    record_date=action.get("record_date"),
+                    payable_date=action.get("payable_date"),
+                    process_date=action.get("process_date"),
+                    due_bill_redemption_date=action.get("due_bill_redemption_date"),
+                    source_symbol=action.get("source_symbol"),
+                    source_cusip=action.get("source_cusip"),
+                    source_rate=_dec(action.get("source_rate")),
+                    new_symbol=action.get("new_symbol"),
+                    new_cusip=action.get("new_cusip"),
+                    new_rate=_dec(action.get("new_rate")),
+                    provider="alpaca",
+                )
+            )
+
+        # Rights distributions
+        for action in ca_data.get("rights_distributions", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("source_symbol", ""),
+                    action_type="rights_distribution",
+                    ex_date=action.get("ex_date"),
+                    record_date=action.get("record_date"),
+                    payable_date=action.get("payable_date"),
+                    process_date=action.get("process_date"),
+                    expiration_date=action.get("expiration_date"),
+                    amount=_dec(action.get("rate")),
+                    source_symbol=action.get("source_symbol"),
+                    source_cusip=action.get("source_cusip"),
+                    new_symbol=action.get("new_symbol"),
+                    new_cusip=action.get("new_cusip"),
+                    provider="alpaca",
+                )
+            )
+
+        # Name changes
+        for action in ca_data.get("name_changes", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("new_symbol", action.get("old_symbol", "")),
+                    action_type="name_change",
+                    process_date=action.get("process_date"),
+                    old_symbol=action.get("old_symbol"),
+                    old_cusip=action.get("old_cusip"),
+                    new_symbol=action.get("new_symbol"),
+                    new_cusip=action.get("new_cusip"),
+                    provider="alpaca",
+                )
+            )
+
+        # Worthless removals
+        for action in ca_data.get("worthless_removals", []):
+            results.append(
+                NormalizedCorporateAction(
+                    id=action.get("id"),
+                    symbol=action.get("symbol", ""),
+                    action_type="worthless_removal",
+                    process_date=action.get("process_date"),
+                    cusip=action.get("cusip"),
+                    provider="alpaca",
+                )
+            )
 
         return results
 
@@ -2378,16 +2672,7 @@ class AlpacaProvider(DataProvider):
 
     def _normalize_quote(self, symbol: str, raw: dict[str, Any]) -> NormalizedQuote:
         """Convert Alpaca quote to normalized format."""
-        raw_conditions = raw.get("c")
-        if isinstance(raw_conditions, list):
-            conditions = raw_conditions
-        elif isinstance(raw_conditions, str):
-            stripped = raw_conditions.strip()
-            conditions = [item for item in stripped.split(",") if item] if stripped else []
-        elif raw_conditions is None:
-            conditions = []
-        else:
-            conditions = [str(raw_conditions)]
+        conditions = self._normalize_conditions(raw.get("c"))
 
         return NormalizedQuote(
             symbol=symbol,
@@ -2412,11 +2697,30 @@ class AlpacaProvider(DataProvider):
             size=Decimal(str(raw["s"])),
             trade_id=str(raw["i"]) if raw.get("i") else None,
             exchange=raw.get("x"),  # Stocks only
-            conditions=raw.get("c", []),  # Stocks only
+            conditions=self._normalize_conditions(raw.get("c")),
             tape=raw.get("z"),  # Stocks only
             taker_side=raw.get("tks"),  # Crypto only (B=buy, S=sell)
+            update=raw.get("u"),  # Trade correction: canceled, incorrect, corrected
             provider="alpaca",
         )
+
+    @staticmethod
+    def _normalize_conditions(raw_conditions: Any) -> list[str]:
+        if isinstance(raw_conditions, list):
+            return raw_conditions
+        if isinstance(raw_conditions, str):
+            stripped = raw_conditions.strip()
+            return [item for item in stripped.split(",") if item] if stripped else []
+        if raw_conditions is None:
+            return []
+        return [str(raw_conditions)]
+
+    @staticmethod
+    def _normalize_options_feed(value: Any) -> str:
+        normalized = str(value or "opra").strip().lower()
+        if normalized not in {"opra", "indicative"}:
+            raise ValueError("options_feed must be 'opra' or 'indicative'")
+        return normalized
 
     def _convert_timeframe(self, timeframe: str) -> str:
         """Convert gateway timeframe to Alpaca format."""
