@@ -55,10 +55,10 @@ async def test_call_sync_uses_semaphore_and_records_metrics(monkeypatch):
     def _dec_inflight(_provider: str) -> None:
         state["inflight"] -= 1
 
-    monkeypatch.setattr("gateway.providers.uw.record_provider_sync_call_wait", _record_wait)
-    monkeypatch.setattr("gateway.providers.uw.record_provider_sync_call_exec", _record_exec)
-    monkeypatch.setattr("gateway.providers.uw.inc_provider_sync_call_inflight", _inc_inflight)
-    monkeypatch.setattr("gateway.providers.uw.dec_provider_sync_call_inflight", _dec_inflight)
+    monkeypatch.setattr("gateway.providers.uw._base.record_provider_sync_call_wait", _record_wait)
+    monkeypatch.setattr("gateway.providers.uw._base.record_provider_sync_call_exec", _record_exec)
+    monkeypatch.setattr("gateway.providers.uw._base.inc_provider_sync_call_inflight", _inc_inflight)
+    monkeypatch.setattr("gateway.providers.uw._base.dec_provider_sync_call_inflight", _dec_inflight)
 
     def _blocking_call() -> int:
         time.sleep(0.05)

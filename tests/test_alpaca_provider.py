@@ -216,7 +216,7 @@ async def test_get_quotes_records_requested_batch_size(monkeypatch: pytest.Monke
     recorded: list[tuple[str, int]] = []
 
     monkeypatch.setattr(
-        "gateway.providers.alpaca.record_provider_quote_batch_size",
+        "gateway.providers.alpaca.market.record_provider_quote_batch_size",
         lambda provider_name, batch_size: recorded.append((provider_name, batch_size)),
     )
 
