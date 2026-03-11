@@ -83,6 +83,7 @@ class RedisStreamsSink(DataSink):
         self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=FAILED_EVENT_BUFFER_CAPACITY)
         self._drain_lock = asyncio.Lock()
         self._buffer_stats = {"buffered": 0, "drained": 0, "evicted": 0}
+        self._background_tasks: set[asyncio.Task] = set()
 
     @property
     def name(self) -> str:
@@ -131,7 +132,9 @@ class RedisStreamsSink(DataSink):
 
         # After reconnect, drain any buffered events (outside the lock)
         if is_reconnect and self._failed_buffer:
-            asyncio.create_task(self._drain_buffer())
+            task = asyncio.create_task(self._drain_buffer())
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     @staticmethod
     async def _close_stale_client(client: Any) -> None:
@@ -467,6 +470,7 @@ class RedisStreamsSink(DataSink):
                 for topic, _ in chunks[i]:
                     record_sink_publish(sink=self.name, topic=topic, success=False)
             else:
+                assert isinstance(result, int)
                 total_published += result
 
         return total_published

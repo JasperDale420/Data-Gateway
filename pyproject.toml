@@ -27,6 +27,7 @@ dependencies = [
     "msgpack>=1.0",
     "orjson>=3.9",
     # unusualwhales SDK is installed separately in Docker via copied local package
+    "aiofiles>=25.1.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -115,7 +116,7 @@ disable_error_code = ["list-item", "return-value", "assignment", "union-attr", "
 
 # Provider modules with SDK type stub mismatches
 [[tool.mypy.overrides]]
-module = ["gateway.providers.uw", "gateway.providers.alpaca"]
+module = ["gateway.providers.uw", "gateway.providers.uw.*", "gateway.providers.alpaca"]
 disable_error_code = ["call-arg", "attr-defined", "arg-type", "misc"]
 
 # Tests - don't need strict typing
