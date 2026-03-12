@@ -60,9 +60,7 @@ def _helper_monkeypatch(
     *,
     route_registry: _FakeRegistry,
 ) -> None:
-    async def _execute_alpaca_call(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
-    ):
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
         assert registry is cast(ProviderRegistry, route_registry)
         assert block is False
         provider_obj = registry.get("alpaca")
@@ -225,9 +223,7 @@ async def test_get_assets_uses_cached_helper_key_and_count(
 
     assert observed["key"] == "alpaca:trading:assets:active:us_equity:nyse"
     assert observed["route_label"] == "alpaca_trading_assets"
-    assert provider.assets_calls == [
-        {"status": "active", "asset_class": "us_equity", "exchange": "NYSE"}
-    ]
+    assert provider.assets_calls == [{"status": "active", "asset_class": "us_equity", "exchange": "NYSE"}]
     assert response["meta"]["count"] == 1
 
 

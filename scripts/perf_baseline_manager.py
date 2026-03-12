@@ -78,11 +78,7 @@ def _to_run_entry(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 def _median_suite(runs: list[dict[str, Any]]) -> float | None:
-    samples = [
-        float(run["suite_seconds"])
-        for run in runs
-        if isinstance(run.get("suite_seconds"), int | float)
-    ]
+    samples = [float(run["suite_seconds"]) for run in runs if isinstance(run.get("suite_seconds"), int | float)]
     if not samples:
         return None
     return float(median(samples))
@@ -105,9 +101,7 @@ def _median_tests(runs: list[dict[str, Any]]) -> dict[str, float]:
     return medians
 
 
-def _ratchet_budget(
-    current: float, baseline: float, mult: float, slack: float, floor: float
-) -> float:
+def _ratchet_budget(current: float, baseline: float, mult: float, slack: float, floor: float) -> float:
     candidate = max(floor, (baseline * mult) + slack)
     if candidate >= current:
         return current
@@ -166,9 +160,7 @@ def main() -> int:
     if isinstance(baseline_suite, float):
         next_baseline["suite_baseline_seconds"] = _round_seconds(baseline_suite)
     if baseline_tests:
-        next_baseline["tests"] = {
-            key: _round_seconds(value) for key, value in sorted(baseline_tests.items())
-        }
+        next_baseline["tests"] = {key: _round_seconds(value) for key, value in sorted(baseline_tests.items())}
 
     next_budgets = copy.deepcopy(budgets)
     if "ratchet" not in next_budgets:

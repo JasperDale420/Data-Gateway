@@ -77,9 +77,7 @@ async def get_account_activities(
     types_list = activity_types.split(",") if activity_types else None
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(
-            provider.get_account_activities, types_list
-        ),
+        provider_call=lambda provider: asyncio.to_thread(provider.get_account_activities, types_list),
     )
     return {
         "success": True,

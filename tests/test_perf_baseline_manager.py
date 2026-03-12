@@ -156,31 +156,13 @@ def test_perf_baseline_manager_rotates_history_and_ratchets_budgets(tmp_path: Pa
 
     baseline = _read_json(out_baseline_file)
     assert baseline["suite_baseline_seconds"] == 1.6
-    assert (
-        baseline["tests"][
-            "tests/perf/test_perf_baseline.py::test_wrap_event_serialization_baseline"
-        ]
-        == 0.4
-    )
-    assert (
-        baseline["tests"][
-            "tests/perf/test_perf_baseline.py::test_metrics_path_normalization_baseline"
-        ]
-        == 0.3
-    )
+    assert baseline["tests"]["tests/perf/test_perf_baseline.py::test_wrap_event_serialization_baseline"] == 0.4
+    assert baseline["tests"]["tests/perf/test_perf_baseline.py::test_metrics_path_normalization_baseline"] == 0.3
 
     budgets = _read_json(out_budgets_file)
     assert budgets["suite_max_seconds"] == 4.05
-    assert (
-        budgets["tests"]["tests/perf/test_perf_baseline.py::test_wrap_event_serialization_baseline"]
-        == 1.05
-    )
-    assert (
-        budgets["tests"][
-            "tests/perf/test_perf_baseline.py::test_metrics_path_normalization_baseline"
-        ]
-        == 0.8
-    )
+    assert budgets["tests"]["tests/perf/test_perf_baseline.py::test_wrap_event_serialization_baseline"] == 1.05
+    assert budgets["tests"]["tests/perf/test_perf_baseline.py::test_metrics_path_normalization_baseline"] == 0.8
 
     report = _read_json(report_file)
     assert report["ratchet_applied"] is True

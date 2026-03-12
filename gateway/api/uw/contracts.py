@@ -100,9 +100,7 @@ async def get_option_contract_volume_profile(
         cache_key=cache_key,
         registry=registry,
         ttl=300,
-        fetcher=lambda provider: provider.get_option_contract_volume_profile(
-            option_symbol=option_symbol
-        ),
+        fetcher=lambda provider: provider.get_option_contract_volume_profile(option_symbol=option_symbol),
         build_response=lambda data: make_response(
             data,
             count=len(data),

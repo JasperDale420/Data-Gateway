@@ -69,10 +69,7 @@ async def test_get_news_threads_filters_to_provider(
         registry=cast(ProviderRegistry, route_registry),
     )
 
-    assert (
-        observed["key"]
-        == "alpaca:news:articles:AAPL,MSFT:2026-01-01T00:00:00+00:00:2026-01-02T00:00:00+00:00:5:1"
-    )
+    assert observed["key"] == "alpaca:news:articles:AAPL,MSFT:2026-01-01T00:00:00+00:00:2026-01-02T00:00:00+00:00:5:1"
     assert observed["route_label"] == "alpaca_news_articles"
     assert len(provider.calls) == 1
     assert provider.calls[0]["symbols"] == ["AAPL", "MSFT"]

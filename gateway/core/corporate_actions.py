@@ -123,15 +123,12 @@ class CorporateActionsService:
 
     def __init__(self) -> None:
         self._fetch_actions_func: (
-            Callable[[str, date, date, list[ActionType] | None], Awaitable[list[CorporateAction]]]
-            | None
+            Callable[[str, date, date, list[ActionType] | None], Awaitable[list[CorporateAction]]] | None
         ) = None
 
     def set_fetcher(
         self,
-        func: Callable[
-            [str, date, date, list[ActionType] | None], Awaitable[list[CorporateAction]]
-        ],
+        func: Callable[[str, date, date, list[ActionType] | None], Awaitable[list[CorporateAction]]],
     ) -> None:
         """Set the function used to fetch corporate actions."""
         self._fetch_actions_func = func

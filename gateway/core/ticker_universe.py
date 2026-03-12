@@ -126,9 +126,7 @@ class TickerUniverse:
                 new_dynamic: list[str] = []
                 core_set = set(self._core)
                 for result in screener_results:
-                    symbol = (
-                        result.symbol if hasattr(result, "symbol") else result.get("symbol", "")
-                    )
+                    symbol = result.symbol if hasattr(result, "symbol") else result.get("symbol", "")
                     if symbol and symbol.upper() not in core_set:
                         new_dynamic.append(symbol.upper())
                     if len(new_dynamic) >= self._dynamic_count:

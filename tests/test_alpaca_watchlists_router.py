@@ -35,9 +35,7 @@ class _FakeProvider:
     def get_watchlist(self, watchlist_id: str) -> dict[str, str]:
         return {"id": watchlist_id}
 
-    def update_watchlist(
-        self, watchlist_id: str, name: str | None, symbols: list[str] | None
-    ) -> dict[str, Any]:
+    def update_watchlist(self, watchlist_id: str, name: str | None, symbols: list[str] | None) -> dict[str, Any]:
         self.update_calls.append((watchlist_id, name, symbols))
         return {"id": watchlist_id, "name": name, "symbols": symbols or []}
 
@@ -59,9 +57,7 @@ def _helper_monkeypatch(
     *,
     route_registry: _FakeRegistry,
 ) -> None:
-    async def _execute_alpaca_call(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
-    ):
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
         assert registry is cast(ProviderRegistry, route_registry)
         assert block is False
         provider_obj = registry.get("alpaca")

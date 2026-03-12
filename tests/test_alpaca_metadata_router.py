@@ -125,9 +125,7 @@ async def test_logo_endpoint_returns_bytes_and_404_when_missing(
     assert ok_response.body == b"PNG_BYTES"
     assert ok_response.media_type == "image/png"
 
-    async def _fake_execute_none(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
-    ):
+    async def _fake_execute_none(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
         return None
 
     monkeypatch.setattr(metadata, "execute_alpaca_provider_call", _fake_execute_none)

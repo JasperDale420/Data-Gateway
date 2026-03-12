@@ -448,9 +448,7 @@ class TestReplayWebSocketControlLoop:
         assert should_stop is False
         assert session.state == ReplayState.PAUSED
 
-        should_stop = replay_api._apply_replay_ws_action(
-            session, {"action": "resume", "speed": 3.0}
-        )
+        should_stop = replay_api._apply_replay_ws_action(session, {"action": "resume", "speed": 3.0})
         assert should_stop is False
         assert session.state == ReplayState.RUNNING
         assert session.speed == 3.0

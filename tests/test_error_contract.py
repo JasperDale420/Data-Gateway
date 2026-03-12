@@ -27,9 +27,7 @@ def _build_test_app() -> FastAPI:
 
     @app.get("/api/v1/test/list")
     async def list_error():
-        raise HTTPException(
-            status_code=422, detail=[{"loc": ["query", "symbol"], "msg": "bad value"}]
-        )
+        raise HTTPException(status_code=422, detail=[{"loc": ["query", "symbol"], "msg": "bad value"}])
 
     return app
 

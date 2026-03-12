@@ -125,9 +125,7 @@ async def test_get_articles_cache_miss_parses_dates_and_fetches(
     )
 
     assert calls["rate_limit"] == 1
-    assert deduper.keys == [
-        "news:articles:AAPL, msft:earnings:2026-01-01T00:00:00Z:2026-01-02T00:00:00Z:10:2:asc"
-    ]
+    assert deduper.keys == ["news:articles:AAPL, msft:earnings:2026-01-01T00:00:00Z:2026-01-02T00:00:00Z:10:2:asc"]
     assert len(provider.calls) == 1
     assert provider.calls[0]["symbols"] == ["AAPL", "MSFT"]
     assert provider.calls[0]["keywords"] == "earnings"

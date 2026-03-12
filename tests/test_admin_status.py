@@ -107,12 +107,8 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
 
     monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", _get_sink_snapshot)
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", _get_fanout_snapshot)
-    monkeypatch.setattr(
-        admin, "get_provider_health_check_snapshot", _get_provider_health_checks_snapshot
-    )
-    monkeypatch.setattr(
-        admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot
-    )
+    monkeypatch.setattr(admin, "get_provider_health_check_snapshot", _get_provider_health_checks_snapshot)
+    monkeypatch.setattr(admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot)
 
     registry = _FakeRegistry()
     cache = _FakeCache()
@@ -638,9 +634,7 @@ async def test_get_status_can_skip_provider_health_checks_section(
         provider_health_checks_calls["count"] += 1
         return {"finnhub": {"count": 1}}
 
-    monkeypatch.setattr(
-        admin, "get_provider_health_check_snapshot", _get_provider_health_checks_snapshot
-    )
+    monkeypatch.setattr(admin, "get_provider_health_check_snapshot", _get_provider_health_checks_snapshot)
     monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
     monkeypatch.setattr(admin, "_provider_health_cache", None)
@@ -673,9 +667,7 @@ async def test_get_status_can_skip_provider_quote_batches_section(
         provider_quote_batches_calls["count"] += 1
         return {"alphavantage": {"count": 1}}
 
-    monkeypatch.setattr(
-        admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot
-    )
+    monkeypatch.setattr(admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot)
     monkeypatch.setattr(admin, "get_provider_health_check_snapshot", lambda: {})
     monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
@@ -812,9 +804,7 @@ async def test_get_status_reuses_optional_section_stats_within_cache_ttl(
         provider_health_checks_calls["count"] += 1
         return {"finnhub": {"count": provider_health_checks_calls["count"]}}
 
-    monkeypatch.setattr(
-        admin, "get_provider_health_check_snapshot", _get_provider_health_checks_snapshot
-    )
+    monkeypatch.setattr(admin, "get_provider_health_check_snapshot", _get_provider_health_checks_snapshot)
     monkeypatch.setattr(admin, "_provider_health_cache", None)
     monkeypatch.setattr(admin, "_provider_health_cache_at", None)
     monkeypatch.setattr(admin, "_status_section_stats_cache", None)
@@ -914,9 +904,7 @@ async def test_get_status_reuses_provider_quote_batches_within_optional_cache_tt
         quote_batch_calls["count"] += 1
         return {"alphavantage": {"count": quote_batch_calls["count"]}}
 
-    monkeypatch.setattr(
-        admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot
-    )
+    monkeypatch.setattr(admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot)
 
     now = datetime(2026, 2, 9, 21, 0, tzinfo=UTC)
     time_ref = {"now": now}
@@ -966,9 +954,7 @@ async def test_get_status_force_refresh_bypasses_provider_quote_batches_optional
         quote_batch_calls["count"] += 1
         return {"alphavantage": {"count": quote_batch_calls["count"]}}
 
-    monkeypatch.setattr(
-        admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot
-    )
+    monkeypatch.setattr(admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot)
 
     now = datetime(2026, 2, 9, 22, 0, tzinfo=UTC)
     time_ref = {"now": now}
@@ -1018,9 +1004,7 @@ async def test_get_status_optional_cache_is_shape_aware_for_provider_quote_batch
         quote_batch_calls["count"] += 1
         return {"alphavantage": {"count": quote_batch_calls["count"]}}
 
-    monkeypatch.setattr(
-        admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot
-    )
+    monkeypatch.setattr(admin, "get_provider_quote_batch_snapshot", _get_provider_quote_batches_snapshot)
 
     now = datetime(2026, 2, 9, 22, 30, tzinfo=UTC)
     time_ref = {"now": now}
@@ -1307,9 +1291,7 @@ async def test_get_status_reports_status_cache_entry_counts(
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
     monkeypatch.setattr(admin, "_provider_health_cache", None)
     monkeypatch.setattr(admin, "_provider_health_cache_at", None)
-    monkeypatch.setattr(
-        admin, "_status_section_stats_cache", {(True, True, True, True, True): {"cache": {}}}
-    )
+    monkeypatch.setattr(admin, "_status_section_stats_cache", {(True, True, True, True, True): {"cache": {}}})
     monkeypatch.setattr(
         admin,
         "_status_section_stats_cache_at",
@@ -1539,9 +1521,7 @@ async def test_get_status_can_clear_optional_section_cache_on_request(
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
     monkeypatch.setattr(admin, "_provider_health_cache", None)
     monkeypatch.setattr(admin, "_provider_health_cache_at", None)
-    monkeypatch.setattr(
-        admin, "_status_section_stats_cache", {(True, False, False, False, False): {"cache": {}}}
-    )
+    monkeypatch.setattr(admin, "_status_section_stats_cache", {(True, False, False, False, False): {"cache": {}}})
     monkeypatch.setattr(
         admin,
         "_status_section_stats_cache_at",
@@ -1571,9 +1551,7 @@ async def test_get_status_can_clear_stream_section_cache_on_request(
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
     monkeypatch.setattr(admin, "_provider_health_cache", None)
     monkeypatch.setattr(admin, "_provider_health_cache_at", None)
-    monkeypatch.setattr(
-        admin, "_stream_section_stats_cache", {(True, True): {"stream_sink_dispatch": {}}}
-    )
+    monkeypatch.setattr(admin, "_stream_section_stats_cache", {(True, True): {"stream_sink_dispatch": {}}})
     monkeypatch.setattr(
         admin,
         "_stream_section_stats_cache_at",
@@ -1603,9 +1581,7 @@ async def test_get_status_optional_cache_maintenance_evictions_are_request_scope
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
     monkeypatch.setattr(admin, "_provider_health_cache", None)
     monkeypatch.setattr(admin, "_provider_health_cache_at", None)
-    monkeypatch.setattr(
-        admin, "_status_section_stats_cache", {(True, False, False, False, False): {"cache": {}}}
-    )
+    monkeypatch.setattr(admin, "_status_section_stats_cache", {(True, False, False, False, False): {"cache": {}}})
     monkeypatch.setattr(
         admin,
         "_status_section_stats_cache_at",
@@ -1648,9 +1624,7 @@ async def test_get_status_stream_cache_maintenance_evictions_are_request_scoped(
     monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
     monkeypatch.setattr(admin, "_provider_health_cache", None)
     monkeypatch.setattr(admin, "_provider_health_cache_at", None)
-    monkeypatch.setattr(
-        admin, "_stream_section_stats_cache", {(True, True): {"stream_sink_dispatch": {}}}
-    )
+    monkeypatch.setattr(admin, "_stream_section_stats_cache", {(True, True): {"stream_sink_dispatch": {}}})
     monkeypatch.setattr(
         admin,
         "_stream_section_stats_cache_at",

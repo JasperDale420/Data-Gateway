@@ -182,9 +182,7 @@ async def get_greeks_by_strike_expiry(
     )
 
 
-@router.get(
-    "/stock/{symbol}/greek-exposure-by-strike-expiry/{expiry}", response_model=SuccessResponse
-)
+@router.get("/stock/{symbol}/greek-exposure-by-strike-expiry/{expiry}", response_model=SuccessResponse)
 async def get_greek_exposure_by_strike_expiry(
     symbol: str,
     expiry: str,
@@ -488,9 +486,7 @@ async def get_stock_insider_trades(
     )
 
 
-@router.get(
-    "/stock/{symbol}/spot-exposures-by-expiry-strike/{expiry}", response_model=SuccessResponse
-)
+@router.get("/stock/{symbol}/spot-exposures-by-expiry-strike/{expiry}", response_model=SuccessResponse)
 async def get_spot_exposures_by_expiry_strike(
     symbol: str,
     expiry: str,

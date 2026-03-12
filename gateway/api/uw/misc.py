@@ -142,10 +142,7 @@ async def get_news_headlines(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get latest financial news headlines."""
-    cache_key = (
-        f"uw:news:headlines:{sources or 'all'}:{search_term or 'none'}:"
-        f"{major_only}:{limit}:{page or 1}"
-    )
+    cache_key = f"uw:news:headlines:{sources or 'all'}:{search_term or 'none'}:{major_only}:{limit}:{page or 1}"
     sources_list = sources.split(",") if sources else None
     return await execute_uw_cached(
         cache=cache,

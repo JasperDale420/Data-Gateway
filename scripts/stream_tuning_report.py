@@ -266,11 +266,7 @@ def main() -> int:
     else:
         output = _render_text(summary)
         if args.env_file:
-            output += (
-                f"\nenv_file={args.env_file}\n"
-                f"env_file_updated=yes\n"
-                f"env_keys_changed={env_changed}\n"
-            )
+            output += f"\nenv_file={args.env_file}\nenv_file_updated=yes\nenv_keys_changed={env_changed}\n"
         print(output, end="")
     return 0
 

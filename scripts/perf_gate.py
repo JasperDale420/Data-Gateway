@@ -240,35 +240,23 @@ def main() -> int:
         return completed.returncode
 
     if effective_elapsed > suite_budget:
-        print(
-            f"perf_gate_failed: runtime {effective_elapsed:.2f}s exceeded threshold "
-            f"{suite_budget:.2f}s"
-        )
+        print(f"perf_gate_failed: runtime {effective_elapsed:.2f}s exceeded threshold {suite_budget:.2f}s")
         return 1
 
     if per_test_budget_failures:
         print("perf_gate_failed: one or more per-test budgets were exceeded")
         for failure in per_test_budget_failures:
             if failure["reason"] == "missing":
-                print(
-                    f"  - {failure['test']}: missing in junit results "
-                    f"(budget {failure['budget_seconds']:.2f}s)"
-                )
+                print(f"  - {failure['test']}: missing in junit results (budget {failure['budget_seconds']:.2f}s)")
             else:
-                print(
-                    f"  - {failure['test']}: {failure['actual_seconds']:.3f}s > "
-                    f"{failure['budget_seconds']:.3f}s"
-                )
+                print(f"  - {failure['test']}: {failure['actual_seconds']:.3f}s > {failure['budget_seconds']:.3f}s")
         return 1
 
     if trend_regressions:
         print("perf_gate_failed: trend regression guardrail exceeded")
         for regression in trend_regressions:
             if regression["scope"] == "suite":
-                print(
-                    f"  - suite: {regression['actual_seconds']:.3f}s > "
-                    f"{regression['allowed_seconds']:.3f}s"
-                )
+                print(f"  - suite: {regression['actual_seconds']:.3f}s > {regression['allowed_seconds']:.3f}s")
             else:
                 print(
                     f"  - {regression['test']}: {regression['actual_seconds']:.3f}s > "
@@ -276,10 +264,7 @@ def main() -> int:
                 )
         return 1
 
-    print(
-        f"perf_gate_passed: runtime {effective_elapsed:.2f}s within threshold "
-        f"{suite_budget:.2f}s"
-    )
+    print(f"perf_gate_passed: runtime {effective_elapsed:.2f}s within threshold {suite_budget:.2f}s")
     return 0
 
 

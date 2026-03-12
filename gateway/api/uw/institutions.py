@@ -116,9 +116,7 @@ async def get_institution_sector_exposure(
         cache_key=cache_key,
         registry=registry,
         ttl=3600,
-        fetcher=lambda provider: provider.get_institution_sector_exposure(
-            institution_id=institution_id
-        ),
+        fetcher=lambda provider: provider.get_institution_sector_exposure(institution_id=institution_id),
         build_response=lambda data: make_response(
             data,
             count=len(data),
