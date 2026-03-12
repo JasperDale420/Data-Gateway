@@ -232,6 +232,11 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
         ("owner_name", None, ""),
         ("transaction_date", None, ""),
     ],
+    "treasury_yields": [
+        ("date", None, ""),
+        ("maturity", None, ""),
+        ("yield_pct", None, 0),
+    ],
 }
 
 

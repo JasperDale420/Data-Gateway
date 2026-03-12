@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     uw_dynamic_ticker_count: int = Field(default=20, ge=0)
     uw_eod_concurrency: int = Field(default=5, ge=1, le=20)
 
+    # Treasury Yield Poller
+    treasury_poller_maturities: str = "2year,10year"  # comma-separated Alpha Vantage maturity keys
+
     # Alpaca option chain capture
     option_capture_enabled: bool = False
     option_capture_symbols: str = "SPY,QQQ,IWM"
@@ -146,6 +149,18 @@ class Settings(BaseSettings):
                 continue
             symbols.append(symbol)
         return symbols
+
+    @property
+    def treasury_poller_maturity_list(self) -> list[str]:
+        """Parse and validate configured Treasury yield maturities.
+
+        Filters against the Alpha Vantage supported set. Falls back to the
+        default ["2year", "10year"] if the result would be empty.
+        """
+        _valid = frozenset({"3month", "2year", "5year", "7year", "10year", "30year"})
+        maturities = [m.strip().lower() for m in self.treasury_poller_maturities.split(",") if m.strip()]
+        filtered = [m for m in maturities if m in _valid]
+        return filtered if filtered else ["2year", "10year"]
 
     @field_validator("stream_options_feed", mode="before")
     @classmethod
