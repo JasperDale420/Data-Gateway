@@ -393,15 +393,15 @@ class UWOptionsMixin:
                     NormalizedOIChange(
                         symbol=symbol.upper(),
                         date=str(get("date") or get("curr_date") or ""),
-                        call_oi=int(get("call_oi") or get("curr_oi") or 0),
-                        put_oi=int(get("put_oi") or 0),
-                        call_oi_change=int(get("call_oi_change") or get("oi_change") or 0),
-                        put_oi_change=int(get("put_oi_change") or 0),
+                        call_oi=int(float(get("call_oi") or get("curr_oi") or 0)),
+                        put_oi=int(float(get("put_oi") or 0)),
+                        call_oi_change=int(float(get("call_oi_change") or get("oi_change") or 0)),
+                        put_oi_change=int(float(get("put_oi_change") or 0)),
                         avg_price=(Decimal(str(get("avg_price"))) if get("avg_price") is not None else None),
-                        prev_oi=(int(get("last_oi")) if get("last_oi") is not None else None),
+                        prev_oi=(int(float(get("last_oi"))) if get("last_oi") is not None else None),
                         option_symbol=get("option_symbol"),
-                        volume=(int(get("volume")) if get("volume") is not None else None),
-                        trades=(int(get("trades")) if get("trades") is not None else None),
+                        volume=(int(float(get("volume"))) if get("volume") is not None else None),
+                        trades=(int(float(get("trades"))) if get("trades") is not None else None),
                         provider="unusual_whales",
                     )
                 )

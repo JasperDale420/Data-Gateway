@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **UW OI change parsing crash** (`gateway/providers/uw/options.py`): The UW API returns OI change values as float strings (e.g., `'0.73297002724795640327'`), which caused `int()` to raise `ValueError: invalid literal for int() with base 10`. Replaced bare `int()` casts with `int(float(...))` for all numeric fields in `get_oi_change()` — `call_oi`, `put_oi`, `call_oi_change`, `put_oi_change`, `prev_oi`, `volume`, and `trades`. This was causing 100% failure on the EOD OI change poller (29/29 tickers every cycle).
+
 - **OPRA option REST alignment** (`gateway/providers/alpaca.py`, `tests/test_alpaca_provider.py`): Option chain snapshots, option quotes, option trades, and option snapshot REST calls now use the configured options feed instead of being hardcoded to `indicative`. The provider defaults to `opra`, honors explicit overrides, and now coerces string trade conditions into the normalized list form required by `NormalizedTrade`.
 - **Alpaca option snapshot normalization** (`gateway/providers/alpaca.py`, `tests/test_alpaca_provider.py`): Fixed `volume` being populated from `open_interest`, added fallback parsing for snapshot `volume`, `openInterest`, and `underlyingPrice`, and stopped dropping zero-valued Greeks or IV when Alpaca returns `0.0`.
 - **Invalid option websocket bars subscriptions** (`gateway/core/option_capture.py`, `gateway/core/stream.py`): The option capture service no longer subscribes to option `bars`, and the upstream options connection now strips any accidental option `bars` subscriptions before sending to Alpaca. Alpaca option websockets support `quotes` and `trades`, not `bars`.
