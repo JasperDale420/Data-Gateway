@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
 
 import structlog
 from fastapi import HTTPException
@@ -13,12 +12,10 @@ from gateway.core.registry import ProviderRegistry
 
 logger = structlog.get_logger()
 
-T = TypeVar("T")
-
 PROVIDER_NOT_AVAILABLE = "No healthy providers available"
 
 
-async def execute_provider_failover(
+async def execute_provider_failover[T](
     capability: str,
     handler: Callable[[DataProvider], Awaitable[T]],
     registry: ProviderRegistry,
