@@ -6,20 +6,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
-import logging
 from contextlib import asynccontextmanager, suppress
 
 import orjson
 
 # uvloop removed — incompatible with container environment (causes deadlocks).
 # Standard asyncio event loop is used instead.
+from empire_core.logger import setup_logging
 
-
-# Configure stdlib logging for structlog integration
-logging.basicConfig(
-    format="%(message)s",
-    level=logging.INFO,
-)
+setup_logging("data-gateway")
 
 import structlog
 from fastapi import FastAPI, HTTPException
@@ -77,24 +72,7 @@ from gateway.core.metrics import (
 from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import StreamMultiplexer
 
-# Configure structlog
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.JSONRenderer(),
-    ],
-    wrapper_class=structlog.stdlib.BoundLogger,
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    cache_logger_on_first_use=True,
-)
-
-logger = structlog.get_logger()
+logger = structlog.get_logger("data-gateway")
 attach_error_buffer_handler()
 
 

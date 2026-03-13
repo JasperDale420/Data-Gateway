@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Dev environment bootstrap** (`pyproject.toml`): `unusualwhales-python-client` (a local path package) was missing from `uv.sources` and `[project.optional-dependencies] local`, causing `ModuleNotFoundError: No module named 'unusualwhales'` on fresh `uv sync`. Package added to the `local` extras group alongside `empire-schemas` so `uv sync --all-extras` installs it correctly.
+- **Import sort in `gateway/main.py`**: Sorted stdlib/third-party/local import blocks to satisfy ruff `I001`.
+
 ### Changed
 
 - **Option chain snapshot payload contract** (`gateway/core/option_capture.py`, `gateway/schemas/__init__.py`): Added optional `underlying_price` to normalized option contracts and publish it at the top level of `option_chain_snapshot` envelopes so downstream storage and replay do not need to infer spot from per-contract prices.

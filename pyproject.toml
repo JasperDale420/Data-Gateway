@@ -26,7 +26,6 @@ dependencies = [
     "alpaca-py>=0.34",
     "msgpack>=1.0",
     "orjson>=3.9",
-    # unusualwhales SDK is installed separately in Docker via copied local package
     "aiofiles>=25.1.0",
 ]
 
@@ -40,6 +39,7 @@ local = [
     # or Docker builds will fail silently.
     "empire-core",
     "empire-schemas",
+    "unusualwhales-python-client",
 ]
 dev = [
     "pytest>=8.0",
@@ -63,6 +63,7 @@ skips = ["B101", "B104", "B110", "B311", "B324"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
 
 [tool.ruff]
 extend = "../ruff-base.toml"
@@ -151,3 +152,4 @@ exclude_lines = [
 [tool.uv.sources]
 empire-core = { path = "../empire-core", editable = true }
 empire-schemas = { path = "../empire-schemas", editable = true }
+unusualwhales-python-client = { path = "../unusualwhales_python_client-5.1" }
