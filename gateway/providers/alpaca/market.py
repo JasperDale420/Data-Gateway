@@ -34,9 +34,10 @@ class AlpacaMarketMixin:
         results: list[NormalizedBar] = []
         symbols_param = ",".join(symbols)
 
+        alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, Any] = {
             "symbols": symbols_param,
-            "timeframe": self._convert_timeframe(timeframe),
+            "timeframe": alpaca_timeframe,
             "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
             "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": kwargs.get("feed", self._feed),
@@ -52,7 +53,7 @@ class AlpacaMarketMixin:
 
                 for symbol, bars in data.get("bars", {}).items():
                     for bar in bars:
-                        results.append(self._normalize_bar(symbol, bar))
+                        results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
 
                 next_token = data.get("next_page_token")
                 if not next_token:

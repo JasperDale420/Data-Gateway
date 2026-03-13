@@ -757,6 +757,7 @@ class UWPoller:
             ("short_interest", self._poll_eod_short_interest),
             ("short_volume", self._poll_eod_short_volume),
             ("ftds", self._poll_eod_ftds),
+            ("iv_term_structure", self._poll_eod_iv_term_structure),
         ]
 
         totals: dict[str, dict[str, int]] = {}
@@ -810,6 +811,13 @@ class UWPoller:
         except Exception as e:
             logger.error("uw_eod_insiders_error", error=str(e))
             totals["insider_trades"] = {"published": 0, "errors": 1}
+
+        try:
+            etf_tide_count = await self._poll_eod_etf_tide(sink_registry)
+            totals["etf_tide"] = {"published": etf_tide_count, "errors": 0}
+        except Exception as e:
+            logger.error("uw_eod_etf_tide_error", error=str(e))
+            totals["etf_tide"] = {"published": 0, "errors": 1}
 
         # Mark today as polled
         self._last_eod_date = datetime.now(ET).strftime("%Y-%m-%d")
@@ -994,6 +1002,68 @@ class UWPoller:
             missing_event_log="uw_ftd_missing_event_id",
         )
         return published
+
+    async def _poll_eod_iv_term_structure(self, sink_registry, ticker: str) -> int:
+        """Poll IV term structure for a single ticker."""
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
+        results = await self._provider.get_iv_term_structure(ticker)
+        if not results:
+            return 0
+
+        envelopes = [
+            wrap_event(
+                event=item.model_dump(),
+                provider="unusual_whales",
+                feed="iv_term_structure",
+                source="rest",
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:ivts",
+            missing_event_log="uw_ivts_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_etf_tide(self, sink_registry) -> int:
+        """Poll ETF tide for key ETFs (market-wide, no per-ticker needed)."""
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
+
+        etf_symbols = ["SPY", "QQQ", "IWM", "DIA", "XLF", "XLK", "XLE", "XLV"]
+        total_published = 0
+
+        for etf_sym in etf_symbols:
+            try:
+                results = await self._provider.get_etf_tide(etf_sym)
+                if not results:
+                    continue
+
+                envelopes = [
+                    wrap_event(
+                        event=item,
+                        provider="unusual_whales",
+                        feed="etf_tide",
+                        source="rest",
+                    )
+                    for item in results
+                ]
+
+                published, _ = await self._publish_envelopes(
+                    sink_registry=sink_registry,
+                    envelopes=envelopes,
+                    dedupe_prefix=f"uw:etftide:{etf_sym.lower()}",
+                    missing_event_log="uw_etf_tide_missing_event_id",
+                )
+                total_published += published
+            except Exception as e:
+                logger.error("uw_eod_etf_tide_error", symbol=etf_sym, error=str(e))
+
+        return total_published
 
     async def _poll_eod_congress_trades(self, sink_registry) -> int:
         """Poll congress trades (market-wide, no ticker needed)."""

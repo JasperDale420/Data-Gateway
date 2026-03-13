@@ -212,7 +212,7 @@ class AlpacaBaseMixin(DataProvider):
             return value
         return datetime.fromisoformat(value.replace("Z", UTC_OFFSET))
 
-    def _normalize_bar(self, symbol: str, raw: dict[str, Any]) -> NormalizedBar:
+    def _normalize_bar(self, symbol: str, raw: dict[str, Any], timeframe: str = "1Min") -> NormalizedBar:
         """Convert Alpaca bar to normalized format."""
         return NormalizedBar(
             symbol=symbol,
@@ -225,6 +225,7 @@ class AlpacaBaseMixin(DataProvider):
             vwap=Decimal(str(raw["vw"])) if raw.get("vw") else None,
             trade_count=raw.get("n"),
             provider="alpaca",
+            timeframe=timeframe,
         )
 
     def _normalize_quote(self, symbol: str, raw: dict[str, Any]) -> NormalizedQuote:

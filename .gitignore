@@ -92,3 +92,6 @@ gateway_errors_24h.log
 
 # Agent output files
 .agents/
+
+# Log files
+logs/*.log

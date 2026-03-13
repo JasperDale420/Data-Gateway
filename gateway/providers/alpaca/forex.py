@@ -63,9 +63,10 @@ class AlpacaForexMixin:
 
         results: dict[str, list[NormalizedBar]] = {}
 
+        alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, Any] = {
             "currency_pairs": ",".join(pairs),
-            "timeframe": self._convert_timeframe(timeframe),
+            "timeframe": alpaca_timeframe,
             "limit": limit,
         }
         if start:
@@ -79,7 +80,7 @@ class AlpacaForexMixin:
             data = response.json()
 
             for pair, bars in data.get("bars", {}).items():
-                results[pair] = [self._normalize_bar(pair, bar) for bar in bars]
+                results[pair] = [self._normalize_bar(pair, bar, timeframe=alpaca_timeframe) for bar in bars]
 
             logger.info(
                 "alpaca_forex_historical_fetched",

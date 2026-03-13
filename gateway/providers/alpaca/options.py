@@ -103,9 +103,10 @@ class AlpacaOptionsMixin:
         results: list[NormalizedBar] = []
         symbols_param = ",".join(contracts)
 
+        alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, str | int] = {
             "symbols": symbols_param,
-            "timeframe": self._convert_timeframe(timeframe),
+            "timeframe": alpaca_timeframe,
             "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
             "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "limit": limit,
@@ -121,7 +122,7 @@ class AlpacaOptionsMixin:
 
             for symbol, bars in data.get("bars", {}).items():
                 for bar in bars:
-                    results.append(self._normalize_bar(symbol, bar))
+                    results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
 
             logger.info(
                 "alpaca_option_bars_fetched",

@@ -32,8 +32,9 @@ class AlpacaCryptoMixin:
 
         results: list[NormalizedBar] = []
 
+        alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, Any] = {
-            "timeframe": self._convert_timeframe(timeframe),
+            "timeframe": alpaca_timeframe,
             "limit": limit,
         }
         if start:
@@ -49,7 +50,7 @@ class AlpacaCryptoMixin:
 
             for symbol, bars in data.get("bars", {}).items():
                 for bar in bars:
-                    results.append(self._normalize_bar(symbol, bar))
+                    results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
 
             logger.info("alpaca_crypto_bars_fetched", pair=pair, bars=len(results))
 
