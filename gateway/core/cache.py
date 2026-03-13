@@ -1,5 +1,6 @@
 """In-memory cache with TTL support."""
 
+import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -233,11 +234,10 @@ class RedisCache:
         """Get value from Redis cache."""
         try:
             await self._ensure_connected()
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
             value = await self._redis.get(f"{self.KEY_PREFIX}{key}")
             if value is not None:
-                import json
-
                 self._stats.hits += 1
                 return json.loads(value)
             self._stats.misses += 1
@@ -251,8 +251,8 @@ class RedisCache:
         """Set value in Redis cache with TTL."""
         try:
             await self._ensure_connected()
-            assert self._redis is not None
-            import json
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
 
             serialized = json.dumps(value, default=str)
             await self._redis.setex(
@@ -264,11 +264,101 @@ class RedisCache:
         except Exception as e:
             logger.warning("redis_cache_set_error", key=key, error=str(e))
 
+    async def mget(self, keys: list[str]) -> dict[str, Any]:
+        """Fetch multiple keys in a single MGET round trip.
+
+        Returns:
+            Mapping of key -> parsed value for keys that exist.
+        """
+        if not keys:
+            return {}
+        try:
+            await self._ensure_connected()
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
+
+            prefixed = [f"{self.KEY_PREFIX}{k}" for k in keys]
+            values = await self._redis.mget(prefixed)
+            result: dict[str, Any] = {}
+            for key, raw in zip(keys, values, strict=False):
+                if raw is not None:
+                    self._stats.hits += 1
+                    result[key] = json.loads(raw)
+                else:
+                    self._stats.misses += 1
+            return result
+        except Exception as e:
+            logger.warning("redis_cache_mget_error", count=len(keys), error=str(e))
+            self._stats.misses += len(keys)
+            return {}
+
+    async def set_many(
+        self,
+        items: list[tuple[str, Any]],
+        ttl: int | None = None,
+    ) -> int:
+        """Set multiple keys in a single Redis pipeline.
+
+        Args:
+            items: List of (key, value) tuples to set.
+            ttl: TTL in seconds (uses default_ttl if None).
+
+        Returns:
+            Number of successfully set keys.
+        """
+        if not items:
+            return 0
+        try:
+            await self._ensure_connected()
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
+
+            effective_ttl = ttl or self.default_ttl
+            pipe = self._redis.pipeline(transaction=False)
+            for key, value in items:
+                serialized = json.dumps(value, default=str)
+                pipe.setex(f"{self.KEY_PREFIX}{key}", effective_ttl, serialized)
+            results = await pipe.execute()
+            success = sum(1 for r in results if not isinstance(r, Exception))
+            self._stats.sets += success
+            return success
+        except Exception as e:
+            logger.warning("redis_cache_set_many_error", count=len(items), error=str(e))
+            return 0
+
+    async def set_nx(self, key: str, value: Any, ttl: int | None = None) -> bool:
+        """Atomically set key only if it does not exist (SET NX EX).
+
+        Returns True if the key was set (first caller wins), False if it already
+        exists. Uses a single Redis SET command with NX and EX flags so there is
+        no TOCTOU window between checking and setting.
+        """
+        try:
+            await self._ensure_connected()
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
+
+            serialized = json.dumps(value, default=str)
+            result = await self._redis.set(
+                f"{self.KEY_PREFIX}{key}",
+                serialized,
+                nx=True,
+                ex=ttl or self.default_ttl,
+            )
+            if result:
+                self._stats.sets += 1
+                return True
+            return False
+        except Exception as e:
+            logger.warning("redis_cache_set_nx_error", key=key, error=str(e))
+            return False
+
     async def delete(self, key: str) -> bool:
         """Delete key from Redis cache."""
         try:
             await self._ensure_connected()
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
             result = await self._redis.delete(f"{self.KEY_PREFIX}{key}")
             return result > 0
         except Exception as e:
@@ -279,7 +369,8 @@ class RedisCache:
         """Check if key exists in Redis cache."""
         try:
             await self._ensure_connected()
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis connection not established")
             return await self._redis.exists(f"{self.KEY_PREFIX}{key}") > 0
         except Exception:
             return False

@@ -1,12 +1,12 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents when working with this repository.
 
 ## Project Overview
 
 Data Gateway is a unified financial data gateway for the Empire Trading Framework. It provides WebSocket multiplexing and REST proxy caching over multiple financial data providers (Alpaca, Unusual Whales, Finnhub, Alpha Vantage, yfinance, SEC EDGAR, NewsAPI.org) via FastAPI.
 
-## Commands
+## Development Commands
 
 ```bash
 # Install
@@ -43,6 +43,19 @@ docker-compose up --build
 - **Config** (`gateway/config.py`): pydantic-settings, reads from `.env`.
 - **`unusualwhales_sdk/`**: Git submodule containing a custom SDK, installed separately in Docker.
 
+## Important Files
+
+- `README.md`: service overview and quickstart.
+- `PRD.md`: product and behavior contract for routes and services.
+- `docs/ARCHITECTURE.md`: deep technical design and data flow.
+- `docs/RUNBOOK.md`: on-call and operations procedures.
+- `docs/API_REFERENCE.md`: endpoint and stream contract reference.
+- `config/providers.yaml`: provider registry and capabilities.
+- `config/clients.yaml`: API key permissions and limits.
+- `gateway/main.py`: app startup, middleware registration, lifespan hooks.
+- `gateway/api/middleware.py`: caching + envelope middleware chain.
+- `gateway/core/registry.py`: provider lifecycle management.
+
 ## UW Poller
 
 `gateway/core/uw_poller.py` runs a background polling loop that fetches Unusual Whales data and publishes events to a Redis stream (`heber:events`) via `gateway/core/data_sink.py`. Events are wrapped in `EventEnvelope` format (`gateway/core/envelope.py`).
@@ -55,13 +68,14 @@ docker-compose up --build
 
 The base loop wakes every 60 seconds and checks which pollers are due. Market-awareness comes from `TradingCalendar` (`gateway/core/calendar.py`). An in-memory dedup cache (2-hour TTL) prevents duplicate events. The poller is started/stopped in the FastAPI lifespan in `gateway/main.py`.
 
-## Code Style
+## Key Patterns
 
 - Python 3.12+, line length 100 (black + ruff)
 - Type checking: pyright basic mode
 - Async throughout (FastAPI + async providers)
 - structlog for structured JSON logging
 - Security: bandit + detect-secrets via pre-commit
+- Vertical-slice feature changes should include tests first, then implementation.
 
 ## Adding a New Provider
 

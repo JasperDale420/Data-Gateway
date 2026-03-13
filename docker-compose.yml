@@ -9,15 +9,25 @@ services:
     environment:
       - GATEWAY_DEBUG=true
       - GATEWAY_LOG_LEVEL=DEBUG
+      - GATEWAY_STREAM_OPTIONS_FEED=opra
       # Override Redis URLs for container networking (redis = service name)
       - GATEWAY_CACHE_REDIS_URL=redis://redis:6379/0
       - GATEWAY_DATA_SINK_REDIS_URL=redis://redis:6379/0
       - REDIS_URL=redis://redis:6379/0
+      # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.)
+      - GATEWAY_UW_EOD_ENABLED=true
+      # Enable minute-level Alpaca option chain capture for Heber replay.
+      - GATEWAY_OPTION_CAPTURE_ENABLED=true
+      - GATEWAY_OPTION_CAPTURE_SYMBOLS=SPY,QQQ,IWM
+      - GATEWAY_OPTION_CAPTURE_INTERVAL_SECONDS=60
+      - GATEWAY_OPTION_CAPTURE_MARKET_HOURS_ONLY=true
+      - GATEWAY_OPTION_CAPTURE_WS_ENABLED=true
     env_file:
       - .env
     volumes:
-      - ./config/clients.yaml:/app/config/clients.yaml:ro
-      - ./config/providers.yaml:/app/config/providers.yaml:ro
+      - ./gateway:/app/gateway
+      - ./config:/app/config
+    # command: uses Dockerfile CMD by default (gateway.main:app)
     depends_on:
       redis:
         condition: service_healthy
@@ -28,11 +38,11 @@ services:
         max-size: "50m"
         max-file: "5"
     healthcheck:
-      test: [ "CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()" ]
-      interval: 30s
-      timeout: 10s
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 10s
+      timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 5s
 
   # Redis for Heber data sink
   redis:
@@ -45,10 +55,11 @@ services:
     command: redis-server --appendonly yes
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 30
+      start_period: 300s
 
 volumes:
   redis_data:

@@ -5,6 +5,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import httpx
 import structlog
 from fastapi import Depends, HTTPException
 
@@ -90,9 +91,7 @@ def get_alphavantage_provider(registry: ProviderRegistry):
     return provider
 
 
-def make_response(
-    data: Any, cached: bool, extra_meta: dict[str, Any] | None = None
-) -> dict[str, Any]:
+def make_response(data: Any, cached: bool, extra_meta: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build consistent Alpha Vantage success response payload."""
     meta = {"cached": cached, "provider": "alphavantage"}
     if extra_meta:
@@ -100,6 +99,17 @@ def make_response(
             if value is not None:
                 meta[key] = value
     return {"success": True, "data": data, "meta": meta}
+
+
+def _translate_provider_error(error: Exception) -> None:
+    """Map known provider runtime errors to explicit HTTP status codes."""
+    message = str(error).strip()
+    normalized = message.lower()
+    if "rate limit exceeded" in normalized:
+        raise HTTPException(
+            status_code=429,
+            detail="Provider rate limit exceeded: alphavantage",
+        )
 
 
 async def execute_av_cached(
@@ -121,14 +131,23 @@ async def execute_av_cached(
         cached = await cache.get(cache_key_value)
         if cached:
             if endpoint:
-                record_alphavantage_route_cache(
-                    endpoint=endpoint, status="hit", cache_mode=cache_mode
-                )
+                record_alphavantage_route_cache(endpoint=endpoint, status="hit", cache_mode=cache_mode)
             return make_response(cached, cached=True)
 
     provider = get_alphavantage_provider(registry)
     await require_provider_rate_limit("alphavantage")
-    result = await fetcher(provider)
+    try:
+        result = await fetcher(provider)
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
+    except RuntimeError as e:
+        _translate_provider_error(e)
+        raise
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
     cached_value = cache_transform(result)
     if cache_enabled:
         await cache.set(cache_key_value, cached_value, ttl=ttl)

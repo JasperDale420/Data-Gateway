@@ -14,11 +14,11 @@ from gateway.api.finnhub import router as finnhub_router
 from gateway.api.health import router as health_router
 from gateway.api.market import router as market_router
 from gateway.api.news import router as news_router
-from gateway.api.quality import router as quality_router
-from gateway.api.replay import router as replay_router
+from gateway.api.quality import router as quality_router  # audit-2026-02: zero consumers
+from gateway.api.replay import router as replay_router  # audit-2026-02: zero consumers
 from gateway.api.sec import router as sec_router
-from gateway.api.symbology import legacy_router as legacy_symbology_router
-from gateway.api.symbology import router as symbology_router
+from gateway.api.symbology import legacy_router as legacy_symbology_router  # audit-2026-02: zero consumers
+from gateway.api.symbology import router as symbology_router  # audit-2026-02: zero consumers
 from gateway.api.uw import router as uw_router
 from gateway.api.websocket import router as websocket_router
 from gateway.api.yf import router as yf_router

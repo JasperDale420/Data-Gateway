@@ -1,5 +1,6 @@
 """Alpha Vantage fundamentals endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from gateway.api.alphavantage.common import (
@@ -14,6 +15,8 @@ from gateway.api.alphavantage.common import (
     require_api_key,
 )
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -47,8 +50,9 @@ async def get_company_overview(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/earnings/{symbol}", response_model=SuccessResponse)
@@ -71,8 +75,9 @@ async def get_earnings(
             endpoint="earnings",
             cache_mode="default",
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/income-statement/{symbol}", response_model=SuccessResponse)
@@ -95,8 +100,9 @@ async def get_income_statement(
             endpoint="income_statement",
             cache_mode="default",
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/balance-sheet/{symbol}", response_model=SuccessResponse)
@@ -119,8 +125,9 @@ async def get_balance_sheet(
             endpoint="balance_sheet",
             cache_mode="default",
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/cash-flow/{symbol}", response_model=SuccessResponse)
@@ -143,5 +150,6 @@ async def get_cash_flow(
             endpoint="cash_flow",
             cache_mode="default",
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

@@ -1,0 +1,59 @@
+# Testing Guide
+
+This repository uses pytest for unit and integration tests, with TDD as the default workflow.
+
+## Test Workflow
+
+1. Write a failing test that reproduces the bug or defines the new behavior.
+2. Implement the smallest code change to make the test pass.
+3. Refactor while keeping tests green.
+4. Update logs and documentation if behavior changed.
+
+## Running Tests
+
+```bash
+# Default suite (excludes perf-marked tests)
+pytest
+
+# Quiet mode (useful in CI)
+pytest -q
+
+# Single file
+pytest tests/test_auth.py -v
+
+# Single test
+pytest tests/test_auth.py::test_valid_api_key -v
+
+# Coverage summary
+pytest --cov=gateway --cov-report=term-missing
+```
+
+## Test Layout
+
+- `tests/test_*.py`: unit and integration tests.
+- `tests/perf/`: performance tests (excluded by default marker config).
+- `tests/smoke/`: smoke-level checks for key flows.
+- `tests/fixtures/`: reusable test payloads and fixture data.
+
+## Quality Gate
+
+Run this before commit when code behavior changes:
+
+```bash
+pytest -q && ruff check . && mypy .
+```
+
+If a Docker-related change is made, also rebuild and verify:
+
+```bash
+docker-compose build gateway
+docker-compose up -d gateway
+curl http://localhost:8080/health/ready
+```
+
+## Test Design Rules
+
+- Keep tests deterministic: no real network calls in unit tests.
+- Prefer behavior-driven names (for example, `test_risk_check_blocks_order_when_limit_exceeded`).
+- Cover edge cases: empty payloads, malformed data, rate limits, and permission failures.
+- Keep regression tests for every bug fix.

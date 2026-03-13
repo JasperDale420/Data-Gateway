@@ -62,6 +62,13 @@ def _get_uw_poller_runtime_snapshot() -> dict[str, Any]:
     return get_uw_poller_snapshot()
 
 
+def _get_option_capture_runtime_snapshot() -> dict[str, Any]:
+    """Load option capture runtime snapshot without hard-coupling admin startup imports."""
+    from gateway.core.option_capture import get_option_capture_runtime_snapshot
+
+    return get_option_capture_runtime_snapshot()
+
+
 def _build_stream_tuning_summary(
     *,
     stream_sink_dispatch: dict[str, Any],
@@ -667,6 +674,10 @@ async def get_status(
         bool,
         Query(description="Whether to include UW poller runtime tuning snapshot"),
     ] = True,
+    include_option_capture_runtime: Annotated[
+        bool,
+        Query(description="Whether to include option capture runtime and quality snapshot"),
+    ] = True,
     stream_section_cache_ttl_seconds: Annotated[
         int,
         Query(ge=0, description="TTL seconds for optional stream telemetry section cache"),
@@ -782,6 +793,8 @@ async def get_status(
         )
     if include_uw_poller_runtime:
         data["uw_poller_runtime"] = _get_uw_poller_runtime_snapshot()
+    if include_option_capture_runtime:
+        data["option_capture_runtime"] = _get_option_capture_runtime_snapshot()
     if include_provider_health_cache_metadata:
         data["provider_health_cache"] = provider_health_cache
     if include_status_sections:
@@ -801,6 +814,7 @@ async def get_status(
             "stream_fanout": include_stream_fanout,
             "stream_tuning_summary": include_stream_tuning_summary,
             "uw_poller_runtime": include_uw_poller_runtime,
+            "option_capture_runtime": include_option_capture_runtime,
             "optional_stats_source": optional_stats_source,
             "optional_stats_ttl_seconds": status_section_cache_ttl_seconds,
             "optional_stats_age_seconds": optional_stats_age_seconds,
@@ -1200,4 +1214,3 @@ async def admin_add_to_blocklist(
         "data": {"blocked": True, "entry": entry},
         "meta": {"timestamp": datetime.now(UTC).isoformat(), "actor": client.id},
     }
-

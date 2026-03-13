@@ -5,17 +5,26 @@ crypto, news) and fans out received data to subscribed downstream clients.
 """
 
 import asyncio
+import json
 import random
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+import msgpack
+import orjson
 import structlog
 import websockets
-from websockets.client import WebSocketClientProtocol
+from websockets.asyncio.client import ClientConnection
 
-from gateway.core.envelope import wrap_event
+from gateway.core.envelope import fast_wrap_streaming_event
+from gateway.core.metrics import (
+    record_stream_fanout_batch_size,
+    record_stream_fanout_dispatch_event,
+    set_stream_fanout_limits_metrics,
+)
 from gateway.core.validator import get_validator
 
 logger = structlog.get_logger()
@@ -28,6 +37,22 @@ MESSAGE_TYPE_TO_DATA_TYPE = {
     "t": "trades",
     "n": "news",
 }
+_VALIDATABLE_FEEDS = frozenset({"bars", "quotes", "trades"})
+
+
+def _orjson_default(obj: Any) -> str:
+    """Fallback serializer for orjson.dumps.
+
+    Handles non-serializable types that Alpaca's WebSocket SDK may include
+    in raw event dicts:
+    - pandas.Timestamp, datetime — have .isoformat()
+    - msgpack.Timestamp (OPRA options stream) — has .to_datetime()
+    """
+    if hasattr(obj, "isoformat"):
+        return obj.isoformat()
+    if hasattr(obj, "to_datetime"):
+        return obj.to_datetime().isoformat()
+    raise TypeError(f"Type is not JSON serializable: {type(obj).__name__}")
 
 
 class SequenceTracker:
@@ -109,6 +134,17 @@ class AlpacaStreamType(Enum):
             AlpacaStreamType.NEWS: "wss://stream.data.alpaca.markets/v1beta1/news",
         }
         return endpoints[self]
+
+    @property
+    def instrument_type(self) -> str:
+        """Get canonical instrument type for this stream."""
+        if self in (AlpacaStreamType.STOCKS_SIP, AlpacaStreamType.STOCKS_IEX, AlpacaStreamType.NEWS):
+            return "equity"
+        if self == AlpacaStreamType.OPTIONS:
+            return "option"
+        if self == AlpacaStreamType.CRYPTO:
+            return "crypto"
+        return "equity"
 
 
 @dataclass
@@ -314,8 +350,16 @@ class SubscriptionManager:
         return removed_bars, removed_quotes, removed_trades, removed_news
 
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
-        """Get all clients subscribed to a symbol for a data type."""
-        return list(self._index.get(data_type, {}).get(symbol, ()))
+        """Get all clients subscribed to a symbol for a data type (returns copy)."""
+        return list(self.get_clients_for_symbol_view(symbol, data_type))
+
+    def get_clients_for_symbol_view(self, symbol: str, data_type: str) -> frozenset[str]:
+        """Get clients subscribed to a symbol as an immutable snapshot.
+
+        Returns a frozenset to prevent accidental mutation of the internal
+        subscription index during async fanout dispatch.
+        """
+        return frozenset(self._index.get(data_type, {}).get(symbol, set()))
 
     def _aggregate(self) -> tuple[set[str], set[str], set[str], set[str]]:
         """Compute union of all client subscriptions."""
@@ -344,6 +388,7 @@ class UpstreamConnection:
         api_key: str,
         api_secret: str,
         on_message: Callable[[dict[str, Any]], Awaitable[None]],
+        endpoint: str | None = None,
         base_delay: float = 1.0,
         max_delay: float = 16.0,
         max_retries: int = 10,
@@ -352,15 +397,17 @@ class UpstreamConnection:
         self.api_key = api_key
         self.api_secret = api_secret
         self.on_message = on_message
+        self.endpoint = endpoint or self.stream_type.endpoint
         self.base_delay = base_delay
         self.max_delay = max_delay
         self.max_retries = max_retries
 
-        self._ws: WebSocketClientProtocol | None = None
+        self._ws: ClientConnection | None = None
         self._authenticated = False
         self._running = False
         self._receive_task: asyncio.Task | None = None
         self._subscriptions = SubscriptionManager()
+        self._connected_event = asyncio.Event()
 
     @property
     def is_connected(self) -> bool:
@@ -388,7 +435,7 @@ class UpstreamConnection:
         # Close existing connection to release Alpaca's connection slot
         await self._close_ws()
 
-        endpoint = self.stream_type.endpoint
+        endpoint = self.endpoint
         logger.info("connecting_upstream", stream=self.stream_type.value, endpoint=endpoint)
 
         self._ws = await websockets.connect(
@@ -405,23 +452,15 @@ class UpstreamConnection:
 
     def _decode_message(self, message: bytes | str) -> Any:
         """Decode a message from either JSON or MessagePack format."""
-        import json
-
-        import msgpack
-
         if isinstance(message, bytes):
             return msgpack.unpackb(message, raw=False)
         return json.loads(message)
 
     def _encode_message(self, data: dict[str, Any]) -> bytes | str:
         """Encode a message to either JSON or MessagePack format."""
-        import json
-
-        import msgpack
-
         if self._is_msgpack_stream():
             return msgpack.packb(data)
-        return json.dumps(data)
+        return orjson.dumps(data).decode()
 
     async def authenticate(self) -> None:
         """Send authentication message and wait for response.
@@ -473,6 +512,8 @@ class UpstreamConnection:
             logger.warning("subscribe_not_connected", stream=self.stream_type.value)
             return
 
+        bars, quotes, trades, news = self._sanitize_subscription_request(bars, quotes, trades, news)
+
         msg: dict[str, Any] = {"action": "subscribe"}
         if bars:
             msg["bars"] = list(bars)
@@ -505,6 +546,8 @@ class UpstreamConnection:
         if not self.is_connected:
             return
 
+        bars, quotes, trades, news = self._sanitize_subscription_request(bars, quotes, trades, news)
+
         msg: dict[str, Any] = {"action": "unsubscribe"}
         if bars:
             msg["bars"] = list(bars)
@@ -525,6 +568,22 @@ class UpstreamConnection:
                 trades=list(trades) if trades else [],
                 news=list(news) if news else [],
             )
+
+    def _sanitize_subscription_request(
+        self,
+        bars: set[str] | None,
+        quotes: set[str] | None,
+        trades: set[str] | None,
+        news: set[str] | None,
+    ) -> tuple[set[str] | None, set[str] | None, set[str] | None, set[str] | None]:
+        if self.stream_type == AlpacaStreamType.OPTIONS and bars:
+            logger.warning(
+                "options_stream_ignoring_bars_subscription",
+                count=len(bars),
+                hint="Alpaca options websocket supports quotes and trades, not bars",
+            )
+            bars = None
+        return bars, quotes, trades, news
 
     async def start(self) -> None:
         """Start the connection and receive loop."""
@@ -564,6 +623,7 @@ class UpstreamConnection:
         ws = self._ws
         self._ws = None
         self._authenticated = False
+        self._connected_event.clear()
 
         try:
             await asyncio.wait_for(
@@ -579,8 +639,8 @@ class UpstreamConnection:
             )
             try:
                 ws.transport.abort()
-            except Exception:
-                pass
+            except Exception as abort_err:
+                logger.debug("websocket_abort_failed", error=str(abort_err), exc_info=True)
         except Exception as e:
             logger.warning(
                 "websocket_close_error",
@@ -594,6 +654,7 @@ class UpstreamConnection:
             try:
                 await self.connect()
                 await self.authenticate()
+                self._connected_event.set()
 
                 # Resubscribe to all symbols
                 bars, quotes, trades, news = self._subscriptions.get_all_subscriptions()
@@ -722,9 +783,11 @@ class StreamMultiplexer:
         api_secret: str,
         on_data: Callable[[str, str, dict[str, Any]], Awaitable[None]],
         use_iex: bool = False,
+        options_feed: str = "opra",
         lazy_connect: bool = True,
         fanout_max_inflight: int = DEFAULT_FANOUT_MAX_INFLIGHT,
         fanout_batch_size: int = DEFAULT_FANOUT_BATCH_SIZE,
+        on_broadcast: Callable[[dict[str, Any] | str | bytes, list[str]], Awaitable[int]] | None = None,
     ) -> None:
         """Initialize multiplexer.
 
@@ -733,16 +796,22 @@ class StreamMultiplexer:
             api_secret: Alpaca API secret
             on_data: Callback for data messages (client_id, data_type, message)
             use_iex: Use IEX feed instead of SIP for stocks
+            options_feed: Alpaca options stream feed (`opra` or `indicative`)
             lazy_connect: If True, only connect to streams when first client subscribes
             fanout_max_inflight: Max concurrent callback deliveries per fanout batch.
             fanout_batch_size: Number of clients to dispatch per gather batch.
+            on_broadcast: Optional callback for efficient broadcast (message, client_ids) -> count
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.on_data = on_data
+        self._options_feed = str(options_feed or "opra").strip().lower()
+        if self._options_feed not in {"opra", "indicative"}:
+            raise ValueError("options_feed must be 'opra' or 'indicative'")
         self._lazy_connect = lazy_connect
         self._fanout_max_inflight = max(1, fanout_max_inflight)
         self._fanout_client_batch_size = max(1, fanout_batch_size)
+        self._on_broadcast = on_broadcast
         set_stream_fanout_limits_metrics(
             max_inflight=self._fanout_max_inflight,
             batch_size=self._fanout_client_batch_size,
@@ -761,6 +830,7 @@ class StreamMultiplexer:
                 stream_type=AlpacaStreamType.OPTIONS,
                 api_key=api_key,
                 api_secret=api_secret,
+                endpoint=f"wss://stream.data.alpaca.markets/v1beta1/{self._options_feed}",
                 on_message=lambda m: self._handle_message(AlpacaStreamType.OPTIONS, m),
             ),
             AlpacaStreamType.CRYPTO: UpstreamConnection(
@@ -871,14 +941,13 @@ class StreamMultiplexer:
         self._tasks.append(task)
 
         # Wait briefly for connection to establish
-        for _ in range(50):  # 5 second timeout
-            await asyncio.sleep(0.1)
-            if conn.is_connected:
-                logger.info("lazy_connect_established", stream=stream_type.value)
-                return True
-
-        logger.warning("lazy_connect_timeout", stream=stream_type.value)
-        return False
+        try:
+            await asyncio.wait_for(conn._connected_event.wait(), timeout=5.0)
+            logger.info("lazy_connect_established", stream=stream_type.value)
+            return True
+        except TimeoutError:
+            logger.warning("lazy_connect_timeout", stream=stream_type.value)
+            return False
 
     async def client_subscribe(
         self,
@@ -982,21 +1051,45 @@ class StreamMultiplexer:
         """Route incoming message to subscribed clients."""
         msg_type = message.get("T", "")
 
-        # Map Alpaca message types to our data types
-        data_type_map = {
-            "b": "bars",
-            "q": "quotes",
-            "t": "trades",
-            "n": "news",
-        }
-
-        data_type = data_type_map.get(msg_type)
+        data_type = MESSAGE_TYPE_TO_DATA_TYPE.get(msg_type)
         if not data_type:
             # System message, heartbeat, etc.
             return
 
-        if data_type in {"bars", "quotes", "trades"}:
-            validator = get_validator()
+        # Find connection and get subscribed clients
+        conn = self._get_connection(stream_type)
+        if not conn:
+            return
+
+        symbols: list[str]
+        if data_type == "news":
+            symbols = []
+            symbol_field = message.get("S")
+            if symbol_field:
+                symbols.append(symbol_field)
+            raw_symbols = message.get("symbols")
+            if isinstance(raw_symbols, list):
+                symbols.extend([s for s in raw_symbols if s])
+            if not symbols:
+                symbols = ["*"]
+            symbol_for_log = symbols[0] if symbols else "*"
+        else:
+            symbol = message.get("S", "")
+            if not symbol:
+                return
+            symbols = [symbol]
+            symbol_for_log = symbol
+
+        clients: set[str] = set()
+        if data_type == "news":
+            clients.update(conn.subscriptions.get_clients_for_symbol_view("*", data_type))
+        for sym in dict.fromkeys(symbols):
+            clients.update(conn.subscriptions.get_clients_for_symbol_view(sym, data_type))
+        if not clients:
+            return
+
+        if data_type in _VALIDATABLE_FEEDS:
+            validator = self._get_stream_validator()
             if data_type == "bars":
                 result = validator.validate_bar(
                     {
@@ -1039,56 +1132,55 @@ class StreamMultiplexer:
                 )
                 return
 
-        # Find connection and get subscribed clients
-        conn = self._get_connection(stream_type)
-        if not conn:
-            return
+        # Use fast-path wrapper for streaming
+        # Optimizations:
+        # 1. Skip per-message UUID/BLAKE2b hash (use fast random ID)
+        # 2. Skip instrument inference (we know the stream type)
+        # 3. Skip Pydantic validation (assumes upstream structure is somewhat trusted/consistent)
+        ts_ingest = datetime.now(UTC)
+        seq = self._seq_tracker.next_seq(symbol_for_log, data_type)
 
-        symbols: list[str]
-        if data_type == "news":
-            symbols = []
-            symbol_field = message.get("S")
-            if symbol_field:
-                symbols.append(symbol_field)
-            raw_symbols = message.get("symbols")
-            if isinstance(raw_symbols, list):
-                symbols.extend([s for s in raw_symbols if s])
-            if not symbols:
-                symbols = ["*"]
-            symbol_for_log = symbols[0] if symbols else "*"
-        else:
-            symbol = message.get("S", "")
-            if not symbol:
-                return
-            symbols = [symbol]
-            symbol_for_log = symbol
-
-        clients: set[str] = set()
-        if data_type == "news":
-            clients.update(conn.subscriptions.get_clients_for_symbol("*", data_type))
-        for sym in symbols:
-            clients.update(conn.subscriptions.get_clients_for_symbol(sym, data_type))
-        if not clients:
-            return
-
-        # Wrap event in EventEnvelope for downstream consumers
-        envelope = wrap_event(
+        envelope = fast_wrap_streaming_event(
             event=message,
             provider="alpaca",
             feed=data_type,
-            source="websocket",
-            stream_type=stream_type.value if stream_type else None,
+            instrument_type=stream_type.instrument_type if stream_type else "equity",
+            ts_ingest=ts_ingest,
+            sequence=seq,
         )
 
-        # Inject per-symbol, per-feed sequence number for gap detection (PRD §Sequence Numbers)
-        seq = self._seq_tracker.next_seq(symbol_for_log, data_type)
-        envelope["seq"] = seq
-        envelope["lineage"]["seq"] = seq
+        # Serialize once if we are going to broadcast
+        # envelope is a dict here, we can serialize it to string once for efficiency
+        # This matches what we did for RedisSink optimization
+        envelope_json = orjson.dumps(envelope, default=_orjson_default)
 
-        # Fan out envelope to each subscribed client with bounded concurrency
+        if self._on_broadcast:
+            # Efficient O(1) loop-level broadcast via ConnectionManager
+            # We pass the list of clients and let ConnectionManager handle the async write loop
+            try:
+                # on_broadcast expects (message, client_ids)
+                await self._on_broadcast(envelope_json, list(clients))
+                record_stream_fanout_dispatch_event("delivered")
+            except Exception as e:
+                record_stream_fanout_dispatch_event("error")
+                logger.error(
+                    "broadcast_error",
+                    symbol=symbol_for_log,
+                    event_id=envelope.get("event_id", "unknown"),
+                    error=str(e),
+                )
+            return
+
+        # Fallback to manual fanout if no broadcast callback (e.g. tests)
         async def _send(client_id: str) -> None:
             try:
                 async with self._fanout_semaphore:
+                    # Send pre-serialized JSON string if possible, or envelope dict
+                    # on_data signature might need update or flexible handling
+                    # Current on_data is Callable[[str, str, dict[str, Any]], Awaitable[None]]
+                    # We should check if on_data supports string payload, but standard Multiplexer uses on_data from main.py
+                    # which calls connection_manager.send_personal_message which expects JSON-serializable
+                    # For safety in fallback mode, we pass the dict envelope
                     await self.on_data(client_id, data_type, envelope)
                 record_stream_fanout_dispatch_event("delivered")
             except Exception as e:

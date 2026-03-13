@@ -15,6 +15,8 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, Field
 
+from gateway.core.metrics import record_envelope_created
+
 logger = structlog.get_logger()
 
 # Schema version for envelope format
@@ -113,7 +115,11 @@ def compute_event_id(
     ts_event: datetime,
     unique_fields: list[Any],
 ) -> str:
-    """Compute SHA256 idempotency hash for event deduplication.
+    """Compute BLAKE2b idempotency hash for event deduplication.
+
+    Uses BLAKE2b with a 16-byte digest (32 hex chars) for faster hashing
+    compared to SHA256, while maintaining sufficient collision resistance
+    for bounded event streams.
 
     Args:
         provider: Data provider name
@@ -144,7 +150,7 @@ def compute_event_id(
             parts.append(str(field))
 
     data = "|".join(parts)
-    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:32]
+    return hashlib.blake2b(data.encode("utf-8"), digest_size=16, usedforsecurity=False).hexdigest()
 
 
 # Feed-specific unique field extractors for event ID computation
@@ -165,12 +171,18 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
         ("premium", None, 0),
         ("volume", None, 0),
     ],
-    "darkpool": [
+    "flow_alerts": [
         ("expiry", None, ""),
         ("strike", None, 0),
         ("put_call", None, ""),
         ("premium", None, 0),
         ("volume", None, 0),
+    ],
+    "darkpool": [
+        ("tracking_id", None, ""),
+        ("price", None, 0),
+        ("size", None, 0),
+        ("notional", None, 0),
     ],
     "news": [("article_id", "id", "")],
     "etf": [("etf_symbol", None, ""), ("holding_symbol", "symbol", ""), ("date", None, "")],
@@ -199,7 +211,7 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
     "forex": [("pair", None, ""), ("bid", None, 0), ("ask", None, 0)],
     "fundamentals": [("symbol", None, ""), ("market_cap", None, 0)],
     # EOD per-ticker UW feeds
-    "greek_exposure": [("symbol", None, ""), ("gamma_exposure", None, 0)],
+    "greek_exposure": [("symbol", None, ""), ("call_gamma", None, 0)],
     "iv_rank": [("symbol", None, ""), ("iv_rank", None, 0)],
     "oi_change": [("symbol", None, ""), ("date", None, ""), ("call_oi_change", None, 0)],
     "historic_option_volume": [
@@ -262,6 +274,9 @@ def wrap_event(
     source: str = "websocket",
     stream_type: str | None = None,
     ts_ingest: datetime | None = None,
+    instrument_type_override: str | None = None,
+    instrument_key_override: str | None = None,
+    symbol_override: str | None = None,
 ) -> dict:
     """Wrap a normalized event in an EventEnvelope.
 
@@ -283,7 +298,16 @@ def wrap_event(
         payload = dict(event)
 
     # Extract symbol - handle various field names
-    symbol = payload.get("symbol") or payload.get("S") or payload.get("underlying") or payload.get("ticker") or ""
+    symbol = (
+        symbol_override
+        or payload.get("symbol")
+        or payload.get("S")
+        or payload.get("underlying")
+        or payload.get("ticker")
+        or ""
+    )
+    if not isinstance(symbol, str):
+        symbol = str(symbol) if not isinstance(symbol, dict) else ""
 
     # Market-wide feeds may not include a symbol; set a stable placeholder
     if not symbol and feed in {"market_tide", "sector_tide", "etf_tide", "market_tide_by_etf"}:
@@ -291,10 +315,7 @@ def wrap_event(
 
     # Extract event timestamp
     ts_event_raw = (
-        payload.get("timestamp")
-        or payload.get("t")
-        or payload.get("published_at")
-        or payload.get("datetime")
+        payload.get("timestamp") or payload.get("t") or payload.get("published_at") or payload.get("datetime")
     )
 
     if isinstance(ts_event_raw, datetime):
@@ -312,11 +333,11 @@ def wrap_event(
         ts_ingest = datetime.now(UTC)
 
     # Infer instrument type
-    instrument_type = _infer_instrument_type(feed, symbol, payload)
+    instrument_type = instrument_type_override or _infer_instrument_type(feed, symbol, payload)
 
     # Generate instrument key
     contract_symbol = payload.get("contract_symbol") or payload.get("contract")
-    instrument_key = make_instrument_key(symbol, instrument_type, contract_symbol)
+    instrument_key = instrument_key_override or make_instrument_key(symbol, instrument_type, contract_symbol)
 
     # Extract unique fields for event ID
     unique_fields = _extract_unique_fields(feed, payload)
@@ -373,12 +394,7 @@ def wrap_event(
         )
 
         # Record metrics
-        try:
-            from gateway.core.metrics import record_envelope_created
-
-            record_envelope_created(provider=provider, feed=feed)
-        except ImportError:
-            pass  # Metrics not available
+        record_envelope_created(provider=provider, feed=feed)
 
         return envelope
 
@@ -407,3 +423,93 @@ def wrap_event(
             "quality_flags": ["error"],
             "payload": payload,
         }
+
+
+def fast_wrap_streaming_event(
+    event: dict[str, Any],
+    provider: str,
+    feed: str,
+    instrument_type: str,
+    ts_ingest: datetime,
+    sequence: int | None = None,
+) -> dict[str, Any]:
+    """Optimized event wrapper for high-frequency streaming.
+
+    Skips:
+    - Pydantic model validation (assumes dict)
+    - Instrument type inference (passed in)
+    - Content hashing (uses fast random ID)
+    - Extensive unique field extraction
+
+    Args:
+        event: Raw event dict
+        provider: Provider name (e.g. "alpaca")
+        feed: Feed type (e.g. "trades")
+        instrument_type: Known instrument type
+        ts_ingest: Pre-computed ingest timestamp
+        sequence: Optional sequence number
+
+    Returns:
+        Serialized envelope dict
+    """
+    # symbol - fast path
+    symbol = event.get("S") or event.get("symbol") or ""
+    if not isinstance(symbol, str):
+        symbol = str(symbol)
+
+    # timestamp - assume ISO string or let json.dumps handle format if it's already a string?
+    # Actually, we need to standardize to ISO string for the envelope.
+    # Alpaca sends 't' as RFC3339 string (usually).
+    ts_event_str = event.get("t") or event.get("timestamp")
+    if not ts_event_str:
+        ts_event_str = ts_ingest.isoformat()
+    elif not isinstance(ts_event_str, str):
+        # Fallback for non-string timestamps (unlikely in Alpaca V2)
+        try:
+            ts_event_str = ts_event_str.isoformat()
+        except AttributeError:
+            ts_event_str = str(ts_event_str)
+
+    # instrument_key - manual inline construction for speed
+    # (Replicates make_instrument_key logic for common cases)
+    if instrument_type == "option":
+        # Fast path for options (symbol is key if no contract specific)
+        # But we assume standard "option:SYMBOL" or "option:OCC:..." logic?
+        # make_instrument_key handles crypto normalization too.
+        # For speed, let's call make_instrument_key but optimize it later if needed.
+        # It's dominated by hashing anyway.
+        inst_key = make_instrument_key(symbol, instrument_type)
+    else:
+        # Equity is just equity:SYMBOL
+        inst_key = f"equity:{symbol}" if instrument_type == "equity" else make_instrument_key(symbol, instrument_type)
+
+    # event_id - fast random 32-char hex (skip BLAKE2b/SHA256)
+    # Using urandom or simple string construction is faster than hashing content.
+    # UUID4 is ~1-2us. Hashing 100 bytes is ~5-10us.
+    # Let's use os.urandom(16).hex()
+    import os
+
+    event_id = os.urandom(16).hex()
+
+    lineage = {}
+    if sequence is not None:
+        lineage["seq"] = sequence
+
+    envelope = {
+        "event_id": event_id,
+        "provider": provider,
+        "feed": feed,
+        "source": "websocket",
+        "instrument_type": instrument_type,
+        "instrument_key": inst_key,
+        "symbol": symbol,
+        "ts_event": ts_event_str,
+        "ts_ingest": ts_ingest.isoformat(),
+        "schema_version": SCHEMA_VERSION,
+        "lineage": lineage,
+        "quality_flags": ["streaming"],
+        "payload": event,
+    }
+    if sequence is not None:
+        envelope["seq"] = sequence
+    return envelope

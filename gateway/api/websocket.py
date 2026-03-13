@@ -111,6 +111,7 @@ async def _heartbeat_loop(websocket: WebSocket, connection_id: str) -> None:
                     "ts": int(time.time()),
                 }
             )
+            missed_heartbeats = 0
             logger.debug("heartbeat_sent", connection_id=connection_id)
         except Exception as e:
             logger.warning("heartbeat_send_failed", connection_id=connection_id, error=str(e))
@@ -216,7 +217,6 @@ async def _message_loop(
             raw = await websocket.receive()
             if raw.get("text") is not None:
                 raw_text = raw["text"]
-                max_bytes = get_settings().ws_max_message_size
                 if len(raw_text.encode("utf-8")) > max_bytes:
                     await websocket.send_json(
                         {
@@ -229,7 +229,6 @@ async def _message_loop(
                 message = json.loads(raw_text)
             elif raw.get("bytes") is not None:
                 raw_bytes = raw["bytes"]
-                max_bytes = get_settings().ws_max_message_size
                 if len(raw_bytes) > max_bytes:
                     await websocket.send_json(
                         {
@@ -553,9 +552,7 @@ def _has_provider_permission(client: Any, provider: str) -> bool:
         return True
     if provider == "uw" and "unusual_whales" in allowed:
         return True
-    if provider == "yf" and "yfinance" in allowed:
-        return True
-    return False
+    return bool(provider == "yf" and "yfinance" in allowed)
 
 
 def _normalize_feed_permission(feed: str) -> str:

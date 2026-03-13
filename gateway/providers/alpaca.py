@@ -1,6 +1,7 @@
 """Alpaca Markets data provider."""
 
 import os
+import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -35,7 +36,8 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
-from gateway.core.metrics import httpx_event_hooks
+from gateway.core.http_client import create_async_http_client, http_retry
+from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
@@ -72,7 +74,7 @@ class AlpacaProvider(DataProvider):
 
     @property
     def supported_feeds(self) -> list[str]:
-        return ["bars", "quotes", "trades", "options"]
+        return ["bars", "quotes", "trades", "options", "option_bars", "option_quotes", "option_trades"]
 
     @property
     def capabilities(self) -> ProviderCapabilities:
@@ -81,11 +83,12 @@ class AlpacaProvider(DataProvider):
             supports_quotes=True,
             supports_trades=True,
             supports_options=True,
+            supports_news=True,
             supports_streaming=True,
             supports_historical=True,
             max_symbols_per_request=1000,
             max_historical_range_days=365,
-            rate_limit_requests_per_minute=200,
+            rate_limit_requests_per_minute=10000,
             supports_adjusted_prices=True,
             supports_extended_hours=True,
             supported_timeframes=["1Min", "5Min", "15Min", "30Min", "1Hour", "1Day"],
@@ -108,7 +111,7 @@ class AlpacaProvider(DataProvider):
             )
 
         # Create HTTP client for Market Data API
-        self._client = httpx.AsyncClient(
+        self._client = create_async_http_client(
             base_url=self._base_url,
             headers={
                 "APCA-API-KEY-ID": self._api_key,
@@ -149,6 +152,7 @@ class AlpacaProvider(DataProvider):
 
         logger.info("alpaca_provider_shutdown")
 
+    @http_retry
     async def health_check(self) -> HealthStatus:
         """Check API connectivity."""
         if not self._client:
@@ -182,6 +186,7 @@ class AlpacaProvider(DataProvider):
     # REST API
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_bars(
         self,
         symbols: list[str],
@@ -190,33 +195,37 @@ class AlpacaProvider(DataProvider):
         end: datetime,
         **kwargs: Any,
     ) -> list[NormalizedBar]:
-        """Fetch historical bars from Alpaca."""
+        """Fetch historical bars from Alpaca with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         results: list[NormalizedBar] = []
-
-        # Alpaca accepts comma-separated symbols
         symbols_param = ",".join(symbols)
 
-        params = {
+        params: dict[str, Any] = {
             "symbols": symbols_param,
             "timeframe": self._convert_timeframe(timeframe),
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
+            "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": kwargs.get("feed", self._feed),
-            "adjustment": kwargs.get("adjustment", "raw"),
+            "adjustment": kwargs.get("adjustment", "split"),
             "limit": kwargs.get("limit", 10000),
         }
 
         try:
-            response = await self._client.get("/v2/stocks/bars", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v2/stocks/bars", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, bars in data.get("bars", {}).items():
-                for bar in bars:
-                    results.append(self._normalize_bar(symbol, bar))
+                for symbol, bars in data.get("bars", {}).items():
+                    for bar in bars:
+                        results.append(self._normalize_bar(symbol, bar))
+
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
 
             logger.info(
                 "alpaca_bars_fetched",
@@ -234,6 +243,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_quotes(self, symbols: list[str]) -> list[NormalizedQuote]:
         """Fetch latest quotes from Alpaca."""
         if not self._client:
@@ -264,6 +274,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_trades(
         self,
         symbols: list[str],
@@ -271,7 +282,7 @@ class AlpacaProvider(DataProvider):
         end: datetime,
         limit: int = 10000,
     ) -> list[NormalizedTrade]:
-        """Fetch historical trades from Alpaca."""
+        """Fetch historical trades from Alpaca with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
@@ -281,20 +292,32 @@ class AlpacaProvider(DataProvider):
 
         params: dict[str, str | int] = {
             "symbols": symbols_param,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
+            "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": self._feed,
             "limit": request_limit,
         }
 
         try:
-            response = await self._client.get("/v2/stocks/trades", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v2/stocks/trades", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, trades in data.get("trades", {}).items():
-                for trade in trades:
-                    results.append(self._normalize_trade(symbol, trade))
+                for symbol, trades in data.get("trades", {}).items():
+                    for trade in trades:
+                        results.append(self._normalize_trade(symbol, trade))
+
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
+
+            logger.info(
+                "alpaca_trades_fetched",
+                symbols=len(symbols),
+                trades=len(results),
+            )
 
         except httpx.HTTPStatusError as e:
             logger.error(
@@ -306,6 +329,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_latest_bars(self, symbols: list[str]) -> list[NormalizedBar]:
         """Fetch latest bars from Alpaca."""
         if not self._client:
@@ -333,6 +357,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_latest_trades(self, symbols: list[str]) -> list[NormalizedTrade]:
         """Fetch latest trades from Alpaca."""
         if not self._client:
@@ -360,6 +385,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_historical_quotes(
         self,
         symbols: list[str],
@@ -367,31 +393,42 @@ class AlpacaProvider(DataProvider):
         end: datetime,
         limit: int = 10000,
     ) -> list[NormalizedQuote]:
-        """Fetch historical quotes from Alpaca."""
+        """Fetch historical quotes from Alpaca with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         results: list[NormalizedQuote] = []
         symbols_param = ",".join(symbols)
+        request_limit = max(1, min(limit, 10000))
 
         params: dict[str, str | int] = {
             "symbols": symbols_param,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
+            "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": self._feed,
-            "limit": limit,
+            "limit": request_limit,
         }
 
         try:
-            response = await self._client.get("/v2/stocks/quotes", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v2/stocks/quotes", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, quotes in data.get("quotes", {}).items():
-                for quote in quotes:
-                    results.append(self._normalize_quote(symbol, quote))
+                for symbol, quotes in data.get("quotes", {}).items():
+                    for quote in quotes:
+                        results.append(self._normalize_quote(symbol, quote))
 
-            logger.info("alpaca_historical_quotes_fetched", count=len(results))
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
+
+            logger.info(
+                "alpaca_historical_quotes_fetched",
+                symbols=len(symbols),
+                quotes=len(results),
+            )
 
         except httpx.HTTPStatusError as e:
             logger.error("alpaca_historical_quotes_error", status=e.response.status_code)
@@ -399,6 +436,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_snapshots(self, symbols: list[str]) -> dict[str, Any]:
         """Get current snapshots for symbols."""
         if not self._client:
@@ -427,6 +465,7 @@ class AlpacaProvider(DataProvider):
             logger.error("alpaca_snapshots_error", status=e.response.status_code)
             raise
 
+    @http_retry
     async def get_auctions(
         self,
         symbols: list[str],
@@ -441,9 +480,9 @@ class AlpacaProvider(DataProvider):
         symbols_param = ",".join(symbols)
         params: dict[str, Any] = {"symbols": symbols_param, "feed": self._feed, "limit": limit}
         if start:
-            params["start"] = start.isoformat()
+            params["start"] = start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat()
         if end:
-            params["end"] = end.isoformat()
+            params["end"] = end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat()
 
         try:
             response = await self._client.get("/v2/stocks/auctions", params=params)
@@ -461,6 +500,7 @@ class AlpacaProvider(DataProvider):
     # Options REST API
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_option_chain(
         self,
         underlying: str,
@@ -479,37 +519,37 @@ class AlpacaProvider(DataProvider):
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         request_limit = max(1, min(limit, 1000)) if limit is not None else 1000
-        params: dict[str, Any] = {
-            "underlying_symbols": underlying.upper(),
-            "feed": "indicative",
-            "limit": request_limit,
-        }
-
-        if expiration_date:
-            params["expiration_date"] = expiration_date
-        if expiration_gte:
-            params["expiration_date_gte"] = expiration_gte
-        if expiration_lte:
-            params["expiration_date_lte"] = expiration_lte
-        if strike_gte:
-            params["strike_price_gte"] = strike_gte
-        if strike_lte:
-            params["strike_price_lte"] = strike_lte
-        if option_type:
-            params["type"] = option_type
+        params: dict[str, Any] = {"feed": "indicative", "limit": request_limit}
 
         results: list[NormalizedOptionContract] = []
 
         try:
             response = await self._client.get(
-                "/v1beta1/options/snapshots",
+                f"/v1beta1/options/snapshots/{underlying.upper()}",
                 params=params,
             )
             response.raise_for_status()
             data = response.json()
 
             for contract_symbol, snapshot in data.get("snapshots", {}).items():
-                contract = self._normalize_option_contract(contract_symbol, snapshot)
+                parsed_contract = self._parse_occ_contract(contract_symbol)
+                if parsed_contract is None:
+                    continue
+                if not self._matches_option_chain_filters(
+                    parsed_contract,
+                    expiration_date=expiration_date,
+                    expiration_gte=expiration_gte,
+                    expiration_lte=expiration_lte,
+                    strike_gte=strike_gte,
+                    strike_lte=strike_lte,
+                    option_type=option_type,
+                ):
+                    continue
+                contract = self._normalize_option_contract(
+                    contract_symbol,
+                    snapshot,
+                    parsed_contract=parsed_contract,
+                )
                 if contract:
                     results.append(contract)
 
@@ -529,6 +569,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_option_bars(
         self,
         contracts: list[str],
@@ -547,8 +588,8 @@ class AlpacaProvider(DataProvider):
         params: dict[str, str | int] = {
             "symbols": symbols_param,
             "timeframe": self._convert_timeframe(timeframe),
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
+            "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "limit": limit,
         }
 
@@ -580,6 +621,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_option_quotes(self, contracts: list[str]) -> list[NormalizedQuote]:
         """Get latest quotes for option contracts."""
         if not self._client:
@@ -615,6 +657,62 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    async def get_historical_option_quotes(
+        self,
+        contracts: list[str],
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 10000,
+    ) -> list[NormalizedQuote]:
+        """Get historical quotes for option contracts."""
+        if not self._client:
+            raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
+
+        results: list[NormalizedQuote] = []
+        symbols_param = ",".join(contracts)
+        request_limit = max(1, min(limit, 10000))
+
+        params: dict[str, str | int] = {
+            "symbols": symbols_param,
+            "feed": "indicative",
+            "limit": request_limit,
+        }
+        if start:
+            params["start"] = start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat()
+        if end:
+            params["end"] = end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat()
+
+        try:
+            while True:
+                response = await self._client.get(
+                    "/v1beta1/options/quotes",
+                    params=params,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                for symbol, quotes in data.get("quotes", {}).items():
+                    for quote in quotes:
+                        results.append(self._normalize_quote(symbol, quote))
+
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
+
+            logger.info("alpaca_historical_option_quotes_fetched", count=len(results))
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "alpaca_historical_option_quotes_error",
+                status=e.response.status_code,
+                error=str(e),
+            )
+            raise
+
+        return results
+
+    @http_retry
     async def get_option_trades(
         self,
         contracts: list[str],
@@ -630,9 +728,9 @@ class AlpacaProvider(DataProvider):
         symbols_param = ",".join(contracts)
         params: dict[str, Any] = {"symbols": symbols_param, "feed": "indicative", "limit": limit}
         if start:
-            params["start"] = start.isoformat()
+            params["start"] = start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat()
         if end:
-            params["end"] = end.isoformat()
+            params["end"] = end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat()
 
         try:
             response = await self._client.get("/v1beta1/options/trades", params=params)
@@ -651,6 +749,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_option_latest_trades(self, contracts: list[str]) -> list[NormalizedTrade]:
         """Get latest trades for option contracts."""
         if not self._client:
@@ -678,6 +777,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_option_snapshots(self, underlying: str) -> dict[str, Any]:
         """Get snapshots for all options on an underlying."""
         if not self._client:
@@ -702,7 +802,86 @@ class AlpacaProvider(DataProvider):
             logger.error("alpaca_option_snapshots_error", status=e.response.status_code)
             raise
 
-    def _normalize_option_contract(self, contract_symbol: str, snapshot: dict[str, Any]):
+    async def get_option_snapshot_contracts(self, underlying: str) -> list:
+        """Get the latest full underlying snapshot as normalized option contracts."""
+        from gateway.schemas import NormalizedOptionContract
+
+        snapshots = await self.get_option_snapshots(underlying)
+        results: list[NormalizedOptionContract] = []
+        for contract_symbol, snapshot in snapshots.items():
+            parsed_contract = self._parse_occ_contract(contract_symbol)
+            if parsed_contract is None:
+                continue
+            contract = self._normalize_option_contract(
+                contract_symbol,
+                snapshot,
+                parsed_contract=parsed_contract,
+            )
+            if contract:
+                results.append(contract)
+
+        logger.info(
+            "alpaca_option_snapshot_contracts_fetched",
+            underlying=underlying,
+            contracts=len(results),
+        )
+        return results
+
+    @staticmethod
+    def _parse_occ_contract(contract_symbol: str) -> dict[str, Any] | None:
+        """Parse OCC option contract symbol into components."""
+        match = re.match(r"^([A-Z]{1,6})(\d{6})([CP])(\d{8})$", contract_symbol.upper())
+        if not match:
+            return None
+
+        underlying, expiry_yy_mm_dd, cp_flag, strike_digits = match.groups()
+        try:
+            expiry = datetime.strptime(expiry_yy_mm_dd, "%y%m%d").date().isoformat()
+            strike = Decimal(int(strike_digits)) / Decimal(1000)
+        except (ValueError, ArithmeticError):
+            return None
+
+        return {
+            "underlying": underlying,
+            "expiration": expiry,
+            "option_type": "call" if cp_flag == "C" else "put",
+            "strike": strike,
+        }
+
+    @staticmethod
+    def _matches_option_chain_filters(
+        parsed_contract: dict[str, Any],
+        *,
+        expiration_date: str | None,
+        expiration_gte: str | None,
+        expiration_lte: str | None,
+        strike_gte: float | None,
+        strike_lte: float | None,
+        option_type: str | None,
+    ) -> bool:
+        """Apply API-level filters to parsed OCC contract metadata."""
+        expiration = str(parsed_contract["expiration"])
+        strike = Decimal(parsed_contract["strike"])
+        contract_option_type = str(parsed_contract["option_type"])
+
+        if expiration_date and expiration != expiration_date:
+            return False
+        if expiration_gte and expiration < expiration_gte:
+            return False
+        if expiration_lte and expiration > expiration_lte:
+            return False
+        if strike_gte is not None and strike < Decimal(str(strike_gte)):
+            return False
+        if strike_lte is not None and strike > Decimal(str(strike_lte)):
+            return False
+        return not (option_type and contract_option_type != option_type.lower())
+
+    def _normalize_option_contract(
+        self,
+        contract_symbol: str,
+        snapshot: dict[str, Any],
+        parsed_contract: dict[str, Any] | None = None,
+    ):
         """Normalize option snapshot to NormalizedOptionContract."""
         from gateway.schemas import NormalizedOptionContract
 
@@ -710,19 +889,25 @@ class AlpacaProvider(DataProvider):
             quote = snapshot.get("latestQuote", {})
             trade = snapshot.get("latestTrade", {})
             greeks = snapshot.get("greeks", {})
+            parsed = parsed_contract or self._parse_occ_contract(contract_symbol)
+            if parsed is None:
+                logger.warning(
+                    "alpaca_option_contract_parse_failed",
+                    contract=contract_symbol,
+                )
+                return None
 
-            # Parse contract symbol for underlying/expiry/strike/type
-            # OCC format: AAPL250117C00200000
-            underlying = contract_symbol[:4].rstrip("0123456789")
-            if not underlying:
-                underlying = contract_symbol[:3]
+            underlying = str(parsed["underlying"])
+            expiration = str(parsed["expiration"])
+            strike = Decimal(parsed["strike"])
+            option_type = str(parsed["option_type"])
 
             return NormalizedOptionContract(
                 contract_symbol=contract_symbol,
                 underlying=underlying,
-                expiration=snapshot.get("expiration_date", ""),
-                strike=Decimal(str(snapshot.get("strike_price", 0))),
-                option_type=snapshot.get("type", "call"),
+                expiration=expiration,
+                strike=strike,
+                option_type=option_type,
                 bid=Decimal(str(quote.get("bp", 0))),
                 ask=Decimal(str(quote.get("ap", 0))),
                 last=Decimal(str(trade.get("p", 0))),
@@ -748,6 +933,7 @@ class AlpacaProvider(DataProvider):
     # Crypto REST API
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_crypto_bars(
         self,
         pair: str,
@@ -793,6 +979,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_crypto_trades(
         self,
         pair: str,
@@ -833,21 +1020,23 @@ class AlpacaProvider(DataProvider):
 
         return results
 
-    async def get_crypto_quotes(self, pair: str) -> NormalizedQuote | None:
-        """Fetch latest crypto quote from Alpaca."""
+    @http_retry
+    async def get_crypto_quotes(self, pairs: list[str]) -> dict[str, NormalizedQuote]:
+        """Fetch latest crypto quotes from Alpaca."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         try:
-            response = await self._client.get("/v1beta3/crypto/us/latest/quotes", params={"symbols": pair})
+            symbols = ",".join(pairs)
+            response = await self._client.get("/v1beta3/crypto/us/latest/quotes", params={"symbols": symbols})
             response.raise_for_status()
             data = response.json()
 
-            quotes = data.get("quotes", {})
-            if pair in quotes:
-                return self._normalize_quote(pair, quotes[pair])
+            results = {}
+            for pair, quote in data.get("quotes", {}).items():
+                results[pair] = self._normalize_quote(pair, quote)
 
-            return None
+            return results
 
         except httpx.HTTPStatusError as e:
             logger.error(
@@ -857,20 +1046,71 @@ class AlpacaProvider(DataProvider):
             )
             raise
 
-    async def get_crypto_snapshot(self, pair: str) -> dict[str, Any]:
-        """Fetch current crypto snapshot from Alpaca."""
+    async def get_historical_crypto_quotes(
+        self,
+        pair: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 10000,
+    ) -> list[NormalizedQuote]:
+        """Fetch historical crypto quotes from Alpaca."""
+        if not self._client:
+            raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
+
+        results: list[NormalizedQuote] = []
+        request_limit = max(1, min(limit, 10000))
+
+        params: dict[str, Any] = {
+            "symbols": pair,
+            "limit": request_limit,
+        }
+        if start:
+            params["start"] = start.isoformat()
+        if end:
+            params["end"] = end.isoformat()
+
+        try:
+            while True:
+                response = await self._client.get("/v1beta3/crypto/us/quotes", params=params)
+                response.raise_for_status()
+                data = response.json()
+
+                for symbol, quotes in data.get("quotes", {}).items():
+                    for quote in quotes:
+                        results.append(self._normalize_quote(symbol, quote))
+
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
+
+            logger.info("alpaca_historical_crypto_quotes_fetched", pair=pair, quotes=len(results))
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "alpaca_historical_crypto_quotes_error",
+                status=e.response.status_code,
+                error=str(e),
+            )
+            raise
+
+        return results
+
+    @http_retry
+    async def get_crypto_snapshots(self, pairs: list[str]) -> dict[str, Any]:
+        """Fetch current crypto snapshots from Alpaca."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         try:
-            response = await self._client.get("/v1beta3/crypto/us/snapshots", params={"symbols": pair})
+            symbols = ",".join(pairs)
+            response = await self._client.get("/v1beta3/crypto/us/snapshots", params={"symbols": symbols})
             response.raise_for_status()
             data = response.json()
 
-            snapshots = data.get("snapshots", {})
-            if pair in snapshots:
-                snap = snapshots[pair]
-                return {
+            results = {}
+            for pair, snap in data.get("snapshots", {}).items():
+                results[pair] = {
                     "symbol": pair,
                     "latest_bar": snap.get("dailyBar"),
                     "latest_quote": snap.get("latestQuote"),
@@ -878,16 +1118,17 @@ class AlpacaProvider(DataProvider):
                     "minute_bar": snap.get("minuteBar"),
                 }
 
-            return {"symbol": pair, "error": "No snapshot available"}
+            return results
 
         except httpx.HTTPStatusError as e:
             logger.error(
-                "alpaca_crypto_snapshot_error",
+                "alpaca_crypto_snapshots_error",
                 status=e.response.status_code,
                 error=str(e),
             )
             raise
 
+    @http_retry
     async def get_crypto_latest_bars(self, pairs: list[str]) -> dict[str, Any]:
         """Get latest bars for crypto pairs."""
         if not self._client:
@@ -910,6 +1151,7 @@ class AlpacaProvider(DataProvider):
             logger.error("alpaca_crypto_latest_bars_error", status=e.response.status_code)
             raise
 
+    @http_retry
     async def get_crypto_latest_trades(self, pairs: list[str]) -> dict[str, Any]:
         """Get latest trades for crypto pairs."""
         if not self._client:
@@ -936,6 +1178,7 @@ class AlpacaProvider(DataProvider):
     # Forex REST API (REST only - no WebSocket per PRD)
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_forex_rates(self, pairs: list[str]) -> dict[str, Any]:
         """Fetch latest forex rates from Alpaca."""
         if not self._client:
@@ -967,6 +1210,7 @@ class AlpacaProvider(DataProvider):
             )
             raise
 
+    @http_retry
     async def get_forex_rates_historical(
         self,
         pairs: list[str],
@@ -1019,6 +1263,7 @@ class AlpacaProvider(DataProvider):
     # News API (Phase 1)
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_news(
         self,
         symbols: list[str] | None = None,
@@ -1082,6 +1327,7 @@ class AlpacaProvider(DataProvider):
     # Screener APIs (Phase 1)
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_most_actives(
         self,
         by: str = "volume",
@@ -1127,6 +1373,7 @@ class AlpacaProvider(DataProvider):
 
         return results
 
+    @http_retry
     async def get_movers(
         self,
         market_type: str = "stocks",
@@ -1193,6 +1440,7 @@ class AlpacaProvider(DataProvider):
     # Phase 2: Corporate Actions
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_corporate_actions(
         self,
         symbols: list[str],
@@ -1254,6 +1502,7 @@ class AlpacaProvider(DataProvider):
     # Phase 3: Metadata & Orderbook
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_condition_codes(self, asset_class: str = "stocks") -> dict:
         """Get condition codes for trades/quotes."""
         if not self._client:
@@ -1278,6 +1527,7 @@ class AlpacaProvider(DataProvider):
             )
             raise
 
+    @http_retry
     async def get_exchange_codes(self, asset_class: str = "stocks") -> dict:
         """Get exchange codes."""
         if not self._client:
@@ -1299,6 +1549,7 @@ class AlpacaProvider(DataProvider):
             )
             raise
 
+    @http_retry
     async def get_crypto_orderbook(self, pair: str) -> dict[str, Any]:
         """Get crypto orderbook for a trading pair."""
         from gateway.schemas import NormalizedOrderbook, NormalizedOrderbookLevel
@@ -1364,6 +1615,7 @@ class AlpacaProvider(DataProvider):
     # Logos API
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_logo(self, symbol: str, placeholder: bool = True) -> bytes | None:
         """Get company logo image for a symbol.
 
@@ -1406,6 +1658,7 @@ class AlpacaProvider(DataProvider):
     # Fixed Income API
     # ─────────────────────────────────────────────────────────────────
 
+    @http_retry
     async def get_fixed_income_prices(self, isins: list[str]) -> dict[str, dict]:
         """Get latest prices for fixed income securities (US Treasuries).
 
@@ -1587,7 +1840,7 @@ class AlpacaProvider(DataProvider):
             return data
 
         except APIError as e:
-            logger.error("alpaca_order_create_error", error=str(e))
+            logger.warning("alpaca_order_create_error", error=str(e))
             raise
 
     def get_orders(
@@ -2093,7 +2346,7 @@ class AlpacaProvider(DataProvider):
             high=Decimal(str(raw["h"])),
             low=Decimal(str(raw["l"])),
             close=Decimal(str(raw["c"])),
-            volume=int(raw["v"]),
+            volume=Decimal(str(raw["v"])),
             vwap=Decimal(str(raw["vw"])) if raw.get("vw") else None,
             trade_count=raw.get("n"),
             provider="alpaca",
@@ -2101,16 +2354,27 @@ class AlpacaProvider(DataProvider):
 
     def _normalize_quote(self, symbol: str, raw: dict[str, Any]) -> NormalizedQuote:
         """Convert Alpaca quote to normalized format."""
+        raw_conditions = raw.get("c")
+        if isinstance(raw_conditions, list):
+            conditions = raw_conditions
+        elif isinstance(raw_conditions, str):
+            stripped = raw_conditions.strip()
+            conditions = [item for item in stripped.split(",") if item] if stripped else []
+        elif raw_conditions is None:
+            conditions = []
+        else:
+            conditions = [str(raw_conditions)]
+
         return NormalizedQuote(
             symbol=symbol,
             timestamp=self._parse_timestamp(raw["t"]),
             bid_price=Decimal(str(raw["bp"])),
-            bid_size=int(raw["bs"]),
+            bid_size=Decimal(str(raw["bs"])),
             ask_price=Decimal(str(raw["ap"])),
-            ask_size=int(raw["as"]),
-            bid_exchange=raw.get("bx"),
-            ask_exchange=raw.get("ax"),
-            conditions=raw.get("c", []),
+            ask_size=Decimal(str(raw["as"])),
+            bid_exchange=raw.get("bx", raw.get("x")),
+            ask_exchange=raw.get("ax", raw.get("x")),
+            conditions=conditions,
             tape=raw.get("z"),
             provider="alpaca",
         )
@@ -2121,7 +2385,7 @@ class AlpacaProvider(DataProvider):
             symbol=symbol,
             timestamp=self._parse_timestamp(raw["t"]),
             price=Decimal(str(raw["p"])),
-            size=int(raw["s"]),
+            size=Decimal(str(raw["s"])),
             trade_id=str(raw["i"]) if raw.get("i") else None,
             exchange=raw.get("x"),  # Stocks only
             conditions=raw.get("c", []),  # Stocks only
@@ -2132,5 +2396,14 @@ class AlpacaProvider(DataProvider):
 
     def _convert_timeframe(self, timeframe: str) -> str:
         """Convert gateway timeframe to Alpaca format."""
-        # Gateway uses "1Min", Alpaca uses "1Min" - already compatible
-        return timeframe
+        mapping = {
+            "1m": "1Min",
+            "5m": "5Min",
+            "15m": "15Min",
+            "30m": "30Min",
+            "1h": "1Hour",
+            "1d": "1Day",
+            "1w": "1Week",
+            "1M": "1Month",
+        }
+        return mapping.get(timeframe, timeframe)

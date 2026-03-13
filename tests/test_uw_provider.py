@@ -3,6 +3,7 @@
 import asyncio
 import time
 
+import httpx
 import pytest
 
 from gateway.providers.uw import DEFAULT_UW_MAX_INFLIGHT_CALLS, UnusualWhalesProvider
@@ -124,10 +125,7 @@ async def test_get_flow_alerts_falls_back_to_local_offset_slicing(monkeypatch):
             raise TypeError("unsupported pagination parameter")
         limit = kwargs["limit"]
         return _FakeResponse(
-            [
-                {"ticker": "AAPL", "strike": 100, "expiry": "2026-01-01", "total_premium": idx}
-                for idx in range(limit)
-            ]
+            [{"ticker": "AAPL", "strike": 100, "expiry": "2026-01-01", "total_premium": idx} for idx in range(limit)]
         )
 
     monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
@@ -141,3 +139,148 @@ async def test_get_flow_alerts_falls_back_to_local_offset_slicing(monkeypatch):
     assert calls[2]["limit"] == 5
     assert len(results) == 3
     assert results[0]["total_premium"] == 2
+
+
+class _FakeHTTPResponse:
+    def __init__(self, payload, *, status_error: Exception | None = None):
+        self._payload = payload
+        self._status_error = status_error
+
+    def raise_for_status(self) -> None:
+        if self._status_error is not None:
+            raise self._status_error
+        return None
+
+    def json(self):
+        return self._payload
+
+
+class _FakeHTTPClient:
+    def __init__(self, response: _FakeHTTPResponse | list[_FakeHTTPResponse]) -> None:
+        self._responses = response if isinstance(response, list) else [response]
+        self.calls: list[tuple[str, dict[str, str] | None]] = []
+
+    def get(self, path: str, params: dict[str, str] | None = None):
+        self.calls.append((path, params))
+        idx = min(len(self.calls) - 1, len(self._responses) - 1)
+        return self._responses[idx]
+
+
+class _FakeUWClient:
+    def __init__(self, http_client: _FakeHTTPClient) -> None:
+        self._http_client = http_client
+
+    def get_httpx_client(self) -> _FakeHTTPClient:
+        return self._http_client
+
+
+@pytest.mark.asyncio
+async def test_get_iv_rank_parses_raw_http_payload_when_sdk_shape_is_incompatible(
+    monkeypatch,
+):
+    """IV-rank should parse raw API payloads instead of relying on SDK response parsing."""
+    provider = UnusualWhalesProvider()
+    http_response = _FakeHTTPResponse(
+        {
+            "data": [
+                {"date": "2026-02-11", "volatility": "0.1478", "iv_rank_1y": "11.6152"},
+                {"date": "2026-02-12", "volatility": "0.1756", "iv_rank_1y": "20.2449"},
+            ]
+        }
+    )
+    http_client = _FakeHTTPClient(http_response)
+    provider._client = _FakeUWClient(http_client)
+
+    async def _fake_call_sync(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    result = await provider.get_iv_rank("SPY", date_str="2026-02-12")
+
+    assert result is not None
+    assert result.symbol == "SPY"
+    assert str(result.iv_rank) == "20.2449"
+    assert str(result.current_iv) == "0.1756"
+    assert http_client.calls == [("/api/stock/SPY/iv-rank", {"date": "2026-02-12"})]
+
+
+@pytest.mark.asyncio
+async def test_get_iv_rank_uses_latest_payload_without_forcing_date(monkeypatch):
+    """IV-rank lookup without date should avoid the date filter and request latest data."""
+    provider = UnusualWhalesProvider()
+    http_response = _FakeHTTPResponse({"data": [{"iv_rank_1y": "12.34", "volatility": "0.2"}]})
+    http_client = _FakeHTTPClient(http_response)
+    provider._client = _FakeUWClient(http_client)
+
+    async def _fake_call_sync(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    result = await provider.get_iv_rank("SPY")
+
+    assert result is not None
+    assert str(result.iv_rank) == "12.34"
+    assert http_client.calls == [("/api/stock/SPY/iv-rank", None)]
+
+
+@pytest.mark.asyncio
+async def test_get_iv_rank_retries_without_date_after_422(monkeypatch):
+    """Date-filter 422 responses should retry once without date and return latest payload."""
+    provider = UnusualWhalesProvider()
+    request = httpx.Request("GET", "https://api.unusualwhales.com/api/stock/SPY/iv-rank")
+    first_response = _FakeHTTPResponse(
+        {},
+        status_error=httpx.HTTPStatusError(
+            "422 Unprocessable Entity",
+            request=request,
+            response=httpx.Response(status_code=422, request=request),
+        ),
+    )
+    second_response = _FakeHTTPResponse({"data": [{"iv_rank_1y": "45.67", "volatility": "0.31"}]})
+    http_client = _FakeHTTPClient([first_response, second_response])
+    provider._client = _FakeUWClient(http_client)
+
+    async def _fake_call_sync(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    result = await provider.get_iv_rank("SPY", date_str="2026-02-13")
+
+    assert result is not None
+    assert str(result.iv_rank) == "45.67"
+    assert http_client.calls == [
+        ("/api/stock/SPY/iv-rank", {"date": "2026-02-13"}),
+        ("/api/stock/SPY/iv-rank", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_darkpool_recent_falls_back_to_raw_http_when_sdk_parse_fails(monkeypatch):
+    """Darkpool recent should fall back to raw HTTP when SDK parser fails on bad payloads."""
+    provider = UnusualWhalesProvider()
+    http_response = _FakeHTTPResponse(
+        {
+            "data": [
+                {"ticker": "AAPL", "price": 201.5, "size": 50, "executed_at": "2026-02-13T02:11:00Z"},
+                {"ticker": "MSFT", "price": 430.1, "size": 25, "executed_at": "2026-02-13T02:11:05Z"},
+            ]
+        }
+    )
+    http_client = _FakeHTTPClient(http_response)
+    provider._client = _FakeUWClient(http_client)
+
+    async def _fake_call_sync(func, *args, **kwargs):
+        if getattr(func, "__name__", "") != "get":
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+    monkeypatch.setattr(provider, "_normalize_darkpool_trade", lambda item: item)
+
+    result = await provider.get_darkpool_recent(limit=2, offset=1)
+
+    assert len(result) == 2
+    assert http_client.calls == [("/api/darkpool/recent", {"limit": "2", "offset": "1"})]

@@ -6,7 +6,7 @@ and provider-specific formats as specified in PRD (lines 459-523).
 
 import re
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -245,9 +245,7 @@ class SymbolResolver:
             expiration=expiry,
             strike=strike,
             option_type=option_type,
-            provider_formats=self._get_option_provider_formats(
-                underlying, expiry, strike, opt_type
-            ),
+            provider_formats=self._get_option_provider_formats(underlying, expiry, strike, opt_type),
         )
 
     def _parse_human_option(self, symbol: str) -> ResolvedSymbol:
@@ -274,9 +272,7 @@ class SymbolResolver:
                 expiration=expiry,
                 strike=strike,
                 option_type=option_type,
-                provider_formats=self._get_option_provider_formats(
-                    underlying, expiry, strike, opt_type
-                ),
+                provider_formats=self._get_option_provider_formats(underlying, expiry, strike, opt_type),
             )
 
         # Try pattern 2: "AAPL Jan17 200C"
@@ -289,7 +285,7 @@ class SymbolResolver:
 
             # Assume current or next year
             month = self.MONTH_MAP.get(month_str, 1)
-            current_year = datetime.now().year
+            current_year = datetime.now(UTC).year
             expiry = date(current_year, month, day)
             if expiry < date.today():
                 expiry = date(current_year + 1, month, day)
@@ -305,9 +301,7 @@ class SymbolResolver:
                 expiration=expiry,
                 strike=strike,
                 option_type=option_type,
-                provider_formats=self._get_option_provider_formats(
-                    underlying, expiry, strike, opt_type
-                ),
+                provider_formats=self._get_option_provider_formats(underlying, expiry, strike, opt_type),
             )
 
         # Unknown format - return as stock with warning
@@ -366,10 +360,7 @@ class SymbolResolver:
             return resolved.symbol
 
         opt_type_str = "Call" if resolved.option_type == "call" else "Put"
-        return (
-            f"{resolved.underlying} {resolved.expiration.isoformat()} "
-            f"${resolved.strike} {opt_type_str}"
-        )
+        return f"{resolved.underlying} {resolved.expiration.isoformat()} ${resolved.strike} {opt_type_str}"
 
     def to_provider_format(self, symbol: str, provider: str) -> str:
         """Get symbol in provider-specific format.

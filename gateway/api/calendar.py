@@ -4,6 +4,7 @@ Implements market hours, trading days, and earnings calendar as specified in PRD
 """
 
 import asyncio
+import time as time_module
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, cast
 
@@ -155,7 +156,7 @@ async def get_market_hours(
     calendar = get_trading_calendar()
     provider = cast(SupportsAlpacaCalendar | None, registry.get("alpaca"))
 
-    if provider:
+    if provider and not _calendar_provider_is_degraded("market_hours"):
         try:
             await require_provider_rate_limit("alpaca")
             entries = await asyncio.to_thread(provider.get_calendar, query_date, query_date)
@@ -196,9 +197,9 @@ async def get_market_hours(
                 holiday_name=None,
             )
             return MarketHoursResponse(**hours.to_dict())
-        except Exception:
+        except Exception as exc:
+            _mark_calendar_provider_failure("market_hours", exc)
             # Fall back to static calendar
-            pass
 
     hours = calendar.get_market_hours(query_date)
     return MarketHoursResponse(**hours.to_dict())
@@ -386,7 +387,8 @@ async def get_earnings(
 
             return mapped
 
-        earnings_calendar.set_fetcher(_fetch_earnings)
+        if not earnings_calendar.has_fetcher():
+            earnings_calendar.set_fetcher(_fetch_earnings)
     elif not settings.allow_stub_data:
         raise HTTPException(status_code=503, detail="Finnhub provider not available")
 

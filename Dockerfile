@@ -4,11 +4,17 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Create non-root user
-RUN groupadd -r gateway && useradd -r -g gateway gateway
+RUN groupadd -r gateway && \
+    useradd -r -g gateway -m -d /home/gateway gateway && \
+    mkdir -p /home/gateway/.cache/py-yfinance && \
+    chown -R gateway:gateway /home/gateway
 
 # Copy and install patched Unusual Whales SDK v5.1 first
 COPY vendor/unusualwhales_sdk/ /tmp/unusualwhales_sdk/
 RUN pip install --no-cache-dir /tmp/unusualwhales_sdk/ && rm -rf /tmp/unusualwhales_sdk/
+
+# Install curl for healthchecks and debugging
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 # Copy pyproject.toml first to cache dependency installation
 COPY pyproject.toml README.md ./
@@ -19,6 +25,9 @@ RUN mkdir -p gateway && \
     echo '"""Stub for dependency resolution."""' > gateway/__init__.py && \
     pip install --no-cache-dir . && \
     rm -rf gateway
+
+# Remove uvloop if pulled in as a transitive dep (incompatible with container)
+RUN pip uninstall -y uvloop 2>/dev/null || true
 
 # Copy gateway source and reinstall package only (deps already installed above)
 COPY gateway/ gateway/

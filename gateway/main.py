@@ -9,6 +9,12 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
+import orjson
+
+# uvloop removed — incompatible with container environment (causes deadlocks).
+# Standard asyncio event loop is used instead.
+
+
 # Configure stdlib logging for structlog integration
 logging.basicConfig(
     format="%(message)s",
@@ -35,6 +41,7 @@ from gateway.api import (
     legacy_adjustments_router,
     legacy_corporate_router,
     legacy_symbology_router,
+    market_router,
     news_router,
     quality_router,
     replay_router,
@@ -45,7 +52,7 @@ from gateway.api import (
     yf_router,
 )
 from gateway.api.admin import attach_error_buffer_handler
-from gateway.api.deps import get_connection_manager, set_multiplexer, set_registry
+from gateway.api.deps import get_connection_manager
 from gateway.api.errors import gateway_http_exception_handler
 from gateway.api.metrics import router as metrics_router
 from gateway.api.middleware import (
@@ -58,7 +65,15 @@ from gateway.api.middleware import (
     SecurityHeadersMiddleware,
 )
 from gateway.config import get_settings
-from gateway.core.metrics import init_metrics, init_uptime, update_uptime
+from gateway.core.globals import set_multiplexer, set_registry
+from gateway.core.metrics import (
+    init_metrics,
+    init_uptime,
+    record_stream_sink_dispatch_event,
+    set_stream_sink_dispatch_limits_metrics,
+    set_stream_sink_pending_tasks,
+    update_uptime,
+)
 from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import StreamMultiplexer
 
@@ -118,8 +133,126 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
     # Publish to data sink for Heber storage (non-blocking)
     sink_registry = _stream_sink_registry
     if sink_registry:
-        # Schedule sink publish off the stream callback path.
-        _schedule_stream_sink_publish(sink_registry, envelope)
+        # Optimization: Pre-serialize to JSON string to avoid re-serialization in Redis sink
+        # envelope is already a dict, so we serialize it once here.
+        try:
+            envelope_json = orjson.dumps(envelope, default=str).decode()
+            _schedule_stream_sink_publish(sink_registry, envelope_json)
+        except Exception:
+            # Fallback to dict if serialization fails (unlikely)
+            _schedule_stream_sink_publish(sink_registry, envelope)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stream-to-Sink Dispatch
+# ─────────────────────────────────────────────────────────────────────────────
+
+_stream_sink_registry = None
+STREAM_SINK_TOPIC = "heber:events"
+DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH = 32
+DEFAULT_STREAM_SINK_MAX_PENDING_TASKS = 512
+
+_stream_sink_max_inflight_publish = DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH
+_stream_sink_max_pending_tasks = DEFAULT_STREAM_SINK_MAX_PENDING_TASKS
+_stream_sink_publish_semaphore: asyncio.Semaphore | None = None
+_stream_sink_publish_tasks: set[asyncio.Task[None]] = set()
+
+
+def _configure_stream_sink_dispatch_limits(
+    *,
+    max_inflight_publish: int,
+    max_pending_tasks: int,
+) -> None:
+    """Configure stream-to-sink dispatch limits for this process."""
+    global _stream_sink_max_inflight_publish
+    global _stream_sink_max_pending_tasks
+    global _stream_sink_publish_semaphore
+
+    _stream_sink_max_inflight_publish = max(1, int(max_inflight_publish))
+    _stream_sink_max_pending_tasks = max(1, int(max_pending_tasks))
+    _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
+    set_stream_sink_dispatch_limits_metrics(
+        max_inflight_publish=_stream_sink_max_inflight_publish,
+        max_pending_tasks=_stream_sink_max_pending_tasks,
+    )
+    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
+
+
+def _set_stream_sink_registry(sink_registry) -> None:
+    global _stream_sink_registry
+    _stream_sink_registry = sink_registry
+
+
+def _get_stream_sink_publish_semaphore() -> asyncio.Semaphore:
+    global _stream_sink_publish_semaphore
+    if _stream_sink_publish_semaphore is None:
+        _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
+    return _stream_sink_publish_semaphore
+
+
+def _on_stream_sink_publish_done(task: asyncio.Task[None]) -> None:
+    _stream_sink_publish_tasks.discard(task)
+    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
+    if task.cancelled():
+        record_stream_sink_dispatch_event("cancelled")
+        return
+    exc = task.exception()
+    if exc:
+        record_stream_sink_dispatch_event("failed")
+        logger.warning("stream_sink_publish_task_failed", error=str(exc))
+        return
+    record_stream_sink_dispatch_event("completed")
+
+
+async def _publish_stream_event(sink_registry, envelope: dict | str) -> None:
+    semaphore = _get_stream_sink_publish_semaphore()
+    async with semaphore:
+        await sink_registry.publish_all(STREAM_SINK_TOPIC, envelope)
+
+
+def _schedule_stream_sink_publish(sink_registry, envelope: dict | str) -> None:
+    if len(_stream_sink_publish_tasks) >= _stream_sink_max_pending_tasks:
+        record_stream_sink_dispatch_event("dropped_backpressure")
+        # Extract event_id safely whether envelope is dict or string
+        event_id = "unknown"
+        if isinstance(envelope, dict):
+            event_id = envelope.get("event_id", "unknown")
+        # Creating a task just to log dropped event ID from string is overkill, skip parsing
+
+        logger.warning(
+            "stream_sink_publish_backpressure_drop",
+            pending_tasks=len(_stream_sink_publish_tasks),
+            max_pending_tasks=_stream_sink_max_pending_tasks,
+            event_id=event_id,
+        )
+        return
+
+    task = asyncio.create_task(_publish_stream_event(sink_registry, envelope))
+    _stream_sink_publish_tasks.add(task)
+    record_stream_sink_dispatch_event("scheduled")
+    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
+    task.add_done_callback(_on_stream_sink_publish_done)
+
+
+async def _drain_stream_sink_publish_tasks(timeout_seconds: float = 2.0) -> None:
+    if not _stream_sink_publish_tasks:
+        return
+
+    pending = list(_stream_sink_publish_tasks)
+    try:
+        await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout_seconds)
+    except TimeoutError:
+        logger.warning(
+            "stream_sink_publish_drain_timeout",
+            timeout_seconds=timeout_seconds,
+            pending_tasks=len(_stream_sink_publish_tasks),
+        )
+    finally:
+        for task in pending:
+            if not task.done():
+                task.cancel()
+        _stream_sink_publish_tasks.clear()
+        set_stream_sink_pending_tasks(0)
 
 
 @asynccontextmanager
@@ -149,7 +282,7 @@ async def lifespan(app: FastAPI):
         try:
             while True:
                 update_uptime()
-                await asyncio.sleep(1)
+                await asyncio.sleep(5)
         except asyncio.CancelledError:
             pass
 
@@ -163,33 +296,42 @@ async def lifespan(app: FastAPI):
     # Initialize stream multiplexer (only if credentials are set)
     multiplexer = None
     if settings.alpaca_api_key and settings.alpaca_secret_key:
+        connections = get_connection_manager()
         multiplexer = StreamMultiplexer(
             api_key=settings.alpaca_api_key,
             api_secret=settings.alpaca_secret_key,
             on_data=_on_stream_data,
             use_iex=settings.stream_use_iex,
+            options_feed=settings.stream_options_feed,
             lazy_connect=settings.stream_lazy_connect,
             fanout_max_inflight=settings.stream_fanout_max_inflight,
             fanout_batch_size=settings.stream_fanout_batch_size,
+            on_broadcast=connections.broadcast,
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()
-        logger.info("multiplexer_initialized", lazy_connect=settings.stream_lazy_connect)
+        logger.info(
+            "multiplexer_initialized",
+            lazy_connect=settings.stream_lazy_connect,
+            options_feed=settings.stream_options_feed,
+        )
     else:
         logger.warning("multiplexer_skipped", reason="Missing Alpaca credentials")
 
     # Initialize data sink for Heber integration
     sink_registry = None
     if settings.data_sink_enabled and settings.data_sink_redis_url:
-        from gateway.api.deps import set_sink_registry
         from gateway.core.cache import RedisCache
         from gateway.core.data_sink import DataSinkRegistry
+        from gateway.core.globals import set_sink_registry
         from gateway.core.redis_sink import RedisStreamsSink
 
         sink_registry = DataSinkRegistry()
         redis_sink = RedisStreamsSink(
             redis_url=settings.data_sink_redis_url,
             max_len=settings.data_sink_max_stream_len,
+            operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
+            pool_size=settings.data_sink_redis_pool_size,
         )
         sink_registry.register(redis_sink)
 
@@ -209,7 +351,10 @@ async def lifespan(app: FastAPI):
     # Configure backfill engine with provider and sink registries
     from gateway.core.backfill import get_backfill_engine
 
-    backfill_engine = get_backfill_engine()
+    backfill_engine = get_backfill_engine(
+        lightweight_concurrency=settings.backfill_lightweight_concurrency,
+        heavyweight_concurrency=settings.backfill_heavyweight_concurrency,
+    )
     backfill_engine.configure(
         provider_registry=registry,
         sink_registry=sink_registry,
@@ -256,6 +401,24 @@ async def lifespan(app: FastAPI):
             eod_enabled=settings.uw_eod_enabled,
         )
 
+    option_capture_service = None
+    if settings.option_capture_enabled:
+        from gateway.core.option_capture import start_option_capture_service
+
+        option_capture_service = await start_option_capture_service(
+            registry=registry,
+            multiplexer=multiplexer,
+            sink_registry=sink_registry,
+            settings=settings,
+        )
+        logger.info(
+            "option_capture_initialized",
+            symbols=settings.option_capture_symbol_list,
+            interval_seconds=settings.option_capture_interval_seconds,
+            market_hours_only=settings.option_capture_market_hours_only,
+            websocket_enabled=settings.option_capture_ws_enabled,
+        )
+
     yield
 
     # ── PRD §Graceful Shutdown: 8-step sequence ────────────────────────────
@@ -278,6 +441,11 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(drain_seconds)
 
     # Step 4: Unsubscribe upstream / stop multiplexer
+    if option_capture_service:
+        from gateway.core.option_capture import stop_option_capture_service
+
+        await stop_option_capture_service()
+
     if multiplexer:
         logger.info("multiplexer_shutdown_starting")
         try:

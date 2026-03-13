@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytest
 
+from gateway.api.finnhub import common as finnhub_common
 from gateway.api.finnhub import quotes
 from gateway.core.registry import ProviderRegistry
 
@@ -57,9 +58,7 @@ class _FakeProvider:
         start: Any,
         end: Any,
     ) -> list[_FakeBar]:
-        self.bars_calls.append(
-            {"symbol": symbol, "resolution": resolution, "start": start, "end": end}
-        )
+        self.bars_calls.append({"symbol": symbol, "resolution": resolution, "start": start, "end": end})
         return [_FakeBar()]
 
 
@@ -103,7 +102,7 @@ async def test_bars_emits_cache_miss_telemetry_and_caches(
     def _record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:
         cache_events.append((route, status, cache_mode))
 
-    monkeypatch.setattr(quotes, "require_provider_rate_limit", _rate_limit)
+    monkeypatch.setattr(finnhub_common, "require_provider_rate_limit", _rate_limit)
     monkeypatch.setattr(quotes, "record_route_cache", _record_route_cache)
 
     response = await quotes.get_bars(
@@ -117,8 +116,6 @@ async def test_bars_emits_cache_miss_telemetry_and_caches(
     )
 
     assert response["meta"]["cached"] is False
-    assert provider.bars_calls == [
-        {"symbol": "aapl", "resolution": "D", "start": None, "end": None}
-    ]
+    assert provider.bars_calls == [{"symbol": "aapl", "resolution": "D", "start": None, "end": None}]
     assert cache.set_calls
     assert cache_events == [("finnhub_bars", "miss", "finnhub")]

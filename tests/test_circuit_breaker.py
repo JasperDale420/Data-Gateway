@@ -219,6 +219,23 @@ class TestCircuitBreakerRegistry:
         assert breaker.config.recovery_timeout == 30
 
     @pytest.mark.asyncio
+    async def test_redis_streams_sink_uses_custom_config(self) -> None:
+        """data_sink:redis_streams should have high-throughput-tuned config.
+
+        The default (threshold=5, recovery=60s) was too aggressive for the
+        Redis Streams pipeline — a transient blip triggered 5 failures in <2s,
+        causing a 60-second blackout that dropped ~256 events.  The custom
+        config raises the threshold to 20 (each failure already survived 3
+        retries) and cuts recovery to 15s.
+        """
+        registry = CircuitBreakerRegistry()
+        breaker = await registry.get("data_sink:redis_streams")
+
+        assert breaker.config.failure_threshold == 20
+        assert breaker.config.recovery_timeout == 15
+        assert breaker.config.success_threshold == 2
+
+    @pytest.mark.asyncio
     async def test_get_all_status(self) -> None:
         """Registry should return status of all breakers."""
         registry = CircuitBreakerRegistry()

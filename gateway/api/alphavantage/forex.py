@@ -1,5 +1,6 @@
 """Alpha Vantage forex endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
@@ -13,6 +14,8 @@ from gateway.api.alphavantage.common import (
     require_api_key,
 )
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -40,8 +43,9 @@ async def get_forex_rate(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/forex/daily/{from_symbol}/{to_symbol}", response_model=SuccessResponse)
@@ -54,14 +58,14 @@ async def get_forex_daily(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get daily forex time series."""
-    key = cache_key("av:forex-daily", from_symbol.upper(), to_symbol.upper())
+    key = cache_key("av:forex-daily", from_symbol.upper(), to_symbol.upper(), str(max_points))
     try:
         return await execute_av_cached(
             cache=cache,
             cache_key_value=key,
             registry=registry,
             ttl=3600,
-            fetcher=lambda provider: provider.get_forex_daily(from_symbol, to_symbol),
+            fetcher=lambda provider: provider.get_forex_daily(from_symbol, to_symbol, max_points=max_points),
             cache_transform=lambda data: data,
             miss_meta_builder=lambda data, _cached: {"count": len(data)},
             endpoint="forex_daily",
@@ -69,5 +73,6 @@ async def get_forex_daily(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

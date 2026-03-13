@@ -115,7 +115,7 @@ async def test_execute_alpaca_provider_call_wraps_provider_errors(
         )
 
     assert exc.value.status_code == 502
-    assert exc.value.detail == "Provider error: boom"
+    assert exc.value.detail == "Upstream provider error"
 
 
 @pytest.mark.asyncio
@@ -149,9 +149,7 @@ async def test_execute_alpaca_cached_call_returns_cached_value(
     cache = _FakeAsyncCache(initial={"alpaca:test:key": {"cached": True}})
     cache_events: list[tuple[str, str, str]] = []
 
-    async def _unexpected_execute(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
-    ):
+    async def _unexpected_execute(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
         raise AssertionError("execute_alpaca_provider_call should not run on cache hit")
 
     def _record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:

@@ -2,23 +2,52 @@
 
 This sink publishes Gateway data to Redis Streams, which Heber ingestors
 can consume for storage in the Bronze layer.
+
+Uses a connection pool for concurrent pipeline execution and processes
+batch chunks in parallel with retry logic.
 """
 
-import json
+import asyncio
+import time
+from collections import deque
 from typing import Any
 
+import orjson
 import structlog
 
 from gateway.core.data_sink import DataSink
+from gateway.core.metrics import record_sink_publish
 
 logger = structlog.get_logger()
+
+DEFAULT_OPERATION_TIMEOUT_SECONDS = 5.0
+DEFAULT_POOL_SIZE = 64
+BATCH_CHUNK_SIZE = 2_000
+MAX_CONCURRENT_CHUNKS = 4
+CHUNK_RETRY_ATTEMPTS = 1
+INITIAL_BACKOFF_SECONDS = 0.5
+MAX_BACKOFF_SECONDS = 5.0
+
+# Retry settings for single publish operations.
+# Previously, a single transient failure (timeout, connection reset) would
+# immediately reset the connection and return False, causing the circuit
+# breaker to count it as a failure.  With retries, transient blips are
+# absorbed before they cascade into circuit-open events.
+PUBLISH_RETRY_ATTEMPTS = 3
+PUBLISH_RETRY_BACKOFF_BASE = 0.1  # seconds — doubles each attempt (0.1, 0.2, 0.4)
+
+# Failed event buffer: events that exhaust all retries are held here
+# and drained on the next successful reconnect.  The deque maxlen caps
+# memory usage — at ~1 KB/event, 10 000 events ≈ 10 MB.
+FAILED_EVENT_BUFFER_CAPACITY = 10_000
 
 
 class RedisStreamsSink(DataSink):
     """Redis Streams implementation of DataSink.
 
     Publishes messages to Redis Streams with automatic trimming
-    to prevent unbounded growth.
+    to prevent unbounded growth. Uses a connection pool to support
+    concurrent pipeline execution from multiple backfill coroutines.
     """
 
     def __init__(
@@ -26,6 +55,8 @@ class RedisStreamsSink(DataSink):
         redis_url: str,
         max_len: int = 100_000,
         approximate_trim: bool = True,
+        operation_timeout_seconds: float = DEFAULT_OPERATION_TIMEOUT_SECONDS,
+        pool_size: int = DEFAULT_POOL_SIZE,
     ) -> None:
         """Initialize Redis Streams sink.
 
@@ -33,12 +64,25 @@ class RedisStreamsSink(DataSink):
             redis_url: Redis connection URL
             max_len: Maximum stream length (oldest entries trimmed)
             approximate_trim: Use ~ for more efficient trimming
+            operation_timeout_seconds: Timeout for Redis operations
+            pool_size: Max connections in the Redis connection pool
         """
         self._redis_url = redis_url
         self._max_len = max_len
         self._approximate = approximate_trim
+        self._operation_timeout_seconds = max(0.5, float(operation_timeout_seconds))
+        self._pool_size = max(1, min(64, int(pool_size)))
         self._redis: Any = None
         self._connected = False
+        self._connect_lock = asyncio.Lock()
+        self._reconnect_cooldown_until: float = 0.0
+        self._backoff_seconds: float = INITIAL_BACKOFF_SECONDS
+
+        # Failed event buffer — holds (topic, payload_bytes) for events that
+        # exhausted all retries.  Drained automatically on reconnect.
+        self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=FAILED_EVENT_BUFFER_CAPACITY)
+        self._drain_lock = asyncio.Lock()
+        self._buffer_stats = {"buffered": 0, "drained": 0, "evicted": 0}
 
     @property
     def name(self) -> str:
@@ -49,23 +93,235 @@ class RedisStreamsSink(DataSink):
         return True
 
     async def _ensure_connected(self) -> None:
-        """Lazy connection to Redis."""
-        if self._redis is None:
+        """Lazy connection to Redis with connection pool.
+
+        Respects a reconnect cooldown set by ``_reset_connection`` to avoid
+        tight reconnect-fail loops that saturate Redis with connections.
+        """
+        if self._redis is not None:
+            return
+
+        now = time.monotonic()
+        if now < self._reconnect_cooldown_until:
+            remaining = self._reconnect_cooldown_until - now
+            logger.debug(
+                "redis_sink_reconnect_cooldown",
+                wait_seconds=round(remaining, 2),
+            )
+            await asyncio.sleep(remaining)
+
+        is_reconnect = False
+        async with self._connect_lock:
+            if self._redis is None:
+                try:
+                    is_reconnect = self._reconnect_cooldown_until > 0
+                    self._redis = self._create_client()
+                    self._connected = True
+                    self._backoff_seconds = INITIAL_BACKOFF_SECONDS
+                    logger.info(
+                        "redis_sink_connected",
+                        url=self._redis_url[:20] + "...",
+                        pool_size=self._pool_size,
+                        timeout_seconds=self._operation_timeout_seconds,
+                        buffered_events=len(self._failed_buffer),
+                    )
+                except ImportError:
+                    logger.error("redis_sink_import_error", msg="redis package not installed")
+                    raise
+
+        # After reconnect, drain any buffered events (outside the lock)
+        if is_reconnect and self._failed_buffer:
+            asyncio.create_task(self._drain_buffer())
+
+    @staticmethod
+    async def _close_stale_client(client: Any) -> None:
+        """Close a stale Redis client and disconnect the underlying pool.
+
+        Calling ``client.close()`` releases the client handle but the
+        ``ConnectionPool`` may keep idle TCP sockets open.  Explicitly
+        disconnecting the pool ensures every socket is closed immediately.
+        """
+        try:
+            if hasattr(client, "aclose"):
+                await client.aclose()
+            else:
+                await client.close()
+        except Exception as e:
+            logger.debug("redis_sink_close_client_error", error=str(e))
+
+        try:
+            pool = getattr(client, "connection_pool", None)
+            if pool is not None:
+                await pool.disconnect()
+            logger.debug("redis_sink_stale_client_closed")
+        except Exception:
+            pass
+
+    def _create_client(self) -> Any:
+        import redis.asyncio as aioredis
+
+        pool = aioredis.BlockingConnectionPool.from_url(
+            self._redis_url,
+            max_connections=self._pool_size,
+            timeout=self._operation_timeout_seconds,
+            decode_responses=False,
+            socket_connect_timeout=self._operation_timeout_seconds,
+            socket_timeout=self._operation_timeout_seconds,
+        )
+        return aioredis.Redis(connection_pool=pool)
+
+    async def _reset_connection(
+        self,
+        operation: str,
+        error: Exception,
+        *,
+        failed_client: Any = None,
+    ) -> None:
+        """Force reconnect on the next call after a transport/protocol failure.
+
+        Awaits closing the old client pool to prevent connection leaks,
+        then sets an exponential backoff cooldown to avoid tight
+        reconnect-fail loops.
+
+        If ``failed_client`` is provided, the reset is only performed when
+        ``self._redis`` is still that exact object.  This prevents multiple
+        concurrent chunks from each triggering independent resets when only
+        one is needed.
+
+        Acquires ``_connect_lock`` to serialize against ``_ensure_connected``
+        and other concurrent ``_reset_connection`` calls, preventing multiple
+        independent pool creations which would leak connections.
+        """
+        if failed_client is not None and self._redis is not failed_client:
+            return
+
+        async with self._connect_lock:
+            # Re-check after acquiring the lock — another coroutine may have
+            # already reset a different (or the same) client while we waited.
+            if failed_client is not None and self._redis is not failed_client:
+                return
+
+            old_client = self._redis
+            self._redis = None
+            self._connected = False
+            if old_client is not None:
+                await self._close_stale_client(old_client)
+            self._reconnect_cooldown_until = time.monotonic() + self._backoff_seconds
+            error_desc = str(error) if str(error) else type(error).__name__
+            logger.warning(
+                "redis_sink_connection_reset",
+                operation=operation,
+                error=error_desc,
+                backoff_seconds=round(self._backoff_seconds, 2),
+            )
+            self._backoff_seconds = min(self._backoff_seconds * 2, MAX_BACKOFF_SECONDS)
+
+    def _buffer_failed_event(self, topic: str, payload: bytes) -> None:
+        """Buffer a failed event for retry on reconnect.
+
+        Uses a bounded deque so oldest events are evicted if the buffer fills.
+        """
+        was_full = len(self._failed_buffer) == (self._failed_buffer.maxlen or FAILED_EVENT_BUFFER_CAPACITY)
+        self._failed_buffer.append((topic, payload))
+        self._buffer_stats["buffered"] += 1
+        if was_full:
+            self._buffer_stats["evicted"] += 1
+            logger.warning(
+                "redis_sink_buffer_eviction",
+                buffer_size=len(self._failed_buffer),
+                total_evicted=self._buffer_stats["evicted"],
+            )
+
+    async def _drain_buffer(self) -> None:
+        """Drain buffered failed events after a successful reconnect.
+
+        Called from _ensure_connected after re-establishing a connection.
+        Uses a pipeline to send all buffered events efficiently.
+        Events that fail during drain are re-buffered (up to one attempt).
+        """
+        if not self._failed_buffer:
+            return
+
+        if not self._drain_lock.locked():
+            async with self._drain_lock:
+                await self._do_drain()
+
+    async def _do_drain(self) -> None:
+        """Execute the actual drain.  Separated for lock clarity."""
+        if not self._failed_buffer:
+            return
+
+        client = self._redis
+        if client is None:
+            return
+
+        # Snapshot and clear — events that fail drain get re-appended
+        events = list(self._failed_buffer)
+        self._failed_buffer.clear()
+
+        logger.info(
+            "redis_sink_buffer_drain_start",
+            count=len(events),
+        )
+
+        drained = 0
+        re_buffer: list[tuple[str, bytes]] = []
+
+        # Drain in pipeline chunks for efficiency
+        for i in range(0, len(events), BATCH_CHUNK_SIZE):
+            chunk = events[i : i + BATCH_CHUNK_SIZE]
             try:
-                import redis.asyncio as aioredis
+                async with client.pipeline(transaction=False) as pipe:
+                    for topic, payload_bytes in chunk:
+                        pipe.xadd(
+                            topic,
+                            {b"data": payload_bytes},
+                            maxlen=self._max_len,
+                            approximate=self._approximate,
+                        )
+                    timeout = self._operation_timeout_seconds + (len(chunk) / 500) * 0.5
+                    results = await asyncio.wait_for(pipe.execute(), timeout=timeout)
 
-                self._redis = aioredis.from_url(
-                    self._redis_url,
-                    decode_responses=True,
+                for j, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        re_buffer.append(chunk[j])
+                    else:
+                        drained += 1
+            except Exception as e:
+                error_desc = str(e) if str(e) else type(e).__name__
+                logger.warning(
+                    "redis_sink_buffer_drain_chunk_error",
+                    chunk_size=len(chunk),
+                    error=error_desc,
                 )
-                self._connected = True
-                logger.info("redis_sink_connected", url=self._redis_url[:20] + "...")
-            except ImportError:
-                logger.error("redis_sink_import_error", msg="redis package not installed")
-                raise
+                re_buffer.extend(chunk)
 
-    async def publish(self, topic: str, data: dict[str, Any]) -> bool:
-        """Publish data to a Redis Stream.
+        # Re-buffer events that failed during drain
+        for item in re_buffer:
+            self._failed_buffer.append(item)
+
+        self._buffer_stats["drained"] += drained
+        logger.info(
+            "redis_sink_buffer_drain_complete",
+            drained=drained,
+            re_buffered=len(re_buffer),
+            buffer_remaining=len(self._failed_buffer),
+        )
+
+    def get_buffer_stats(self) -> dict[str, int]:
+        """Return failed event buffer statistics."""
+        return {
+            **self._buffer_stats,
+            "buffer_size": len(self._failed_buffer),
+            "buffer_capacity": self._failed_buffer.maxlen or FAILED_EVENT_BUFFER_CAPACITY,
+        }
+
+    async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
+        """Publish data to a Redis Stream with automatic retry.
+
+        Retries up to PUBLISH_RETRY_ATTEMPTS times with exponential backoff
+        before declaring failure.  This absorbs transient connection blips
+        and prevents them from cascading into circuit breaker trips.
 
         Args:
             topic: Stream name (e.g., 'gateway.stream.bars')
@@ -74,60 +330,234 @@ class RedisStreamsSink(DataSink):
         Returns:
             True if successful
         """
-        await self._ensure_connected()
+        if isinstance(data, str):
+            payload = {b"data": data.encode()}
+        elif isinstance(data, bytes):
+            payload = {b"data": data}
+        else:
+            payload = {b"data": orjson.dumps(data, default=str)}
 
-        try:
-            # Serialize payload
-            payload = {"data": json.dumps(data, default=str)}
+        last_error: Exception | None = None
 
-            # Add to stream with automatic trimming
-            message_id = await self._redis.xadd(
-                topic,
-                payload,
-                maxlen=self._max_len,
-                approximate=self._approximate,
-            )
+        for attempt in range(PUBLISH_RETRY_ATTEMPTS):
+            await self._ensure_connected()
+            client = self._redis
+            if client is None:
+                # Could not reconnect — count as a failed attempt
+                last_error = last_error or ConnectionError("redis_not_connected")
+                if attempt < PUBLISH_RETRY_ATTEMPTS - 1:
+                    await asyncio.sleep(PUBLISH_RETRY_BACKOFF_BASE * (2**attempt))
+                continue
 
-            # Log successful publish at debug level for tracing
-            logger.debug(
-                "redis_sink_published",
-                topic=topic,
-                message_id=str(message_id),
-                event_id=data.get("event_id", "unknown"),
-            )
-
-            # Record metrics
             try:
-                from gateway.core.metrics import record_sink_publish
+                message_id = await asyncio.wait_for(
+                    client.xadd(
+                        topic,
+                        payload,
+                        maxlen=self._max_len,
+                        approximate=self._approximate,
+                    ),
+                    timeout=self._operation_timeout_seconds,
+                )
+
+                if attempt > 0:
+                    logger.info(
+                        "redis_sink_publish_retry_success",
+                        topic=topic,
+                        attempt=attempt + 1,
+                    )
+
+                logger.debug(
+                    "redis_sink_published",
+                    topic=topic,
+                    message_id=message_id.decode() if isinstance(message_id, bytes) else str(message_id),
+                    event_id=data.get("event_id", "unknown") if isinstance(data, dict) else "unknown",
+                )
 
                 record_sink_publish(sink=self.name, topic=topic, success=True)
-            except ImportError:
-                pass
+                return True
 
-            return True
+            except Exception as e:
+                last_error = e
+                error_desc = str(e) if str(e) else type(e).__name__
+                await self._reset_connection(operation="publish", error=e, failed_client=client)
+
+                if attempt < PUBLISH_RETRY_ATTEMPTS - 1:
+                    backoff = PUBLISH_RETRY_BACKOFF_BASE * (2**attempt)
+                    logger.debug(
+                        "redis_sink_publish_retrying",
+                        topic=topic,
+                        attempt=attempt + 1,
+                        max_attempts=PUBLISH_RETRY_ATTEMPTS,
+                        backoff_seconds=round(backoff, 3),
+                        error=error_desc,
+                    )
+                    await asyncio.sleep(backoff)
+
+        # All retries exhausted — buffer the event for drain on reconnect
+        error_desc = (
+            str(last_error)
+            if last_error and str(last_error)
+            else (type(last_error).__name__ if last_error else "unknown")
+        )
+        self._buffer_failed_event(topic, payload[b"data"])
+        logger.warning(
+            "redis_sink_publish_error",
+            topic=topic,
+            error=error_desc,
+            attempts=PUBLISH_RETRY_ATTEMPTS,
+            buffered=True,
+            buffer_size=len(self._failed_buffer),
+        )
+        record_sink_publish(sink=self.name, topic=topic, success=False)
+        return False
+
+    async def publish_batch(
+        self,
+        messages: list[tuple[str, dict[str, Any] | str | bytes]],
+    ) -> int:
+        """Publish multiple messages via concurrent chunked Redis pipelines.
+
+        Large batches are split into chunks of BATCH_CHUNK_SIZE and processed
+        concurrently (up to MAX_CONCURRENT_CHUNKS at once) for higher throughput.
+
+        Args:
+            messages: List of (topic, data) tuples to publish.
+
+        Returns:
+            Number of successfully published messages.
+        """
+        if not messages:
+            return 0
+
+        await self._ensure_connected()
+
+        chunks = [messages[i : i + BATCH_CHUNK_SIZE] for i in range(0, len(messages), BATCH_CHUNK_SIZE)]
+
+        sem = asyncio.Semaphore(MAX_CONCURRENT_CHUNKS)
+
+        async def _process_chunk_with_retry(chunk: list) -> int:
+            async with sem:
+                published = await self._publish_chunk(chunk)
+                if published == 0 and len(chunk) > 0:
+                    # Retry once on total failure
+                    await self._ensure_connected()
+                    published = await self._publish_chunk(chunk)
+                    if published > 0:
+                        logger.info(
+                            "redis_sink_chunk_retry_success",
+                            chunk_size=len(chunk),
+                            published=published,
+                        )
+                return published
+
+        results = await asyncio.gather(
+            *[_process_chunk_with_retry(chunk) for chunk in chunks],
+            return_exceptions=True,
+        )
+
+        total_published = 0
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "redis_sink_chunk_exception",
+                    chunk_index=i,
+                    error=str(result),
+                )
+                for topic, _ in chunks[i]:
+                    record_sink_publish(sink=self.name, topic=topic, success=False)
+            else:
+                total_published += result
+
+        return total_published
+
+    async def _publish_chunk(
+        self,
+        chunk: list[tuple[str, dict[str, Any] | str | bytes]],
+    ) -> int:
+        """Execute a single pipeline chunk. Returns number published."""
+        client = self._redis
+        if client is None:
+            for topic, _ in chunk:
+                record_sink_publish(sink=self.name, topic=topic, success=False)
+            return 0
+
+        try:
+            async with client.pipeline(transaction=False) as pipe:
+                for topic, data in chunk:
+                    if isinstance(data, str):
+                        payload = {b"data": data.encode()}
+                    elif isinstance(data, bytes):
+                        payload = {b"data": data}
+                    else:
+                        payload = {b"data": orjson.dumps(data, default=str)}
+                    pipe.xadd(
+                        topic,
+                        payload,
+                        maxlen=self._max_len,
+                        approximate=self._approximate,
+                    )
+
+                # Timeout scales with chunk size: base + proportional
+                timeout = self._operation_timeout_seconds + (len(chunk) / 500) * 0.5
+                results = await asyncio.wait_for(pipe.execute(), timeout=timeout)
+
+            published = 0
+            for i, result in enumerate(results):
+                topic = chunk[i][0]
+                if isinstance(result, Exception):
+                    logger.warning(
+                        "redis_sink_batch_item_error",
+                        topic=topic,
+                        error=str(result),
+                    )
+                    record_sink_publish(sink=self.name, topic=topic, success=False)
+                else:
+                    published += 1
+                    record_sink_publish(sink=self.name, topic=topic, success=True)
+
+            logger.debug(
+                "redis_sink_chunk_published",
+                chunk_size=len(chunk),
+                published=published,
+            )
+            return published
 
         except Exception as e:
-            logger.warning("redis_sink_publish_error", topic=topic, error=str(e))
-            # Record error metrics
-            try:
-                from gateway.core.metrics import record_sink_publish
-
+            error_msg = str(e) if str(e) else type(e).__name__
+            await self._reset_connection(
+                operation="publish_batch",
+                error=e,
+                failed_client=client,
+            )
+            logger.warning(
+                "redis_sink_batch_error",
+                count=len(chunk),
+                error=error_msg,
+            )
+            for topic, _ in chunk:
                 record_sink_publish(sink=self.name, topic=topic, success=False)
-            except ImportError:
-                pass
-            return False
+            return 0
 
     async def health_check(self) -> bool:
         """Check Redis connection health."""
         try:
             await self._ensure_connected()
-            await self._redis.ping()
+            client = self._redis
+            if client is None:
+                return False
+            await asyncio.wait_for(client.ping(), timeout=self._operation_timeout_seconds)
             return True
-        except Exception:
+        except Exception as e:
+            await self._reset_connection(
+                operation="health_check",
+                error=e,
+                failed_client=client,
+            )
             return False
 
     async def close(self) -> None:
-        """Close Redis connection."""
+        """Close Redis connection pool."""
         if self._redis:
             await self._redis.close()
             self._redis = None
@@ -145,9 +575,13 @@ class LogSink(DataSink):
     def name(self) -> str:
         return "log"
 
-    async def publish(self, topic: str, data: dict[str, Any]) -> bool:
+    async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
         """Log the message."""
-        logger.debug("data_sink_log", topic=topic, data_keys=list(data.keys()))
+        if isinstance(data, dict):
+            keys = list(data.keys())
+        else:
+            keys = ["<serialized>"]
+        logger.debug("data_sink_log", topic=topic, data_keys=keys)
         return True
 
     async def health_check(self) -> bool:

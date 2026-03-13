@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +47,7 @@ class Settings(BaseSettings):
 
     # Streaming
     stream_use_iex: bool = False  # Use IEX instead of SIP for stocks
+    stream_options_feed: str = "opra"  # Options stream feed: opra or indicative
     stream_lazy_connect: bool = True  # Connect to streams on-demand for efficiency
     stream_reconnect_max_retries: int = Field(default=10, ge=1)
     stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
@@ -58,12 +59,14 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_default: int = Field(default=600, ge=1)  # requests per minute
 
+    # Per-provider rate limits (override hardcoded defaults via env)
+    alpaca_rate_limit_per_minute: int = Field(default=10000, ge=1)
+    alpaca_rate_limit_per_second: int = Field(default=75, ge=1)
+
     # Alpaca (loaded from env, not prefixed)
     alpaca_api_key: str = Field(default="", alias="APCA_API_KEY_ID")
     alpaca_secret_key: str = Field(default="", alias="APCA_API_SECRET_KEY")
-    alpaca_base_url: str = Field(
-        default="https://paper-api.alpaca.markets", alias="APCA_API_BASE_URL"
-    )
+    alpaca_base_url: str = Field(default="https://paper-api.alpaca.markets", alias="APCA_API_BASE_URL")
 
     # Unusual Whales
     uw_api_key: str = Field(default="", alias="UNUSUAL_WHALES_API_KEY")
@@ -92,8 +95,14 @@ class Settings(BaseSettings):
     data_sink_enabled: bool = False
     data_sink_redis_url: str = Field(default="", alias="GATEWAY_DATA_SINK_REDIS_URL")
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
+    data_sink_operation_timeout_seconds: float = Field(default=5.0, ge=0.5)
+    data_sink_redis_pool_size: int = Field(default=8, ge=1, le=32)
     data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
     data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
+
+    # Backfill concurrency (per-provider, split by feed weight)
+    backfill_lightweight_concurrency: int = Field(default=5, ge=1)
+    backfill_heavyweight_concurrency: int = Field(default=2, ge=1)
 
     # Bulk Jobs
     bulk_results_max_in_memory: int = Field(default=25_000, ge=100)
@@ -110,6 +119,15 @@ class Settings(BaseSettings):
     uw_dynamic_ticker_count: int = Field(default=20, ge=0)
     uw_eod_concurrency: int = Field(default=5, ge=1, le=20)
 
+    # Alpaca option chain capture
+    option_capture_enabled: bool = False
+    option_capture_symbols: str = "SPY,QQQ,IWM"
+    option_capture_interval_seconds: int = Field(default=60, ge=1)
+    option_capture_market_hours_only: bool = True
+    option_capture_snapshot_timeout_seconds: float = Field(default=10.0, ge=0.5)
+    option_capture_ws_enabled: bool = True
+    option_capture_ws_contract_limit_per_symbol: int = Field(default=40, ge=1)
+
     # Replay
     replay_messages_max_in_memory: int = Field(default=50_000, ge=100)
     replay_messages_spool_to_disk: bool = True
@@ -117,6 +135,25 @@ class Settings(BaseSettings):
     # Endpoint Rate Limits (PRD 7.5.3)
     bulk_rate_limit_per_hour: int = Field(default=10, ge=1)
     replay_max_concurrent_sessions: int = Field(default=5, ge=1)
+
+    @property
+    def option_capture_symbol_list(self) -> list[str]:
+        """Parse configured option capture symbols into a stable uppercase list."""
+        symbols: list[str] = []
+        for raw_symbol in self.option_capture_symbols.split(","):
+            symbol = raw_symbol.strip().upper()
+            if not symbol or symbol in symbols:
+                continue
+            symbols.append(symbol)
+        return symbols
+
+    @field_validator("stream_options_feed", mode="before")
+    @classmethod
+    def _normalize_stream_options_feed(cls, value: str) -> str:
+        normalized = str(value or "opra").strip().lower()
+        if normalized not in {"opra", "indicative"}:
+            raise ValueError("stream_options_feed must be 'opra' or 'indicative'")
+        return normalized
 
 
 @lru_cache

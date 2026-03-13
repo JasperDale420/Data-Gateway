@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 
 from gateway.api.alphavantage import timeseries
 
@@ -90,3 +91,63 @@ async def test_daily_route_forwards_max_points_and_keys_cache(
             {"symbol": "MSFT", "outputsize": "compact", "adjusted": True, "max_points": 75},
         )
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route_name", ["intraday", "daily", "weekly", "monthly", "search"])
+async def test_timeseries_routes_preserve_http_exception_status_codes(
+    monkeypatch: pytest.MonkeyPatch, route_name: str
+) -> None:
+    async def _fake_execute_av_cached(**_: Any):
+        raise HTTPException(status_code=429, detail="Provider rate limit exceeded: alphavantage")
+
+    monkeypatch.setattr(timeseries, "execute_av_cached", _fake_execute_av_cached)
+
+    with pytest.raises(HTTPException) as exc_info:
+        if route_name == "intraday":
+            await timeseries.get_intraday(
+                symbol="AAPL",
+                interval="5min",
+                outputsize="compact",
+                max_points=5,
+                client=object(),
+                registry=object(),
+                cache=object(),
+            )
+        elif route_name == "daily":
+            await timeseries.get_daily(
+                symbol="AAPL",
+                outputsize="compact",
+                adjusted=True,
+                max_points=5,
+                client=object(),
+                registry=object(),
+                cache=object(),
+            )
+        elif route_name == "weekly":
+            await timeseries.get_weekly(
+                symbol="AAPL",
+                adjusted=True,
+                max_points=5,
+                client=object(),
+                registry=object(),
+                cache=object(),
+            )
+        elif route_name == "monthly":
+            await timeseries.get_monthly(
+                symbol="AAPL",
+                adjusted=True,
+                max_points=5,
+                client=object(),
+                registry=object(),
+                cache=object(),
+            )
+        else:
+            await timeseries.search_symbols(
+                q="apple",
+                client=object(),
+                registry=object(),
+                cache=object(),
+            )
+
+    assert exc_info.value.status_code == 429

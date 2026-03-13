@@ -30,7 +30,7 @@ class DataSink(ABC):
         ...
 
     @abstractmethod
-    async def publish(self, topic: str, data: dict[str, Any]) -> bool:
+    async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
         """Publish data to the sink.
 
         Args:
@@ -52,7 +52,7 @@ class DataSink(ABC):
         """Whether the sink records publish metrics internally."""
         return False
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027
         """Close the sink connection. Override if cleanup is needed."""
         pass
 
@@ -88,7 +88,6 @@ class DataSinkRegistry:
         self._dedup_stats = {"checked": 0, "deduplicated": 0}
         self._publish_stats = {"scheduled": 0, "dropped_backpressure": 0}
         self._sink_semaphores: dict[str, asyncio.Semaphore] = {}
-        self._slot_lock = asyncio.Lock()
 
     def set_dedup_cache(self, cache: Any) -> None:
         """Set dedup cache after initialization (for lazy setup)."""
@@ -122,7 +121,7 @@ class DataSinkRegistry:
         """Return publish scheduling/backpressure statistics."""
         return self._publish_stats.copy()
 
-    async def publish_all(self, topic: str, data: dict[str, Any]) -> None:
+    async def publish_all(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish to all registered sinks (non-blocking).
 
         Uses fire-and-forget pattern to avoid blocking the caller.
@@ -131,33 +130,52 @@ class DataSinkRegistry:
         if not self._enabled or not self._sinks:
             return
 
-        # Dedup check: skip if event_id already published
-        event_id = data.get("event_id")
-        if event_id and self._dedup_cache:
-            self._dedup_stats["checked"] += 1
-            cache_key = f"dedup:publish:{event_id}"
-            try:
-                cached = await self._dedup_cache.get(cache_key)
-                if cached is not None:
-                    self._dedup_stats["deduplicated"] += 1
-                    logger.debug(
-                        "publish_deduplicated",
+        # Dedup check: skip if event_id already published (only for dicts)
+        if isinstance(data, dict):
+            event_id = data.get("event_id")
+            if event_id and self._dedup_cache:
+                self._dedup_stats["checked"] += 1
+                cache_key = f"dedup:publish:{event_id}"
+                try:
+                    # Atomic set-if-not-exists: first caller wins, no TOCTOU race.
+                    # set_nx returns True if key was newly set, False if it existed.
+                    is_new = await self._dedup_cache.set_nx(cache_key, "1", ttl=self.DEDUP_TTL_SECONDS)
+                    if not is_new:
+                        self._dedup_stats["deduplicated"] += 1
+                        logger.debug(
+                            "publish_deduplicated",
+                            event_id=event_id,
+                            topic=topic,
+                        )
+                        return  # Skip duplicate
+                except Exception as e:
+                    # On cache error, proceed with publish (fail open)
+                    logger.warning(
+                        "dedup_cache_error",
                         event_id=event_id,
-                        topic=topic,
+                        error=str(e),
                     )
-                    return  # Skip duplicate
-
-                # Mark as published
-                await self._dedup_cache.set(cache_key, "1", ttl=self.DEDUP_TTL_SECONDS)
-            except Exception as e:
-                # On cache error, proceed with publish (fail open)
-                logger.warning(
-                    "dedup_cache_error",
-                    event_id=event_id,
-                    error=str(e),
-                )
 
         for sink in self._sinks:
+            # Check circuit state BEFORE creating fire-and-forget task.
+            # Previously, the check happened inside _safe_publish, meaning
+            # events queued during a burst would still spawn tasks that
+            # immediately hit CircuitOpenError.  Checking here prevents
+            # wasted task creation and noisy error logs.
+            try:
+                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+                if breaker.state == CircuitState.OPEN:
+                    logger.debug(
+                        "data_sink_circuit_open_skip",
+                        sink=sink.name,
+                        topic=topic,
+                    )
+                    if not sink.record_publish_metrics:
+                        record_sink_publish(sink=sink.name, topic=topic, success=False)
+                    continue
+            except Exception:
+                pass  # If breaker lookup fails, proceed with publish
+
             acquired = await self._try_acquire_sink_slot(sink.name)
             if not acquired:
                 self._publish_stats["dropped_backpressure"] += 1
@@ -176,23 +194,79 @@ class DataSinkRegistry:
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
 
+    async def publish_all_batch(
+        self,
+        messages: list[tuple[str, dict[str, Any]]],
+    ) -> int:
+        """Batch-publish multiple messages to all registered sinks.
+
+        Sinks that implement ``publish_batch`` receive all messages in a single
+        pipeline call. Other sinks fall back to individual ``publish`` calls.
+
+        Args:
+            messages: List of (topic, data) tuples.
+
+        Returns:
+            Total number of successfully published messages across all sinks.
+        """
+        if not self._enabled or not self._sinks or not messages:
+            return 0
+
+        total_published = 0
+
+        for sink in self._sinks:
+            if hasattr(sink, "publish_batch"):
+                try:
+                    breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+                    if breaker.state == CircuitState.OPEN:
+                        logger.warning(
+                            "data_sink_batch_circuit_open",
+                            sink=sink.name,
+                            count=len(messages),
+                        )
+                        continue
+
+                    count = await sink.publish_batch(messages)
+                    total_published += count
+                except Exception:
+                    logger.exception(
+                        "data_sink_batch_publish_failed",
+                        sink=sink.name,
+                        count=len(messages),
+                    )
+            else:
+                # Fallback: publish individually
+                for topic, data in messages:
+                    task = asyncio.create_task(self._safe_publish(sink, topic, data))
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                    total_published += 1  # Optimistic; errors logged in _safe_publish
+
+        return total_published
+
     async def _try_acquire_sink_slot(self, sink_name: str) -> bool:
-        """Try to reserve an in-flight publish slot without blocking."""
-        async with self._slot_lock:
-            sem = self._sink_semaphores.get(sink_name)
-            if sem is None:
-                sem = asyncio.Semaphore(self._max_in_flight_per_sink)
-                self._sink_semaphores[sink_name] = sem
-            if sem.locked():
-                return False
-            await sem.acquire()
+        """Try to reserve an in-flight publish slot with a short timeout.
+
+        Waits up to 2 seconds for a slot to become available during burst
+        publishing (e.g., batch backfill or EOD polls). This prevents
+        silently dropping events during short-lived spikes while still
+        protecting against unbounded backlog.
+        """
+        sem = self._sink_semaphores.get(sink_name)
+        if sem is None:
+            sem = asyncio.Semaphore(self._max_in_flight_per_sink)
+            self._sink_semaphores[sink_name] = sem
+        try:
+            await asyncio.wait_for(sem.acquire(), timeout=2.0)
             return True
+        except TimeoutError:
+            return False
 
     async def _safe_publish_with_release(
         self,
         sink: DataSink,
         topic: str,
-        data: dict[str, Any],
+        data: dict[str, Any] | str | bytes,
     ) -> None:
         """Publish and always release the per-sink in-flight slot."""
         try:
@@ -202,7 +276,7 @@ class DataSinkRegistry:
             if sem is not None:
                 sem.release()
 
-    async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any]) -> None:
+    async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish with error handling."""
         try:
             breaker = await get_circuit_breaker(f"data_sink:{sink.name}")

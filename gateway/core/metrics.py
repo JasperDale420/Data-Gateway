@@ -32,6 +32,12 @@ REQUEST_DURATION = Histogram(
     buckets=(0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 10.0),
 )
 
+SYMBOLOGY_BATCH_SIZE = Histogram(
+    "gateway_symbology_batch_size",
+    "Number of symbols in symbology batch requests",
+    buckets=(1, 2, 5, 10, 25, 50, 100, 250, 500, 1000),
+)
+
 # Cache metrics
 CACHE_HITS = Counter(
     "gateway_cache_hits_total",
@@ -94,6 +100,13 @@ PROVIDER_HEALTH = Gauge(
     "gateway_provider_healthy",
     "Provider health status (1=healthy, 0=unhealthy)",
     ["provider"],
+)
+
+PROVIDER_HEALTH_CHECK_DURATION = Histogram(
+    "gateway_provider_health_check_duration_seconds",
+    "Provider health check duration in seconds",
+    ["provider", "status"],  # status: success, error
+    buckets=(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
 )
 
 PROVIDER_SYNC_CALL_WAIT = Histogram(
@@ -186,6 +199,46 @@ STREAM_FANOUT_LIMIT = Gauge(
     ["limit_type"],  # max_inflight, batch_size
 )
 
+OPTION_CAPTURE_CYCLES = Counter(
+    "gateway_option_capture_cycles_total",
+    "Option capture cycle outcomes",
+    ["status"],  # success, partial_failure, skipped_market_closed
+)
+
+OPTION_CAPTURE_SNAPSHOTS_PUBLISHED = Counter(
+    "gateway_option_capture_snapshots_published_total",
+    "Option chain snapshots published to the sink",
+)
+
+OPTION_CAPTURE_FAILED_SYMBOLS = Counter(
+    "gateway_option_capture_failed_symbols_total",
+    "Option capture symbol failures across cycles",
+)
+
+OPTION_CAPTURE_SYMBOL_CONTRACTS = Gauge(
+    "gateway_option_capture_symbol_contracts",
+    "Contracts seen and tracked by option capture",
+    ["symbol", "kind"],  # snapshot_contracts, ws_tracked_contracts
+)
+
+OPTION_CAPTURE_QUALITY_RATIO = Gauge(
+    "gateway_option_capture_quality_ratio",
+    "Option capture field coverage ratios",
+    ["symbol", "metric"],  # greeks_coverage, iv_coverage, nonzero_open_interest, bid_ask_coverage
+)
+
+OPTION_CAPTURE_SNAPSHOT_AGE = Gauge(
+    "gateway_option_capture_snapshot_age_seconds",
+    "Age of the latest snapshot payload observed for each underlying",
+    ["symbol"],
+)
+
+OPTION_CAPTURE_WS_EVENTS = Counter(
+    "gateway_option_capture_ws_events_total",
+    "Option capture websocket subscription updates",
+    ["event"],  # subscribe_calls, unsubscribe_calls, contracts_added, contracts_removed
+)
+
 _STREAM_SINK_DISPATCH_SNAPSHOT: dict[str, Any] = {
     "limits": {"max_inflight_publish": 1, "max_pending_tasks": 1},
     "pending_tasks": 0,
@@ -196,6 +249,17 @@ _STREAM_FANOUT_SNAPSHOT: dict[str, Any] = {
     "limits": {"max_inflight": 1, "batch_size": 1},
     "events": {},
     "batches": {"count": 0, "total_clients": 0, "max_batch_size": 0},
+}
+
+_OPTION_CAPTURE_SNAPSHOT: dict[str, Any] = {
+    "cycles": {"count": 0, "published": 0, "failed_symbols": 0, "skipped_market_closed": 0},
+    "websocket": {
+        "subscribe_calls": 0,
+        "unsubscribe_calls": 0,
+        "contracts_added": 0,
+        "contracts_removed": 0,
+    },
+    "symbols": {},
 }
 
 _PROVIDER_HEALTH_CHECK_SNAPSHOT: dict[str, dict[str, Any]] = {}
@@ -244,6 +308,12 @@ ALPHAVANTAGE_ROUTE_CACHE = Counter(
     "gateway_alphavantage_route_cache_total",
     "Alpha Vantage route cache events",
     ["endpoint", "status", "cache_mode"],  # status: hit, miss
+)
+
+ROUTE_CACHE_EVENTS = Counter(
+    "gateway_route_cache_total",
+    "Route-level cache hit/miss events",
+    ["route", "status", "cache_mode"],  # status: hit, miss
 )
 
 ALPHAVANTAGE_PAYLOAD_BYTES = Histogram(
@@ -406,6 +476,56 @@ def set_provider_health(provider: str, healthy: bool) -> None:
     PROVIDER_HEALTH.labels(provider=provider).set(1 if healthy else 0)
 
 
+def record_provider_health_check(provider: str, healthy: bool, duration: float) -> None:
+    """Record provider health check duration."""
+    status = "success" if healthy else "error"
+    PROVIDER_HEALTH_CHECK_DURATION.labels(provider=provider, status=status).observe(duration)
+
+    snapshot = _PROVIDER_HEALTH_CHECK_SNAPSHOT.setdefault(
+        provider,
+        {
+            "count": 0,
+            "success_count": 0,
+            "error_count": 0,
+            "total_duration_seconds": 0.0,
+            "last_duration_seconds": 0.0,
+        },
+    )
+    snapshot["count"] = int(snapshot.get("count", 0)) + 1
+    if healthy:
+        snapshot["success_count"] = int(snapshot.get("success_count", 0)) + 1
+    else:
+        snapshot["error_count"] = int(snapshot.get("error_count", 0)) + 1
+    snapshot["total_duration_seconds"] = float(snapshot.get("total_duration_seconds", 0.0)) + max(0.0, duration)
+    snapshot["last_duration_seconds"] = max(0.0, duration)
+
+
+def get_provider_health_check_snapshot() -> dict[str, dict[str, Any]]:
+    """Get provider health-check telemetry snapshot for admin status surfaces."""
+    snapshot = deepcopy(_PROVIDER_HEALTH_CHECK_SNAPSHOT)
+    for provider_data in snapshot.values():
+        count = float(int(provider_data.get("count", 0)))
+        error_count = float(int(provider_data.get("error_count", 0)))
+        total_duration = float(provider_data.get("total_duration_seconds", 0.0))
+        avg_duration_seconds = _safe_ratio(total_duration, count)
+        error_rate = _safe_ratio(error_count, count)
+        health_level = _threshold_level(error_rate, warning_at=0.05, critical_at=0.2)
+        latency_level = _threshold_level(avg_duration_seconds, warning_at=0.3, critical_at=1.0)
+        recommendations: list[str] = []
+        if health_level != "healthy":
+            recommendations.append("Review failing provider health checks and upstream error budgets.")
+        if latency_level != "healthy":
+            recommendations.append("Profile provider health endpoint latency and adjust check intervals.")
+        provider_data["derived"] = {
+            "avg_duration_seconds": avg_duration_seconds,
+            "error_rate": error_rate,
+            "health_level": health_level,
+            "latency_level": latency_level,
+            "recommendations": recommendations,
+        }
+    return snapshot
+
+
 def record_provider_sync_call_wait(provider: str, duration: float) -> None:
     """Record sync-call queue wait duration."""
     PROVIDER_SYNC_CALL_WAIT.labels(provider=provider).observe(duration)
@@ -495,17 +615,13 @@ def _looks_like_id(s: str) -> bool:
     if len(s) > 8 and any(c.isdigit() for c in s):
         return True
     # Pure numbers
-    if s.isdigit() and len(s) > 4:
-        return True
-    return False
+    return bool(s.isdigit() and len(s) > 4)
 
 
 def _looks_like_date(s: str) -> bool:
     """Check if string looks like a date."""
     # YYYY-MM-DD format
-    if len(s) == 10 and s[4] == "-" and s[7] == "-":
-        return True
-    return False
+    return bool(len(s) == 10 and s[4] == "-" and s[7] == "-")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -574,6 +690,242 @@ def record_sink_publish(sink: str, topic: str, success: bool) -> None:
     """Record data sink publish result."""
     status = "success" if success else "error"
     SINK_PUBLISH.labels(sink=sink, topic=topic, status=status).inc()
+
+
+def record_stream_sink_dispatch_event(status: str) -> None:
+    """Record stream-to-sink scheduler lifecycle events."""
+    STREAM_SINK_DISPATCH_EVENTS.labels(status=status).inc()
+    events = _STREAM_SINK_DISPATCH_SNAPSHOT["events"]
+    if isinstance(events, dict):
+        events[status] = int(events.get(status, 0)) + 1
+
+
+def set_stream_sink_pending_tasks(count: int) -> None:
+    """Set current pending stream-to-sink task count."""
+    pending = max(0, count)
+    STREAM_SINK_PENDING_TASKS.set(pending)
+    _STREAM_SINK_DISPATCH_SNAPSHOT["pending_tasks"] = pending
+
+
+def set_stream_sink_dispatch_limits_metrics(
+    *,
+    max_inflight_publish: int,
+    max_pending_tasks: int,
+) -> None:
+    """Set configured stream-to-sink scheduler limits."""
+    STREAM_SINK_DISPATCH_LIMIT.labels(limit_type="max_inflight_publish").set(max(1, max_inflight_publish))
+    STREAM_SINK_DISPATCH_LIMIT.labels(limit_type="max_pending_tasks").set(max(1, max_pending_tasks))
+    limits = _STREAM_SINK_DISPATCH_SNAPSHOT["limits"]
+    if isinstance(limits, dict):
+        limits["max_inflight_publish"] = max(1, max_inflight_publish)
+        limits["max_pending_tasks"] = max(1, max_pending_tasks)
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    """Return a bounded ratio and avoid division-by-zero in derived telemetry."""
+    if denominator <= 0:
+        return 0.0
+    return numerator / denominator
+
+
+def _threshold_level(value: float, *, warning_at: float, critical_at: float) -> str:
+    """Return health level from simple warning/critical thresholds."""
+    if value >= critical_at:
+        return "critical"
+    if value >= warning_at:
+        return "warning"
+    return "healthy"
+
+
+def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
+    """Get stream-to-sink scheduler telemetry snapshot for admin status surfaces."""
+    snapshot = deepcopy(_STREAM_SINK_DISPATCH_SNAPSHOT)
+    limits = snapshot.get("limits", {})
+    events = snapshot.get("events", {})
+
+    max_pending_tasks = float(int(limits.get("max_pending_tasks", 0)))
+    pending_tasks = float(int(snapshot.get("pending_tasks", 0)))
+    scheduled = float(int(events.get("scheduled", 0)))
+    completed = float(int(events.get("completed", 0)))
+    dropped_backpressure = float(int(events.get("dropped_backpressure", 0)))
+
+    pending_utilization = _safe_ratio(pending_tasks, max_pending_tasks)
+    completion_rate = _safe_ratio(completed, scheduled)
+    drop_rate = _safe_ratio(dropped_backpressure, scheduled)
+    backpressure_level = max(
+        _threshold_level(pending_utilization, warning_at=0.7, critical_at=0.9),
+        _threshold_level(drop_rate, warning_at=0.01, critical_at=0.05),
+        key=lambda level: {"healthy": 0, "warning": 1, "critical": 2}[level],
+    )
+    recommendations: list[str] = []
+    if pending_utilization >= 0.7:
+        recommendations.append(
+            "Increase data_sink_stream_publish_max_pending (max_pending_tasks) or reduce sink publish load."
+        )
+    if drop_rate >= 0.01:
+        recommendations.append("Increase data_sink_stream_publish_max_inflight and inspect sink latency.")
+    if completion_rate < 0.95:
+        recommendations.append("Investigate sink publish failures/timeouts and callback backpressure.")
+
+    snapshot["derived"] = {
+        "pending_utilization": pending_utilization,
+        "completion_rate": completion_rate,
+        "drop_rate": drop_rate,
+        "completion_gap": max(0.0, 1.0 - completion_rate),
+        "backpressure_level": backpressure_level,
+        "recommendations": recommendations,
+    }
+    return snapshot
+
+
+def record_stream_fanout_dispatch_event(status: str) -> None:
+    """Record stream fanout dispatch lifecycle events."""
+    STREAM_FANOUT_EVENTS.labels(status=status).inc()
+    events = _STREAM_FANOUT_SNAPSHOT["events"]
+    if isinstance(events, dict):
+        events[status] = int(events.get(status, 0)) + 1
+
+
+def record_stream_fanout_batch_size(batch_size: int) -> None:
+    """Record fanout client batch size for each dispatch batch."""
+    bounded_size = max(0, batch_size)
+    STREAM_FANOUT_BATCH_SIZE.observe(bounded_size)
+    batches = _STREAM_FANOUT_SNAPSHOT["batches"]
+    if isinstance(batches, dict):
+        batches["count"] = int(batches.get("count", 0)) + 1
+        batches["total_clients"] = int(batches.get("total_clients", 0)) + bounded_size
+        batches["max_batch_size"] = max(int(batches.get("max_batch_size", 0)), bounded_size)
+
+
+def set_stream_fanout_limits_metrics(*, max_inflight: int, batch_size: int) -> None:
+    """Set configured stream fanout limits."""
+    STREAM_FANOUT_LIMIT.labels(limit_type="max_inflight").set(max(1, max_inflight))
+    STREAM_FANOUT_LIMIT.labels(limit_type="batch_size").set(max(1, batch_size))
+    limits = _STREAM_FANOUT_SNAPSHOT["limits"]
+    if isinstance(limits, dict):
+        limits["max_inflight"] = max(1, max_inflight)
+        limits["batch_size"] = max(1, batch_size)
+
+
+def get_stream_fanout_snapshot() -> dict[str, Any]:
+    """Get stream fanout telemetry snapshot for admin status surfaces."""
+    snapshot = deepcopy(_STREAM_FANOUT_SNAPSHOT)
+    limits = snapshot.get("limits", {})
+    events = snapshot.get("events", {})
+    batches = snapshot.get("batches", {})
+
+    count = float(int(batches.get("count", 0)))
+    total_clients = float(int(batches.get("total_clients", 0)))
+    configured_batch_size = float(int(limits.get("batch_size", 0)))
+    delivered = float(int(events.get("delivered", 0)))
+    errored = float(int(events.get("error", 0)))
+
+    avg_batch_size = _safe_ratio(total_clients, count)
+    batch_fill_ratio = _safe_ratio(avg_batch_size, configured_batch_size)
+    error_rate = _safe_ratio(errored, delivered + errored)
+    fanout_level = max(
+        _threshold_level(batch_fill_ratio, warning_at=0.8, critical_at=0.95),
+        _threshold_level(error_rate, warning_at=0.005, critical_at=0.02),
+        key=lambda level: {"healthy": 0, "warning": 1, "critical": 2}[level],
+    )
+    recommendations: list[str] = []
+    if batch_fill_ratio >= 0.8:
+        recommendations.append("Increase stream_fanout_batch_size or shard high-fanout symbols.")
+    if error_rate >= 0.005:
+        recommendations.append("Increase stream_fanout_max_inflight and inspect client send latency.")
+
+    snapshot["derived"] = {
+        "avg_batch_size": avg_batch_size,
+        "batch_fill_ratio": batch_fill_ratio,
+        "error_rate": error_rate,
+        "fanout_level": fanout_level,
+        "recommendations": recommendations,
+    }
+    return snapshot
+
+
+def record_option_capture_cycle(*, published: int, failed_symbols: int, skipped_market_closed: bool) -> None:
+    """Record option capture cycle outcome counters and snapshot totals."""
+    status = "skipped_market_closed" if skipped_market_closed else "partial_failure" if failed_symbols else "success"
+    OPTION_CAPTURE_CYCLES.labels(status=status).inc()
+    OPTION_CAPTURE_SNAPSHOTS_PUBLISHED.inc(max(0, published))
+    OPTION_CAPTURE_FAILED_SYMBOLS.inc(max(0, failed_symbols))
+
+    cycles = _OPTION_CAPTURE_SNAPSHOT["cycles"]
+    if isinstance(cycles, dict):
+        cycles["count"] = int(cycles.get("count", 0)) + 1
+        cycles["published"] = int(cycles.get("published", 0)) + max(0, published)
+        cycles["failed_symbols"] = int(cycles.get("failed_symbols", 0)) + max(0, failed_symbols)
+        if skipped_market_closed:
+            cycles["skipped_market_closed"] = int(cycles.get("skipped_market_closed", 0)) + 1
+
+
+def record_option_capture_symbol_metrics(
+    *,
+    symbol: str,
+    snapshot_contracts: int,
+    ws_tracked_contracts: int,
+    snapshot_age_seconds: float,
+    greeks_coverage_ratio: float,
+    iv_coverage_ratio: float,
+    nonzero_open_interest_ratio: float,
+    bid_ask_coverage_ratio: float,
+) -> None:
+    """Record per-symbol option capture quality gauges and admin snapshot state."""
+    safe_symbol = symbol.strip().upper()
+    OPTION_CAPTURE_SYMBOL_CONTRACTS.labels(symbol=safe_symbol, kind="snapshot_contracts").set(
+        max(0, snapshot_contracts)
+    )
+    OPTION_CAPTURE_SYMBOL_CONTRACTS.labels(symbol=safe_symbol, kind="ws_tracked_contracts").set(
+        max(0, ws_tracked_contracts)
+    )
+    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="greeks_coverage").set(
+        max(0.0, min(1.0, greeks_coverage_ratio))
+    )
+    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="iv_coverage").set(
+        max(0.0, min(1.0, iv_coverage_ratio))
+    )
+    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="nonzero_open_interest").set(
+        max(0.0, min(1.0, nonzero_open_interest_ratio))
+    )
+    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="bid_ask_coverage").set(
+        max(0.0, min(1.0, bid_ask_coverage_ratio))
+    )
+    OPTION_CAPTURE_SNAPSHOT_AGE.labels(symbol=safe_symbol).set(max(0.0, snapshot_age_seconds))
+
+    symbols = _OPTION_CAPTURE_SNAPSHOT["symbols"]
+    if isinstance(symbols, dict):
+        symbols[safe_symbol] = {
+            "snapshot_contracts": max(0, snapshot_contracts),
+            "ws_tracked_contracts": max(0, ws_tracked_contracts),
+            "snapshot_age_seconds": max(0.0, snapshot_age_seconds),
+            "greeks_coverage_ratio": max(0.0, min(1.0, greeks_coverage_ratio)),
+            "iv_coverage_ratio": max(0.0, min(1.0, iv_coverage_ratio)),
+            "nonzero_open_interest_ratio": max(0.0, min(1.0, nonzero_open_interest_ratio)),
+            "bid_ask_coverage_ratio": max(0.0, min(1.0, bid_ask_coverage_ratio)),
+        }
+
+
+def record_option_capture_ws_update(*, added: int = 0, removed: int = 0) -> None:
+    """Record websocket add/remove activity for option capture."""
+    websocket = _OPTION_CAPTURE_SNAPSHOT["websocket"]
+    if added > 0:
+        OPTION_CAPTURE_WS_EVENTS.labels(event="subscribe_calls").inc()
+        OPTION_CAPTURE_WS_EVENTS.labels(event="contracts_added").inc(added)
+        if isinstance(websocket, dict):
+            websocket["subscribe_calls"] = int(websocket.get("subscribe_calls", 0)) + 1
+            websocket["contracts_added"] = int(websocket.get("contracts_added", 0)) + added
+    if removed > 0:
+        OPTION_CAPTURE_WS_EVENTS.labels(event="unsubscribe_calls").inc()
+        OPTION_CAPTURE_WS_EVENTS.labels(event="contracts_removed").inc(removed)
+        if isinstance(websocket, dict):
+            websocket["unsubscribe_calls"] = int(websocket.get("unsubscribe_calls", 0)) + 1
+            websocket["contracts_removed"] = int(websocket.get("contracts_removed", 0)) + removed
+
+
+def get_option_capture_snapshot() -> dict[str, Any]:
+    """Return option capture telemetry snapshot for tests and admin surfaces."""
+    return deepcopy(_OPTION_CAPTURE_SNAPSHOT)
 
 
 def httpx_event_hooks(provider: str) -> dict[str, list]:

@@ -51,9 +51,7 @@ async def test_get_crypto_bars_threads_query_params(
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = datetime(2026, 1, 2, tzinfo=UTC)
 
-    async def _execute_alpaca_call(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
-    ):
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
         assert registry is cast(ProviderRegistry, route_registry)
         assert block is False
         provider_obj = registry.get("alpaca")
@@ -82,23 +80,25 @@ async def test_get_crypto_bars_threads_query_params(
 
 
 @pytest.mark.asyncio
-async def test_get_crypto_quotes_raises_404_when_missing(
+async def test_get_crypto_latest_quotes_threads_pairs_to_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
     async def _fake_execute(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
-        return None
+        return {"BTC/USD": _ModelLike({"bid_price": 1.0})}
 
     monkeypatch.setattr(crypto, "execute_alpaca_provider_call", _fake_execute)
 
-    with pytest.raises(HTTPException) as exc:
-        await crypto.get_crypto_quotes(
-            pair="btc/usd",
-            client=cast(Any, SimpleNamespace(id="test-client")),
-            registry=cast(ProviderRegistry, _FakeRegistry({"alpaca": object()})),
-        )
+    response = await crypto.get_crypto_latest_quotes(
+        pairs="btc/usd",
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
 
-    assert exc.value.status_code == 404
-    assert exc.value.detail == "No quote found for btc/usd"
+    assert response["data"]["BTC/USD"].model_dump() == {"bid_price": 1.0}
+    assert response["meta"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -108,9 +108,7 @@ async def test_get_crypto_latest_bars_threads_pairs_to_provider(
     provider = _FakeProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
-    ):
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
         assert registry is cast(ProviderRegistry, route_registry)
         assert block is False
         provider_obj = registry.get("alpaca")
@@ -126,3 +124,47 @@ async def test_get_crypto_latest_bars_threads_pairs_to_provider(
 
     assert provider.latest_bars_calls == [["BTC/USD", "ETH/USD"]]
     assert response["meta"]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_crypto_bars_rejects_invalid_pair_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _should_not_execute(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("provider call should not execute for invalid input")
+
+    monkeypatch.setattr(crypto, "execute_alpaca_provider_call", _should_not_execute)
+
+    with pytest.raises(HTTPException) as exc:
+        await crypto.get_crypto_bars(
+            pair="AAPL",
+            timeframe="1Hour",
+            start=None,
+            end=None,
+            limit=100,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, _FakeRegistry({"alpaca": object()})),
+        )
+
+    assert exc.value.status_code == 400
+    assert "Invalid crypto pair format" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_get_crypto_latest_bars_rejects_invalid_pairs_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _should_not_execute(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("provider call should not execute for invalid input")
+
+    monkeypatch.setattr(crypto, "execute_alpaca_provider_call", _should_not_execute)
+
+    with pytest.raises(HTTPException) as exc:
+        await crypto.get_crypto_latest_bars(
+            pairs="BTC/USD,AAPL",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, _FakeRegistry({"alpaca": object()})),
+        )
+
+    assert exc.value.status_code == 400
+    assert "Invalid crypto pair format" in str(exc.value.detail)

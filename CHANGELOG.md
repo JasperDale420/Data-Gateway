@@ -2,6 +2,512 @@
 
 All notable changes to this project will be documented in this file.
 
+### Changed
+
+- **Option capture quality telemetry** (`gateway/core/option_capture.py`, `gateway/core/metrics.py`, `gateway/api/admin.py`): Added per-symbol snapshot quality stats for contract count, Greeks coverage, IV coverage, non-zero open-interest coverage, bid/ask coverage, snapshot age, and websocket add/remove counts. These now show up in the option capture runtime snapshot for admin status and in Prometheus metrics.
+- **OPRA-first option streaming** (`gateway/config.py`, `gateway/core/stream.py`, `gateway/main.py`, `docker-compose.yml`): Added `stream_options_feed` / `GATEWAY_STREAM_OPTIONS_FEED` with `opra` as the default, and pass the configured options feed into the Alpaca multiplexer at startup.
+- **Budgeted option websocket universe** (`gateway/config.py`, `gateway/core/option_capture.py`): Added `option_capture_ws_contract_limit_per_symbol` with a default budget of 40 contracts per underlying. Full chain snapshots still land in Heber, while websocket `quotes`/`trades` subscriptions are capped to the nearest-expiry, near-ATM, tighter-spread, more-liquid contracts per symbol.
+
+### Fixed
+
+- **Invalid option websocket bars subscriptions** (`gateway/core/option_capture.py`, `gateway/core/stream.py`): The option capture service no longer subscribes to option `bars`, and the upstream options connection now strips any accidental option `bars` subscriptions before sending to Alpaca. Alpaca option websockets support `quotes` and `trades`, not `bars`.
+- **Stream Timestamp serialization crash** (`gateway/core/stream.py`): All WebSocket streaming messages (800K+/day) failed with `Type is not JSON serializable: Timestamp` because `orjson.dumps` could not serialize `msgpack.Timestamp` objects from the OPRA options stream. Added `_orjson_default` fallback handler that converts `pandas.Timestamp` (`.isoformat()`) and `msgpack.Timestamp` (`.to_datetime().isoformat()`) to ISO 8601 strings.
+
+- **UW sector tide never polled** (`gateway/core/uw_poller.py`): Sector tide shared `_should_poll_tide()` and `_last_tide_poll` with market tide, so after market tide polled and set the timer, sector tide's check always returned `False`. Added independent `_last_sector_tide_poll` field and `_should_poll_sector_tide()` method so both feeds poll on their own hourly cadence.
+- **Alpaca 400 Bad Request on naive datetime params** (`gateway/api/alpaca/stock.py`): FastAPI parses query datetime params without timezone when the client omits it (e.g., `?start=2026-01-14T00:00:00`). Added UTC normalization in `get_stock_bars`, `get_stock_trades`, and `get_historical_quotes` before passing to the provider.
+
+### Fixed
+
+- **Pre-commit** (`detect-secrets`): ignore `logs/` directories during secret scans to prevent generated log artifacts from causing false positives.
+
+- **Provider Error Masking** (`gateway/api/finnhub/*.py`, `gateway/api/yf.py`, `gateway/api/sec.py`): Refactored Finnhub, Yahoo Finance, and SEC routers to utilize centralized execution wrappers (`execute_finnhub_cached`, `execute_yf_cached`, `execute_sec_cached`). This ensures that `httpx.HTTPStatusError` exceptions correctly bubble up to the client instead of being masked as generic 502 Bad Gateway errors.
+- **Redis Sink Connection Pool Exhaustion** (`gateway/core/redis_sink.py`): Replaced `aioredis.ConnectionPool` with `aioredis.BlockingConnectionPool` and configured a timeout (`socket_timeout`). This prevents immediate `ConnectionError: Too many connections` exceptions when burst traffic (e.g., 256 concurrent tasks) momentarily exceeds the `max_connections` limit.
+
+- **Alpaca crypto symbol validation and error-log storm prevention** (`backfill.py`, `crypto.py`, `test_backfill.py`, `test_alpaca_crypto_router.py`):
+  - Backfill jobs for Alpaca `crypto_bars`/`crypto_trades` now validate symbol format at submit time and reject stock tickers with a clear `400`-style error message before any upstream call.
+  - Alpaca crypto REST routes now validate pair format (`BASE/QUOTE`, e.g., `BTC/USD`) before provider execution, returning HTTP 400 for invalid input.
+  - Added regression tests to prevent reintroducing invalid-symbol upstream request loops.
+
+- **HTTP client event_hooks conflict** (`http_client.py`): `create_async_http_client` and `create_http_client` now merge caller-provided `event_hooks` (e.g., metrics hooks from providers) with the default logging hooks via a new `_merge_event_hooks()` helper. Previously, providers passing `event_hooks` through `**kwargs` caused `TypeError: httpx.AsyncClient() got multiple values for keyword argument 'event_hooks'`, crashing all 5 providers (alpaca, finnhub, alphavantage, news, sec) on startup.
+- **Redis sink connection leak race condition** (`redis_sink.py`): `_reset_connection()` now acquires `_connect_lock` and re-checks `failed_client` identity inside the lock. Previously, concurrent publish chunks could each trigger independent resets without coordination, orphaning old connection pools and leaking connections (observed 266 open connections vs. the expected pool max of 8).
+- **Redis sink pool disconnect on reset** (`redis_sink.py`): `_close_stale_client()` now calls `connection_pool.disconnect()` after `client.close()` to force-release all idle TCP sockets from leaked pools.
+
+### Fixed
+
+- **TOCTOU race in DataSinkRegistry dedup** (`data_sink.py`, `cache.py`): Replaced `get()`→`set()` dedup pattern with atomic `set_nx()` (Redis `SET NX EX`). Eliminates race window where two coroutines could both publish the same event.
+- **Mutable set view in SubscriptionManager** (`stream.py`): `get_clients_for_symbol_view()` now returns `frozenset` instead of raw mutable `set` reference, preventing accidental mutation of the subscription index during async fanout dispatch.
+
+### Audit
+
+- **Dead code audit — flagged 3 orphaned API modules** (`replay.py`, `quality.py`, `symbology.py`, `__init__.py`): Cross-repo Sourcegraph audit found zero external consumers across all Empire repos for `/api/v1/replay/*`, `/quality/*`, and `/api/v1/symbology/*` endpoints. Added `TODO(audit-2026-02)` comments to module docstrings and import lines. Cerberus and Heber have their own local replay/quality implementations.
+
+### Fixed
+
+- **Architecture violation `core → api` import** (`core/uw_poller.py`, `api/deps.py`): Extracted singleton state management (provider registry, stream multiplexer, data sink registry) from `api/deps.py` into new `core/globals.py`. `uw_poller` and `main.py` now import from `core.globals`; `deps.py` re-exports for backward compatibility. All 4 `import-linter` contracts now pass.
+
+### Fixed
+
+- **Redis sink concurrent chunk race condition** (`redis_sink.py`):
+  - `_reset_connection()` now accepts a `failed_client` parameter and only resets when the failed client is still the active one, preventing cascading resets from concurrent chunks
+  - `_publish_chunk()`, `publish()`, and `health_check()` capture a local client reference before use, preventing `'NoneType' object has no attribute 'pipeline'` crashes when another chunk triggers a reset mid-flight
+
+- **Docker health check deadlock** (`docker-compose.yml`): Changed health check endpoint from `/ping` (returns 401, marking container unhealthy) to `/health` (public endpoint, returns 200)
+- **Redis sink connection leak and reconnect storm** (`redis_sink.py`):
+  - `_reset_connection()` is now `async` and `await`s closing the old Redis client pool before discarding it, preventing fire-and-forget connection leaks
+  - Added exponential reconnect backoff (0.5s initial, capped at 5s) to prevent tight reconnect-fail loops that saturate Redis with "Too many connections" errors
+  - `_ensure_connected()` respects the backoff cooldown before attempting reconnection
+  - Added `asyncio.Lock` to `_ensure_connected` to prevent race conditions where multiple connection pools were created during concurrent reconnects
+- **UW darkpool SDK settlement enum mismatch** (`vendor/unusualwhales_sdk`): Added `CASH = "cash"` to `SingleTradeSettlement` enum — the UW API returns `"cash"` for some darkpool trades but the SDK only defined `"cash_settlement"`, causing recurring `uw_darkpool_recent_sdk_failed` warnings and SDK-to-raw-HTTP fallbacks
+
+### Removed
+
+- **Orphan `sanity.py`** (`gateway/sanity.py`): Deleted standalone FastAPI app with `/ping` endpoint that was never integrated into the main application — its existence caused confusion and contributed to the health check misconfiguration
+
+### Changed
+
+- **Backfill symbol concurrency** (`backfill.py`): Increased `DEFAULT_SYMBOL_CONCURRENCY` from 5 → 10, allowing more parallel symbol fetching within a single backfill job
+
+## [0.5.83] - 2026-02-19
+
+### Added
+
+- **Bulk cancel endpoint**: Add `POST /cancel-all` functionality to `gateway/api/backfill.py` which was missing from API routing.
+- **Flush endpoint**: Add `DELETE /` functionality to `gateway/api/backfill.py` which was missing from API routing.
+
+### Fixed
+
+- **Redis sink concurrency test CPU bottleneck**: Patcher limits `BATCH_CHUNK_SIZE` to 10 in `test_publish_batch_concurrent_chunks` to prevent massive list comprehension payloads from blocking the asyncio runloop and skewing concurrency timing assertions.
+- **Auth test debug calls expectation mismatch**: Updated `test_authenticate_valid_key_logs_debug_not_info` to assert 2 expected logger.debug() calls instead of 1.
+- **Redis sink connection leak and reconnect storm** (`redis_sink.py`):
+  - `_reset_connection()` is now `async` and `await`s closing the old Redis client pool before discarding it, preventing fire-and-forget connection leaks
+  - Added exponential reconnect backoff (0.5s initial, capped at 5s) to prevent tight reconnect-fail loops that saturate Redis with "Too many connections" errors
+  - `_ensure_connected()` respects the backoff cooldown before attempting reconnection
+  - Added `asyncio.Lock` to `_ensure_connected` to prevent race conditions where multiple connection pools were created during concurrent reconnects
+- **UW darkpool SDK settlement enum mismatch** (`vendor/unusualwhales_sdk`): Added `CASH = "cash"` to `SingleTradeSettlement` enum — the UW API returns `"cash"` for some darkpool trades but the SDK only defined `"cash_settlement"`, causing recurring `uw_darkpool_recent_sdk_failed` warnings and SDK-to-raw-HTTP fallbacks
+
+### Removed
+
+- **Orphan `sanity.py`** (`gateway/sanity.py`): Deleted standalone FastAPI app with `/ping` endpoint that was never integrated into the main application — its existence caused confusion and contributed to the health check misconfiguration
+
+### Changed
+
+- **Backfill symbol concurrency** (`backfill.py`): Increased `DEFAULT_SYMBOL_CONCURRENCY` from 5 → 10, allowing more parallel symbol fetching within a single backfill job
+
+## [0.5.82] - 2026-02-18
+
+### Changed
+
+- **Redis sink connection pool** (`redis_sink.py`): Replaced single Redis connection with a connection pool (default 8 connections), enabling concurrent pipeline execution from multiple backfill coroutines
+- **Redis sink operation timeout** (`redis_sink.py`): Increased default from 1s → 5s to eliminate frequent `redis_sink_connection_reset` under load
+- **Redis sink binary mode** (`redis_sink.py`): Removed `decode_responses=True` — payloads are binary orjson, skipping unnecessary UTF-8 encode/decode roundtrip
+- **Redis sink concurrent batch chunks** (`redis_sink.py`): Split batches into 2K chunks (down from 5K) and process up to 4 concurrently via `asyncio.gather()`, ~4x throughput improvement
+- **Redis sink chunk retry** (`redis_sink.py`): Failed chunks are retried once with a fresh connection before aborting (previously immediate abort)
+- **Feed-weighted backfill concurrency** (`backfill.py`): Replaced flat 3-slot per-provider semaphore with separate lightweight (bars/quotes/news → 5 slots) and heavyweight (trades → 2 slots) semaphores per provider, preventing heavyweight jobs from starving lightweight ones
+
+### Added
+
+- **Configurable backfill concurrency** (`config.py`): `GATEWAY_BACKFILL_LIGHTWEIGHT_CONCURRENCY` (default 5) and `GATEWAY_BACKFILL_HEAVYWEIGHT_CONCURRENCY` (default 2) environment variables
+- **Configurable Redis sink pool** (`config.py`): `GATEWAY_DATA_SINK_OPERATION_TIMEOUT_SECONDS` (default 5.0) and `GATEWAY_DATA_SINK_REDIS_POOL_SIZE` (default 8) environment variables
+- **Feed weight classification tests** (`test_backfill.py`): Tests for heavyweight/lightweight feed classification and concurrency isolation between weight classes
+- **Redis sink bandwidth tests** (`test_redis_sink.py`): Tests for connection pool params, concurrent chunk execution, retry on failure, and binary payload encoding
+
+## [0.5.81] - 2026-02-18
+
+### Changed
+
+- **Backfill per-provider concurrency**: Replaced per-provider mutex lock with semaphore (3 concurrent jobs per provider) in `backfill.py`, eliminating head-of-line blocking where one slow job starved all others
+- **Concurrent symbol processing**: Symbols within a single backfill job are now fetched concurrently (bounded by semaphore, default 5) instead of sequentially via `asyncio.gather` in `backfill.py`
+- **Alpaca inter-chunk delay**: Reduced from 200ms to 50ms in `backfill.py` to improve throughput while staying within rate limits
+- **Alpaca rate limit capability**: Fixed stale `rate_limit_requests_per_minute` from 200 to 10000 in `alpaca.py` to match Algo Trader Plus plan
+
+### Added
+
+- **Bulk cancel endpoint**: `POST /api/v1/backfill/cancel-all` cancels all running and queued backfill jobs (`api/backfill.py`)
+- **Flush endpoint**: `DELETE /api/v1/backfill` cancels all jobs and purges job history (`api/backfill.py`)
+- **Stale job auto-expiry**: Completed/failed/cancelled jobs older than 1 hour are automatically pruned on next submit (`backfill.py`)
+- **Backfill architecture tests**: Added tests for `cancel_all`, `flush`, stale expiry, concurrent symbol processing, and new API endpoints (`test_backfill.py`)
+
+## [0.5.80] - 2026-02-17
+
+### Fixed
+
+- **Redis sink batch timeouts** (`redis_sink.py`): Large backfills (874K+ messages) sent entire batch in a single pipeline with 2s timeout, causing perpetual `redis_sink_connection_reset`. Now chunks into 5,000-message pipelines with dynamic timeout scaling
+- **Empty error strings** (`redis_sink.py`): `asyncio.TimeoutError` has empty `str()` — error logs now fall back to exception type name
+
+## [0.5.79] - 2026-02-17
+
+### Fixed
+
+- **Greek exposure schema alignment**: Updated `NormalizedGreekExposure` to use per-call/per-put split fields (`call_gamma`, `put_gamma`, `call_delta`, `put_delta`, `call_vanna`, `put_vanna`, `call_charm`, `put_charm`) matching the UW API response. Added `dte` field for expiry-level data. Updated all 3 provider methods (`get_greek_exposure`, `get_greek_exposure_by_strike`, `get_greek_exposure_by_expiry`) and `FEED_UNIQUE_FIELDS` in `envelope.py`.
+
+## [0.5.78] - 2026-02-17
+
+### Fixed
+
+- **Blocking health_check** (`yfinance.py`): `health_check` called `yf.Ticker().info` synchronously on the event loop; wrapped in `asyncio.to_thread` to prevent blocking the async server
+
+### Removed
+
+- **Dead constant** (`yfinance.py`): Remove unused `YFINANCE_CACHE_TTL` — caching is handled at the API route layer (`gateway/api/yf.py`)
+
+### Changed
+
+- **Docstring correction** (`yfinance.py`): Clarify that response caching is handled at the route layer, not the provider
+
+## [0.5.77] - 2026-02-15
+
+### Changed
+
+- **pyproject.toml cleanup**: Remove stale mypy overrides for deleted `gateway.core.redis_cache` and non-existent `gateway.api._legacy`
+- **pyproject.toml cleanup**: Remove unused `numpy.typing.mypy_plugin` (no numpy imports in gateway)
+- **pyproject.toml cleanup**: Remove unused `black>=24.0` dev dependency (ruff-format handles formatting)
+
+## [0.5.76] - 2026-02-15
+
+### Fixed
+
+- **Heartbeat counter bug** (`websocket.py`): `missed_heartbeats` now resets to 0 on successful send; previously intermittent failures accumulated until false disconnect
+
+### Changed
+
+- **Stream dispatch serialization** (`main.py`): Switch `json.dumps` → `orjson.dumps` in Heber sink dispatch hot path for consistency with fanout
+- **Upstream encode** (`stream.py`): Switch `json.dumps` → `orjson.dumps` in `_encode_message` for consistency
+- **Redis cache imports** (`cache.py`): Move 4 inline `import json` statements to module level
+- **WebSocket message loop** (`websocket.py`): Remove redundant `get_settings()` calls per received message — use pre-resolved `max_bytes`
+
+## [0.5.75] - 2026-02-15
+
+### Removed
+
+- **Dead code: `redis_cache.py`**: Deleted deprecated compatibility shim with zero imports (`core/redis_cache.py`)
+- **Dead code: `multiplexer.py`**: Deleted legacy `SubscriptionManager` superseded by `StreamMultiplexer` (`core/multiplexer.py`)
+- **Dead code: `MessageDeduplicator`**: Removed unused class, singleton, and imports from `core/dedup.py`
+
+### Fixed
+
+- **TYPE_CHECKING import**: Corrected `StreamMultiplexer` import path in `deps.py` from `multiplexer` → `stream`
+
+## [0.5.74] - 2026-02-15
+
+### Fixed
+
+- **CLI key rotation**: `cmd_rotate_key` now appends old key hash to `old_key_hashes` before overwriting (`cli.py`)
+- **Stream lazy connect**: Replace busy-poll loop with `asyncio.Event` in `_ensure_connected` (`stream.py`)
+- **Hot-path import**: Move `datetime` import from per-message scope to module level (`stream.py`)
+
+### Performance
+
+- **Stream fanout serialization**: Switch `json.dumps` → `orjson.dumps` for ~5-10x faster envelope serialization (`stream.py`)
+- **Uptime loop interval**: Reduce polling from 1s → 5s since Prometheus scrapes at 15-30s intervals (`main.py`)
+- **Middleware cache type**: Cache `_cache_type` label to avoid repeated import + isinstance checks per request (`middleware.py`)
+
+## [0.5.73] - 2026-02-15
+
+### Fixed
+
+- **broadcast_shutdown**: Send shutdown messages via `send_json` per connection instead of delegating to `broadcast` which pre-serialized to bytes (`connections.py`)
+- **validate_symbols_array**: Route through `validate_symbol` instead of `_matches_any_symbol_pattern` for consistent validation (`security.py`)
+- **UW options alias**: Added `/options/{symbol}/iv-rank` alias route (`uw/options.py`)
+- **AlphaVantage max_points**: Pass `max_points` through to provider calls and cache keys in `indicators.py`, `forex.py`, and `crypto.py`
+- **Calendar degradation**: Added degradation tracking in `get_market_hours` endpoint (`calendar.py`)
+- **Fetcher guards**: Added `has_fetcher()` / `has_bars_fetcher()` guards in `bulk.py`, `calendar.py`, and `corporate.py` to prevent double-binding
+- **Pagination logic**: Fixed undefined `total`, `has_more`, `next_offset` in `bulk.py:list_jobs` and `replay.py:list_sessions`
+- **Envelope seq field**: Added `seq` as top-level field in `fast_wrap_streaming_event` output (`envelope.py`)
+- **News symbol ordering**: Use `dict.fromkeys()` for order-preserving deduplication in news message routing (`stream.py`)
+- **Replay state filter**: Guard `state` filter with `isinstance(state, str)` to handle direct function calls (`replay.py`)
+- **Missing script functions**: Added `_run_provider_smoke_check` to `live_provider_smoke.py` and `_index_function_defs`, `_resolve_handler_name`, `ROUTE_PATTERN` to `generate_provider_contract.py`
+- **Rate limiter imports**: Added missing `get_endpoint_rate_limiter` and `EndpointRateLimitExceeded` imports in `bulk.py` and `replay.py`
+
+### Added
+
+- **BulkJobManager.list_jobs_page**: Paginated job listing with `client_id` and `status` filtering (`core/bulk.py`)
+- **ReplaySessionManager.list_sessions_page**: Paginated session listing with `client_id` and `state` filtering (`core/replay.py`)
+- **trading-bot gateway client**: Created `trading-bot/src/core/gateway_client.py` with `DataGatewayClient` using `X-Gateway-Key` header authentication
+
+## [0.5.72] - 2026-02-14
+
+### Performance
+
+- **orjson serialization**: Replaced `json.dumps` with `orjson.dumps` in `ConnectionManager.broadcast` and `RedisStreamsSink.publish`/`publish_batch`. `orjson.dumps` returns `bytes` directly, eliminating UTF-8 encode/decode overhead for WebSocket and Redis I/O.
+- **uvloop event loop**: Explicitly install `uvloop.EventLoopPolicy` in `gateway/main.py` for 2-4x faster asyncio event loop execution. Added `orjson` and `uvloop` as explicit dependencies in `pyproject.toml`.
+
+### Fixed
+
+- **Pre-serialization test assertion**: Updated `test_main_stream_sink.py` to expect pre-serialized JSON string from `_on_stream_data` (aligned with Item #5 pre-serialization optimization).
+
+## [0.5.71] - 2026-02-13
+
+### Performance
+
+- **Raw ASGI middleware**: Converted all 7 `BaseHTTPMiddleware` classes (`RequestMetricsMiddleware`, `InputValidationMiddleware`, `RateLimitMiddleware`, `SecurityHeadersMiddleware`, `GlobalRateLimitMiddleware`, `CacheMiddleware`, `EventEnvelopeMiddleware`) to raw ASGI `__call__` pattern. Eliminates per-request `Request`/`Response` object creation overhead from Starlette's middleware adapter. `CacheMiddleware` and `EventEnvelopeMiddleware` use response body buffering via `send` interceptors for caching and envelope wrapping.
+- **Redis pipeline batching**: Added `RedisStreamsSink.publish_batch()` using Redis pipelines to batch multiple `XADD` commands in a single network round trip. Added `DataSinkRegistry.publish_all_batch()` to orchestrate batch publishing with circuit breaker support. Backfill engine `_publish_items` now uses batch publishing for all items in a chunk.
+
+### Fixed
+
+- **CacheMiddleware BYPASS header**: Non-cacheable 200 responses (streaming, missing content-length) now correctly return `X-Gateway-Cache: BYPASS` instead of `MISS`.
+- **Stock router test**: Fixed `test_get_stock_trades_threads_limit_to_provider` which was monkeypatching `stock.execute_alpaca_provider_call` — a function that no longer exists in `stock.py`. Test now bypasses the rate limiter and uses the actual provider call path.
+
+## [0.5.70] - 2026-02-13
+
+### Performance
+
+- **Hoisted per-message imports**: Moved `json` and `msgpack` imports from `_decode_message`/`_encode_message` to module level in `gateway/core/stream.py`, eliminating `sys.modules` lookup overhead on every WebSocket message.
+- **Cached validator in hot path**: Replaced `get_validator()` call per message with `_get_stream_validator()` (already cached on the multiplexer) in `stream.py:_handle_message`.
+- **Eliminated per-message dict creation**: Replaced inline `data_type_map` dict with existing `MESSAGE_TYPE_TO_DATA_TYPE` module constant; added `_VALIDATABLE_FEEDS` frozenset for the feed validation check in `stream.py`.
+- **Hoisted metrics imports**: Moved `record_envelope_created` and `record_sink_publish` imports from deferred try/except blocks to module-level in `gateway/core/envelope.py` and `gateway/core/redis_sink.py`.
+- **Pre-serialized broadcast JSON**: `ConnectionManager.broadcast` in `gateway/core/connections.py` now serializes the message dict once with `json.dumps` and sends via `send_text`, avoiding redundant `send_json` serialization per client.
+- **SHA256 usedforsecurity flag**: Added `usedforsecurity=False` to `hashlib.sha256` in `envelope.py:compute_event_id` to skip FIPS compliance checks.
+- **Frozenset for public path check**: `CacheMiddleware._is_public_path` in `gateway/api/middleware.py` now uses class-level `frozenset` and tuple `startswith` for O(1) lookups.
+
+## [0.5.69] - 2026-02-13
+
+### Fixed
+
+- **UW poller out-of-order timestamp log flood**: Downgraded per-item `uw_flow_out_of_order_ts`, `uw_darkpool_out_of_order_ts`, `uw_market_tide_out_of_order_ts`, and `uw_sector_tide_out_of_order_ts` logs from `warning` to `debug` in `gateway/core/uw_poller.py`. The UW API returns data sorted newest-first, so consecutive pairs naturally trigger this check — producing ~5,200 warnings per 9 minutes. The aggregate out-of-order count remains logged at info-level in each poll summary line.
+- **Data sink backpressure silently dropping events**: Replaced instant-drop backpressure in `gateway/core/data_sink.py` `_try_acquire_sink_slot` with a 2-second queuing timeout using `asyncio.wait_for`. During burst publishing (e.g., 200+ darkpool records in a batch poll), events now wait briefly for a publish slot instead of being silently dropped. Removed unused `_slot_lock` mutex.
+
+## [0.5.68] - 2026-02-13
+
+### Added
+
+- **Sliding window rate limiting**: Replaced fixed-window counter in `RateLimitBucket` (`middleware.py`) with sliding window deque to prevent burst starvation where the entire allowance was consumed in <1 second.
+- **Standard `Retry-After` header**: All 429 responses from `RateLimitMiddleware` and `GlobalRateLimitMiddleware` now include the `Retry-After` header for proper HTTP backoff.
+- **Configurable Alpaca rate limits**: Added `GATEWAY_ALPACA_RATE_LIMIT_PER_MINUTE` and `GATEWAY_ALPACA_RATE_LIMIT_PER_SECOND` env vars in `config.py` to override Alpaca provider limits without code changes.
+- **Sliding window rate limit tests**: New `tests/test_sliding_window_rate_limit.py` with 10 tests covering burst behavior, window expiry, and Retry-After header presence.
+
+### Changed
+
+- **3roses client rate limit**: Increased from 300 → 6,000 req/min in `clients.yaml` to accommodate ~5,000 symbol pre-market scanner burst.
+- **Alpaca provider limits**: Updated from free-tier defaults (200/min, 10/sec) to paid-tier (10,000/min, 75/sec) in `rate_limiter.py`.
+- **Provider rate limits aligned with official docs**: Removed arbitrary NewsAPI 10/min (their docs only enforce 100/day). Updated SEC EDGAR from conservative 8/sec + 300/min to official 10/sec + 600/min. Updated module docstring to document each provider's plan tier.
+- **Rate limiter queues by default**: Changed `require_provider_rate_limit` default from `block=False` (immediate 429) to `block=True` (wait up to 30s for a slot). All provider calls now queue instead of rejecting.
+
+## [0.5.67] - 2026-02-13
+
+### Added
+
+- **Snapshot envelope wrapping regression tests**: Added `test_wrap_event_symbol_keyed_dict_does_not_crash` and `TestIsSymbolKeyedDict` tests in `tests/test_envelope.py` to lock behavior for symbol-keyed dict payloads and middleware detection heuristic.
+- Added `snapshots` and `snapshot` entries to `FEED_MAPPING` in `middleware.py`.
+
+### Fixed
+
+- **Envelope middleware crash on snapshots endpoint (`'dict' object has no attribute 'upper'`)**: Updated `EventEnvelopeMiddleware` in `gateway/api/middleware.py` to detect symbol-keyed dict payloads (where keys are ticker symbols like `"AAPL"`, `"S"`) and flatten them into per-symbol items before wrapping, instead of passing the entire keyed dict to `wrap_event` which misinterpreted tickers like `"S"` as metadata field lookups returning nested dicts.
+- **Defensive symbol type guard in `wrap_event`**: Added type check in `gateway/core/envelope.py` to ensure the extracted symbol is always a string, preventing `AttributeError` if a non-string value is returned by the `or` extraction chain.
+
+## [0.5.66] - 2026-02-13
+
+### Added
+
+- Added UW provider regression tests in `tests/test_uw_provider.py` for:
+  - IV-rank latest lookup without forced date filtering.
+  - IV-rank retry behavior when a date-filtered request returns HTTP 422.
+  - Darkpool recent raw-HTTP fallback when SDK payload parsing fails.
+
+### Fixed
+
+- **UW IV-rank EOD poll error flood (HTTP 422)**: Updated `gateway/providers/uw.py` so `get_iv_rank(...)` no longer forces `date=today` when no date is provided, and retries once without date when date-filtered requests are rejected with `422`.
+- **UW darkpool recent parser fragility on upstream gateway failures**: Updated `gateway/providers/uw.py` so `get_darkpool_recent(...)` falls back to raw HTTP (`/api/darkpool/recent`) when SDK parsing fails and logs upstream `5xx` as warning context.
+
+## [0.5.65] - 2026-02-13
+
+### Added
+
+- Added `TESTING.md` with Data Gateway test commands, test layout, and TDD expectations.
+- Added `DEVELOPER_NOTES.md` with operational gotchas, debugging tips, and high-risk edit areas.
+
+### Changed
+
+- Standardized AI agent guidance file to `AGENTS.md` and aligned content to current repository docs layout.
+- Moved operational docs into standard locations:
+  - `runbook.md` -> `docs/RUNBOOK.md`
+  - `API_REFERENCE.md` -> `docs/API_REFERENCE.md`
+- Relocated root audit/report artifacts to `docs/audits/` and normalized checklist naming to `AUDIT_CHECKLIST.md`.
+- Updated cross-document links in `README.md`, `CONTRIBUTING.md`, and `docs/API_REFERENCE.md` to match standardized paths.
+
+### Fixed
+
+- Corrected runbook authentication header examples from `X-API-Key` to `X-Gateway-Key` to match actual gateway auth behavior.
+
+## [0.5.64] - 2026-02-12
+
+### Added
+
+- **Alpaca/UW regression coverage**:
+  - Added Alpaca option quote normalization tests for scalar/string/null `conditions`.
+  - Added UW IV-rank endpoint contract tests for passthrough and fallback payload shapes.
+  - Added router contract coverage to lock `block=True` limiter behavior on high-volume Alpaca options routes.
+
+### Fixed
+
+- **Alpaca option quote schema mismatch (502s)**: Updated Alpaca quote normalization to coerce `conditions` into a list shape accepted by `OptionQuote`.
+- **UW iv-rank route failures (404/parse errors)**: Updated UW provider `get_iv_rank(...)` to parse iv-rank from raw HTTP payload with robust field fallback mapping.
+- **Burst rate-limit amplification on hot options routes**: Updated Alpaca options routers to call provider limiter with `block=True` for chain/quote endpoints so requests queue instead of failing immediately under load.
+
+## [0.5.63] - 2026-02-12
+
+### Changed
+
+- **Adaptive darkpool polling**: Replaced static 60s darkpool poll interval with time-of-day adaptive intervals — 15s during morning rush (9:30-10:30 ET), 30s during normal market hours, 60s during extended hours. Reduces missed trades during peak volume periods. Base loop tick reduced from 60s to 15s to support the faster cadence.
+
+## [0.5.62] - 2026-02-12
+
+### Added
+
+- **REST sink explode regression coverage**: Added middleware tests in `tests/test_middleware_streaming.py` for Alpaca REST dict payloads with nested `bars[]` and `trades[]`, including empty-list skip behavior.
+
+### Fixed
+
+- **Malformed sink payload shape for Alpaca REST bars/trades**: Updated `gateway/api/middleware.py` so sink publishing now explodes nested REST payloads (`data.bars[]` / `data.trades[]`) into one EventEnvelope per item, preserving top-level context like `symbol` and `timeframe`.
+- **Empty aggregate sink noise**: Sink publishing now skips empty list payloads for eligible routes instead of emitting empty aggregate envelopes that normalize to null-heavy Silver rows.
+- **Bulk Alpaca stocks route feed resolution**: Updated canonical route mapping so `/api/v1/alpaca/stocks/bars` and `/api/v1/alpaca/stocks/trades` resolve to sink feeds `bars` / `trades` instead of fallback `stocks`.
+- **Middleware sink eligibility typing cleanup**: Refined Alpaca bars/trades sink eligibility checks to use typed intermediate list variables, eliminating `len(Any | None)` static type errors without changing runtime behavior.
+
+## [0.5.61] - 2026-02-12
+
+### Fixed
+
+- **Flow alerts dedup collision**: Added `flow_alerts` entry to `FEED_UNIQUE_FIELDS` in `envelope.py` — poller wraps flow events with feed `flow_alerts` but only `flow` was mapped, causing zero unique fields in event_id and collisions between different alerts on the same ticker at the same second.
+- **Darkpool dedup collision**: Replaced options-specific fields (expiry/strike/put_call) in `FEED_UNIQUE_FIELDS["darkpool"]` with actual darkpool trade fields (`tracking_id`, `price`, `size`, `notional`) — the old fields don't exist on darkpool payloads, so all trades on the same ticker at the same second produced identical event_ids.
+
+## [0.5.60] - 2026-02-12
+
+### Added
+
+- **Alpha Vantage rate-limit mapping regression coverage**: Added tests in `tests/test_alphavantage_common.py` to ensure provider runtime rate-limit errors map to HTTP `429` while unrelated runtime errors still bubble for normal error handling.
+
+### Fixed
+
+- **Alpha Vantage free-tier throttle status mapping**: Updated `gateway/api/alphavantage/common.py` to translate provider-side `"Rate limit exceeded"` runtime failures into explicit HTTP `429` responses (`Provider rate limit exceeded: alphavantage`) instead of generic `502`.
+- **Alpha Vantage throttle log severity**: Updated `gateway/providers/alphavantage.py` daily/weekly/monthly handlers to log provider rate-limit failures at warning level (`*_rate_limited`) instead of error level, reducing false-positive error noise in operational logs.
+
+## [0.5.59] - 2026-02-12
+
+### Added
+
+- **Redis sink regression coverage**: Added `tests/test_redis_sink.py` to lock reconnect/reset behavior after Redis LOADING failures and enforce bounded publish/health-check timeout behavior.
+- **Readiness degradation/warm-up coverage**: Expanded `tests/test_health.py` with sink-degraded readiness behavior and Redis LOADING cache warm-up classification checks.
+- **Alpha Vantage premium fallback coverage**: Expanded `tests/test_alphavantage_provider.py` with daily/weekly/monthly adjusted-endpoint fallback tests when premium endpoints are unavailable.
+
+### Fixed
+
+- **Alpha Vantage adjusted time-series premium fallback**: Updated `gateway/providers/alphavantage.py` so adjusted daily/weekly/monthly requests automatically retry their non-adjusted endpoints when Alpha Vantage returns premium-only errors.
+- **Monthly fallback parsing correctness**: Updated monthly time-series parsing to safely map close/volume fields when fallback responses come from non-adjusted payload shapes.
+- **Redis sink recovery under LOADING/timeouts**: Updated `gateway/core/redis_sink.py` to enforce bounded Redis operation timeouts and reset connection state on publish/health-check failures so reconnect can happen on the next attempt.
+- **Readiness behavior during transient sink/cache startup states**: Updated `gateway/api/health.py` so sink failures report `degraded` (without flipping global readiness), and Redis dataset-loading cache failures are reported as `warming_up`.
+
+### Changed
+
+- **Redis Docker health-check startup tolerance**: Updated `docker-compose.yml` Redis health check with a command that requires `PONG`, increased retries, and a `300s` start period to reduce false unhealthy states during large AOF/RDB load windows.
+
+## [0.5.58] - 2026-02-12
+
+### Fixed
+
+- **Mypy plugin import failure**: Updated `pyproject.toml` mypy plugin path from `numpy.typing.mypy` to `numpy.typing.mypy_plugin`, fixing type-check startup failure (`No module named 'numpy.typing.mypy'`).
+
+## [0.5.57] - 2026-02-12
+
+### Added
+
+- **Alpha Vantage provider error payload regression coverage**: Added tests in `tests/test_alphavantage_provider.py` to ensure `_fetch_json(...)` fails fast when Alpha Vantage returns `Information` / `Error Message` payloads (including mixed rate-limit + premium wording).
+- **Timeseries HTTP status propagation regression coverage**: Added `tests/test_alphavantage_timeseries.py::test_timeseries_routes_preserve_http_exception_status_codes` to lock `429` passthrough behavior for intraday/daily/weekly/monthly/search endpoints.
+
+### Fixed
+
+- **Silent empty-success Alpha Vantage responses**: Updated `gateway/providers/alphavantage.py` `_fetch_json(...)` to detect and raise on provider-side error payloads (`Note`, `Information`, `Error Message`) instead of returning empty success data.
+- **Alpha Vantage rate-limit status remapping bug**: Updated `gateway/api/alphavantage/timeseries.py` handlers to re-raise `HTTPException` so provider limiter `429` responses are preserved and no longer converted into `502`.
+
+## [0.5.56] - 2026-02-12
+
+### Fixed
+
+- **Alpha Vantage route max-points forwarding**: Updated `gateway/api/alphavantage/timeseries.py` to pass `max_points` through to provider calls for intraday/daily/weekly/monthly endpoints.
+- **Alpha Vantage cache-key correctness for max-points requests**: Included `max_points` in Alpha Vantage time-series cache keys so capped responses do not share cache entries with uncapped/full responses.
+- **Timeseries route regression tests restored**: Fixed `tests/test_alphavantage_timeseries.py` expectations by restoring intended route behavior (`max_points` forwarded + cache key suffix includes point cap).
+
+## [0.5.55] - 2026-02-12
+
+### Added
+
+- **Alpha Vantage regression guard for daily max-points path**: Added `tests/test_alphavantage_provider.py::test_get_daily_respects_max_points_window` to reproduce and prevent the missing helper crash in time-series iteration.
+
+### Fixed
+
+- **Alpha Vantage daily/intraday/weekly time-series crash**: Restored `AlphaVantageProvider._iter_time_series_items(...)` in `gateway/providers/alphavantage.py` so max-points-limited time-series endpoints no longer raise `AttributeError: _iter_time_series_items` and return `502`.
+
+## [0.5.54] - 2026-02-12
+
+### Fixed
+
+- **Cerberus provider access alignment**: Expanded `config/clients.yaml` `cerberus.permissions.providers` to include `finnhub`, `alphavantage`, and `sec` in addition to existing providers, eliminating gateway `403 Provider access denied` responses for those requested endpoints.
+
+## [0.5.53] - 2026-02-12
+
+### Fixed
+
+- **Docker yfinance cache directory permissions**: Updated `Dockerfile` to create a real `/home/gateway` home directory for the non-root `gateway` user, pre-create `/home/gateway/.cache/py-yfinance`, and assign ownership to `gateway:gateway` so yfinance cache initialization no longer fails with permission-denied warnings.
+
+## [0.5.52] - 2026-02-12
+
+### Added
+
+- **Middleware regression guard for UW flow list envelopes**: Added `tests/test_middleware_streaming.py::test_envelope_middleware_wraps_uw_flow_list_with_sink_enabled` to lock behavior for list payload envelope wrapping when sink publishing is enabled.
+
+### Fixed
+
+- **REST envelope sink batch publish crash**: Restored `EventEnvelopeMiddleware._publish_sink_batch(...)` in `gateway/api/middleware.py` so list payload sink publishes no longer throw `'EventEnvelopeMiddleware' object has no attribute '_publish_sink_batch'` and leak un-awaited coroutine warnings.
+
+## [0.5.51] - 2026-02-12
+
+### Changed
+
+- **Removed embedded trading-bot scaffold**: Deleted legacy `trading-bot/` scripts, docs, and source modules from this repository to keep Data-Gateway scope focused on gateway services and providers.
+
+## [0.5.50] - 2026-02-12
+
+### Fixed
+
+- **Finnhub bars compatibility regression**: `gateway/providers/finnhub.py` now supports both legacy `get_bars(symbol, resolution=...)` calls and batch `get_bars(symbols, timeframe, start, end)` calls without breaking tests or runtime callers.
+- **Provider quote batch metric imports**: Added missing `record_provider_quote_batch_size` imports in `gateway/providers/finnhub.py` and `gateway/providers/alpaca.py` to prevent quote-path NameErrors.
+
+## [0.5.49] - 2026-02-12
+
+### Added
+
+- **Trading-bot gateway client regression tests**: Added `tests/test_trading_bot_gateway_client.py` to lock auth/header behavior with TDD coverage for:
+  - required `X-Gateway-Key` header usage,
+  - API key resolution from explicit arg / env / `config/clients.yaml`,
+  - fail-fast error when no key is available.
+
+### Changed
+
+- **Trading-bot gateway auth alignment**: Updated `trading-bot/src/core/gateway_client.py` to use `X-Gateway-Key` (matching gateway middleware), remove hardcoded default key fallback, and fail fast when no valid key source exists.
+- **Trading-bot connectivity script auth header**: Updated `trading-bot/test_connectivity.py` to use `X-Gateway-Key` for authenticated endpoint checks.
+
+### Fixed
+
+- **Readiness probe runtime error**: Fixed missing `inspect` import in `gateway/api/health.py` so async cache-delete readiness checks execute correctly (`/health/ready` no longer flips to `not_ready` from `NameError`).
+
+## [0.5.48] - 2026-02-12
+
+### Changed
+
+- **Finnhub bars API compatibility restore**: Updated `gateway/providers/finnhub.py` `get_bars(...)` to support both legacy single-symbol calls (`symbol`, `resolution`) and current batch signature (`symbols`, `timeframe`, `start`, `end`) while preserving normalized timeframe output.
+- **Finnhub quote-batch telemetry hook**: Added `record_provider_quote_batch_size` wiring in `gateway/providers/finnhub.py` to keep provider quote batch metrics emitting consistently.
+- **Alpaca quote-batch telemetry hook**: Added `record_provider_quote_batch_size` import in `gateway/providers/alpaca.py` to resolve quote-path metric calls.
+- **Alpaca timeframe normalization**: Expanded `_convert_timeframe(...)` mapping in `gateway/providers/alpaca.py` to normalize shorthand inputs (`1m`, `5m`, `1h`, `1d`, etc.) into Alpaca-compatible timeframe strings.
+
+## [0.5.47] - 2026-02-12
+
+### Changed
+
+- **Startup crash recovery for gateway boot path**: Restored stream-to-sink dispatch helpers in `gateway/main.py` (`_configure_stream_sink_dispatch_limits`, `_set_stream_sink_registry`, `_schedule_stream_sink_publish`, `_drain_stream_sink_publish_tasks`) and reconnected metric hooks so app startup no longer fails with missing-name errors.
+- **Metrics regression repair after merge drift**: Restored missing telemetry primitives in `gateway/core/metrics.py`, including `ROUTE_CACHE_EVENTS`, provider health check timing/snapshots, stream sink/fanout scheduler event helpers, and derived snapshot calculations used by admin status surfaces.
+- **Stream fanout telemetry wiring**: Updated `gateway/core/stream.py` imports to include `record_stream_fanout_dispatch_event` and `record_stream_fanout_batch_size` so runtime fanout metrics calls resolve correctly.
+- **Provider quote batch metric wiring**: Added `record_provider_quote_batch_size` imports in `gateway/providers/alpaca.py` and `gateway/providers/finnhub.py` to prevent quote-path NameErrors.
+- **Metrics endpoint import fix**: Added `update_memory_metrics_if_due` import in `gateway/api/metrics.py` so `/metrics` scrape path executes without unresolved-name failures.
+- **Registry capability compatibility hardening**: Updated `gateway/core/registry.py` capability checks to support both legacy list-style capabilities and `ProviderCapabilities` objects, preventing provider ordering regressions.
+
 ## [0.5.46] - 2026-02-07
 
 ### Added
@@ -724,6 +1230,14 @@ All notable changes to this project will be documented in this file.
   - `AlpacaCryptoStreamHandler` - crypto WS with heartbeat monitoring
   - `AlpacaNewsStreamHandler` - news WS with heartbeat monitoring
 
+## 2026-03-10
+
+- feat: add a minute-based Alpaca option capture service for `SPY`, `QQQ`, and `IWM`
+- feat: publish authoritative `alpaca/option_chain_snapshot` envelopes to the Heber sink while keeping option tape subscriptions in sync through the existing multiplexer
+- feat: add `option_capture_*` settings and a full-snapshot Alpaca provider helper for normalized option contracts
+- ops: enable the option capture service in the default Docker Compose gateway stack
+- test: cover market-hours gating, per-symbol snapshot publishing, partial-failure handling, websocket subscription reconciliation, and full-snapshot normalization
+
 ## [0.2.0] - 2026-01-14
 
 ### Added
@@ -760,3 +1274,7 @@ All notable changes to this project will be documented in this file.
 - **WebSocket endpoint**: `/ws` with auth handshake and timeout
 - **Structured logging**: structlog with JSON output
 - **Test suite**: pytest fixtures and unit tests for core components
+
+## 2026-02-21
+
+- chore: workspace sync checkpoint and gitignore audit (2026-02-21)

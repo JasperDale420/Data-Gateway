@@ -1,0 +1,51 @@
+[importlinter]
+root_packages =
+    gateway
+
+# In Data-Gateway's architecture, the actual layer ordering is:
+#   api → core (api uses core services)
+#   api → providers (api routes call providers)
+#   providers → core (providers implement DataProvider ABC from core)
+#   providers → schemas (providers use normalized schemas)
+#   core → schemas (core defines normalizers using schemas)
+#
+# The key rules to enforce:
+# 1. Providers must not import from the API layer
+# 2. Core must not import from the API layer
+# 3. Schemas must not import from any other layer
+# 4. Providers must be independent of each other
+
+[importlinter:contract:providers-no-api]
+name = Providers must not import from API layer
+type = forbidden
+source_modules =
+    gateway.providers
+forbidden_modules =
+    gateway.api
+
+[importlinter:contract:core-no-api]
+name = Core must not import from API layer
+type = forbidden
+source_modules =
+    gateway.core
+forbidden_modules =
+    gateway.api
+
+[importlinter:contract:schemas-independence]
+name = Schemas must not import from other layers
+type = forbidden
+source_modules =
+    gateway.schemas
+forbidden_modules =
+    gateway.api
+    gateway.core
+    gateway.providers
+
+[importlinter:contract:providers-independence]
+name = Providers are independent of each other
+type = independence
+modules =
+    gateway.providers.alphavantage
+    gateway.providers.finnhub
+    gateway.providers.uw
+    gateway.providers.yfinance

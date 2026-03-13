@@ -10,21 +10,22 @@ authors = [
 ]
 dependencies = [
     "fastapi[standard]>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
+    "uvicorn>=0.32.0",
     "websockets>=13.0",
     "pydantic>=2.5",
     "pydantic-settings>=2.0",
     "cachetools>=5.3",
     "httpx>=0.27",
-    "structlog>=24.0",
+    "structlog>=24.1.0",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "redis>=5.0",
     "prometheus-client>=0.20",
     "psutil>=5.9",
     "yfinance>=0.2",
-    "alpaca-py>=0.28",
+    "alpaca-py>=0.34",
     "msgpack>=1.0",
+    "orjson>=3.9",
     # unusualwhales SDK is installed separately in Docker via copied local package
 ]
 
@@ -32,12 +33,18 @@ dependencies = [
 packages = ["gateway"]
 
 [project.optional-dependencies]
+local = [
+    # These are local-only packages resolved by uv via [tool.uv.sources].
+    # They are NOT available on PyPI and must not be in core dependencies
+    # or Docker builds will fail silently.
+    "empire-core",
+    "empire-schemas",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=4.0",
     "ruff>=0.5",
-    "black>=24.0",
     "pyright>=1.1",
     "pre-commit>=4.0",
     "bandit[toml]>=1.8",
@@ -89,16 +96,16 @@ warn_return_any = false
 warn_unused_ignores = true
 ignore_missing_imports = true
 check_untyped_defs = true
-plugins = ["pydantic.mypy", "numpy.typing.mypy"]
+plugins = ["pydantic.mypy"]
 # Provider routers access methods not in base DataProvider class
 # These are implemented in concrete providers
 [[tool.mypy.overrides]]
-module = ["gateway.api", "gateway.api.__init__", "gateway.api.alpaca", "gateway.api.alpaca.*", "gateway.api.alphavantage", "gateway.api.alphavantage.*", "gateway.api.finnhub", "gateway.api.finnhub.*", "gateway.api.uw", "gateway.api.uw.*", "gateway.api.admin", "gateway.api.yf", "gateway.api.sec", "gateway.api._legacy", "gateway.api._legacy.*"]
+module = ["gateway.api", "gateway.api.__init__", "gateway.api.alpaca", "gateway.api.alpaca.*", "gateway.api.alphavantage", "gateway.api.alphavantage.*", "gateway.api.finnhub", "gateway.api.finnhub.*", "gateway.api.uw", "gateway.api.uw.*", "gateway.api.admin", "gateway.api.yf", "gateway.api.sec"]
 disable_error_code = ["attr-defined", "call-arg", "arg-type"]
 
 # Core modules with pre-existing type issues
 [[tool.mypy.overrides]]
-module = ["gateway.core.labels", "gateway.core.symbology", "gateway.core.ring_buffer", "gateway.core.quality", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.redis_cache", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream"]
+module = ["gateway.core.labels", "gateway.core.symbology", "gateway.core.ring_buffer", "gateway.core.quality", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream"]
 disable_error_code = ["assignment", "union-attr", "var-annotated", "index", "operator", "return-value", "arg-type", "attr-defined", "call-overload", "dict-item"]
 
 # Provider modules with complex dynamic typing
@@ -139,3 +146,7 @@ exclude_lines = [
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
+
+[tool.uv.sources]
+empire-core = { path = "../empire-core", editable = true }
+empire-schemas = { path = "../empire-schemas", editable = true }

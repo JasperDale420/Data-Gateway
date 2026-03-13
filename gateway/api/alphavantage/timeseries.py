@@ -1,5 +1,6 @@
 """Alpha Vantage time series endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
@@ -16,6 +17,8 @@ from gateway.api.alphavantage.common import (
     require_api_key,
 )
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -49,8 +52,9 @@ async def get_quote(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/intraday/{symbol}", response_model=SuccessResponse)
@@ -65,7 +69,7 @@ async def get_intraday(
 ):
     """Get intraday time series data."""
     normalized_outputsize = outputsize.lower()
-    key = cache_key("av:intraday", symbol.upper(), interval, outputsize)
+    key = cache_key("av:intraday", symbol.upper(), interval, outputsize, max_points)
     try:
         return await execute_av_cached(
             cache=cache,
@@ -77,6 +81,7 @@ async def get_intraday(
                 symbol,
                 interval=interval,
                 outputsize=outputsize,
+                max_points=max_points,
             ),
             cache_transform=lambda bars: {
                 "symbol": symbol.upper(),
@@ -87,8 +92,11 @@ async def get_intraday(
             endpoint="intraday",
             cache_mode=normalized_outputsize,
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/daily/{symbol}", response_model=SuccessResponse)
@@ -103,7 +111,7 @@ async def get_daily(
 ):
     """Get daily time series data."""
     normalized_outputsize = outputsize.lower()
-    key = cache_key("av:daily", symbol.upper(), outputsize, str(adjusted))
+    key = cache_key("av:daily", symbol.upper(), outputsize, str(adjusted), max_points)
     try:
         return await execute_av_cached(
             cache=cache,
@@ -115,6 +123,7 @@ async def get_daily(
                 symbol,
                 outputsize=outputsize,
                 adjusted=adjusted,
+                max_points=max_points,
             ),
             cache_transform=lambda bars: {
                 "symbol": symbol.upper(),
@@ -125,8 +134,11 @@ async def get_daily(
             endpoint="daily",
             cache_mode=normalized_outputsize,
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/weekly/{symbol}", response_model=SuccessResponse)
@@ -139,14 +151,18 @@ async def get_weekly(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get weekly time series data."""
-    key = cache_key("av:weekly", symbol.upper(), str(adjusted))
+    key = cache_key("av:weekly", symbol.upper(), str(adjusted), max_points)
     try:
         return await execute_av_cached(
             cache=cache,
             cache_key_value=key,
             registry=registry,
             ttl=CACHE_TTL_BARS,
-            fetcher=lambda provider: provider.get_weekly(symbol, adjusted=adjusted),
+            fetcher=lambda provider: provider.get_weekly(
+                symbol,
+                adjusted=adjusted,
+                max_points=max_points,
+            ),
             cache_transform=lambda bars: {
                 "symbol": symbol.upper(),
                 "adjusted": adjusted,
@@ -156,8 +172,11 @@ async def get_weekly(
             endpoint="weekly",
             cache_mode="default",
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/monthly/{symbol}", response_model=SuccessResponse)
@@ -170,21 +189,28 @@ async def get_monthly(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get monthly time series data."""
-    key = cache_key("av:monthly", symbol.upper(), str(adjusted))
+    key = cache_key("av:monthly", symbol.upper(), str(adjusted), max_points)
     try:
         return await execute_av_cached(
             cache=cache,
             cache_key_value=key,
             registry=registry,
             ttl=CACHE_TTL_BARS,
-            fetcher=lambda provider: provider.get_monthly(symbol, adjusted=adjusted),
+            fetcher=lambda provider: provider.get_monthly(
+                symbol,
+                adjusted=adjusted,
+                max_points=max_points,
+            ),
             cache_transform=lambda bars: [bar.model_dump(mode="json") for bar in bars],
             miss_meta_builder=lambda _bars, data: {"count": len(data)},
             endpoint="monthly",
             cache_mode="default",
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/search", response_model=SuccessResponse)
@@ -209,5 +235,8 @@ async def search_symbols(
             endpoint="search",
             cache_mode="query",
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

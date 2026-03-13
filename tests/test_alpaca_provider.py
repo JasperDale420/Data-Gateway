@@ -35,12 +35,11 @@ def _option_chain_payload() -> dict[str, Any]:
     return {
         "snapshots": {
             "AAPL250117C00200000": {
-                "expiration_date": "2025-01-17",
-                "strike_price": 200.0,
-                "type": "call",
                 "open_interest": 42,
                 "latestQuote": {"bp": 1.2, "ap": 1.3},
                 "latestTrade": {"p": 1.25},
+                "greeks": {"delta": 0.51, "gamma": 0.02},
+                "impliedVolatility": 0.31,
             }
         }
     }
@@ -60,6 +59,21 @@ def _quotes_payload() -> dict[str, Any]:
     }
 
 
+def _option_quotes_payload_with_string_conditions() -> dict[str, Any]:
+    return {
+        "quotes": {
+            "SPY260618C00700000": {
+                "t": datetime(2026, 2, 12, 21, 34, tzinfo=UTC).isoformat(),
+                "bp": 12.1,
+                "ap": 12.3,
+                "bs": 5,
+                "as": 7,
+                "c": " ",
+            }
+        }
+    }
+
+
 @pytest.mark.asyncio
 async def test_get_option_chain_uses_default_limit_when_not_provided() -> None:
     provider = AlpacaProvider()
@@ -69,9 +83,27 @@ async def test_get_option_chain_uses_default_limit_when_not_provided() -> None:
     contracts = await provider.get_option_chain("aapl")
 
     assert len(contracts) == 1
-    assert fake_client.last_path == "/v1beta1/options/snapshots"
+    assert fake_client.last_path == "/v1beta1/options/snapshots/AAPL"
     assert fake_client.last_params is not None
     assert fake_client.last_params["limit"] == 1000
+    assert "underlying_symbols" not in fake_client.last_params
+
+
+@pytest.mark.asyncio
+async def test_get_option_chain_parses_occ_components_without_snapshot_contract_fields() -> None:
+    provider = AlpacaProvider()
+    fake_client = _FakeClient(_option_chain_payload())
+    provider._client = cast(Any, fake_client)
+
+    contracts = await provider.get_option_chain("aapl")
+
+    assert len(contracts) == 1
+    contract = contracts[0]
+    assert contract.contract_symbol == "AAPL250117C00200000"
+    assert contract.underlying == "AAPL"
+    assert contract.expiration == "2025-01-17"
+    assert float(contract.strike) == pytest.approx(200.0)
+    assert contract.option_type == "call"
 
 
 @pytest.mark.asyncio
@@ -91,6 +123,21 @@ async def test_get_option_chain_applies_custom_limit_bounds() -> None:
     await provider.get_option_chain("aapl", limit=0)
     assert fake_client.last_params is not None
     assert fake_client.last_params["limit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_option_snapshot_contracts_normalizes_full_snapshot_without_limit() -> None:
+    provider = AlpacaProvider()
+    fake_client = _FakeClient(_option_chain_payload())
+    provider._client = cast(Any, fake_client)
+
+    contracts = await provider.get_option_snapshot_contracts("aapl")
+
+    assert len(contracts) == 1
+    assert fake_client.last_path == "/v1beta1/options/snapshots/AAPL"
+    assert fake_client.last_params == {"feed": "indicative"}
+    assert contracts[0].contract_symbol == "AAPL250117C00200000"
+    assert contracts[0].underlying == "AAPL"
 
 
 @pytest.mark.asyncio
@@ -143,3 +190,15 @@ async def test_get_quotes_records_requested_batch_size(monkeypatch: pytest.Monke
 
     assert len(quotes) == 1
     assert recorded == [("alpaca", 2)]
+
+
+@pytest.mark.asyncio
+async def test_get_option_quotes_coerces_string_conditions_to_list() -> None:
+    provider = AlpacaProvider()
+    provider._client = cast(Any, _FakeClient(_option_quotes_payload_with_string_conditions()))
+
+    quotes = await provider.get_option_quotes(["SPY260618C00700000"])
+
+    assert len(quotes) == 1
+    assert quotes[0].symbol == "SPY260618C00700000"
+    assert quotes[0].conditions == []

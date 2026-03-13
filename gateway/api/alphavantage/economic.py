@@ -1,5 +1,6 @@
 """Alpha Vantage economic indicators endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
@@ -14,6 +15,8 @@ from gateway.api.alphavantage.common import (
     require_api_key,
 )
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -46,5 +49,6 @@ async def get_economic_indicator(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

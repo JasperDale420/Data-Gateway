@@ -150,7 +150,8 @@ def _configure_corporate_fetcher(
 
             return actions
 
-        service.set_fetcher(_fetch)
+        if not service.has_fetcher():
+            service.set_fetcher(_fetch)
         return
 
     settings = get_settings()

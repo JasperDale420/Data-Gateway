@@ -26,9 +26,7 @@ class ApiKey:
         """Check if key is available for use."""
         if not self.healthy:
             return False
-        if self.cooldown_until and datetime.now(UTC) < self.cooldown_until:
-            return False
-        return True
+        return not (self.cooldown_until and datetime.now(UTC) < self.cooldown_until)
 
     def record_request(self) -> None:
         """Record a successful request."""

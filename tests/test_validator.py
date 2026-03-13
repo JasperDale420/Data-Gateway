@@ -66,6 +66,21 @@ class TestValidateBar:
         assert result.valid is False
         assert ValidationErrorCodes.FUTURE_TIMESTAMP in result.error_codes
 
+    def test_future_timestamp_clock_drift_passes(self, validator: DataValidator) -> None:
+        """Timestamps slightly in the future (within tolerance) should pass."""
+        slightly_future = datetime.now(UTC) + timedelta(seconds=2)
+        bar = {
+            "symbol": "AAPL",
+            "timestamp": slightly_future.isoformat(),
+            "open": 100,
+            "high": 105,
+            "low": 99,
+            "close": 102,
+            "volume": 1000,
+        }
+        result = validator.validate_bar(bar)
+        assert result.valid is True
+
     def test_negative_price_rejected(self, validator: DataValidator) -> None:
         """Negative prices should be rejected with GW-E7002."""
         bar = {

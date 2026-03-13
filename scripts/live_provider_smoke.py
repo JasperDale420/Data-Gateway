@@ -81,6 +81,59 @@ async def _run_sample_call(provider_name: str, provider: DataProvider) -> tuple[
         return False, "error", message
 
 
+async def _run_provider_smoke_check(
+    provider_name: str,
+    provider: object | None,
+    credential_env: str | None,
+    credential_present: bool,
+    semaphore: asyncio.Semaphore,
+) -> SmokeResult:
+    """Run health and sample checks for a single provider, respecting semaphore."""
+    env_name = credential_env
+    if provider is None:
+        return SmokeResult(
+            provider=provider_name,
+            credential_env=env_name,
+            credential_present=credential_present,
+            loaded=False,
+            health_ok=False,
+            health_error="provider not loaded",
+            sample_ok=False,
+            sample_status="skipped",
+            sample_detail="provider not loaded",
+        )
+
+    async with semaphore:
+        try:
+            health: HealthStatus = await provider.health_check()  # type: ignore[union-attr]
+        except Exception as exc:  # noqa: BLE001
+            return SmokeResult(
+                provider=provider_name,
+                credential_env=env_name,
+                credential_present=credential_present,
+                loaded=True,
+                health_ok=False,
+                health_error=str(exc),
+                sample_ok=False,
+                sample_status="skipped",
+                sample_detail="health check failed",
+            )
+
+        sample_ok, sample_status, sample_detail = await _run_sample_call(provider_name, provider)
+
+    return SmokeResult(
+        provider=provider_name,
+        credential_env=env_name,
+        credential_present=credential_present,
+        loaded=True,
+        health_ok=health.healthy,
+        health_error=health.error,
+        sample_ok=sample_ok,
+        sample_status=sample_status,
+        sample_detail=sample_detail,
+    )
+
+
 async def run_smoke() -> list[SmokeResult]:
     load_dotenv(override=False)
 

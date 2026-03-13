@@ -8,7 +8,7 @@ clients:
     key: gw_cerberus_dev_key_12345
     role: trader
     permissions:
-      providers: ["alpaca", "uw", "yfinance"]
+      providers: ["alpaca", "uw", "yfinance", "finnhub", "alphavantage", "sec"]
       feeds: ["bars", "quotes", "trades", "flow"]
       max_symbols: 1000
       rate_limit: 600  # requests per minute
@@ -22,7 +22,7 @@ clients:
       providers: ["alpaca"]
       feeds: ["bars", "quotes", "trades", "news"]
       max_symbols: 1000
-      rate_limit: 300
+      rate_limit: 6000  # ~5000 symbols scanned pre-market
     enabled: true
 
   # Orion trading system
@@ -32,6 +32,17 @@ clients:
     permissions:
       providers: ["alpaca", "uw", "yfinance", "finnhub"]
       feeds: ["bars", "quotes", "trades", "flow", "news", "options"]
+      max_symbols: 1000
+      rate_limit: 600
+    enabled: true
+
+  # Atlas research system
+  - id: atlas
+    key: gw_atlas_research_key_24680
+    role: trader
+    permissions:
+      providers: ["alpaca", "uw", "yfinance", "finnhub", "alphavantage", "sec"]
+      feeds: ["bars", "quotes", "trades", "flow", "news", "options", "option_trades", "option_bars", "option_quotes", "crypto_bars", "crypto_trades", "crypto_quotes", "flow_alerts", "ticker_flow", "darkpool", "darkpool_ticker", "congress_trades", "insider_trades", "institutions", "greek_exposure", "earnings", "market_tide", "sector_tide"]
       max_symbols: 1000
       rate_limit: 600
     enabled: true

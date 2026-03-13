@@ -15,8 +15,10 @@ from pydantic import BaseModel, Field
 
 from gateway.core.envelope import wrap_event
 from gateway.core.rate_limiter import ProviderRateLimitManager, get_rate_limiter
+from gateway.core.security import InputValidator
 
 logger = structlog.get_logger()
+_INPUT_VALIDATOR = InputValidator()
 
 HEBER_EVENTS_TOPIC = "heber:events"
 
@@ -25,10 +27,26 @@ DEFAULT_CHUNK_DAYS = 1
 
 # Per-provider delay between chunks to avoid API throttling
 PROVIDER_CHUNK_DELAY_MS: dict[str, int] = {
-    "alpaca": 200,
+    "alpaca": 50,
     "unusual_whales": 500,
 }
 DEFAULT_CHUNK_DELAY_MS = 300
+
+# Max concurrent symbol fetches within a single backfill job
+DEFAULT_SYMBOL_CONCURRENCY = 10
+
+# Feed weight classification for concurrency scheduling
+# Lightweight feeds complete quickly and can run many in parallel.
+# Heavyweight feeds transfer large volumes and need limited concurrency.
+HEAVYWEIGHT_FEEDS = frozenset({"trades", "option_trades", "crypto_trades"})
+
+# Default concurrency per weight class per provider
+DEFAULT_LIGHTWEIGHT_CONCURRENCY = 5
+DEFAULT_HEAVYWEIGHT_CONCURRENCY = 2
+ALPACA_CRYPTO_FEEDS = frozenset({"crypto_bars", "crypto_trades"})
+
+# Auto-expire completed/failed/cancelled jobs after this duration (seconds)
+JOB_EXPIRY_SECONDS = 3600
 
 
 class BackfillStatus(str, Enum):
@@ -138,7 +156,7 @@ def _date_chunks(start: date, end: date, chunk_days: int) -> list[tuple[datetime
 
 
 async def _alpaca_bars(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
-    return await p.get_bars([sym], kw.get("timeframe", "1Day"), s, e)
+    return await p.get_bars([sym], kw.get("timeframe", "1Day"), s, e, adjustment=kw.get("adjustment", "split"))
 
 
 async def _alpaca_trades(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
@@ -151,6 +169,18 @@ async def _alpaca_quotes(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) 
 
 async def _alpaca_option_trades(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
     return await p.get_option_trades([sym], s, e)
+
+
+async def _alpaca_option_bars(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    return await p.get_option_bars(contracts=[sym], timeframe=kw.get("timeframe", "1Day"), start=s, end=e)
+
+
+async def _alpaca_option_quotes(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    return await p.get_historical_option_quotes(contracts=[sym], start=s, end=e)
+
+
+async def _alpaca_crypto_quotes(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    return await p.get_historical_crypto_quotes(pair=sym, start=s, end=e)
 
 
 async def _alpaca_crypto_bars(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
@@ -197,14 +227,33 @@ async def _uw_earnings(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) ->
     return await p.get_earnings(sym)
 
 
+async def _alpaca_news(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Alpaca news endpoint accepts multiple symbols, but backfill engine drives per-symbol
+    return await p.get_news(symbols=[sym], start=s, end=e, include_content=True)
+
+
+async def _uw_market_tide(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # sym is ignored — market tide is market-wide. Date filters by chunk start.
+    return await p.get_market_tide(date_str=s.strftime("%Y-%m-%d"))
+
+
+async def _uw_sector_tide(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # sym is the GICS sector name (e.g. "Technology"). Date filters by chunk start.
+    return await p.get_sector_tide(sector=sym, date_str=s.strftime("%Y-%m-%d"))
+
+
 BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     # Alpaca
     ("alpaca", "bars"): _alpaca_bars,
     ("alpaca", "trades"): _alpaca_trades,
     ("alpaca", "quotes"): _alpaca_quotes,
     ("alpaca", "option_trades"): _alpaca_option_trades,
+    ("alpaca", "option_bars"): _alpaca_option_bars,
+    ("alpaca", "option_quotes"): _alpaca_option_quotes,
     ("alpaca", "crypto_bars"): _alpaca_crypto_bars,
     ("alpaca", "crypto_trades"): _alpaca_crypto_trades,
+    ("alpaca", "crypto_quotes"): _alpaca_crypto_quotes,
+    ("alpaca", "news"): _alpaca_news,
     # Unusual Whales
     ("unusual_whales", "flow_alerts"): _uw_flow,
     ("unusual_whales", "ticker_flow"): _uw_ticker_flow,
@@ -215,23 +264,37 @@ BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     ("unusual_whales", "institutions"): _uw_institutions,
     ("unusual_whales", "greek_exposure"): _uw_greeks,
     ("unusual_whales", "earnings"): _uw_earnings,
+    ("unusual_whales", "market_tide"): _uw_market_tide,
+    ("unusual_whales", "sector_tide"): _uw_sector_tide,
 }
 
 
 class BackfillEngine:
     """Manages backfill jobs: queuing, execution, rate limiting, progress tracking.
 
-    Enforces one running job per provider to prevent API bans.
+    Uses feed-weighted concurrency: lightweight feeds (bars, quotes, news) get
+    higher concurrent slots than heavyweight feeds (trades) to prevent starvation.
     Jobs for different providers can run concurrently.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        symbol_concurrency: int = DEFAULT_SYMBOL_CONCURRENCY,
+        lightweight_concurrency: int = DEFAULT_LIGHTWEIGHT_CONCURRENCY,
+        heavyweight_concurrency: int = DEFAULT_HEAVYWEIGHT_CONCURRENCY,
+    ) -> None:
         self._jobs: dict[str, BackfillJob] = {}
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
-        # Lock per provider: at most one backfill job runs per provider
-        self._provider_locks: dict[str, asyncio.Lock] = {}
+        # Separate semaphores per provider per weight class
+        self._lightweight_semaphores: dict[str, asyncio.Semaphore] = {}
+        self._heavyweight_semaphores: dict[str, asyncio.Semaphore] = {}
         self._sink_registry: Any = None
         self._provider_registry: Any = None
+        self._symbol_concurrency = symbol_concurrency
+        self._lightweight_concurrency = max(1, lightweight_concurrency)
+        self._heavyweight_concurrency = max(1, heavyweight_concurrency)
+        self._instance_id = uuid.uuid4().hex[:8]
+        logger.info("backfill_engine_init", instance_id=self._instance_id)
 
     def configure(
         self,
@@ -242,10 +305,15 @@ class BackfillEngine:
         self._provider_registry = provider_registry
         self._sink_registry = sink_registry
 
-    def _get_lock(self, provider: str) -> asyncio.Lock:
-        if provider not in self._provider_locks:
-            self._provider_locks[provider] = asyncio.Lock()
-        return self._provider_locks[provider]
+    def _get_semaphore(self, provider: str, feed: str) -> asyncio.Semaphore:
+        """Get the appropriate semaphore based on feed weight."""
+        if feed in HEAVYWEIGHT_FEEDS:
+            if provider not in self._heavyweight_semaphores:
+                self._heavyweight_semaphores[provider] = asyncio.Semaphore(self._heavyweight_concurrency)
+            return self._heavyweight_semaphores[provider]
+        if provider not in self._lightweight_semaphores:
+            self._lightweight_semaphores[provider] = asyncio.Semaphore(self._lightweight_concurrency)
+        return self._lightweight_semaphores[provider]
 
     @property
     def supported_feeds(self) -> list[dict[str, str]]:
@@ -254,6 +322,8 @@ class BackfillEngine:
 
     def submit(self, request: BackfillRequest) -> BackfillJob:
         """Validate and queue a new backfill job, then start it in the background."""
+        self._prune_stale_jobs()
+
         # Validate provider
         if not self._provider_registry:
             raise ValueError("BackfillEngine not configured: missing provider registry")
@@ -301,6 +371,25 @@ class BackfillEngine:
         if not normalized_symbols:
             raise ValueError("symbols must include at least one valid symbol")
 
+        if request.provider == "alpaca" and request.feed in ALPACA_CRYPTO_FEEDS:
+            invalid_crypto_symbols = [
+                symbol
+                for symbol in normalized_symbols
+                if _INPUT_VALIDATOR.validate_symbol(symbol, symbol_type="crypto") is not None
+            ]
+            if invalid_crypto_symbols:
+                logger.warning(
+                    "backfill_invalid_crypto_symbols",
+                    provider=request.provider,
+                    feed=request.feed,
+                    invalid_symbols=invalid_crypto_symbols,
+                    total_symbols=len(normalized_symbols),
+                )
+                raise ValueError(
+                    f"Invalid symbols for alpaca feed '{request.feed}': {invalid_crypto_symbols}. "
+                    "Expected crypto pairs like ['BTC/USD', 'ETH/USD']."
+                )
+
         request.symbols = normalized_symbols
 
         # Build job
@@ -315,6 +404,7 @@ class BackfillEngine:
 
         job = BackfillJob(request=request, symbols_progress=symbols_progress)
         self._jobs[job.job_id] = job
+        logger.info("backfill_job_created", instance_id=self._instance_id, job_id=job.job_id, job_obj_id=id(job))
 
         # Kick off in background
         task = asyncio.create_task(self._run_job(job))
@@ -333,7 +423,18 @@ class BackfillEngine:
         return job
 
     def get_job(self, job_id: str) -> BackfillJob | None:
-        return self._jobs.get(job_id)
+        job = self._jobs.get(job_id)
+        if job:
+            logger.debug(
+                "backfill_job_read",
+                instance_id=self._instance_id,
+                job_id=job_id,
+                job_obj_id=id(job),
+                records=job.records_published,
+            )
+        else:
+            logger.warning("backfill_job_not_found", instance_id=self._instance_id, job_id=job_id)
+        return job
 
     def list_jobs(self) -> list[BackfillJob]:
         return list(self._jobs.values())
@@ -353,16 +454,52 @@ class BackfillEngine:
         logger.info("backfill_job_cancelled", job_id=job_id)
         return True
 
-    async def _run_job(self, job: BackfillJob) -> None:
-        """Execute a backfill job, respecting per-provider concurrency locks."""
-        lock = self._get_lock(job.request.provider)
+    def cancel_all(self) -> int:
+        """Cancel all running and queued jobs. Returns count of cancelled jobs."""
+        cancelled = 0
+        for job_id in self._jobs:
+            if self.cancel(job_id):
+                cancelled += 1
+        logger.info("backfill_cancel_all", cancelled=cancelled)
+        return cancelled
 
-        async with lock:
+    def flush(self) -> int:
+        """Cancel all jobs and purge job history. Returns count of removed jobs."""
+        self.cancel_all()
+        count = len(self._jobs)
+        self._jobs.clear()
+        self._running_tasks.clear()
+        logger.info("backfill_flushed", purged=count)
+        return count
+
+    def _prune_stale_jobs(self) -> None:
+        """Remove completed/failed/cancelled jobs older than JOB_EXPIRY_SECONDS."""
+        now = datetime.now(UTC)
+        terminal_statuses = {BackfillStatus.COMPLETED, BackfillStatus.FAILED, BackfillStatus.CANCELLED}
+        stale_ids = [
+            jid
+            for jid, job in self._jobs.items()
+            if job.status in terminal_statuses
+            and job.completed_at
+            and (now - job.completed_at).total_seconds() > JOB_EXPIRY_SECONDS
+        ]
+        for jid in stale_ids:
+            del self._jobs[jid]
+        if stale_ids:
+            logger.info("backfill_stale_jobs_pruned", count=len(stale_ids))
+
+    async def _run_job(self, job: BackfillJob) -> None:
+        """Execute a backfill job, respecting feed-weighted concurrency limits."""
+        semaphore = self._get_semaphore(job.request.provider, job.request.feed)
+
+        async with semaphore:
             job.status = BackfillStatus.RUNNING
             job.started_at = datetime.now(UTC)
 
             logger.info(
                 "backfill_job_started",
+                instance_id=self._instance_id,
+                job_obj_id=id(job),
                 job_id=job.job_id,
                 provider=job.request.provider,
                 feed=job.request.feed,
@@ -407,7 +544,7 @@ class BackfillEngine:
             )
 
     async def _execute_job(self, job: BackfillJob) -> None:
-        """Iterate over symbols and date chunks, fetching and publishing data."""
+        """Fetch and publish data for all symbols concurrently (bounded by semaphore)."""
         provider_instance = self._provider_registry.get(job.request.provider)
         if provider_instance is None:
             raise RuntimeError(f"Provider '{job.request.provider}' not available")
@@ -417,18 +554,24 @@ class BackfillEngine:
         rate_limiter = get_rate_limiter()
         delay_ms = PROVIDER_CHUNK_DELAY_MS.get(job.request.provider, DEFAULT_CHUNK_DELAY_MS)
 
-        for sym in job.request.symbols:
-            if job.status == BackfillStatus.CANCELLED:
-                break
-            await self._process_symbol(
-                job,
-                sym,
-                chunks,
-                dispatch_fn,
-                provider_instance,
-                rate_limiter,
-                delay_ms,
-            )
+        sem = asyncio.Semaphore(self._symbol_concurrency)
+
+        async def _bounded_process(sym: str) -> None:
+            async with sem:
+                if job.status == BackfillStatus.CANCELLED:
+                    return
+                await self._process_symbol(
+                    job,
+                    sym,
+                    chunks,
+                    dispatch_fn,
+                    provider_instance,
+                    rate_limiter,
+                    delay_ms,
+                )
+
+        tasks = [asyncio.create_task(_bounded_process(sym)) for sym in job.request.symbols]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _process_symbol(
         self,
@@ -486,7 +629,7 @@ class BackfillEngine:
                 sp.chunks_complete += 1
                 return
 
-            items = _normalize_results(results)
+            items = await asyncio.to_thread(_normalize_results, results)
             published = await self._publish_items(
                 items=items,
                 provider=job.request.provider,
@@ -525,7 +668,7 @@ class BackfillEngine:
             logger.warning("backfill_publish_skipped", reason="no sink registry", job_id=job_id)
             return 0
 
-        published = 0
+        messages: list[tuple[str, dict[str, Any]]] = []
         for item in items:
             envelope = wrap_event(
                 event=item,
@@ -533,9 +676,16 @@ class BackfillEngine:
                 feed=feed,
                 source="backfill",
             )
-            await self._sink_registry.publish_all(HEBER_EVENTS_TOPIC, envelope)
-            published += 1
+            messages.append((HEBER_EVENTS_TOPIC, envelope))
 
+        if type(self._sink_registry).__name__ == "DataSinkRegistry":
+            return await self._sink_registry.publish_all_batch(messages)
+
+        # Fallback: individual publishes for registries without batch support
+        published = 0
+        for topic, envelope in messages:
+            await self._sink_registry.publish_all(topic, envelope)
+            published += 1
         return published
 
     async def shutdown(self) -> None:
@@ -586,9 +736,20 @@ def _normalize_results(results: Any) -> list[dict[str, Any]]:
 _engine: BackfillEngine | None = None
 
 
-def get_backfill_engine() -> BackfillEngine:
-    """Get or create the singleton BackfillEngine."""
+def get_backfill_engine(
+    lightweight_concurrency: int = DEFAULT_LIGHTWEIGHT_CONCURRENCY,
+    heavyweight_concurrency: int = DEFAULT_HEAVYWEIGHT_CONCURRENCY,
+) -> BackfillEngine:
+    """Get or create the singleton BackfillEngine.
+
+    If the engine hasn't been created yet, initializes it with the
+    provided concurrency settings. Subsequent calls return the
+    existing instance regardless of arguments.
+    """
     global _engine
     if _engine is None:
-        _engine = BackfillEngine()
+        _engine = BackfillEngine(
+            lightweight_concurrency=lightweight_concurrency,
+            heavyweight_concurrency=heavyweight_concurrency,
+        )
     return _engine

@@ -1,21 +1,23 @@
 """Finnhub company profile and fundamentals endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.finnhub.common import (
-    PROVIDER_NOT_AVAILABLE,
     Client,
     InMemoryCache,
     ProviderRegistry,
     cache_key,
     datetime,
+    execute_finnhub_cached,
     get_cache,
     get_registry,
     require_api_key,
-    require_provider_rate_limit,
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -28,37 +30,25 @@ async def get_company_profile(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get company profile information."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:profile", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_company_profile", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
+    async def fetcher(provider):
         data = await provider.get_company_profile(symbol)
         if not data:
             raise HTTPException(status_code=404, detail=f"No profile for symbol: {symbol}")
+        return data
 
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_company_profile", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_company_profile", status, "finnhub")
+    return response
 
 
 @router.get("/financials/{symbol}", response_model=SuccessResponse)
@@ -69,32 +59,22 @@ async def get_financials(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get financial metrics (P/E, EPS, beta, etc)."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:financials", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_financials", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_financials(symbol)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_financials", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    async def fetcher(provider):
+        return await provider.get_financials(symbol)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_financials", status, "finnhub")
+    return response
 
 
 @router.get("/peers/{symbol}", response_model=SuccessResponse)
@@ -105,33 +85,27 @@ async def get_peers(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get peer companies for a symbol."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:peers", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_peers", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        peers = await provider.get_peers(symbol)
-        data = {"symbol": symbol.upper(), "peers": peers}
-        await cache.set(key, data, ttl=86400)
-        record_route_cache("finnhub_peers", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(peers), "cached": False, "provider": "finnhub"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    async def fetcher(provider):
+        return await provider.get_peers(symbol)
+
+    def cache_transform(data):
+        return {"symbol": symbol.upper(), "peers": data}
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=86400,
+        fetcher=fetcher,
+        cache_transform=cache_transform,
+        miss_meta_builder=lambda orig, xform: {"count": len(orig)},
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_peers", status, "finnhub")
+    return response
 
 
 @router.get("/metrics/{symbol}", response_model=SuccessResponse)
@@ -143,32 +117,22 @@ async def get_metrics(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get key financial metrics for a symbol."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:metrics", symbol.upper(), metric)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_metrics", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_metrics(symbol, metric=metric)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_metrics", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    async def fetcher(provider):
+        return await provider.get_metrics(symbol, metric=metric)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_metrics", status, "finnhub")
+    return response
 
 
 @router.get("/executives/{symbol}", response_model=SuccessResponse)
@@ -179,33 +143,27 @@ async def get_executives(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get company executives and compensation."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:executives", symbol.upper())
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_executives", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        execs = await provider.get_executives(symbol)
-        data = {"symbol": symbol.upper(), "executives": execs}
-        await cache.set(key, data, ttl=86400)
-        record_route_cache("finnhub_executives", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(execs), "cached": False, "provider": "finnhub"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    async def fetcher(provider):
+        return await provider.get_executives(symbol)
+
+    def cache_transform(data):
+        return {"symbol": symbol.upper(), "executives": data}
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=86400,
+        fetcher=fetcher,
+        cache_transform=cache_transform,
+        miss_meta_builder=lambda orig, xform: {"count": len(orig)},
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_executives", status, "finnhub")
+    return response
 
 
 @router.get("/ownership/{symbol}", response_model=SuccessResponse)
@@ -217,32 +175,22 @@ async def get_ownership(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get institutional ownership data."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:ownership", symbol.upper(), str(limit))
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_ownership", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_ownership(symbol, limit=limit)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_ownership", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    async def fetcher(provider):
+        return await provider.get_ownership(symbol, limit=limit)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_ownership", status, "finnhub")
+    return response
 
 
 @router.get("/fund-ownership/{symbol}", response_model=SuccessResponse)
@@ -254,32 +202,22 @@ async def get_fund_ownership(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get mutual fund and ETF ownership data."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:fund-ownership", symbol.upper(), str(limit))
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_fund_ownership", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
-        data = await provider.get_fund_ownership(symbol, limit=limit)
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_fund_ownership", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"cached": False, "provider": "finnhub"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    async def fetcher(provider):
+        return await provider.get_fund_ownership(symbol, limit=limit)
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_fund_ownership", status, "finnhub")
+    return response
 
 
 @router.get("/insider-transactions/{symbol}", response_model=SuccessResponse)
@@ -292,33 +230,26 @@ async def get_insider_transactions(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get insider transactions (SEC Form 4)."""
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
     key = cache_key("finnhub:insider-tx", symbol.upper(), start, end)
-    cached = await cache.get(key)
-    if cached:
-        record_route_cache("finnhub_insider_transactions", "hit", "finnhub")
-        return {
-            "success": True,
-            "data": cached,
-            "meta": {"cached": True, "provider": "finnhub"},
-        }
 
-    try:
-        await require_provider_rate_limit("finnhub")
+    async def fetcher(provider):
         start_dt = datetime.fromisoformat(start) if start else None
         end_dt = datetime.fromisoformat(end) if end else None
+        return await provider.get_insider_transactions(symbol, start=start_dt, end=end_dt)
 
-        txs = await provider.get_insider_transactions(symbol, start=start_dt, end=end_dt)
-        data = {"symbol": symbol.upper(), "transactions": txs}
-        await cache.set(key, data, ttl=3600)
-        record_route_cache("finnhub_insider_transactions", "miss", "finnhub")
-        return {
-            "success": True,
-            "data": data,
-            "meta": {"count": len(txs), "cached": False, "provider": "finnhub"},
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    def cache_transform(data):
+        return {"symbol": symbol.upper(), "transactions": data}
+
+    response = await execute_finnhub_cached(
+        cache=cache,
+        cache_key_value=key,
+        registry=registry,
+        ttl=3600,
+        fetcher=fetcher,
+        cache_transform=cache_transform,
+        miss_meta_builder=lambda orig, xform: {"count": len(orig)},
+    )
+
+    status = "hit" if response["meta"]["cached"] else "miss"
+    record_route_cache("finnhub_insider_transactions", status, "finnhub")
+    return response

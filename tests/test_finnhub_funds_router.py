@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytest
 
+from gateway.api.finnhub import common as finnhub_common
 from gateway.api.finnhub import funds
 from gateway.core.registry import ProviderRegistry
 
@@ -91,7 +92,7 @@ async def test_mutual_fund_holdings_emits_cache_miss_telemetry_and_caches(
     def _record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:
         cache_events.append((route, status, cache_mode))
 
-    monkeypatch.setattr(funds, "require_provider_rate_limit", _rate_limit)
+    monkeypatch.setattr(finnhub_common, "require_provider_rate_limit", _rate_limit)
     monkeypatch.setattr(funds, "record_route_cache", _record_route_cache)
 
     response = await funds.get_mutual_fund_holdings(
@@ -122,7 +123,7 @@ async def test_mutual_fund_sector_emits_cache_miss_telemetry_and_caches(
     def _record_route_cache(route: str, status: str, cache_mode: str = "default") -> None:
         cache_events.append((route, status, cache_mode))
 
-    monkeypatch.setattr(funds, "require_provider_rate_limit", _rate_limit)
+    monkeypatch.setattr(finnhub_common, "require_provider_rate_limit", _rate_limit)
     monkeypatch.setattr(funds, "record_route_cache", _record_route_cache)
 
     response = await funds.get_mutual_fund_sector(

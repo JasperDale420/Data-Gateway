@@ -292,6 +292,33 @@ class ReplaySessionManager:
             return sessions
         return [session for session in sessions if session.client_id == client_id]
 
+    async def list_sessions_page(
+        self,
+        client_id: str | None = None,
+        state: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[ReplaySession], int, bool, int | None]:
+        """List sessions with filtering and pagination.
+
+        Returns:
+            (page_sessions, total_matching, has_more, next_offset)
+        """
+        matching = list(self._sessions.values())
+        if client_id is not None:
+            matching = [s for s in matching if s.client_id == client_id]
+        if state is not None:
+            matching = [s for s in matching if s.state.value == state]
+
+        total = len(matching)
+        page_offset = max(0, offset)
+        page_limit = max(1, limit)
+        page = matching[page_offset : page_offset + page_limit]
+        consumed = page_offset + len(page)
+        has_more = consumed < total
+        next_offset = consumed if has_more else None
+        return page, total, has_more, next_offset
+
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
         session = self._sessions.get(session_id)

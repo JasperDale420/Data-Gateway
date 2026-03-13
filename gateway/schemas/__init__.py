@@ -68,7 +68,7 @@ class NormalizedBar(BaseModel):
     high: Decimal
     low: Decimal
     close: Decimal
-    volume: int
+    volume: Decimal
     vwap: Decimal | None = None
     trade_count: int | None = None
     provider: str
@@ -81,9 +81,9 @@ class NormalizedQuote(BaseModel):
     symbol: str
     timestamp: datetime
     bid_price: Decimal
-    bid_size: int
+    bid_size: Decimal
     ask_price: Decimal
-    ask_size: int
+    ask_size: Decimal
     bid_exchange: str | None = None  # Alpaca WS: bx
     ask_exchange: str | None = None  # Alpaca WS: ax
     conditions: list[str] = Field(default_factory=list)  # Alpaca WS: c
@@ -97,12 +97,12 @@ class NormalizedTrade(BaseModel):
     symbol: str
     timestamp: datetime
     price: Decimal
-    size: int
+    size: Decimal
     trade_id: str | None = None  # Alpaca WS: i - Unique trade identifier
     exchange: str | None = None  # Alpaca WS: x (stocks only)
     conditions: list[str] = Field(default_factory=list)  # Alpaca WS: c (stocks only)
     tape: str | None = None  # Alpaca WS: z (stocks: A=NYSE, B=ARCA, C=NASDAQ)
-    taker_side: str | None = None  # Alpaca WS: tks (crypto: B=buy, S=sell)
+    taker_side: str | None = None  # Crypto only (B=buy, S=sell)
     provider: str
 
 
@@ -227,16 +227,21 @@ class NormalizedNewsArticle(BaseModel):
 
 
 class NormalizedGreekExposure(BaseModel):
-    """Greek exposure (GEX/DEX/VEX) data."""
+    """Greek exposure (GEX/DEX/VEX) data — split by call/put per UW API."""
 
     symbol: str
     timestamp: datetime
-    gamma_exposure: Decimal
-    delta_exposure: Decimal | None = None
-    vanna_exposure: Decimal | None = None
-    charm_exposure: Decimal | None = None
+    call_gamma: Decimal
+    put_gamma: Decimal | None = None
+    call_delta: Decimal | None = None
+    put_delta: Decimal | None = None
+    call_vanna: Decimal | None = None
+    put_vanna: Decimal | None = None
+    call_charm: Decimal | None = None
+    put_charm: Decimal | None = None
     strike: Decimal | None = None  # For strike-level data
     expiry: str | None = None  # For expiry-level data
+    dte: int | None = None  # For expiry-level data
     provider: str = "unusual_whales"
 
 

@@ -269,7 +269,7 @@ class TestAlpacaEndpoints:
     def test_stock_bars_requires_auth(self, client: TestClient):
         """GET /api/v1/alpaca/stocks/{symbol}/bars requires auth without key."""
         # Create a fresh client without the dependency overrides to test auth
-        from fastapi.testclient import TestClient as TC
+        from fastapi.testclient import TestClient as TC  # noqa: N817
 
         from gateway.main import app as raw_app
 
@@ -279,7 +279,7 @@ class TestAlpacaEndpoints:
 
     def test_option_chain_requires_auth(self, client: TestClient):
         """GET /api/v1/alpaca/options/{underlying}/chain requires auth."""
-        from fastapi.testclient import TestClient as TC
+        from fastapi.testclient import TestClient as TC  # noqa: N817
 
         from gateway.main import app as raw_app
 

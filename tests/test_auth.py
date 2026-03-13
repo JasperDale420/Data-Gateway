@@ -84,5 +84,5 @@ def test_authenticate_valid_key_logs_debug_not_info(test_authenticator, test_api
     client = test_authenticator.authenticate(test_api_key)
 
     assert client is not None
-    assert fake_logger.debug_calls == 1
+    assert fake_logger.debug_calls == 2
     assert fake_logger.info_calls == 0

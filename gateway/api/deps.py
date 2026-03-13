@@ -1,7 +1,6 @@
 """FastAPI dependency injection."""
 
 from functools import lru_cache
-from typing import TYPE_CHECKING
 
 from fastapi import Depends, Header, HTTPException, Request
 
@@ -10,12 +9,18 @@ from gateway.core.audit import AuditLogger
 from gateway.core.auth import Client, ClientAuthenticator
 from gateway.core.cache import HybridCache, InMemoryCache
 from gateway.core.connections import ConnectionManager
-from gateway.core.rate_limiter import EndpointRateLimiter
-from gateway.core.registry import ProviderRegistry
 
-if TYPE_CHECKING:
-    from gateway.core.data_sink import DataSinkRegistry
-    from gateway.core.multiplexer import StreamMultiplexer
+# Re-exported from core.globals for backward compatibility.
+# All API-layer callers import these from here.
+from gateway.core.globals import (
+    get_multiplexer,  # noqa: F401
+    get_registry,  # noqa: F401
+    get_sink_registry,  # noqa: F401
+    set_multiplexer,  # noqa: F401
+    set_registry,  # noqa: F401
+    set_sink_registry,  # noqa: F401
+)
+from gateway.core.rate_limiter import EndpointRateLimiter
 
 
 @lru_cache
@@ -51,53 +56,14 @@ def get_connection_manager() -> ConnectionManager:
     return ConnectionManager()
 
 
-# Global registry instance (initialized in lifespan)
-_registry: ProviderRegistry | None = None
+def get_endpoint_rate_limiter() -> EndpointRateLimiter:
+    """Get the endpoint rate limiter singleton."""
+    return EndpointRateLimiter.get_instance()
 
 
-def set_registry(registry: ProviderRegistry) -> None:
-    """Set the global registry (called during startup)."""
-    global _registry
-    _registry = registry
-
-
-def get_registry() -> ProviderRegistry:
-    """Get the provider registry."""
-    if _registry is None:
-        raise RuntimeError("Provider registry not initialized")
-    return _registry
-
-
-# Global multiplexer instance (initialized in lifespan)
-_multiplexer: "StreamMultiplexer | None" = None
-
-
-def set_multiplexer(multiplexer: "StreamMultiplexer") -> None:
-    """Set the global multiplexer (called during startup)."""
-    global _multiplexer
-    _multiplexer = multiplexer
-
-
-def get_multiplexer() -> "StreamMultiplexer":
-    """Get the stream multiplexer."""
-    if _multiplexer is None:
-        raise RuntimeError("Stream multiplexer not initialized")
-    return _multiplexer
-
-
-# Global data sink registry (initialized in lifespan)
-_sink_registry: "DataSinkRegistry | None" = None
-
-
-def set_sink_registry(registry: "DataSinkRegistry") -> None:
-    """Set the global data sink registry (called during startup)."""
-    global _sink_registry
-    _sink_registry = registry
-
-
-def get_sink_registry() -> "DataSinkRegistry | None":
-    """Get the data sink registry (may be None if not configured)."""
-    return _sink_registry
+def get_audit_logger() -> AuditLogger:
+    """Get the audit logger singleton."""
+    return AuditLogger.get_instance()
 
 
 def get_endpoint_rate_limiter() -> EndpointRateLimiter:
@@ -290,9 +256,13 @@ def get_provider_rate_limiter() -> ProviderRateLimitManager:
 
 async def require_provider_rate_limit(
     provider: str,
-    block: bool = False,
+    block: bool = True,
 ) -> bool:
     """FastAPI dependency that checks provider rate limit.
+
+    Queues requests by default (block=True), waiting up to 30s for a slot
+    rather than immediately returning 429. Only raises 429 if the wait
+    deadline is exceeded.
 
     Usage in endpoint:
         @router.get("/quote/{symbol}")
@@ -300,8 +270,6 @@ async def require_provider_rate_limit(
             symbol: str,
             _: bool = Depends(lambda: require_provider_rate_limit("finnhub")),
         ):
-
-    Raises HTTPException 429 if rate limited.
     """
     limiter = get_rate_limiter()
 

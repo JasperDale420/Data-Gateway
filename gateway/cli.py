@@ -97,11 +97,15 @@ def cmd_rotate_key(args):
     for client in config.get("clients", []):
         if client.get("id") == args.client_id:
             new_key = generate_key()
+            old_hash = client.get("key_hash")
+
             client["key_hash"] = hash_key(new_key)
 
             # Keep old key hash for deprecation period
             if "old_key_hashes" not in client:
                 client["old_key_hashes"] = []
+            if old_hash:
+                client["old_key_hashes"].append(old_hash)
 
             save_clients(args.config, config)
 

@@ -1,5 +1,6 @@
 """Alpha Vantage crypto endpoints."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
@@ -13,6 +14,8 @@ from gateway.api.alphavantage.common import (
     require_api_key,
 )
 from gateway.schemas import SuccessResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -39,8 +42,9 @@ async def get_crypto_rating(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
 @router.get("/crypto/daily/{symbol}", response_model=SuccessResponse)
@@ -53,14 +57,14 @@ async def get_crypto_daily(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get daily crypto time series."""
-    key = cache_key("av:crypto-daily", symbol.upper(), market.upper())
+    key = cache_key("av:crypto-daily", symbol.upper(), market.upper(), str(max_points))
     try:
         return await execute_av_cached(
             cache=cache,
             cache_key_value=key,
             registry=registry,
             ttl=3600,
-            fetcher=lambda provider: provider.get_crypto_daily(symbol, market),
+            fetcher=lambda provider: provider.get_crypto_daily(symbol, market, max_points=max_points),
             cache_transform=lambda data: data,
             miss_meta_builder=lambda data, _cached: {"count": len(data)},
             endpoint="crypto_daily",
@@ -68,5 +72,6 @@ async def get_crypto_daily(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")

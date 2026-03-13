@@ -40,6 +40,19 @@ class _FakeRedisDedupe:
         self.set_calls.append((key, value, ttl))
         return True
 
+    async def mget(self, keys: list[str]) -> dict[str, bool]:
+        result: dict[str, bool] = {}
+        for key in keys:
+            self.get_calls.append(key)
+            if key in self.duplicate_keys:
+                result[key] = True
+        return result
+
+    async def set_many(self, items: list[tuple[str, bool]], ttl: int | None = None) -> int:
+        for key, value in items:
+            self.set_calls.append((key, value, ttl))
+        return len(items)
+
 
 @pytest.mark.asyncio
 async def test_publish_envelopes_dedupes_seen_and_redis_hits() -> None:
@@ -151,7 +164,7 @@ def test_uw_poller_runtime_snapshot_includes_tuning_fields() -> None:
     assert snapshot["dedupe_cache_entries"] == 1
     assert snapshot["dedupe_cache_ttl_seconds"] == 7200
     assert snapshot["poll_intervals_seconds"]["flow"] == 300
-    assert snapshot["poll_intervals_seconds"]["darkpool"] == 60
+    assert snapshot["poll_intervals_seconds"]["darkpool"] == poller._get_darkpool_interval()
     assert snapshot["poll_intervals_seconds"]["tide"] == 3600
 
 
@@ -162,3 +175,28 @@ def test_get_uw_poller_snapshot_returns_disabled_payload_when_not_started() -> N
 
     assert snapshot["running"] is False
     assert snapshot["enabled"] is False
+
+
+def test_sector_tide_polls_independently_of_market_tide() -> None:
+    """Sector tide must have its own timer so market_tide doesn't block it."""
+    poller = UWPoller()
+
+    # Initially both should be ready to poll
+    assert poller._should_poll_tide() is True
+    assert poller._should_poll_sector_tide() is True
+
+    # Simulate market_tide polling (sets _last_tide_poll)
+    poller._last_tide_poll = uw_poller_module.datetime.now(uw_poller_module.UTC)
+
+    # Market tide should now be blocked (just polled)
+    assert poller._should_poll_tide() is False
+
+    # Sector tide should still be ready (independent timer)
+    assert poller._should_poll_sector_tide() is True
+
+    # Now simulate sector_tide polling
+    poller._last_sector_tide_poll = uw_poller_module.datetime.now(uw_poller_module.UTC)
+
+    # Now both should be blocked
+    assert poller._should_poll_tide() is False
+    assert poller._should_poll_sector_tide() is False

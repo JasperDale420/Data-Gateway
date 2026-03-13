@@ -75,3 +75,20 @@ perf-junit.xml
 perf-output.txt
 perf-summary.json
 perf-history-report.json
+
+# Sonar scanner output
+.scannerwork/
+sonar_scan.log
+
+# Aider
+.aider*
+.env
+
+# Axon knowledge graph cache
+.axon/
+
+# Large log files
+gateway_errors_24h.log
+
+# Agent output files
+.agents/

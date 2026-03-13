@@ -27,7 +27,7 @@ import structlog
 from tenacity import (
     before_sleep_log,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -37,6 +37,21 @@ logger = structlog.get_logger(__name__)
 DEFAULT_TIMEOUT = 30.0
 
 
+def _should_retry_http_error(exc: BaseException) -> bool:
+    """Determine if an HTTP exception should trigger a retry."""
+    if isinstance(exc, httpx.TransportError | httpx.TimeoutException):
+        return True
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        # 429 Too Many Requests
+        # 502 Bad Gateway
+        # 503 Service Unavailable
+        # 504 Gateway Timeout
+        return exc.response.status_code in {429, 502, 503, 504}
+
+    return False
+
+
 def _log_request(request: httpx.Request) -> None:
     """Event hook: log outgoing HTTP requests at DEBUG level."""
     logger.debug("http_request", method=str(request.method), url=str(request.url))
@@ -44,7 +59,10 @@ def _log_request(request: httpx.Request) -> None:
 
 def _log_response(response: httpx.Response) -> None:
     """Event hook: log incoming HTTP responses at DEBUG level."""
-    elapsed = response.elapsed.total_seconds() if response.elapsed else 0.0
+    try:
+        elapsed = response.elapsed.total_seconds() if response.elapsed else 0.0
+    except RuntimeError:
+        elapsed = 0.0
     logger.debug(
         "http_response",
         method=str(response.request.method),
@@ -64,36 +82,59 @@ async def _async_log_response(response: httpx.Response) -> None:
     _log_response(response)
 
 
+def _merge_event_hooks(
+    defaults: dict[str, list],
+    overrides: dict[str, list] | None,
+) -> dict[str, list]:
+    """Merge caller-provided event hooks with the default logging hooks."""
+    if not overrides:
+        return defaults
+    merged: dict[str, list] = {}
+    for key in {*defaults, *overrides}:
+        merged[key] = defaults.get(key, []) + overrides.get(key, [])
+    return merged
+
+
 def create_http_client(
     base_url: str = "",
-    timeout: float = DEFAULT_TIMEOUT,
+    timeout: float | httpx.Timeout = DEFAULT_TIMEOUT,
     headers: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> httpx.Client:
     """Create a configured synchronous httpx.Client with standard defaults."""
+    caller_hooks = kwargs.pop("event_hooks", None)
+    hooks = _merge_event_hooks(
+        {"request": [_log_request], "response": [_log_response]},
+        caller_hooks,
+    )
     return httpx.Client(
         base_url=base_url,
         timeout=timeout,
         headers=headers or {},
         follow_redirects=True,
-        event_hooks={"request": [_log_request], "response": [_log_response]},
+        event_hooks=hooks,
         **kwargs,
     )
 
 
 def create_async_http_client(
     base_url: str = "",
-    timeout: float = DEFAULT_TIMEOUT,
+    timeout: float | httpx.Timeout = DEFAULT_TIMEOUT,
     headers: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> httpx.AsyncClient:
     """Create a configured asynchronous httpx.AsyncClient with standard defaults."""
+    caller_hooks = kwargs.pop("event_hooks", None)
+    hooks = _merge_event_hooks(
+        {"request": [_async_log_request], "response": [_async_log_response]},
+        caller_hooks,
+    )
     return httpx.AsyncClient(
         base_url=base_url,
         timeout=timeout,
         headers=headers or {},
         follow_redirects=True,
-        event_hooks={"request": [_async_log_request], "response": [_async_log_response]},
+        event_hooks=hooks,
         **kwargs,
     )
 
@@ -116,7 +157,7 @@ def raise_for_status(response: httpx.Response) -> None:
 http_retry = retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
-    retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
+    retry=retry_if_exception(_should_retry_http_error),
     before_sleep=before_sleep_log(logger, logging.WARNING),  # type: ignore[arg-type]
     reraise=True,
 )

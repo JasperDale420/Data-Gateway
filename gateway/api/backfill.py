@@ -59,6 +59,32 @@ async def submit_backfill(
     }
 
 
+@router.post("/cancel-all", status_code=200)
+async def cancel_all_backfills(
+    _client: Any = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Cancel all running or queued backfill jobs."""
+    engine = get_backfill_engine()
+    cancelled_count = engine.cancel_all()
+    return {
+        "success": True,
+        "meta": {"cancelled": cancelled_count},
+    }
+
+
+@router.delete("", status_code=200)
+async def flush_backfills(
+    _client: Any = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Flush all completed jobs from history."""
+    engine = get_backfill_engine()
+    purged_count = engine.flush()
+    return {
+        "success": True,
+        "meta": {"purged": purged_count},
+    }
+
+
 @router.get("", status_code=200)
 async def list_backfill_jobs(
     status: str | None = None,
@@ -75,8 +101,7 @@ async def list_backfill_jobs(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid status filter: {status}. "
-                f"Valid: {[s.value for s in BackfillStatus]}",
+                detail=f"Invalid status filter: {status}. Valid: {[s.value for s in BackfillStatus]}",
             )
 
     return {

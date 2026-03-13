@@ -60,6 +60,19 @@ CIRCUIT_CONFIGS: dict[str, CircuitBreakerConfig] = {
     "news_rest": CircuitBreakerConfig(failure_threshold=10, recovery_timeout=30),
     "yfinance_rest": CircuitBreakerConfig(failure_threshold=10, recovery_timeout=30),
     "sec_rest": CircuitBreakerConfig(failure_threshold=10, recovery_timeout=30),
+    # Redis Streams sink to Heber — high-throughput data pipeline.
+    # The default (threshold=5, recovery=60s) was too aggressive: a single
+    # transient Redis blip triggered 5 failures in <2 seconds, then the
+    # 60-second blackout dropped ~256 events permanently.  With the new
+    # retry logic in RedisStreamsSink.publish(), each counted failure
+    # already survived 3 retry attempts, so reaching 20 failures means
+    # Redis is genuinely down.  The 15-second recovery is short enough to
+    # resume quickly once Redis is back.
+    "data_sink:redis_streams": CircuitBreakerConfig(
+        failure_threshold=20,
+        recovery_timeout=15,
+        success_threshold=2,
+    ),
 }
 
 
