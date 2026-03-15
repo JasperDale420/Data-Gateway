@@ -71,6 +71,7 @@ class DataSinkRegistry:
         self,
         dedup_cache: Any | None = None,
         max_in_flight_per_sink: int = 256,
+        slot_wait_timeout: float = 2.0,
     ) -> None:
         """Initialize registry.
 
@@ -79,12 +80,16 @@ class DataSinkRegistry:
                          If provided, duplicate events (same event_id) will be skipped.
             max_in_flight_per_sink: Max concurrent in-flight publish tasks per sink.
                                     Additional events are dropped with backpressure stats.
+            slot_wait_timeout: Seconds to wait for an in-flight slot before dropping.
+                               Set to 0.0 for immediate (non-blocking) drop behavior.
+                               Default 2.0s tolerates short burst spikes.
         """
         self._sinks: list[DataSink] = []
         self._enabled = True
         self._background_tasks: set[asyncio.Task] = set()  # Prevent GC
         self._dedup_cache = dedup_cache
         self._max_in_flight_per_sink = max(1, max_in_flight_per_sink)
+        self._slot_wait_timeout = max(0.0, slot_wait_timeout)
         self._dedup_stats = {"checked": 0, "deduplicated": 0}
         self._publish_stats = {"scheduled": 0, "dropped_backpressure": 0}
         self._sink_semaphores: dict[str, asyncio.Semaphore] = {}
@@ -245,19 +250,25 @@ class DataSinkRegistry:
         return total_published
 
     async def _try_acquire_sink_slot(self, sink_name: str) -> bool:
-        """Try to reserve an in-flight publish slot with a short timeout.
+        """Try to reserve an in-flight publish slot.
 
-        Waits up to 2 seconds for a slot to become available during burst
-        publishing (e.g., batch backfill or EOD polls). This prevents
-        silently dropping events during short-lived spikes while still
-        protecting against unbounded backlog.
+        Waits up to ``slot_wait_timeout`` seconds for a slot to become
+        available during burst publishing (e.g., batch backfill or EOD polls).
+        When ``slot_wait_timeout`` is 0.0 the acquire is non-blocking: returns
+        False immediately if no slot is available.
         """
         sem = self._sink_semaphores.get(sink_name)
         if sem is None:
             sem = asyncio.Semaphore(self._max_in_flight_per_sink)
             self._sink_semaphores[sink_name] = sem
+        if self._slot_wait_timeout == 0.0:
+            # Non-blocking: only acquire if a slot is immediately available.
+            if sem.locked():
+                return False
+            await sem.acquire()
+            return True
         try:
-            await asyncio.wait_for(sem.acquire(), timeout=2.0)
+            await asyncio.wait_for(sem.acquire(), timeout=self._slot_wait_timeout)
             return True
         except TimeoutError:
             return False

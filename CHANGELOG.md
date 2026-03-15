@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **DataSinkRegistry backpressure test timeout** (`gateway/core/data_sink.py`, `tests/perf/test_perf_stream_sink.py`): The 2-second `slot_wait_timeout` introduced in the UW burst fix caused three perf tests to time out (>30s) or produce incorrect peak-task assertions when tested with a permanently-blocking sink. Added a `slot_wait_timeout` parameter to `DataSinkRegistry.__init__` (default `2.0s` preserves production burst-tolerance) and updated the three perf tests that exercise blocked/slow sinks to use `slot_wait_timeout=0.0` (immediate drop), matching their original intended behavior. All 819 unit tests now pass.
+
 - **Dev environment bootstrap** (`pyproject.toml`): `unusualwhales-python-client` (a local path package) was missing from `uv.sources` and `[project.optional-dependencies] local`, causing `ModuleNotFoundError: No module named 'unusualwhales'` on fresh `uv sync`. Package added to the `local` extras group alongside `empire-schemas` so `uv sync --all-extras` installs it correctly.
 - **Import sort in `gateway/main.py`**: Sorted stdlib/third-party/local import blocks to satisfy ruff `I001`.
 
