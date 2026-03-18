@@ -10,7 +10,7 @@ from gateway.schemas import (
     NormalizedMarketTide,
 )
 
-from ._base import ERR_NOT_INITIALIZED, _or_unset
+from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
 
 logger = structlog.get_logger()
 
@@ -434,10 +434,10 @@ class UWFlowMixin:
                     {
                         "symbol": symbol.upper(),
                         "price": float(get("price") or 0) if get("price") else None,
-                        "volume": int(get("volume") or 0) if get("volume") else None,
-                        "lit_volume": int(get("lit_volume") or 0) if get("lit_volume") else None,
+                        "volume": _safe_int(get("volume")) if get("volume") else None,
+                        "lit_volume": _safe_int(get("lit_volume")) if get("lit_volume") else None,
                         "off_lit_volume": (
-                            int(get("off_lit_volume") or get("dark_volume") or 0)
+                            _safe_int(get("off_lit_volume") or get("dark_volume"))
                             if get("off_lit_volume") or get("dark_volume")
                             else None
                         ),
@@ -484,8 +484,8 @@ class UWFlowMixin:
                         "strike": float(get("strike") or 0) if get("strike") else None,
                         "call_premium": (float(get("call_premium") or 0) if get("call_premium") else None),
                         "put_premium": (float(get("put_premium") or 0) if get("put_premium") else None),
-                        "call_volume": int(get("call_volume") or 0) if get("call_volume") else None,
-                        "put_volume": int(get("put_volume") or 0) if get("put_volume") else None,
+                        "call_volume": _safe_int(get("call_volume")) if get("call_volume") else None,
+                        "put_volume": _safe_int(get("put_volume")) if get("put_volume") else None,
                         "net_premium": (float(get("net_premium") or 0) if get("net_premium") else None),
                     }
                 )
@@ -530,8 +530,8 @@ class UWFlowMixin:
                         "expiry": get("expiry") or get("expiration"),
                         "call_premium": (float(get("call_premium") or 0) if get("call_premium") else None),
                         "put_premium": (float(get("put_premium") or 0) if get("put_premium") else None),
-                        "call_volume": int(get("call_volume") or 0) if get("call_volume") else None,
-                        "put_volume": int(get("put_volume") or 0) if get("put_volume") else None,
+                        "call_volume": _safe_int(get("call_volume")) if get("call_volume") else None,
+                        "put_volume": _safe_int(get("put_volume")) if get("put_volume") else None,
                         "net_premium": (float(get("net_premium") or 0) if get("net_premium") else None),
                     }
                 )
@@ -650,7 +650,7 @@ class UWFlowMixin:
                         "timestamp": get("timestamp"),
                         "net_call_premium": net_call,
                         "net_put_premium": net_put,
-                        "net_volume": int(get("net_volume") or 0) if get("net_volume") else None,
+                        "net_volume": _safe_int(get("net_volume")) if get("net_volume") else None,
                         "sentiment": sentiment,
                     }
                 )
@@ -744,7 +744,7 @@ class UWFlowMixin:
                         "timestamp": get("timestamp"),
                         "net_call_premium": net_call,
                         "net_put_premium": net_put,
-                        "net_volume": int(get("net_volume") or 0) if get("net_volume") else None,
+                        "net_volume": _safe_int(get("net_volume")) if get("net_volume") else None,
                         "sentiment": sentiment,
                     }
                 )

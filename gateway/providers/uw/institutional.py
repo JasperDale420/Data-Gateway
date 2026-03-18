@@ -5,7 +5,7 @@ from typing import Any
 
 import structlog
 
-from ._base import ERR_NOT_INITIALIZED
+from ._base import ERR_NOT_INITIALIZED, _safe_int
 
 logger = structlog.get_logger()
 
@@ -208,7 +208,7 @@ class UWInstitutionalMixin:
                         etf_symbol=symbol.upper(),
                         holding_symbol=get("ticker") or get("symbol") or "",
                         weight=Decimal(str(get("weight") or get("percentage") or 0)),
-                        shares=int(get("shares") or 0) if get("shares") else None,
+                        shares=_safe_int(get("shares")) if get("shares") else None,
                         market_value=(Decimal(str(get("market_value") or 0)) if get("market_value") else None),
                         provider="unusual_whales",
                     )
@@ -246,7 +246,7 @@ class UWInstitutionalMixin:
                         etf_symbol=get("etf") or get("etf_ticker") or "",
                         holding_symbol=symbol.upper(),
                         weight=Decimal(str(get("weight") or get("percentage") or 0)),
-                        shares=int(get("shares") or 0) if get("shares") else None,
+                        shares=_safe_int(get("shares")) if get("shares") else None,
                         market_value=(Decimal(str(get("market_value") or 0)) if get("market_value") else None),
                         provider="unusual_whales",
                     )

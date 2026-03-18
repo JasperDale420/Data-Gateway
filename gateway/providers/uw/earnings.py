@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import structlog
 
-from ._base import ERR_NOT_INITIALIZED, _or_unset
+from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
 
 logger = structlog.get_logger()
 
@@ -385,15 +385,15 @@ class UWEarningsMixin:
                         price=(
                             Decimal(str(get("close") or get("price") or 0)) if (get("close") or get("price")) else None
                         ),
-                        volume=int(get("volume") or 0) if get("volume") else None,
+                        volume=_safe_int(get("volume")) if get("volume") else None,
                         market_cap=(
                             Decimal(str(get("marketcap") or get("market_cap") or 0))
                             if (get("marketcap") or get("market_cap"))
                             else None
                         ),
                         sector=get("sector"),
-                        call_volume=int(get("call_volume") or 0) if get("call_volume") else None,
-                        put_volume=int(get("put_volume") or 0) if get("put_volume") else None,
+                        call_volume=_safe_int(get("call_volume")) if get("call_volume") else None,
+                        put_volume=_safe_int(get("put_volume")) if get("put_volume") else None,
                         iv_rank=Decimal(str(get("iv_rank") or 0)) if get("iv_rank") else None,
                         # IV metrics
                         iv30d=(Decimal(str(get("iv30d"))) if get("iv30d") is not None else None),
@@ -418,47 +418,55 @@ class UWEarningsMixin:
                         ),
                         # OI data
                         call_open_interest=(
-                            int(get("call_open_interest")) if get("call_open_interest") is not None else None
+                            _safe_int(get("call_open_interest")) if get("call_open_interest") is not None else None
                         ),
                         put_open_interest=(
-                            int(get("put_open_interest")) if get("put_open_interest") is not None else None
+                            _safe_int(get("put_open_interest")) if get("put_open_interest") is not None else None
                         ),
                         total_open_interest=(
-                            int(get("total_open_interest")) if get("total_open_interest") is not None else None
+                            _safe_int(get("total_open_interest")) if get("total_open_interest") is not None else None
                         ),
-                        prev_call_oi=(int(get("prev_call_oi")) if get("prev_call_oi") is not None else None),
-                        prev_put_oi=(int(get("prev_put_oi")) if get("prev_put_oi") is not None else None),
+                        prev_call_oi=(_safe_int(get("prev_call_oi")) if get("prev_call_oi") is not None else None),
+                        prev_put_oi=(_safe_int(get("prev_put_oi")) if get("prev_put_oi") is not None else None),
                         # Volume breakdowns
                         call_volume_ask_side=(
-                            int(get("call_volume_ask_side")) if get("call_volume_ask_side") is not None else None
+                            _safe_int(get("call_volume_ask_side")) if get("call_volume_ask_side") is not None else None
                         ),
                         call_volume_bid_side=(
-                            int(get("call_volume_bid_side")) if get("call_volume_bid_side") is not None else None
+                            _safe_int(get("call_volume_bid_side")) if get("call_volume_bid_side") is not None else None
                         ),
                         put_volume_ask_side=(
-                            int(get("put_volume_ask_side")) if get("put_volume_ask_side") is not None else None
+                            _safe_int(get("put_volume_ask_side")) if get("put_volume_ask_side") is not None else None
                         ),
                         put_volume_bid_side=(
-                            int(get("put_volume_bid_side")) if get("put_volume_bid_side") is not None else None
+                            _safe_int(get("put_volume_bid_side")) if get("put_volume_bid_side") is not None else None
                         ),
                         # Average volume metrics
                         avg_30_day_call_volume=(
-                            int(get("avg_30_day_call_volume")) if get("avg_30_day_call_volume") is not None else None
+                            _safe_int(get("avg_30_day_call_volume"))
+                            if get("avg_30_day_call_volume") is not None
+                            else None
                         ),
                         avg_30_day_put_volume=(
-                            int(get("avg_30_day_put_volume")) if get("avg_30_day_put_volume") is not None else None
+                            _safe_int(get("avg_30_day_put_volume"))
+                            if get("avg_30_day_put_volume") is not None
+                            else None
                         ),
                         avg_3_day_call_volume=(
-                            int(get("avg_3_day_call_volume")) if get("avg_3_day_call_volume") is not None else None
+                            _safe_int(get("avg_3_day_call_volume"))
+                            if get("avg_3_day_call_volume") is not None
+                            else None
                         ),
                         avg_3_day_put_volume=(
-                            int(get("avg_3_day_put_volume")) if get("avg_3_day_put_volume") is not None else None
+                            _safe_int(get("avg_3_day_put_volume")) if get("avg_3_day_put_volume") is not None else None
                         ),
                         avg_7_day_call_volume=(
-                            int(get("avg_7_day_call_volume")) if get("avg_7_day_call_volume") is not None else None
+                            _safe_int(get("avg_7_day_call_volume"))
+                            if get("avg_7_day_call_volume") is not None
+                            else None
                         ),
                         avg_7_day_put_volume=(
-                            int(get("avg_7_day_put_volume")) if get("avg_7_day_put_volume") is not None else None
+                            _safe_int(get("avg_7_day_put_volume")) if get("avg_7_day_put_volume") is not None else None
                         ),
                         # Market data
                         prev_close=(Decimal(str(get("prev_close"))) if get("prev_close") is not None else None),

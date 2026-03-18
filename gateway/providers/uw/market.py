@@ -5,7 +5,7 @@ from typing import Any
 
 import structlog
 
-from ._base import ERR_NOT_INITIALIZED, _or_unset
+from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
 
 logger = structlog.get_logger()
 
@@ -41,7 +41,7 @@ class UWMarketMixin:
                     NormalizedShortData(
                         symbol=symbol.upper(),
                         date=str(get("date") or ""),
-                        short_interest=int(get("short_interest") or 0),
+                        short_interest=_safe_int(get("short_interest")),
                         days_to_cover=(Decimal(str(get("days_to_cover") or 0)) if get("days_to_cover") else None),
                         short_percent_float=(
                             Decimal(str(get("short_percent_float") or 0)) if get("short_percent_float") else None
@@ -82,7 +82,7 @@ class UWMarketMixin:
             results = []
             for item in self._extract_data(response):
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
-                quantity = int(get("quantity") or get("fails") or 0)
+                quantity = _safe_int(get("quantity") or get("fails"))
                 price = Decimal(str(get("price") or 0)) if get("price") else None
                 results.append(
                     NormalizedFTD(
@@ -126,7 +126,7 @@ class UWMarketMixin:
                     NormalizedShortData(
                         symbol=symbol.upper(),
                         date=str(get("date") or ""),
-                        short_interest=int(get("short_volume") or 0),
+                        short_interest=_safe_int(get("short_volume")),
                         short_percent_float=(Decimal(str(get("short_ratio") or 0)) if get("short_ratio") else None),
                         provider="unusual_whales",
                     )
@@ -168,7 +168,7 @@ class UWMarketMixin:
                         symbol=symbol.upper(),
                         expiry=str(get("expiry") or get("expiration_date") or ""),
                         iv=Decimal(str(get("iv") or get("implied_volatility") or 0)),
-                        days_to_expiry=int(get("days_to_expiry") or get("dte") or 0),
+                        days_to_expiry=_safe_int(get("days_to_expiry") or get("dte")),
                         call_iv=Decimal(str(get("call_iv") or 0)) if get("call_iv") else None,
                         put_iv=Decimal(str(get("put_iv") or 0)) if get("put_iv") else None,
                         provider="unusual_whales",
@@ -297,12 +297,12 @@ class UWMarketMixin:
                 results.append(
                     NormalizedSeasonality(
                         symbol=None,
-                        month=int(get("month") or 0),
+                        month=_safe_int(get("month")),
                         avg_return=Decimal(str(get("avg_return") or get("average_return") or 0)),
                         median_return=(Decimal(str(get("median_return") or 0)) if get("median_return") else None),
                         win_rate=Decimal(str(get("win_rate") or get("positive_rate") or 0)),
                         sample_years=(
-                            int(get("sample_years") or get("years") or 0)
+                            _safe_int(get("sample_years") or get("years"))
                             if get("sample_years") or get("years")
                             else None
                         ),
@@ -340,12 +340,12 @@ class UWMarketMixin:
                 results.append(
                     NormalizedSeasonality(
                         symbol=symbol.upper(),
-                        month=int(get("month") or 0),
+                        month=_safe_int(get("month")),
                         avg_return=Decimal(str(get("avg_return") or get("average_return") or 0)),
                         median_return=(Decimal(str(get("median_return") or 0)) if get("median_return") else None),
                         win_rate=Decimal(str(get("win_rate") or get("positive_rate") or 0)),
                         sample_years=(
-                            int(get("sample_years") or get("years") or 0)
+                            _safe_int(get("sample_years") or get("years"))
                             if get("sample_years") or get("years")
                             else None
                         ),
@@ -436,7 +436,7 @@ class UWMarketMixin:
                         "expiry": get("expiry") or get("expiration"),
                         "type": get("option_type") or get("type"),
                         "premium": float(get("premium") or 0) if get("premium") else None,
-                        "volume": int(get("volume") or 0) if get("volume") else None,
+                        "volume": _safe_int(get("volume")) if get("volume") else None,
                         "rule": get("rule_name") or get("alert_type"),
                         "timestamp": str(get("timestamp") or get("date") or ""),
                     }

@@ -30,7 +30,7 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
-from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, ERR_TRADING_CLIENT_NOT_INITIALIZED
+from gateway.providers.alpaca._base import ERR_TRADING_CLIENT_NOT_INITIALIZED
 
 logger = structlog.get_logger()
 
@@ -348,13 +348,13 @@ class AlpacaTradingMixin:
         Returns:
             Response from the DNE request
         """
-        if not self._client:
-            raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
+        if not self._trading_client:
+            raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
         try:
             # This endpoint is not in alpaca-py SDK, use REST directly
             response = httpx.post(
-                f"{self._base_url}/v2/positions/{symbol_or_contract_id}/do-not-exercise",
+                f"{self._trading_base_url}/v2/positions/{symbol_or_contract_id}/do-not-exercise",
                 headers={
                     "APCA-API-KEY-ID": self._api_key,
                     "APCA-API-SECRET-KEY": self._secret_key,
