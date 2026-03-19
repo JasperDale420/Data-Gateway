@@ -66,6 +66,12 @@ PROVIDER_REQUESTS = Counter(
     ["provider", "status"],  # success, error
 )
 
+PROVIDER_ERRORS = Counter(
+    "gateway_provider_errors_total",
+    "Total provider request errors by type",
+    ["provider", "error_type"],  # timeout, connection, auth, rate_limit, server_error, unknown
+)
+
 PROVIDER_LATENCY = Histogram(
     "gateway_provider_latency_seconds",
     "Upstream provider request latency",
@@ -229,6 +235,23 @@ def record_provider_request(provider: str, success: bool, duration: float) -> No
     PROVIDER_LATENCY.labels(provider=provider).observe(duration)
 
 
+def record_provider_error(provider: str, error_type: str) -> None:
+    """Record provider request error with specific type.
+
+    Args:
+        provider: Provider name (e.g., 'alpaca', 'finnhub')
+        error_type: Error classification:
+            - 'timeout': Request timed out
+            - 'connection': Connection failed
+            - 'auth': Authentication error (401/403)
+            - 'rate_limit': Provider rate limit hit (429)
+            - 'server_error': Server error (5xx)
+            - 'client_error': Client error (4xx)
+            - 'unknown': Unclassified error
+    """
+    PROVIDER_ERRORS.labels(provider=provider, error_type=error_type).inc()
+
+
 def set_provider_health(provider: str, healthy: bool) -> None:
     """Set provider health status."""
     PROVIDER_HEALTH.labels(provider=provider).set(1 if healthy else 0)
@@ -357,6 +380,20 @@ def record_sink_publish(sink: str, topic: str, success: bool) -> None:
     SINK_PUBLISH.labels(sink=sink, topic=topic, status=status).inc()
 
 
+def _classify_http_error(status_code: int) -> str:
+    """Classify HTTP status code into error type."""
+    if status_code == 401 or status_code == 403:
+        return "auth"
+    elif status_code == 429:
+        return "rate_limit"
+    elif 400 <= status_code < 500:
+        return "client_error"
+    elif 500 <= status_code < 600:
+        return "server_error"
+    else:
+        return "unknown"
+
+
 def httpx_event_hooks(provider: str) -> dict[str, list]:
     """Create httpx event hooks to record provider metrics."""
     import time
@@ -367,6 +404,35 @@ def httpx_event_hooks(provider: str) -> dict[str, list]:
     async def _on_response(response) -> None:
         start = response.request.extensions.get("gateway_metrics_start")
         duration = time.perf_counter() - start if start else 0.0
-        record_provider_request(provider, response.is_success, duration)
+        is_success = response.is_success
+        record_provider_request(provider, is_success, duration)
 
-    return {"request": [_on_request], "response": [_on_response]}
+        # Record specific error type for failed requests
+        if not is_success:
+            error_type = _classify_http_error(response.status_code)
+            record_provider_error(provider, error_type)
+
+    async def _on_error(request, error) -> None:
+        # Handle network/transport errors
+        start = request.extensions.get("gateway_metrics_start")
+        duration = time.perf_counter() - start if start else 0.0
+        record_provider_request(provider, success=False, duration=duration)
+
+        # Classify the error type based on exception
+        error_type = "unknown"
+        error_name = type(error).__name__.lower()
+
+        if "timeout" in error_name or "timeout" in str(error).lower():
+            error_type = "timeout"
+        elif "connect" in error_name or "connection" in str(error).lower():
+            error_type = "connection"
+        elif "auth" in error_name:
+            error_type = "auth"
+
+        record_provider_error(provider, error_type)
+
+    return {
+        "request": [_on_request],
+        "response": [_on_response],
+        "request_exception": [_on_error],
+    }
