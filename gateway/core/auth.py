@@ -54,45 +54,107 @@ class ClientAuthenticator:
             logger.warning("clients_config_not_found", path=str(self.config_path))
             return
 
-        with open(self.config_path) as f:
-            config = yaml.safe_load(f)
+        try:
+            with open(self.config_path) as f:
+                config = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            logger.error(
+                "clients_config_parse_error",
+                path=str(self.config_path),
+                error=str(exc),
+                exc_info=True,
+            )
+            raise
+
+        if not isinstance(config, dict):
+            logger.error(
+                "clients_config_invalid_format",
+                path=str(self.config_path),
+                got_type=type(config).__name__,
+            )
+            raise ValueError(f"Expected dict from {self.config_path}, got {type(config).__name__}")
 
         clients = config.get("clients", [])
-        for client_data in clients:
-            client_id = client_data["id"]
-
-            permissions = ClientPermissions(
-                providers=client_data.get("permissions", {}).get("providers", []),
-                feeds=client_data.get("permissions", {}).get("feeds", []),
-                max_symbols=client_data.get("permissions", {}).get("max_symbols", 100),
-                rate_limit=client_data.get("permissions", {}).get("rate_limit", 60),
+        if not isinstance(clients, list):
+            logger.error(
+                "clients_config_invalid_clients_field",
+                path=str(self.config_path),
+                got_type=type(clients).__name__,
             )
+            raise ValueError(f"Expected 'clients' to be a list in {self.config_path}, got {type(clients).__name__}")
 
-            client = Client(
-                id=client_id,
-                permissions=permissions,
-                role=str(client_data.get("role", "client")).lower(),
-                enabled=client_data.get("enabled", True),
-            )
-
-            self._clients[client_id] = client
-
-            # Support both plaintext and hashed keys
-            if "key" in client_data:
-                self._plaintext_keys[client_data["key"]] = client_id
-            if "key_hash" in client_data:
-                # Store just the hash portion (after "sha256:")
-                key_hash = client_data["key_hash"]
-                if key_hash.startswith("sha256:"):
-                    key_hash = key_hash[7:]
-                self._hashed_keys[key_hash] = client_id
+        skipped = 0
+        for idx, client_data in enumerate(clients):
+            if self._parse_client_entry(idx, client_data):
+                skipped += 1
 
         logger.info(
             "clients_loaded",
             count=len(self._clients),
             plaintext_keys=len(self._plaintext_keys),
             hashed_keys=len(self._hashed_keys),
+            skipped=skipped,
         )
+
+    def _parse_client_entry(self, idx: int, client_data: object) -> bool:
+        """Parse and register a single client entry.
+
+        Returns True if the entry was skipped (malformed), False if registered.
+        """
+        if not isinstance(client_data, dict):
+            logger.warning(
+                "clients_config_skip_non_dict_entry",
+                index=idx,
+                got_type=type(client_data).__name__,
+            )
+            return True
+
+        client_id = client_data.get("id")
+        if not client_id:
+            logger.warning(
+                "clients_config_skip_missing_id",
+                index=idx,
+                keys=list(client_data.keys()),
+            )
+            return True
+
+        if "key" not in client_data and "key_hash" not in client_data:
+            logger.warning(
+                "clients_config_skip_no_credentials",
+                client_id=client_id,
+            )
+            return True
+
+        perms_raw = client_data.get("permissions", {})
+        if not isinstance(perms_raw, dict):
+            perms_raw = {}
+
+        permissions = ClientPermissions(
+            providers=perms_raw.get("providers", []),
+            feeds=perms_raw.get("feeds", []),
+            max_symbols=perms_raw.get("max_symbols", 100),
+            rate_limit=perms_raw.get("rate_limit", 60),
+        )
+
+        client = Client(
+            id=client_id,
+            permissions=permissions,
+            role=str(client_data.get("role", "client")).lower(),
+            enabled=client_data.get("enabled", True),
+        )
+
+        self._clients[client_id] = client
+
+        # Support both plaintext and hashed keys
+        if "key" in client_data:
+            self._plaintext_keys[client_data["key"]] = client_id
+        if "key_hash" in client_data:
+            key_hash = client_data["key_hash"]
+            if key_hash.startswith("sha256:"):
+                key_hash = key_hash[7:]
+            self._hashed_keys[key_hash] = client_id
+
+        return False
 
     def authenticate(
         self,
