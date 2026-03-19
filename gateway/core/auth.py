@@ -52,12 +52,49 @@ class ClientAuthenticator:
             logger.warning("clients_config_not_found", path=str(self.config_path))
             return
 
-        with open(self.config_path) as f:
-            config = yaml.safe_load(f)
+        try:
+            with open(self.config_path) as f:
+                config = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            logger.error("auth_receive_error", error="yaml_parse_error", details=str(e))
+            return
+        except OSError as e:
+            logger.error("auth_receive_error", error="file_read_error", details=str(e))
+            return
+
+        if config is None:
+            logger.warning("clients_config_empty", path=str(self.config_path))
+            return
 
         clients = config.get("clients", [])
-        for client_data in clients:
-            client_id = client_data["id"]
+        if not isinstance(clients, list):
+            logger.error(
+                "auth_receive_error",
+                error="invalid_config_structure",
+                details="'clients' must be a list",
+            )
+            return
+
+        for idx, client_data in enumerate(clients):
+            if not isinstance(client_data, dict):
+                logger.warning(
+                    "auth_receive_error",
+                    error="invalid_client_entry",
+                    index=idx,
+                    details="client entry must be a dictionary",
+                )
+                continue
+
+            try:
+                client_id = client_data["id"]
+            except KeyError:
+                logger.warning(
+                    "auth_receive_error",
+                    error="missing_client_id",
+                    index=idx,
+                    details="client entry missing required 'id' field",
+                )
+                continue
 
             permissions = ClientPermissions(
                 providers=client_data.get("permissions", {}).get("providers", []),
