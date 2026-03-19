@@ -300,7 +300,7 @@ class UWPoller:
                     if self._redis_dedupe is not None and cache_key:
                         redis_items.append((cache_key, True))
 
-            if redis_items:
+            if redis_items and self._redis_dedupe is not None:
                 await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
 
         return published, duplicates

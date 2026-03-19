@@ -18,9 +18,9 @@ class _FakeSinkRegistry:
     def __init__(self, delay_seconds: float = 0.0, wait_event: asyncio.Event | None = None) -> None:
         self.delay_seconds = delay_seconds
         self.wait_event = wait_event
-        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.calls: list[tuple[str, dict[str, Any] | str]] = []
 
-    async def publish_all(self, topic: str, data: dict[str, Any]) -> None:
+    async def publish_all(self, topic: str, data: dict[str, Any] | str) -> None:
         self.calls.append((topic, data))
         if self.wait_event is not None:
             await self.wait_event.wait()

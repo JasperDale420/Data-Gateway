@@ -83,7 +83,7 @@ async def _run_sample_call(provider_name: str, provider: DataProvider) -> tuple[
 
 async def _run_provider_smoke_check(
     provider_name: str,
-    provider: object | None,
+    provider: DataProvider | None,
     credential_env: str | None,
     credential_present: bool,
     semaphore: asyncio.Semaphore,
@@ -105,7 +105,7 @@ async def _run_provider_smoke_check(
 
     async with semaphore:
         try:
-            health: HealthStatus = await provider.health_check()  # type: ignore[union-attr]
+            health: HealthStatus = await provider.health_check()
         except Exception as exc:  # noqa: BLE001
             return SmokeResult(
                 provider=provider_name,

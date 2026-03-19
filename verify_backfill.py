@@ -4,14 +4,13 @@ from datetime import UTC, datetime, timedelta
 from gateway.config import get_settings
 from gateway.core.backfill import BackfillEngine, BackfillRequest
 from gateway.core.globals import set_registry
-from gateway.core.rate_limiter import get_provider_rate_limiters
+from gateway.core.rate_limiter import get_rate_limiter
 from gateway.core.registry import ProviderRegistry
 
 
 async def main():
     settings = get_settings()
-    rate_limiters = get_provider_rate_limiters()
-    await rate_limiters.start()
+    get_rate_limiter()  # Initialize global rate limiter instance
 
     # Initialize provider registry properly
     registry = ProviderRegistry()
