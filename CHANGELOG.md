@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **WebSocket bar relay completely broken — zero bars delivered to downstream clients** (`gateway/core/connections.py`): `ConnectionManager.broadcast()` looked up client IDs in `_client_map` (keyed by application-level client IDs like `"3roses"`), but the stream multiplexer's `SubscriptionManager` stores and passes **connection UUIDs**. Every lookup returned `None`, so `targets` was always empty and zero bars were ever sent. Added fallback: when a provided ID is not found in `_client_map`, check `_connections` directly (which is keyed by connection UUID). Confirmed fix with live market test — SPY and AAPL bars now flow correctly.
+
+
 - **`_safe_int` undefined in four UW provider modules** (`gateway/providers/uw/earnings.py`, `market.py`, `flow.py`, `institutional.py`): All four modules called `_safe_int()` but only imported `ERR_NOT_INITIALIZED` and `_or_unset` from `._base`. At runtime this would raise `NameError: name '_safe_int' is not defined` for any endpoint that processes volume, open interest, short interest, or OI data. Added `_safe_int` to the import in each affected file.
 
 - **Unused import `ERR_PROVIDER_NOT_INITIALIZED`** (`gateway/providers/alpaca/trading.py`): `ERR_PROVIDER_NOT_INITIALIZED` was imported but never referenced in the module. Removed it to keep the import clean.
