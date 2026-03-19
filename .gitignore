@@ -68,3 +68,4 @@ data_lake/
 codebase.md
 codebase.md
 vendor/
+.aider*

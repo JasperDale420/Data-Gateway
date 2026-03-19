@@ -3014,6 +3014,82 @@ class UnusualWhalesProvider(DataProvider):
             logger.error("uw_etf_tide_failed", symbol=symbol, error=str(e))
             return []
 
+    async def get_eod_etf_tide(self, symbol: str, date_str: str | None = None) -> list[dict]:
+        """Get end-of-day ETF-level tide data (premium flow sentiment).
+
+        This method retrieves the final settled tide data for an ETF at market close,
+        which includes complete premium totals and final sentiment calculations.
+
+        Args:
+            symbol: ETF ticker symbol (e.g., 'SPY', 'QQQ')
+            date_str: Date in YYYY-MM-DD format (defaults to today)
+
+        Returns:
+            List of dicts with EOD tide data including:
+            - tide_type: 'etf_eod'
+            - ticker: ETF symbol
+            - date: Trading date
+            - timestamp: EOD timestamp
+            - net_call_premium: Total call premium for the day
+            - net_put_premium: Total put premium for the day
+            - net_volume: Total net volume
+            - sentiment: 'bullish', 'bearish', or 'neutral'
+        """
+        if not self._client:
+            logger.warning("uw_client_not_initialized")
+            return []
+
+        try:
+            from unusualwhales.api import market
+
+            # Default to today if not provided
+            if not date_str:
+                date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+
+            kwargs = {"ticker": symbol.upper(), "date": date_str}
+            response = await self._call_sync(
+                market.get_etf_tide.sync, client=self._client, **kwargs
+            )
+
+            tides = []
+            for item in self._extract_data(response):
+                get = (
+                    item.get
+                    if isinstance(item, dict)
+                    else lambda k, d=None, _item=item: getattr(_item, k, d)
+                )
+
+                net_call = float(get("net_call_premium") or 0)
+                net_put = float(get("net_put_premium") or 0)
+
+                # Compute sentiment based on final EOD premium totals
+                if net_call > abs(net_put):
+                    sentiment = "bullish"
+                elif abs(net_put) > net_call:
+                    sentiment = "bearish"
+                else:
+                    sentiment = "neutral"
+
+                tides.append(
+                    {
+                        "tide_type": "etf_eod",
+                        "ticker": symbol.upper(),
+                        "date": get("date") or date_str,
+                        "timestamp": get("timestamp"),
+                        "net_call_premium": net_call,
+                        "net_put_premium": net_put,
+                        "net_volume": int(get("net_volume") or 0) if get("net_volume") else None,
+                        "sentiment": sentiment,
+                    }
+                )
+
+            logger.info("uw_eod_etf_tide_fetched", symbol=symbol, date=date_str, count=len(tides))
+            return tides
+
+        except Exception as e:
+            logger.error("uw_eod_etf_tide_error", symbol=symbol, date=date_str, error=str(e))
+            return []
+
     async def get_option_volume_levels(self, symbol: str) -> list[dict[str, Any]]:
         """Get option volume levels per price."""
         if not self._client:
