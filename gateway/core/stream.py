@@ -320,7 +320,6 @@ class UpstreamConnection:
         self._ws: WebSocketClientProtocol | None = None
         self._authenticated = False
         self._running = False
-        self._receive_task: asyncio.Task | None = None
         self._subscriptions = SubscriptionManager()
 
     @property
@@ -493,14 +492,6 @@ class UpstreamConnection:
         """
         self._running = False
         self._authenticated = False
-
-        # Cancel receive task first
-        if self._receive_task:
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                logger.debug("receive_task_cancelled", stream=self.stream_type.value)
 
         # Aggressively close WebSocket connection
         if self._ws:
@@ -813,10 +804,29 @@ class StreamMultiplexer:
         if new_bars or new_quotes or new_trades or new_news:
             await conn.subscribe(new_bars, new_quotes, new_trades, new_news)
 
+        # Determine feed names for response
+        feeds = []
+        if stream_type == AlpacaStreamType.CRYPTO:
+            prefix = "crypto_"
+        elif stream_type == AlpacaStreamType.OPTIONS:
+            prefix = "option_"
+        else:
+            prefix = "stock_"
+
+        if bars:
+            feeds.append(f"{prefix}bars")
+        if quotes:
+            feeds.append(f"{prefix}quotes")
+        if trades:
+            feeds.append(f"{prefix}trades")
+        if news:
+            feeds.append("news")
+
         subscribed = list(set((bars or []) + (quotes or []) + (trades or []) + (news or [])))
         return {
             "type": "subscription_ack",
             "status": "ok",
+            "feeds": feeds,
             "subscribed": subscribed,
             "failed": [],
         }
