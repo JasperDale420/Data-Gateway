@@ -2972,7 +2972,7 @@ class UnusualWhalesProvider(DataProvider):
             if date_str:
                 kwargs["date"] = date_str
             response = await self._call_sync(
-                market.get_etf_tide.sync, client=self._client, **kwargs
+                market.get_market_tide_by_etf.sync, client=self._client, **kwargs
             )
 
             tides = []
