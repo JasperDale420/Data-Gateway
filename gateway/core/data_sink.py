@@ -170,11 +170,19 @@ class DataSinkRegistry:
             try:
                 breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
                 if breaker.state == CircuitState.OPEN:
-                    logger.debug(
-                        "data_sink_circuit_open_skip",
-                        sink=sink.name,
-                        topic=topic,
-                    )
+                    if hasattr(sink, "buffer_event"):
+                        sink.buffer_event(topic, data)
+                        logger.debug(
+                            "data_sink_circuit_open_buffered",
+                            sink=sink.name,
+                            topic=topic,
+                        )
+                    else:
+                        logger.debug(
+                            "data_sink_circuit_open_skip",
+                            sink=sink.name,
+                            topic=topic,
+                        )
                     if not sink.record_publish_metrics:
                         record_sink_publish(sink=sink.name, topic=topic, success=False)
                     continue
@@ -220,17 +228,30 @@ class DataSinkRegistry:
         total_published = 0
 
         for sink in self._sinks:
-            if hasattr(sink, "publish_batch"):
-                try:
-                    breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
-                    if breaker.state == CircuitState.OPEN:
+            # Check circuit state before any publish attempt
+            try:
+                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+                if breaker.state == CircuitState.OPEN:
+                    if hasattr(sink, "buffer_event"):
+                        for msg_topic, msg_data in messages:
+                            sink.buffer_event(msg_topic, msg_data)
+                        logger.warning(
+                            "data_sink_batch_circuit_open_buffered",
+                            sink=sink.name,
+                            count=len(messages),
+                        )
+                    else:
                         logger.warning(
                             "data_sink_batch_circuit_open",
                             sink=sink.name,
                             count=len(messages),
                         )
-                        continue
+                    continue
+            except Exception:
+                pass  # If breaker lookup fails, proceed with publish
 
+            if hasattr(sink, "publish_batch"):
+                try:
                     count = await sink.publish_batch(messages)
                     total_published += count
                 except Exception:

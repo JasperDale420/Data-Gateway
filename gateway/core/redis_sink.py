@@ -235,6 +235,20 @@ class RedisStreamsSink(DataSink):
                 total_evicted=self._buffer_stats["evicted"],
             )
 
+    def buffer_event(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
+        """Buffer an event from the registry when circuit breaker is OPEN.
+
+        Serializes the data and delegates to _buffer_failed_event so it
+        participates in the same drain logic on reconnect.
+        """
+        if isinstance(data, str):
+            payload = data.encode()
+        elif isinstance(data, bytes):
+            payload = data
+        else:
+            payload = orjson.dumps(data, default=str)
+        self._buffer_failed_event(topic, payload)
+
     async def _drain_buffer(self) -> None:
         """Drain buffered failed events after a successful reconnect.
 
