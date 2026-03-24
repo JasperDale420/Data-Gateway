@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **`data-gateway-redis` ephemeral** (`docker-compose.yml`): Disabled AOF/RDB persistence and capped memory at 512mb with LRU eviction. Eliminates the 15-second startup penalty that caused flow alert data loss during the 576+ container restarts.
+- **Events buffered through circuit breaker OPEN state** (`gateway/core/data_sink.py`, `redis_sink.py`): When the Redis sink's circuit breaker opens, events are now routed to the sink's 10K-event buffer instead of being silently dropped. They are replayed automatically when Redis recovers.
+- **`uw_poller_no_sink` promoted to WARNING** (`gateway/core/uw_poller.py`): Previously logged at DEBUG, making Redis sink outages invisible in production logs.
+
+### Added
+
+- `sink_available` field in UW poller runtime snapshot (`gateway/core/uw_poller.py`)
+- `data_sink` component status in `/health/status` endpoint (`gateway/api/health.py`) for monitoring integration
+
+### Fixed
+
 - **`get_sector_tide` fails with `AttributeError` when running outside Docker** (`gateway/providers/uw/flow.py`): The local conda environment installs `unusualwhales-python-client` 5.0.1 from PyPI which lacks `market.get_sector_tide`. The Docker container correctly installs the vendored 5.1 SDK, but local runs produced 22 `uw_sector_tide_failed` / `uw_poller_sector_tide_error` errors per poll cycle. Added a `hasattr` guard that falls back to a raw HTTP call to `/api/market/{sector}/sector-tide` when the SDK attribute is absent, matching the existing darkpool raw-HTTP fallback pattern. Also extracted `_parse_sector_tide_items()` helper to deduplicate parsing logic between the SDK and raw-HTTP paths.
 
 - **WebSocket bar relay completely broken — zero bars delivered to downstream clients** (`gateway/core/connections.py`): `ConnectionManager.broadcast()` looked up client IDs in `_client_map` (keyed by application-level client IDs like `"3roses"`), but the stream multiplexer's `SubscriptionManager` stores and passes **connection UUIDs**. Every lookup returned `None`, so `targets` was always empty and zero bars were ever sent. Added fallback: when a provided ID is not found in `_client_map`, check `_connections` directly (which is keyed by connection UUID). Confirmed fix with live market test — SPY and AAPL bars now flow correctly.
