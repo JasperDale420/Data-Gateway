@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **`get_etf_tide` fails with `AttributeError` when SDK lacks `market.get_etf_tide`** (`gateway/providers/uw/flow.py`): Same class of bug as the `get_sector_tide` fix — the local SDK version does not expose `market.get_etf_tide`, causing `uw_etf_tide_failed` errors on every EOD poll cycle. Added a `hasattr` guard that falls back to a raw HTTP call to `/api/etf/{symbol}/tide` when the SDK attribute is absent. Extracted `_parse_etf_tide_items()` helper to deduplicate parsing logic between the SDK and raw-HTTP paths.
+
 - **`data-gateway-redis` ephemeral** (`docker-compose.yml`): Disabled AOF/RDB persistence and capped memory at 512mb with LRU eviction. Eliminates the 15-second startup penalty that caused flow alert data loss during the 576+ container restarts.
 - **Events buffered through circuit breaker OPEN state** (`gateway/core/data_sink.py`, `redis_sink.py`): When the Redis sink's circuit breaker opens, events are now routed to the sink's 10K-event buffer instead of being silently dropped. They are replayed automatically when Redis recovers.
 - **`uw_poller_no_sink` promoted to WARNING** (`gateway/core/uw_poller.py`): Previously logged at DEBUG, making Redis sink outages invisible in production logs.

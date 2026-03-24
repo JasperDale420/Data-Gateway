@@ -746,10 +746,69 @@ class UWFlowMixin:
             logger.error("uw_top_net_impact_failed", error=str(e))
             raise
 
+    def _parse_etf_tide_items(self, items: list[Any], symbol: str) -> list[dict]:
+        """Parse raw ETF tide data items into normalized dicts."""
+        tides = []
+        for item in items:
+            get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+
+            net_call = float(get("net_call_premium") or 0)
+            net_put = float(get("net_put_premium") or 0)
+
+            if net_call > abs(net_put):
+                sentiment = "bullish"
+            elif abs(net_put) > net_call:
+                sentiment = "bearish"
+            else:
+                sentiment = "neutral"
+
+            tides.append(
+                {
+                    "tide_type": "etf",
+                    "ticker": symbol.upper(),
+                    "date": get("date"),
+                    "timestamp": get("timestamp"),
+                    "net_call_premium": net_call,
+                    "net_put_premium": net_put,
+                    "net_volume": _safe_int(get("net_volume")) if get("net_volume") else None,
+                    "sentiment": sentiment,
+                }
+            )
+        return tides
+
+    async def _get_etf_tide_raw(self, symbol: str, date_str: str | None = None) -> list[dict]:
+        """Fetch ETF tide via raw HTTP when SDK version lacks get_etf_tide."""
+        if not self._client:
+            return []
+
+        try:
+            http_client = self._client.get_httpx_client()
+            params: dict[str, str] = {}
+            if date_str:
+                params["date"] = date_str
+
+            response = await self._call_sync(
+                http_client.get,
+                f"/api/etf/{symbol.upper()}/tide",
+                params=params,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as e:
+            logger.error("uw_etf_tide_raw_failed", symbol=symbol, error=str(e))
+            raise
+
+        data_items = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(data_items, list):
+            data_items = [data_items] if isinstance(data_items, dict) else []
+
+        return self._parse_etf_tide_items(data_items, symbol)
+
     async def get_etf_tide(self, symbol: str, date_str: str | None = None) -> list[dict]:
         """Get ETF-level tide data (premium flow sentiment).
 
         Returns data in same format as market/tide (Daily Market Tide schema).
+        Falls back to raw HTTP if the installed SDK version lacks get_etf_tide.
         """
         if not self._client:
             raise RuntimeError(ERR_NOT_INITIALIZED)
@@ -757,38 +816,19 @@ class UWFlowMixin:
         try:
             from unusualwhales.api import market
 
+            if not hasattr(market, "get_etf_tide"):
+                logger.warning(
+                    "uw_etf_tide_sdk_missing",
+                    detail="unusualwhales-python-client lacks get_etf_tide — falling back to raw HTTP",
+                )
+                return await self._get_etf_tide_raw(symbol, date_str)
+
             kwargs = {"ticker": symbol.upper()}
             if date_str:
                 kwargs["date"] = date_str
             response = await self._call_sync(market.get_etf_tide.sync, client=self._client, **kwargs)
 
-            tides = []
-            for item in self._extract_data(response):
-                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
-
-                net_call = float(get("net_call_premium") or 0)
-                net_put = float(get("net_put_premium") or 0)
-
-                # Compute sentiment
-                if net_call > abs(net_put):
-                    sentiment = "bullish"
-                elif abs(net_put) > net_call:
-                    sentiment = "bearish"
-                else:
-                    sentiment = "neutral"
-
-                tides.append(
-                    {
-                        "tide_type": "etf",
-                        "ticker": symbol.upper(),
-                        "date": get("date"),
-                        "timestamp": get("timestamp"),
-                        "net_call_premium": net_call,
-                        "net_put_premium": net_put,
-                        "net_volume": _safe_int(get("net_volume")) if get("net_volume") else None,
-                        "sentiment": sentiment,
-                    }
-                )
+            tides = self._parse_etf_tide_items(list(self._extract_data(response)), symbol)
 
             logger.info("uw_etf_tide_fetched", symbol=symbol, count=len(tides))
             return tides
