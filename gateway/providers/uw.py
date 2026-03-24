@@ -2966,13 +2966,13 @@ class UnusualWhalesProvider(DataProvider):
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
-            from unusualwhales.api import market
+            from unusualwhales.api.market import get_market_tide_by_etf
 
-            kwargs = {"ticker": symbol.upper()}
+            kwargs = {}
             if date_str:
                 kwargs["date"] = date_str
             response = await self._call_sync(
-                market.get_etf_tide.sync, client=self._client, **kwargs
+                get_market_tide_by_etf.sync, symbol.upper(), client=self._client, **kwargs
             )
 
             tides = []
