@@ -877,3 +877,17 @@ async def test_publish_buffers_string_payload(
     assert topic == "gateway.stream.bars"
     # String payload should be encoded to bytes
     assert payload_bytes == b'{"symbol": "AAPL"}'
+
+
+@pytest.mark.asyncio
+async def test_buffer_event_delegates_to_failed_buffer() -> None:
+    """buffer_event() should serialize and delegate to _buffer_failed_event."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink.buffer_event("heber:events", {"event_id": "test1", "symbol": "AAPL"})
+
+    assert len(sink._failed_buffer) == 1
+    topic, payload = sink._failed_buffer[0]
+    assert topic == "heber:events"
+    assert b"test1" in payload
+    assert b"AAPL" in payload
+    assert sink._buffer_stats["buffered"] == 1
