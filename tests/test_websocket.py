@@ -19,7 +19,10 @@ def test_websocket_subscribe_with_feeds(client: TestClient, test_api_key: str):
             }
         )
         response = websocket.receive_json()
+        # Without multiplexer mock, expect honest error (not fake stub response)
         assert response["type"] == "subscription_ack"
-        assert response["status"] == "ok"
+        assert response["status"] == "error"
+        assert response["error_code"] == "GW-E5001"
+        assert "multiplexer" in response["message"].lower()
         assert response["feeds"] == ["stock_bars"]
-        assert "AAPL" in response["subscribed"]
+        assert "AAPL" in response["failed"]

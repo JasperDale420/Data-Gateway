@@ -419,15 +419,22 @@ async def _handle_message(
                 "failed": failed,
             }
         except RuntimeError:
-            # Multiplexer not initialized, return stub response
-            connection.subscriptions.update({f"{feed}:{s}" for feed in feeds for s in symbols})
+            # Multiplexer not initialized - return honest error so client can retry
+            logger.error(
+                "subscribe_multiplexer_unavailable",
+                connection_id=connection_id,
+                feeds=feeds,
+                symbols=len(symbols),
+            )
             return {
                 "type": "subscription_ack",
-                "status": "ok",
+                "status": "error",
+                "error_code": "GW-E5001",
+                "message": "Stream multiplexer not initialized — upstream data unavailable",
                 "provider": provider,
                 "feeds": feeds,
-                "subscribed": sorted(set(symbols)),
-                "failed": [],
+                "subscribed": [],
+                "failed": sorted(set(symbols)),
             }
 
     if action == "unsubscribe":
