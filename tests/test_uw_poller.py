@@ -200,3 +200,12 @@ def test_sector_tide_polls_independently_of_market_tide() -> None:
     # Now both should be blocked
     assert poller._should_poll_tide() is False
     assert poller._should_poll_sector_tide() is False
+
+
+@pytest.mark.asyncio
+async def test_runtime_snapshot_includes_sink_available() -> None:
+    """get_runtime_snapshot should include sink_available field."""
+    poller = UWPoller()
+    snapshot = poller.get_runtime_snapshot()
+    assert "sink_available" in snapshot
+    assert snapshot["sink_available"] is False  # No sink configured by default

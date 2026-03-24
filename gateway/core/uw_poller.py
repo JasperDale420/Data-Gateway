@@ -276,7 +276,7 @@ class UWPoller:
         messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, envelope) for envelope, _, _ in to_publish]
 
         try:
-            if type(sink_registry).__name__ == "DataSinkRegistry":
+            if hasattr(sink_registry, "publish_all_batch"):
                 published = await sink_registry.publish_all_batch(messages)
             else:
                 # Fallback for mocks / non-registry objects
@@ -348,8 +348,12 @@ class UWPoller:
 
     def get_runtime_snapshot(self) -> dict[str, Any]:
         """Return lightweight runtime/tuning telemetry for admin surfaces."""
+        from gateway.core.globals import get_sink_registry
+
+        sink_registry = get_sink_registry()
         return {
             "running": self._running,
+            "sink_available": sink_registry is not None,
             "enabled": True,
             "publish_max_inflight": self._publish_max_inflight,
             "dedupe_cache_entries": len(self._seen_ids),
@@ -441,7 +445,7 @@ class UWPoller:
             try:
                 sink_registry = get_sink_registry()
                 if not sink_registry:
-                    logger.debug("uw_poller_no_sink")
+                    logger.warning("uw_poller_no_sink")
                     await asyncio.sleep(base_interval)
                     continue
 
