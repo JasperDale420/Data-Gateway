@@ -95,6 +95,51 @@ async def test_readiness_treats_sink_failures_as_degraded_not_not_ready(
 
 
 @pytest.mark.asyncio
+async def test_status_includes_data_sink_when_registry_configured(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """GET /health/status should include data_sink in components when sink registry is configured."""
+    cache = MagicMock()
+    cache.get_stats_dict = MagicMock(return_value={"hits": 0, "misses": 0})
+    connections = MagicMock()
+    connections.get_stats = MagicMock(return_value={})
+
+    class _HealthySinkRegistry:
+        async def health_check_all(self) -> dict[str, bool]:
+            return {"redis_streams": True, "heber": True}
+
+    monkeypatch.setattr(health_module, "get_sink_registry", lambda: _HealthySinkRegistry())
+
+    response = await health_module.detailed_status(cache=cache, connections=connections)
+
+    assert "data_sink" in response["components"]
+    assert response["components"]["data_sink"]["status"] == "ok"
+    assert response["components"]["data_sink"]["sinks"] == {"redis_streams": "ok", "heber": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_status_data_sink_shows_degraded_when_unhealthy(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """data_sink should show degraded status when a sink is unhealthy."""
+    cache = MagicMock()
+    cache.get_stats_dict = MagicMock(return_value={})
+    connections = MagicMock()
+    connections.get_stats = MagicMock(return_value={})
+
+    class _UnhealthySinkRegistry:
+        async def health_check_all(self) -> dict[str, bool]:
+            return {"redis_streams": False}
+
+    monkeypatch.setattr(health_module, "get_sink_registry", lambda: _UnhealthySinkRegistry())
+
+    response = await health_module.detailed_status(cache=cache, connections=connections)
+
+    assert response["components"]["data_sink"]["status"] == "degraded"
+    assert response["components"]["data_sink"]["sinks"]["redis_streams"] == "degraded"
+
+
+@pytest.mark.asyncio
 async def test_readiness_marks_cache_as_warming_up_when_redis_is_loading(
     monkeypatch: pytest.MonkeyPatch,
 ):
