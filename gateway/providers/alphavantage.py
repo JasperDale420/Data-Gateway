@@ -946,12 +946,17 @@ class AlphaVantageProvider(DataProvider):
     # ─────────────────────────────────────────────────────────────────
 
     async def get_economic_indicator(
-        self, indicator: str, interval: str = "annual"
+        self, indicator: str, interval: str = "annual", maturity: str | None = None
     ) -> dict[str, Any]:
         """Get economic indicator data.
 
         Supports: REAL_GDP, REAL_GDP_PER_CAPITA, TREASURY_YIELD, FEDERAL_FUNDS_RATE,
                   CPI, INFLATION, RETAIL_SALES, DURABLES, UNEMPLOYMENT, NONFARM_PAYROLL
+
+        Args:
+            indicator: The economic indicator to fetch
+            interval: Time interval (annual, quarterly, monthly, daily)
+            maturity: For TREASURY_YIELD, the maturity (3month, 2year, 5year, 7year, 10year, 30year)
         """
         if not self._client:
             raise RuntimeError(PROVIDER_NOT_INIT)
@@ -961,6 +966,8 @@ class AlphaVantageProvider(DataProvider):
         params: dict[str, str] = {"function": indicator.upper(), "apikey": self._api_key}
         if indicator.upper() in ["REAL_GDP", "TREASURY_YIELD", "FEDERAL_FUNDS_RATE", "CPI"]:
             params["interval"] = interval
+        if indicator.upper() == "TREASURY_YIELD" and maturity:
+            params["maturity"] = maturity
 
         try:
             response = await self._client.get(self._base_url, params=params)
