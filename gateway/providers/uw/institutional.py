@@ -86,30 +86,34 @@ class UWInstitutionalMixin:
 
             trades = []
             for item in self._extract_data(response):
-                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
-                ticker = get("ticker") or get("symbol") or ""
+                try:
+                    get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                    ticker = get("ticker") or get("symbol") or ""
 
-                # Filter by symbol if provided
-                if symbol and ticker.upper() != symbol.upper():
+                    # Filter by symbol if provided
+                    if symbol and ticker.upper() != symbol.upper():
+                        continue
+
+                    trades.append(
+                        {
+                            # Match UW Senate Stock schema exactly
+                            "ticker": ticker,
+                            "name": get("name"),
+                            "txn_type": get("txn_type") or get("transaction_type"),
+                            "amounts": get("amounts") or get("amount"),
+                            "transaction_date": get("transaction_date"),
+                            "filed_at_date": get("filed_at_date") or get("disclosure_date"),
+                            "member_type": get("member_type") or get("chamber"),
+                            "politician_id": get("politician_id"),
+                            "reporter": get("reporter"),
+                            "notes": get("notes"),
+                            "issuer": get("issuer"),
+                            "is_active": get("is_active"),
+                        }
+                    )
+                except (ValueError, KeyError) as e:
+                    logger.warning("uw_congress_skip_invalid_record", error=str(e))
                     continue
-
-                trades.append(
-                    {
-                        # Match UW Senate Stock schema exactly
-                        "ticker": ticker,
-                        "name": get("name"),
-                        "txn_type": get("txn_type") or get("transaction_type"),
-                        "amounts": get("amounts") or get("amount"),
-                        "transaction_date": get("transaction_date"),
-                        "filed_at_date": get("filed_at_date") or get("disclosure_date"),
-                        "member_type": get("member_type") or get("chamber"),
-                        "politician_id": get("politician_id"),
-                        "reporter": get("reporter"),
-                        "notes": get("notes"),
-                        "issuer": get("issuer"),
-                        "is_active": get("is_active"),
-                    }
-                )
 
             logger.info("uw_congress_fetched", symbol=symbol, count=len(trades))
             return trades
@@ -318,19 +322,23 @@ class UWInstitutionalMixin:
 
             results = []
             for item in data[:limit]:
-                get = item.get if isinstance(item, dict) else lambda k, d=None, i=item: getattr(i, k, d)
-                results.append(
-                    {
-                        "symbol": get("ticker") or get("symbol"),
-                        "politician": get("politician") or get("representative"),
-                        "party": get("party"),
-                        "chamber": get("chamber"),
-                        "transaction_type": get("transaction_type") or get("type"),
-                        "amount_range": get("amount") or get("amount_range"),
-                        "date": str(get("transaction_date") or get("date") or ""),
-                        "disclosure_date": str(get("disclosure_date") or ""),
-                    }
-                )
+                try:
+                    get = item.get if isinstance(item, dict) else lambda k, d=None, i=item: getattr(i, k, d)
+                    results.append(
+                        {
+                            "symbol": get("ticker") or get("symbol"),
+                            "politician": get("politician") or get("representative"),
+                            "party": get("party"),
+                            "chamber": get("chamber"),
+                            "transaction_type": get("transaction_type") or get("type"),
+                            "amount_range": get("amount") or get("amount_range"),
+                            "date": str(get("transaction_date") or get("date") or ""),
+                            "disclosure_date": str(get("disclosure_date") or ""),
+                        }
+                    )
+                except (ValueError, KeyError) as e:
+                    logger.warning("uw_congress_skip_invalid_record", error=str(e))
+                    continue
 
             logger.info("uw_recent_congress_trades_fetched", count=len(results))
             return results
