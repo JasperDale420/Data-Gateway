@@ -1,0 +1,16 @@
+iteration	type	hypothesis	result	severity	location	description
+1	hypothesis	Division by zero in option_capture.py:558	disproven	-	option_capture.py:527	Guard exists: if total_contracts <= 0: return empty
+2	hypothesis	Division by zero in bulk.py eta_seconds	confirmed	HIGH	bulk.py:225	elapsed could be 0 when job completes instantly
+3	hypothesis	Naive datetime.now() in uw/flow.py	confirmed	MEDIUM	flow.py:418,466,512	Uses naive datetime instead of ET-aware for market dates
+4	hypothesis	Finnhub rate limit 30/sec contradicts 60/min	confirmed	HIGH	rate_limiter.py:59	Per-second allows 30x burst, far exceeding per-minute limit
+5	hypothesis	Race condition in SubscriptionManager	disproven	-	stream.py:189	Synchronous method in asyncio — no real race
+6	hypothesis	Race condition in main.py global set	disproven	-	main.py:136	All mutations synchronous in event loop — no real race
+7	hypothesis	X-Forwarded-For spoofing bypasses rate limits	confirmed	HIGH	middleware.py:1254	Trusts X-Forwarded-For unconditionally, allows IP spoofing
+8	hypothesis	EventEnvelopeMiddleware lazy _background_tasks init	confirmed	LOW	middleware.py:905	getattr lazy init instead of __init__ — code smell
+9	hypothesis	cache.py zip strict=False	disproven	-	cache.py:283	Redis mget always returns same-length list
+10	hypothesis	news.py sentiment division by zero	disproven	-	news.py:280	Guard exists: if total > 0
+11	hypothesis	replay.py speed could be zero	disproven	-	replay.py:71,149	Validated before use: speed <= 0 rejected
+12	hypothesis	Backfill error swallowing via return_exceptions	confirmed	HIGH	backfill.py:574	asyncio.gather swallows exceptions without inspection
+13	hypothesis	CORS allow_origins=* in debug mode	noted	LOW	main.py:495	Only when debug=True (defaults False) - documented risk
+14	hypothesis	follow_redirects=True SSRF	noted	LOW	http_client.py:114,136	Theoretical SSRF via compromised upstream - low risk
+15	hypothesis	Adjustment factor could be zero	disproven	-	adjustments.py:234	Factor 0 is impossible in real stock splits

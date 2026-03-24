@@ -7,7 +7,7 @@ from typing import TypeVar
 import structlog
 from fastapi import HTTPException
 
-from gateway.core.circuit_breaker import get_circuit_registry
+from gateway.core.circuit_breaker import CircuitOpenError, get_circuit_registry
 from gateway.core.provider import DataProvider
 from gateway.core.registry import ProviderRegistry
 
@@ -67,7 +67,7 @@ async def execute_provider_failover(
 
         except Exception as e:
             # Circuit breaker prevented execution — skip to next provider
-            if type(e).__name__ == "CircuitOpenError":
+            if isinstance(e, CircuitOpenError):
                 errors.append(f"{provider.name}:circuit_open")
                 continue
 

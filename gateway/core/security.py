@@ -176,8 +176,16 @@ class InputValidator:
         self,
         symbols: list[str],
         max_symbols: int | None = None,
+        symbol_type: str | None = None,
     ) -> InputValidationError | None:
-        """Validate an array of symbols."""
+        """Validate an array of symbols.
+
+        Args:
+            symbols: List of symbols to validate
+            max_symbols: Max allowed count (defaults to PARAM_LIMITS)
+            symbol_type: Symbol type for validation. If None, accepts any known format
+                         (stock, crypto, option, forex, wildcard).
+        """
         max_allowed = max_symbols or PARAM_LIMITS["symbols_array_max"]
 
         if not symbols:
@@ -201,9 +209,29 @@ class InputValidator:
             if normalized in seen_symbols:
                 continue
             seen_symbols.add(normalized)
-            error = self.validate_symbol(normalized)
-            if error is not None:
-                return error
+
+            # Check for forbidden characters first
+            if FORBIDDEN_PATTERN.search(normalized):
+                return InputValidationError(
+                    code=ValidationErrorCode.FORBIDDEN_CHARACTERS.value,
+                    message="Forbidden characters detected in symbol",
+                    field="symbol",
+                    value=normalized,
+                )
+
+            if symbol_type:
+                error = self.validate_symbol(normalized, symbol_type=symbol_type)
+                if error is not None:
+                    return error
+            else:
+                # No type specified — accept any known symbol format
+                if not self._matches_any_symbol_pattern(normalized):
+                    return InputValidationError(
+                        code=ValidationErrorCode.INVALID_SYMBOL_FORMAT.value,
+                        message="Symbol does not match any known format (stock, crypto, option, forex)",
+                        field="symbol",
+                        value=normalized,
+                    )
 
         return None
 

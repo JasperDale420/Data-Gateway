@@ -33,6 +33,7 @@ class AlpacaMarketMixin:
 
         results: list[NormalizedBar] = []
         symbols_param = ",".join(symbols)
+        total_limit = kwargs.get("limit", 10000)
 
         alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, Any] = {
@@ -42,7 +43,7 @@ class AlpacaMarketMixin:
             "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": kwargs.get("feed", self._feed),
             "adjustment": kwargs.get("adjustment", "split"),
-            "limit": kwargs.get("limit", 10000),
+            "limit": max(1, min(total_limit, 10000)),
         }
 
         try:
@@ -56,9 +57,11 @@ class AlpacaMarketMixin:
                         results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
 
                 next_token = data.get("next_page_token")
-                if not next_token:
+                if not next_token or len(results) >= total_limit:
                     break
                 params["page_token"] = next_token
+
+            results = results[:total_limit]
 
             logger.info(
                 "alpaca_bars_fetched",
@@ -142,9 +145,11 @@ class AlpacaMarketMixin:
                         results.append(self._normalize_trade(symbol, trade))
 
                 next_token = data.get("next_page_token")
-                if not next_token:
+                if not next_token or len(results) >= limit:
                     break
                 params["page_token"] = next_token
+
+            results = results[:limit]
 
             logger.info(
                 "alpaca_trades_fetched",
@@ -253,9 +258,11 @@ class AlpacaMarketMixin:
                         results.append(self._normalize_quote(symbol, quote))
 
                 next_token = data.get("next_page_token")
-                if not next_token:
+                if not next_token or len(results) >= limit:
                     break
                 params["page_token"] = next_token
+
+            results = results[:limit]
 
             logger.info(
                 "alpaca_historical_quotes_fetched",

@@ -85,13 +85,26 @@ def make_instrument_key(
 
     elif instrument_type == "crypto":
         # Normalize various crypto formats to BASE-QUOTE
-        # Handle: BTC/USD, BTCUSD, BTC-USD, BTC_USD
+        # Handle: BTC/USD, BTCUSD, BTC-USD, BTC_USD, DOGEUSD
         normalized = symbol.replace("/", "-").replace("_", "-")
         if len(normalized) >= 6 and "-" not in normalized:
-            # Try to split BTCUSD -> BTC-USD (assume 3-char base)
-            base = normalized[:3]
-            quote = normalized[3:]
-            normalized = f"{base}-{quote}"
+            # Try to split by known quote currencies (3-char first, then 4-char)
+            known_quotes_3 = ("USD", "EUR", "BTC", "ETH", "GBP")
+            known_quotes_4 = ("USDT", "USDC", "BUSD")
+            matched = False
+            for quote_len, known in ((3, known_quotes_3), (4, known_quotes_4)):
+                if len(normalized) > quote_len:
+                    candidate_quote = normalized[-quote_len:]
+                    if candidate_quote in known:
+                        base = normalized[:-quote_len]
+                        normalized = f"{base}-{candidate_quote}"
+                        matched = True
+                        break
+            if not matched:
+                # Fallback: assume 3-char base
+                base = normalized[:3]
+                quote = normalized[3:]
+                normalized = f"{base}-{quote}"
         return f"crypto:{normalized}"
 
     elif instrument_type == "forex":
@@ -464,11 +477,19 @@ def fast_wrap_streaming_event(
     if not ts_event_str:
         ts_event_str = ts_ingest.isoformat()
     elif not isinstance(ts_event_str, str):
-        # Fallback for non-string timestamps (unlikely in Alpaca V2)
+        # Handle non-string timestamps: datetime, msgpack.Timestamp, epoch int
         try:
             ts_event_str = ts_event_str.isoformat()
         except AttributeError:
-            ts_event_str = str(ts_event_str)
+            # msgpack.Timestamp has to_datetime(), not isoformat()
+            if hasattr(ts_event_str, "to_datetime"):
+                ts_event_str = ts_event_str.to_datetime().isoformat()
+            elif isinstance(ts_event_str, int | float):
+                from datetime import datetime as _dt
+
+                ts_event_str = _dt.fromtimestamp(ts_event_str, tz=UTC).isoformat()
+            else:
+                ts_event_str = ts_ingest.isoformat()
 
     # instrument_key - manual inline construction for speed
     # (Replicates make_instrument_key logic for common cases)

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from itertools import islice
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 import structlog
@@ -23,6 +24,9 @@ logger = structlog.get_logger()
 PROVIDER_NOT_INIT = "Provider not initialized"
 API_KEY_NOT_SET = "Alpha Vantage API key not configured"
 DEFAULT_QUOTES_MAX_CONCURRENCY = 2
+
+# Alpha Vantage returns intraday timestamps in US/Eastern
+_ET = ZoneInfo("America/New_York")
 
 
 class AlphaVantageProvider(DataProvider):
@@ -334,7 +338,9 @@ class AlphaVantageProvider(DataProvider):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
-                        timestamp=datetime.fromisoformat(timestamp_str.replace(" ", "T")),
+                        timestamp=datetime.fromisoformat(timestamp_str.replace(" ", "T"))
+                        .replace(tzinfo=_ET)
+                        .astimezone(UTC),
                         open=Decimal(ohlcv.get("1. open", "0")),
                         high=Decimal(ohlcv.get("2. high", "0")),
                         low=Decimal(ohlcv.get("3. low", "0")),
@@ -371,7 +377,7 @@ class AlphaVantageProvider(DataProvider):
         fallback_function = "TIME_SERIES_DAILY" if adjusted else None
 
         try:
-            data, _ = await self._fetch_with_premium_fallback(
+            data, effective_adjusted = await self._fetch_with_premium_fallback(
                 symbol=symbol,
                 params={
                     "function": function,
@@ -386,16 +392,20 @@ class AlphaVantageProvider(DataProvider):
             time_series_key = "Time Series (Daily)"
             time_series = data.get(time_series_key, {})
 
+            # Use adjusted close when adjusted data is available
+            close_field = "5. adjusted close" if effective_adjusted else "4. close"
+
             bars = []
             for date_str, ohlcv in self._iter_time_series_items(time_series, max_points):
+                close_val = ohlcv.get(close_field, ohlcv.get("4. close", "0"))
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
-                        timestamp=datetime.fromisoformat(date_str),
+                        timestamp=datetime.fromisoformat(date_str).replace(tzinfo=UTC),
                         open=Decimal(ohlcv.get("1. open", "0")),
                         high=Decimal(ohlcv.get("2. high", "0")),
                         low=Decimal(ohlcv.get("3. low", "0")),
-                        close=Decimal(ohlcv.get("4. close", ohlcv.get("5. adjusted close", "0"))),
+                        close=Decimal(close_val),
                         volume=int(ohlcv.get("6. volume", ohlcv.get("5. volume", 0))),
                         provider="alphavantage",
                         timeframe="1Day",
@@ -437,16 +447,19 @@ class AlphaVantageProvider(DataProvider):
             time_series_key = "Weekly Adjusted Time Series" if effective_adjusted else "Weekly Time Series"
             time_series = data.get(time_series_key, {})
 
+            close_field = "5. adjusted close" if effective_adjusted else "4. close"
+
             bars = []
             for date_str, ohlcv in self._iter_time_series_items(time_series, max_points):
+                close_val = ohlcv.get(close_field, ohlcv.get("4. close", "0"))
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
-                        timestamp=datetime.fromisoformat(date_str),
+                        timestamp=datetime.fromisoformat(date_str).replace(tzinfo=UTC),
                         open=Decimal(ohlcv.get("1. open", "0")),
                         high=Decimal(ohlcv.get("2. high", "0")),
                         low=Decimal(ohlcv.get("3. low", "0")),
-                        close=Decimal(ohlcv.get("4. close", ohlcv.get("5. adjusted close", "0"))),
+                        close=Decimal(close_val),
                         volume=int(ohlcv.get("6. volume", ohlcv.get("5. volume", 0))),
                         provider="alphavantage",
                         timeframe="1Week",
@@ -647,7 +660,7 @@ class AlphaVantageProvider(DataProvider):
                 bars.append(
                     NormalizedBar(
                         symbol=symbol.upper(),
-                        timestamp=datetime.fromisoformat(date_str),
+                        timestamp=datetime.fromisoformat(date_str).replace(tzinfo=UTC),
                         open=Decimal(values.get("1. open", "0")),
                         high=Decimal(values.get("2. high", "0")),
                         low=Decimal(values.get("3. low", "0")),
@@ -752,7 +765,9 @@ class AlphaVantageProvider(DataProvider):
                 "symbol": symbol.upper(),
                 "indicator": indicator.upper(),
                 "interval": interval,
-                "data": [{"date": date, **vals} for date, vals in self._top_time_series_items(values, limit=100)],
+                "data": [
+                    {"date": date, **vals} for date, vals in self._top_time_series_items(values, limit=max_points)
+                ],
                 "meta": data.get("Meta Data", {}),
             }
 
@@ -913,7 +928,7 @@ class AlphaVantageProvider(DataProvider):
                     "low": v.get("3. low"),
                     "close": v.get("4. close"),
                 }
-                for date, v in self._top_time_series_items(ts, limit=100)
+                for date, v in self._top_time_series_items(ts, limit=max_points)
             ]
 
         except Exception as e:
@@ -965,7 +980,7 @@ class AlphaVantageProvider(DataProvider):
                     "close": v.get(f"4a. close ({market.upper()})"),
                     "volume": v.get("5. volume"),
                 }
-                for date, v in self._top_time_series_items(ts, limit=100)
+                for date, v in self._top_time_series_items(ts, limit=max_points)
             ]
 
         except Exception as e:
@@ -977,15 +992,24 @@ class AlphaVantageProvider(DataProvider):
     # ─────────────────────────────────────────────────────────────────
 
     @http_retry
-    async def get_economic_indicator(self, indicator: str, interval: str = "annual") -> dict[str, Any]:
+    async def get_economic_indicator(
+        self,
+        indicator: str,
+        interval: str = "annual",
+        maturity: str | None = None,
+    ) -> dict[str, Any]:
         """Get economic indicator data.
 
         Supports: REAL_GDP, REAL_GDP_PER_CAPITA, TREASURY_YIELD, FEDERAL_FUNDS_RATE,
                   CPI, INFLATION, RETAIL_SALES, DURABLES, UNEMPLOYMENT, NONFARM_PAYROLL
+
+        For TREASURY_YIELD, pass maturity: 3month, 2year, 5year, 7year, 10year, 30year
         """
         params: dict[str, str] = {"function": indicator.upper(), "apikey": self._api_key}
         if indicator.upper() in ["REAL_GDP", "TREASURY_YIELD", "FEDERAL_FUNDS_RATE", "CPI"]:
             params["interval"] = interval
+        if maturity and indicator.upper() == "TREASURY_YIELD":
+            params["maturity"] = maturity
 
         try:
             data = await self._fetch_json(params)

@@ -26,7 +26,9 @@ from alpaca.trading.requests import (
     MarketOrderRequest,
     ReplaceOrderRequest,
     StopLimitOrderRequest,
+    StopLossRequest,
     StopOrderRequest,
+    TakeProfitRequest,
     UpdateWatchlistRequest,
 )
 
@@ -64,6 +66,10 @@ class AlpacaTradingMixin:
         stop_price: float | None = None,
         client_order_id: str | None = None,
         extended_hours: bool = False,
+        order_class: str | None = None,
+        take_profit_limit_price: float | None = None,
+        stop_loss_stop_price: float | None = None,
+        stop_loss_limit_price: float | None = None,
     ) -> dict[str, Any]:
         """Create a new order using SDK."""
         if not self._trading_client:
@@ -81,6 +87,22 @@ class AlpacaTradingMixin:
         }
         tif = tif_map.get(time_in_force.lower(), TimeInForce.DAY)
 
+        # Build bracket sub-objects when order_class is set
+        tp_request = None
+        sl_request = None
+        if order_class and order_class.lower() in ("bracket", "oco", "oto"):
+            if take_profit_limit_price is not None:
+                tp_request = TakeProfitRequest(limit_price=take_profit_limit_price)
+            if stop_loss_stop_price is not None:
+                sl_request = StopLossRequest(
+                    stop_price=stop_loss_stop_price,
+                    limit_price=stop_loss_limit_price,
+                )
+
+        from alpaca.trading.enums import OrderClass as AlpacaOrderClass
+
+        oc = AlpacaOrderClass(order_class.lower()) if order_class else None
+
         try:
             request: MarketOrderRequest | LimitOrderRequest | StopOrderRequest | StopLimitOrderRequest
             if order_type.lower() == "market":
@@ -92,6 +114,9 @@ class AlpacaTradingMixin:
                     time_in_force=tif,
                     extended_hours=extended_hours,
                     client_order_id=client_order_id,
+                    order_class=oc,
+                    take_profit=tp_request,
+                    stop_loss=sl_request,
                 )
             elif order_type.lower() == "limit":
                 request = LimitOrderRequest(
@@ -103,6 +128,9 @@ class AlpacaTradingMixin:
                     limit_price=limit_price,
                     extended_hours=extended_hours,
                     client_order_id=client_order_id,
+                    order_class=oc,
+                    take_profit=tp_request,
+                    stop_loss=sl_request,
                 )
             elif order_type.lower() == "stop":
                 request = StopOrderRequest(
@@ -131,7 +159,13 @@ class AlpacaTradingMixin:
 
             order = self._trading_client.submit_order(request)
             data = self._model_to_dict(order)
-            logger.info("alpaca_order_created", order_id=data.get("id"), symbol=symbol, side=side)
+            logger.info(
+                "alpaca_order_created",
+                order_id=data.get("id"),
+                symbol=symbol,
+                side=side,
+                order_class=order_class,
+            )
             return data
 
         except APIError as e:

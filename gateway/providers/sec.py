@@ -420,4 +420,4 @@ class SECProvider(DataProvider):
 
         except Exception as e:
             logger.error("sec_search_failed", query=query, error=str(e))
-            return []
+            raise

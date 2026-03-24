@@ -39,6 +39,33 @@ def _or_unset[T](value: T | None) -> T | Unset:
     return UNSET if value is None else value
 
 
+def _safe_int(value: Any) -> int:
+    """Parse a value to int, handling float strings from the UW API.
+
+    The UW API occasionally returns numeric fields as float strings
+    (e.g., '12345.67' for volume). Bare int() crashes on these;
+    int(float()) handles both '12345' and '12345.67' correctly.
+    """
+    if value is None or value == "":
+        return 0
+    return int(float(value))
+
+
+def _safe_bool(value: Any, default: bool = False) -> bool:
+    """Parse a value to bool, handling string 'false'/'true' from APIs.
+
+    Python's bool("false") is True because non-empty strings are truthy.
+    This function correctly handles string representations of booleans.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return bool(value)
+
+
 class UWBaseMixin(DataProvider):
     """Base mixin providing init, lifecycle, helpers, and normalization for the UW provider."""
 
@@ -350,27 +377,27 @@ class UWBaseMixin(DataProvider):
                 expiry=str(get("expiry") or get("expiration_date") or ""),
                 put_call=str(get("type") or get("put_call") or get("option_type") or "").lower(),
                 premium=Decimal(str(get("total_premium") or get("premium") or 0)),
-                volume=int(get("volume") or get("size") or 0),
-                open_interest=int(get("open_interest") or get("oi") or 0),
+                volume=_safe_int(get("volume") or get("size")),
+                open_interest=_safe_int(get("open_interest") or get("oi")),
                 side=str(get("side") or get("aggressor_side") or "mid").lower(),
-                is_sweep=bool(get("has_sweep") or get("is_sweep") or get("sweep")),
-                is_unusual=bool(get("is_unusual") or get("unusual")),
+                is_sweep=_safe_bool(get("has_sweep") or get("is_sweep") or get("sweep")),
+                is_unusual=_safe_bool(get("is_unusual") or get("unusual")),
                 sentiment=get("sentiment"),
                 # Additional UW fields
                 option_chain=get("option_chain"),
                 price=price,
                 underlying_price=underlying_price,
                 alert_rule=get("alert_rule"),
-                total_size=int(get("total_size")) if get("total_size") is not None else None,
-                trade_count=int(get("trade_count")) if get("trade_count") is not None else None,
+                total_size=_safe_int(get("total_size")) if get("total_size") is not None else None,
+                trade_count=_safe_int(get("trade_count")) if get("trade_count") is not None else None,
                 volume_oi_ratio=volume_oi_ratio,
                 total_ask_side_prem=ask_prem,
                 total_bid_side_prem=bid_prem,
-                all_opening_trades=bool(get("all_opening_trades", False)),
-                has_floor=bool(get("has_floor", False)),
-                has_multileg=bool(get("has_multileg", False)),
-                has_singleleg=bool(get("has_singleleg", True)),
-                expiry_count=int(get("expiry_count")) if get("expiry_count") is not None else None,
+                all_opening_trades=_safe_bool(get("all_opening_trades")),
+                has_floor=_safe_bool(get("has_floor")),
+                has_multileg=_safe_bool(get("has_multileg")),
+                has_singleleg=_safe_bool(get("has_singleleg"), default=True),
+                expiry_count=_safe_int(get("expiry_count")) if get("expiry_count") is not None else None,
                 provider="unusual_whales",
             )
         except Exception as e:
@@ -390,7 +417,7 @@ class UWBaseMixin(DataProvider):
             )
 
             price = Decimal(str(get("price") or 0))
-            size = int(get("size") or get("volume") or 0)
+            size = _safe_int(get("size") or get("volume"))
             notional = get("notional") or get("premium")
             if notional is None:
                 notional = price * size
@@ -412,9 +439,9 @@ class UWBaseMixin(DataProvider):
             nbbo_bid_size = None
             nbbo_ask_size = None
             if get("nbbo_bid_quantity") is not None:
-                nbbo_bid_size = int(get("nbbo_bid_quantity"))
+                nbbo_bid_size = _safe_int(get("nbbo_bid_quantity"))
             if get("nbbo_ask_quantity") is not None:
-                nbbo_ask_size = int(get("nbbo_ask_quantity"))
+                nbbo_ask_size = _safe_int(get("nbbo_ask_quantity"))
 
             return NormalizedDarkpoolTrade(
                 symbol=get("ticker") or get("symbol") or "",
@@ -432,7 +459,7 @@ class UWBaseMixin(DataProvider):
                 sale_cond_codes=get("sale_cond_codes"),
                 trade_code=get("trade_code"),
                 trade_settlement=get("trade_settlement"),
-                canceled=bool(get("canceled", False)),
+                canceled=_safe_bool(get("canceled")),
                 provider="unusual_whales",
             )
         except Exception as e:
@@ -457,7 +484,7 @@ class UWBaseMixin(DataProvider):
             # Extract net_volume from UW API
             net_volume = None
             if get("net_volume") is not None:
-                net_volume = int(get("net_volume"))
+                net_volume = _safe_int(get("net_volume"))
 
             # Extract date from UW API
             date_str = get("date")

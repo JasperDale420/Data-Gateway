@@ -256,3 +256,40 @@ async def test_get_asset_uses_cached_helper_key(
     assert observed["route_label"] == "alpaca_trading_asset"
     assert provider.asset_calls == ["aapl"]
     assert response["data"]["symbol"] == "aapl"
+
+
+@pytest.mark.asyncio
+async def test_create_order_passes_bracket_params_to_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bracket order params (order_class, take_profit, stop_loss) pass through to the provider."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"id": "bracket-order-1"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.create_order(
+        symbol="AAPL",
+        side="buy",
+        qty=10,
+        order_type="limit",
+        limit_price=150.0,
+        order_class="bracket",
+        take_profit_limit_price=160.0,
+        stop_loss_stop_price=145.0,
+        stop_loss_limit_price=144.0,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert captured["order_class"] == "bracket"
+    assert captured["take_profit_limit_price"] == 160.0
+    assert captured["stop_loss_stop_price"] == 145.0
+    assert captured["stop_loss_limit_price"] == 144.0
