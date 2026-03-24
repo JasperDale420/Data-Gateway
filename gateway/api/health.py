@@ -114,18 +114,33 @@ async def detailed_status(
     connections: ConnectionManager = Depends(get_connection_manager),
 ) -> dict[str, Any]:
     """Detailed status with component health and stats."""
+    components: dict[str, Any] = {
+        "cache": {
+            "status": "ok",
+            "stats": cache.get_stats_dict(),
+        },
+        "connections": {
+            "status": "ok",
+            "stats": connections.get_stats(),
+        },
+    }
+
+    # Include data sink health if configured
+    sink_registry = get_sink_registry()
+    if sink_registry:
+        try:
+            sink_results = await sink_registry.health_check_all()
+            all_healthy = all(sink_results.values())
+            components["data_sink"] = {
+                "status": "ok" if all_healthy else "degraded",
+                "sinks": {name: "ok" if healthy else "degraded" for name, healthy in sink_results.items()},
+            }
+        except Exception:
+            components["data_sink"] = {"status": "degraded"}
+
     return {
         "status": "ok",
         "version": __version__,
         "timestamp": datetime.now(UTC).isoformat(),
-        "components": {
-            "cache": {
-                "status": "ok",
-                "stats": cache.get_stats_dict(),
-            },
-            "connections": {
-                "status": "ok",
-                "stats": connections.get_stats(),
-            },
-        },
+        "components": components,
     }
