@@ -19,7 +19,7 @@ logger = structlog.get_logger()
 # Alpaca API endpoints
 DATA_BASE_URL = "https://data.alpaca.markets"
 STREAM_URL = "wss://stream.data.alpaca.markets/v2"
-TRADING_BASE_URL = "https://api.alpaca.markets"  # Use paper-api.alpaca.markets for paper trading
+TRADING_BASE_URL = "https://paper-api.alpaca.markets"  # Paper by default; set APCA_API_BASE_URL for live
 
 # Error message constants
 ERR_PROVIDER_NOT_INITIALIZED = "Provider not initialized"
@@ -38,6 +38,7 @@ class AlpacaBaseMixin(DataProvider):
         self._options_feed: str = "opra"
         self._client: httpx.AsyncClient | None = None  # Market Data (HTTP)
         self._trading_client: TradingClient | None = None  # Trading API (SDK)
+        self._trading_base_url: str = TRADING_BASE_URL
         self._paper: bool = False
         self._ws: Any | None = None
         self._subscriptions: set[str] = set()
@@ -103,6 +104,7 @@ class AlpacaBaseMixin(DataProvider):
         # Create SDK TradingClient for Trading API
         # Detect paper trading from env
         trading_url = os.environ.get("APCA_API_BASE_URL", TRADING_BASE_URL)
+        self._trading_base_url = trading_url
         self._paper = "paper" in trading_url.lower()
 
         if self._api_key and self._secret_key:

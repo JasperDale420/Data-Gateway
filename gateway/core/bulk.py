@@ -52,7 +52,7 @@ class BulkBarsRequest:
     end: str
     timeframe: str = "1Day"
     adjusted: bool = False
-    format: str = "jsonl"  # jsonl or parquet
+    format: str = "jsonl"  # jsonl or json (parquet not yet implemented)
 
     def validate(self) -> list[str]:
         """Validate request. Returns list of error messages."""
@@ -65,8 +65,8 @@ class BulkBarsRequest:
             errors.append("start date is required")
         if not self.end:
             errors.append("end date is required")
-        if self.format not in ("jsonl", "parquet", "json"):
-            errors.append(f"Invalid format: {self.format}, must be jsonl, json, or parquet")
+        if self.format not in ("jsonl", "json"):
+            errors.append(f"Invalid format: {self.format}, must be jsonl or json")
         if self.start and self.end:
             try:
                 start_dt = datetime.fromisoformat(self.start)
@@ -222,6 +222,8 @@ class BulkJob:
             return None
 
         elapsed = (datetime.now(UTC) - self.started_at).total_seconds()
+        if elapsed <= 0:
+            return None
         rate = self.symbols_complete / elapsed
         remaining = self.symbols_total - self.symbols_complete
 

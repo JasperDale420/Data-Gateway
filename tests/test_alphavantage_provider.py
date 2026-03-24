@@ -193,7 +193,7 @@ async def test_get_daily_respects_max_points_window(monkeypatch: pytest.MonkeyPa
 
     assert len(bars) == 1
     assert bars[0].symbol == "AAPL"
-    assert bars[0].timestamp.isoformat() == "2026-02-03T00:00:00"
+    assert bars[0].timestamp.isoformat() == "2026-02-03T00:00:00+00:00"
 
 
 @pytest.mark.asyncio

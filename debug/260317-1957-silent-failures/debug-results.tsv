@@ -1,0 +1,123 @@
+iteration	type	hypothesis	result	severity	location	description
+1	hypothesis	Option chain missing pagination	confirmed	HIGH	providers/alpaca/options.py:22-88	get_option_chain single request, truncates at 1000 contracts
+1	hypothesis	Option snapshots missing pagination	confirmed	HIGH	providers/alpaca/options.py:316-338	get_option_snapshots single request, no limit param
+2	hypothesis	Finnhub crypto candles no pagination	disproven	-	providers/finnhub.py:1188	Finnhub returns all candles in one response, no pagination needed
+3	hypothesis	UW return-empty is silent failure	disproven	-	providers/uw/*.py	Intentional guard clauses for optional provider, logged warnings
+4	hypothesis	News provider missing pagination	confirmed	HIGH	providers/alpaca/news.py:19-97	get_news single request, truncates at 50 articles
+5	hypothesis	Missing @http_retry on paginated methods	confirmed	MEDIUM	crypto.py:146, options.py:191	get_historical_crypto_quotes and get_historical_option_quotes missing retry
+6	hypothesis	AlphaVantage [:50] truncation	disproven	-	providers/alphavantage.py:997	Intentional design choice for economic indicators
+7	hypothesis	Finnhub [:50] truncation	disproven	-	providers/finnhub.py:402,443	Safety cap, Finnhub returns all data in one response
+8	hypothesis	do_not_exercise hits wrong API URL	confirmed	CRITICAL	providers/alpaca/trading.py:351-374	Uses data API URL instead of trading API URL
+9	hypothesis	Normalizers silently produce bad values	disproven	-	providers/alpaca/_base.py:217-265	Uses direct key access, raises KeyError on missing fields
+10	hypothesis	Stock endpoint default time range missing	disproven	-	api/alpaca/stock.py:47-50	24-hour default correctly applied
+11	hypothesis	Stream sink silently drops events	disproven	-	main.py:191-206	Backpressure drops are logged and metricked
+12	hypothesis	execute_alpaca_provider_call swallows errors	disproven	-	api/alpaca/common.py:65-97	Properly propagates all errors as HTTPException
+13	hypothesis	_parse_timestamp silently corrupts timestamps	disproven	-	providers/alpaca/_base.py:211-215	Raises ValueError on bad input, correct otherwise
+14	hypothesis	Inconsistent model_dump serialization	confirmed	MEDIUM	api/alpaca/crypto,options,news,screener,corporate,market	Crypto/options/news used model_dump() without mode="json", causing inconsistent response types
+15	hypothesis	http_retry missing network errors	disproven	-	core/http_client.py:40-52	Retries TransportError, TimeoutException, and 429/502/503/504
+16	hypothesis	Envelope crypto instrument_key wrong	disproven	-	core/envelope.py:86-95	Slash-separated pairs normalized correctly, edge case only for unseparated 4+ char base
+17	hypothesis	Circuit breaker stuck open	disproven	-	core/circuit_breaker.py:159-174	OPEN→HALF_OPEN recovery after configurable timeout
+18	hypothesis	Backfill silently drops symbols	disproven	-	core/backfill.py:526-535	Per-symbol progress tracked, partial failures visible
+19	hypothesis	Failover ignores empty results	disproven	-	core/execution.py:18-85	Empty data is valid response, failover for errors only
+20	hypothesis	HybridCache serves stale L1 data	disproven	-	core/cache.py:391-442	Standard TTL-based consistency, bounded staleness
+21	hypothesis	Pagination ignores caller limit	confirmed	HIGH	providers/alpaca/market,crypto,options,forex	All paginated methods used limit as per-page only, never capped total results
+22	hypothesis	HybridCache stale L1 after L2 eviction	disproven	-	core/cache.py:434	Standard TTL-based consistency, staleness bounded by L1 TTL
+23	hypothesis	Pagination limit as total cap (stock)	confirmed	HIGH	providers/alpaca/market.py	Stock bars/trades/quotes also lacked total limit cap despite having pagination
+24	hypothesis	Finnhub s:no_data handling	disproven	-	providers/finnhub.py:254-256	Properly checks status field and logs warning
+25	hypothesis	StreamMultiplexer subscription race	disproven	-	core/stream.py:507-576	Simple message sends, no local mutable state to race
+26	hypothesis	Bulk endpoint drops results	disproven	-	core/bulk.py:689-729	Per-symbol error handling with logging, continue-on-error pattern
+27	hypothesis	Rate limiter phantom request inflation	confirmed	MEDIUM	core/rate_limiter.py:142-163	Per-second bucket recorded before per-minute check, inflating counts
+28	hypothesis	AlphaVantage wrong sort order	disproven	-	providers/alphavantage.py:223-230	ISO date strings sort correctly, descending order check is valid
+29	hypothesis	Envelope misclassifies equities as crypto	noted	LOW	core/envelope.py:267	Substring matching for BTC/ETH/USD is fragile but fallback-only path
+30	hypothesis	Redis sink silent data loss	disproven	-	core/redis_sink.py:322-416	3 retries + 10K failed event buffer + drain on reconnect
+31	hypothesis	_get_data_safe type inconsistency	noted	MEDIUM	providers/uw/_base.py:187	Returns dict/list/None depending on list length, callers using .get() crash on multi-element list
+32	hypothesis	UW int() crash on float strings	confirmed	HIGH	providers/uw/*.py	47 callsites used bare int() on UW float strings, crashes with ValueError
+33	hypothesis	UW poller skips tickers silently	disproven	-	core/uw_poller.py:778-784	Per-ticker error logging with feed name, error counts tracked
+34	hypothesis	Finnhub batch quotes missing	disproven	-	providers/finnhub.py:153-171	Semaphore-controlled concurrency, partial results OK
+35	hypothesis	Finnhub missing @http_retry	disproven	-	providers/finnhub.py	Comprehensive retry coverage on all endpoints
+36	hypothesis	Quotes poller drops batches	disproven	-	core/quotes_poller.py:250-283	Batch-level failure correct (all would fail anyway)
+37	hypothesis	WebSocket rejects crypto/options	confirmed	HIGH	core/security.py:175-208	validate_symbols_array defaults to stock regex, rejects /, digits
+38	hypothesis	DataSinkRegistry skips failed sinks	disproven	-	core/data_sink.py:129-200	Circuit breaker + backpressure + metrics per sink
+39	hypothesis	Calendar missing 2027	noted	MEDIUM	core/calendar.py:159-208	Static holidays stop at 2026-12-25, 2027 holidays would be treated as trading days
+40	hypothesis	Option capture race condition	disproven	-	core/option_capture.py:341-378	Set-based reconciliation, single async entry point
+41	hypothesis	Finnhub insider pagination	disproven	-	providers/finnhub.py:804-840	API returns all data in one response, no pagination needed
+42	hypothesis	UW flow pagination	disproven	-	providers/uw/flow.py:63-102	Continuous polling design, limit/offset as intended
+43	hypothesis	AlphaVantage silent rate-limit	disproven	-	providers/alphavantage.py:145-175	Checks Note/Information/Error Message, raises on rate limit
+44	hypothesis	Dedup race condition	disproven	-	core/dedup.py:43-86	Striped locks + futures, proper error propagation
+45	hypothesis	AlphaVantage max_points ignored	confirmed	MEDIUM	providers/alphavantage.py:755,916,968	3 methods hardcoded limit=100 ignoring max_points parameter
+46	hypothesis	CacheMiddleware caches errors	disproven	-	api/middleware.py:453	Only caches status_code==200 responses
+47	hypothesis	RequestMetrics misses exception paths	disproven	-	api/middleware.py:49-53	try/finally always records latency, defaults to 500
+48	hypothesis	Trading order validation missing	disproven	-	api/alpaca/trading.py:71-110	Alpaca SDK validates, errors caught as 400
+49	hypothesis	ConnectionManager leaks connections	disproven	-	core/connections.py + api/websocket.py:79-94	finally block always calls disconnect
+50	hypothesis	NaN prices bypass validator	confirmed	CRITICAL	core/validator.py:292-310	float('nan') comparisons always False, corrupt data passed validation
+51	hypothesis	Adjustments miscalculate same-date	disproven	-	core/adjustments.py:138	Sorted chronologically, cumulative multiplication handles same-date
+52	hypothesis	Replay emits too fast	disproven	-	core/replay.py:390-395	asyncio.sleep with market-time-based delay
+53	hypothesis	Treasury maturity param ignored	confirmed	HIGH	providers/alphavantage.py:980 + core/treasury_poller.py:77	maturity kwarg not accepted by get_economic_indicator, causes TypeError silently caught
+54	hypothesis	Bulk parquet format silently returns JSON	confirmed	MEDIUM	core/bulk.py:55-69	format=parquet accepted but no parquet code exists
+55	hypothesis	Finnhub unbounded data	disproven	-	providers/finnhub.py:240-294	Date-range bounded by API design
+56	hypothesis	Symbology fails silently	disproven	-	core/symbology.py:145	Purely regex-based, no external calls
+57	hypothesis	Audit ring buffer loses entries	disproven	-	core/audit.py:64-65	In-memory buffer supplements structlog file output, by design
+58	hypothesis	WebSocket drops parse failures	disproven	-	api/websocket.py:248-260	Logged and continued, correct for malformed input
+59	hypothesis	Finnhub router parameter types	disproven	-	api/finnhub/crypto.py	Proper type handling, FastAPI validation
+60	hypothesis	Finnhub zip truncates OHLCV	noted	LOW	providers/finnhub.py:266-273	strict=False silently truncates unequal arrays, Finnhub always sends equal
+45	hypothesis	AlphaVantage max_points ignored	confirmed	MEDIUM	providers/alphavantage.py:755,916,968	3 methods hardcoded limit=100 ignoring max_points parameter
+61	hypothesis	Auth accepts empty keys	disproven	-	core/auth.py:112-127	Empty/invalid keys properly rejected, audit logged
+62	hypothesis	Config dangerous defaults	disproven	-	gateway/config.py	Proper bounds, paper-trading default, empty credential defaults
+63	hypothesis	UW common helper swallows errors	disproven	-	api/uw/common.py:194-221	execute_uw_cached raises HTTPException on all provider errors
+64	hypothesis	UW stock route inconsistency	disproven	-	api/uw/stock.py	All endpoints use execute_uw_cached consistently
+65	hypothesis	deps.py singleton race	disproven	-	api/deps.py:26-50	lru_cache is GIL-protected, asyncio is single-threaded
+66	hypothesis	globals.py None dereference	disproven	-	core/globals.py:36-38	RuntimeError raised when registry/multiplexer accessed before init
+67	hypothesis	AV adjusted close ignored daily/weekly	confirmed	HIGH	providers/alphavantage.py:398,449	Uses raw "4. close" instead of "5. adjusted close" when adjusted=True
+68	hypothesis	SEC CIK format wrong	disproven	-	providers/sec.py:134-136	zfill(10) correctly pads CIK numbers
+69	hypothesis	SEC search returns [] on failure	confirmed	MEDIUM	providers/sec.py:421-423	Catches all exceptions and returns empty list instead of raising
+70	hypothesis	UW earnings date parsing fails	disproven	-	providers/uw/earnings.py:38	Dates stored as strings from API, no parsing
+71	hypothesis	Admin exposes credentials	disproven	-	api/admin.py	No settings/config endpoints, all require auth
+72	hypothesis	Error handler masks exception type	disproven	-	api/errors.py:75-89	Preserves code/message/details in stable envelope
+73	hypothesis	Account endpoint leaks data	disproven	-	api/alpaca/account.py	Single-account gateway design, full account data appropriate
+74	hypothesis	UW institutional date parsing fails	disproven	-	providers/uw/institutional.py:103-104	Dates stored as-is from API
+75	hypothesis	or-0 masks zero values	noted	LOW	providers/uw/*.py	144 occurrences of 'or 0)' convert valid zero to default, rarely triggers
+76	hypothesis	Backfill date chunk gaps	disproven	-	core/backfill.py:133-151	Correct 00:00-23:59 chunks, no overlap, no practical gap
+77	hypothesis	fast_wrap random IDs break dedup	noted	MEDIUM	core/envelope.py:491-497	Documented perf tradeoff, Alpaca WS doesn't replay
+78	hypothesis	Stream reconnect loses events	disproven	-	core/stream.py:663-702	Architectural limitation, REST backfill compensates
+79	hypothesis	msgpack decode fails	disproven	-	core/stream.py:457-461	Handles both bytes (msgpack) and str (JSON) correctly
+80	hypothesis	ETF tide signature mismatch	disproven	-	core/uw_poller.py:1042 + providers/uw/flow.py:708	Signatures match
+81	hypothesis	_extract_data crashes on ErrorMessage	disproven	-	providers/uw/_base.py:153-170	Returns [] for error objects, SDK raises for HTTP errors
+82	hypothesis	Conditions normalization integer	disproven	-	providers/alpaca/_base.py:268-276	str() conversion handles all types
+83	hypothesis	TRADING_BASE_URL defaults to LIVE	confirmed	CRITICAL	providers/alpaca/_base.py:22	Paper-trading safety violated — defaults to api.alpaca.markets instead of paper
+84	hypothesis	Cache leaks between clients	disproven	-	api/middleware.py:524-541	Cache key includes client scope with permission hash
+85	hypothesis	Shutdown doesn't drain WS	disproven	-	core/shutdown.py + core/connections.py	PRD 8-step shutdown with drain period
+86	hypothesis	gather cancels on one failure	disproven	-	providers/finnhub.py:162-171	Per-symbol try/except returns None, gather never sees exceptions
+87	hypothesis	Ticker universe goes stale	disproven	-	core/ticker_universe.py:99-154	Daily refresh from UW screener, core set always present
+88	hypothesis	Seasonality month crash	disproven	-	providers/uw/market.py:281-318	Iterates over API response, no hardcoded months
+89	hypothesis	Decimal string coercion fails in Heber	disproven	-	Heber normalizer.py:149-152	float("150.25") works, Heber handles string Decimals
+90	hypothesis	flow_alerts option_chain lost	disproven	-	Heber key_normalization.py:92-109	OCC symbol synthesized from payload/key/fields with fallback
+91	hypothesis	Feed name mismatch DG→Heber	disproven	-	DG uw_poller.py + Heber ingest_contracts.py	All 15 UW poller feeds in Heber's CONTRACTED_RAW_FEEDS
+92	hypothesis	Crypto instrument_key format mismatch	disproven	-	DG envelope.py:86-95 + Heber key_normalization.py:343	Both normalize BTC/USD → BTC-USD consistently
+93	hypothesis	OPRA msgpack.Timestamp breaks ts_event	confirmed	HIGH	DG envelope.py:468-476	msgpack.Timestamp → str() → "Timestamp(seconds=...)" → Heber DLQ
+94	hypothesis	Redis b"data" field key mismatch	disproven	-	DG redis_sink.py:337 + Heber consumer.py:184	Both use b"data", Heber checks all variants
+95	hypothesis	model_dump(mode=json) drops timezone	disproven	-	Pydantic outputs "Z" suffix, Heber handles Z→+00:00
+96	hypothesis	Double serialization in streaming	disproven	-	DG main.py:117 + redis_sink.py:337	String path: encode only, no double-JSON
+97	hypothesis	market_tide required fields mismatch	disproven	-	Heber ingest_contracts.py:471,678	net_call_premium→total_call_premium mapping runs before validation
+98	hypothesis	sector_tide empty symbol	disproven	-	DG envelope.py:318 + Heber key_normalization.py:174	DG sets sector name, Heber maps to ETF symbol
+99	hypothesis	Dedup slow for streaming	disproven	-	Heber reliability.py:84-105	Bloom filter with rotation, O(1) checks
+100	hypothesis	Redis outage drops events permanently	disproven	-	DG redis_sink.py:222-236	Bounded design with logging, recoverable via backfill
+101	hypothesis	Streaming bars missing timeframe	confirmed	HIGH	DG stream.py:1191 → Heber Silver	WS bars have no timeframe in payload, Silver writes timeframe=null
+102	hypothesis	Darkpool zero notional	disproven	-	DG _base.py:404-408	price*0=0 is mathematically correct
+103	hypothesis	Option chain snapshot nested array	disproven	-	Heber silver.py:1267	chain_json is a string column, not nested Arrow
+104	hypothesis	oi_change date backfill vs FIELD_MAPPING	disproven	-	Heber ingest_contracts.py:867-896	Backfill runs before mapping, correct order
+105	hypothesis	bool(get()) treats "false" as True	confirmed	HIGH	DG _base.py:368-447	7 boolean fields misparse string "false", 0 as True
+106	hypothesis	Retry after Bronze causes duplicate	disproven	-	Heber consumer.py:368	retryable=not bronze_written prevents double Bronze
+107	hypothesis	Microsecond timestamp parsing	disproven	-	Heber normalizer.py:183	fromisoformat handles all ISO-8601 precision levels
+108	hypothesis	Empty list breaks Arrow schema	disproven	-	Heber normalizer.py:200-202	Empty list passes through, Arrow handles it
+109	hypothesis	Conditions null vs [] mismatch	disproven	-	Heber normalizer.py:126,200	Both null and [] handled by coercion layer
+110	hypothesis	Congress/insider empty symbol	disproven	-	Heber key_normalization.py:126-141	Falls back to UNKNOWN sentinel
+111	hypothesis	Bronze partition date off by timezone	disproven	-	Heber utils.py:32	Partitions by ts_event (UTC), consistent
+112	hypothesis	HeberReader ts_available leakage	disproven	-	Heber reader/core.py:325-326	Predicate pushdown: ds.field("ts_available") <= asof_time
+113	hypothesis	DLQ reprocessor duplicate Bronze	disproven	-	Heber consumer.py:368 + compactor.py:323	Intentional re-write, compactor dedupes by event_id
+114	hypothesis	String date fails Silver Parquet	disproven	-	Heber normalizer.py:161-168	_coerce_date converts strings to date objects before write
+115	hypothesis	Compactor loses data during merge	disproven	-	Heber compactor.py:304-351	Deduplicates by event_id, keeps earliest ts_ingest
+116	hypothesis	Transformer feed aliasing fails	disproven	-	Heber transformer.py:208	resolve_silver_feed handles crypto_bars→bars aliasing
+117	hypothesis	Aggregate payloads not exploded	disproven	-	Heber normalizer.py:307-347	explode_aggregate_payload creates per-item envelopes
+118	hypothesis	Redis port mismatch DG vs Heber	noted	LOW	DG config.py:96 + Heber config.py:43	DG has no default, Heber defaults to 6380 — deployment config concern
+119	hypothesis	_safe_int 0 vs None	disproven	-	DG _base.py:42-51	0 is valid default for missing int fields, known tradeoff
+120	hypothesis	Conditions field type dispatch	disproven	-	Heber normalizer.py:140-141	pa.types.is_list catches list_ types correctly

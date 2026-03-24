@@ -489,7 +489,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RateLimitMiddleware, default_limit=settings.rate_limit_default)
     # Global rate limit (PRD 7.5.1-2) before per-client limits
-    app.add_middleware(GlobalRateLimitMiddleware)
+    app.add_middleware(GlobalRateLimitMiddleware, trust_proxy_headers=settings.behind_trusted_proxy)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if settings.debug else [],

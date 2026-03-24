@@ -154,7 +154,7 @@ async def test_get_option_snapshot_contracts_normalizes_full_snapshot_without_li
 
     assert len(contracts) == 1
     assert fake_client.last_path == "/v1beta1/options/snapshots/AAPL"
-    assert fake_client.last_params == {"feed": "opra"}
+    assert fake_client.last_params == {"feed": "opra", "limit": 1000}
     assert contracts[0].contract_symbol == "AAPL250117C00200000"
     assert contracts[0].underlying == "AAPL"
 

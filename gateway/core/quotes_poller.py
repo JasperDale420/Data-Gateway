@@ -216,7 +216,7 @@ class AlpacaQuotesPoller:
         messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, env) for env, _, _ in to_publish]
 
         try:
-            if type(sink_registry).__name__ == "DataSinkRegistry":
+            if hasattr(sink_registry, "publish_all_batch"):
                 published = await sink_registry.publish_all_batch(messages)
             else:
                 for topic, env in messages:

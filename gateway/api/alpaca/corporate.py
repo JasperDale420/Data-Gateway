@@ -56,7 +56,7 @@ async def get_corporate_actions(
         "success": True,
         "data": {
             "symbol": symbol.upper(),
-            "actions": [a.model_dump() for a in actions],
+            "actions": [a.model_dump(mode="json") for a in actions],
         },
         "meta": {
             "count": len(actions),

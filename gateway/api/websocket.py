@@ -98,6 +98,7 @@ async def _heartbeat_loop(websocket: WebSocket, connection_id: str) -> None:
     """Send heartbeats and monitor for pong responses.
 
     Per PRD: Send heartbeat every 30s, disconnect after 3 missed.
+    Exits cleanly if WebSocket is already broken.
     """
     missed_heartbeats = 0
 
@@ -123,7 +124,10 @@ async def _heartbeat_loop(websocket: WebSocket, connection_id: str) -> None:
                     connection_id=connection_id,
                     missed=missed_heartbeats,
                 )
-                await websocket.close(code=4002, reason="Heartbeat timeout")
+                try:
+                    await websocket.close(code=4002, reason="Heartbeat timeout")
+                except Exception:
+                    logger.debug("heartbeat_close_failed", connection_id=connection_id)
                 return
 
 
@@ -378,21 +382,31 @@ async def _handle_message(
                 )
                 if response.get("status") == "error":
                     # Roll back any prior subscriptions for this request
+                    rollback_errors: list[str] = []
                     for rollback_feed in subscribed_feeds:
-                        rollback_stream = AlpacaStreamType.from_feed(rollback_feed)
-                        rollback_bars = symbols if "bars" in rollback_feed else None
-                        rollback_quotes = symbols if "quotes" in rollback_feed else None
-                        rollback_trades = symbols if "trades" in rollback_feed else None
-                        rollback_news = symbols if "news" in rollback_feed else None
-                        await multiplexer.client_unsubscribe(
-                            client_id=connection_id,
-                            stream_type=rollback_stream,
-                            bars=rollback_bars,
-                            quotes=rollback_quotes,
-                            trades=rollback_trades,
-                            news=rollback_news,
-                        )
-                    return {
+                        try:
+                            rollback_stream = AlpacaStreamType.from_feed(rollback_feed)
+                            rollback_bars = symbols if "bars" in rollback_feed else None
+                            rollback_quotes = symbols if "quotes" in rollback_feed else None
+                            rollback_trades = symbols if "trades" in rollback_feed else None
+                            rollback_news = symbols if "news" in rollback_feed else None
+                            await multiplexer.client_unsubscribe(
+                                client_id=connection_id,
+                                stream_type=rollback_stream,
+                                bars=rollback_bars,
+                                quotes=rollback_quotes,
+                                trades=rollback_trades,
+                                news=rollback_news,
+                            )
+                        except Exception as rollback_err:
+                            rollback_errors.append(f"{rollback_feed}: {rollback_err}")
+                            logger.error(
+                                "subscription_rollback_failed",
+                                connection_id=connection_id,
+                                feed=rollback_feed,
+                                error=str(rollback_err),
+                            )
+                    error_response: dict[str, Any] = {
                         "type": "subscription_ack",
                         "status": "error",
                         "provider": provider,
@@ -400,19 +414,24 @@ async def _handle_message(
                         "error_code": response.get("error_code"),
                         "message": response.get("message"),
                     }
+                    if rollback_errors:
+                        error_response["rollback_errors"] = rollback_errors
+                    return error_response
 
                 subscribed_feeds.append(feed)
                 responses.append(response)
 
             subscribed: set[str] = set()
             failed: list[str] = []
+            all_warnings: list[str] = []
             for response in responses:
                 subscribed.update(response.get("subscribed", []))
                 failed.extend(response.get("failed", []))
+                all_warnings.extend(response.get("warnings", []))
 
             # Track subscriptions locally
             connection.subscriptions.update({f"{feed}:{s}" for feed in feeds for s in symbols})
-            return {
+            result: dict[str, Any] = {
                 "type": "subscription_ack",
                 "status": "ok",
                 "provider": provider,
@@ -420,6 +439,9 @@ async def _handle_message(
                 "subscribed": sorted(subscribed),
                 "failed": failed,
             }
+            if all_warnings:
+                result["warnings"] = all_warnings
+            return result
         except RuntimeError:
             # Multiplexer not initialized — return honest error so clients can retry
             logger.error(

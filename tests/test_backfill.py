@@ -135,6 +135,7 @@ def _make_engine() -> BackfillEngine:
     provider_registry.get.return_value = MagicMock()
     sink_registry = MagicMock()
     sink_registry.publish_all = AsyncMock()
+    sink_registry.publish_all_batch = AsyncMock(return_value=1)
     engine.configure(provider_registry=provider_registry, sink_registry=sink_registry)
     return engine
 
@@ -370,7 +371,7 @@ async def test_job_executes_and_publishes() -> None:
         assert job.status == BackfillStatus.COMPLETED
         assert job.records_published == 1
         assert job.symbols_progress["AAPL"].status == "complete"
-        engine._sink_registry.publish_all.assert_called()
+        engine._sink_registry.publish_all_batch.assert_called()
 
 
 @pytest.mark.asyncio
@@ -637,6 +638,7 @@ async def test_concurrent_symbol_processing() -> None:
     provider_registry.get.return_value = MagicMock()
     sink_registry = MagicMock()
     sink_registry.publish_all = AsyncMock()
+    sink_registry.publish_all_batch = AsyncMock(return_value=1)
     engine.configure(provider_registry=provider_registry, sink_registry=sink_registry)
 
     # Track concurrent execution

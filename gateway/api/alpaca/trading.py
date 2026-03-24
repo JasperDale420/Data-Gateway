@@ -80,6 +80,10 @@ async def create_order(
     stop_price: float | None = None,
     client_order_id: str | None = None,
     extended_hours: bool = False,
+    order_class: str | None = None,
+    take_profit_limit_price: float | None = None,
+    stop_loss_stop_price: float | None = None,
+    stop_loss_limit_price: float | None = None,
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
@@ -99,6 +103,10 @@ async def create_order(
                 stop_price=stop_price,
                 client_order_id=client_order_id,
                 extended_hours=extended_hours,
+                order_class=order_class,
+                take_profit_limit_price=take_profit_limit_price,
+                stop_loss_stop_price=stop_loss_stop_price,
+                stop_loss_limit_price=stop_loss_limit_price,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e

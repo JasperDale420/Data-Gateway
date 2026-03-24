@@ -8,7 +8,7 @@ import structlog
 
 from gateway.schemas import NormalizedIVRank
 
-from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset
+from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_int
 
 logger = structlog.get_logger()
 
@@ -145,7 +145,7 @@ class UWOptionsMixin:
                         call_charm=(Decimal(str(get("call_charm") or 0)) if get("call_charm") is not None else None),
                         put_charm=(Decimal(str(get("put_charm") or 0)) if get("put_charm") is not None else None),
                         expiry=str(get("expiry") or get("expiration_date") or ""),
-                        dte=int(get("dte") or 0) if get("dte") is not None else None,
+                        dte=_safe_int(get("dte")) if get("dte") is not None else None,
                         provider="unusual_whales",
                     )
                 )
@@ -183,8 +183,8 @@ class UWOptionsMixin:
                         strike=Decimal(str(get("strike") or 0)),
                         expiry=str(get("expiry") or get("expiration_date") or ""),
                         option_type=str(get("put_call") or get("option_type") or "call").lower(),
-                        volume=int(get("volume") or 0),
-                        open_interest=int(get("open_interest") or get("oi") or 0),
+                        volume=_safe_int(get("volume")),
+                        open_interest=_safe_int(get("open_interest") or get("oi")),
                         premium=Decimal(str(get("premium") or get("total_premium") or 0)),
                         iv=(
                             Decimal(str(get("iv") or get("implied_volatility") or 0))
@@ -235,22 +235,26 @@ class UWOptionsMixin:
                         timestamp=timestamp,
                         net_call_premium=Decimal(str(get("net_call_premium") or get("call_premium") or 0)),
                         net_put_premium=Decimal(str(get("net_put_premium") or get("put_premium") or 0)),
-                        call_volume=int(get("call_volume") or 0),
-                        put_volume=int(get("put_volume") or 0),
+                        call_volume=_safe_int(get("call_volume")),
+                        put_volume=_safe_int(get("put_volume")),
                         net_delta=(Decimal(str(get("net_delta"))) if get("net_delta") is not None else None),
-                        net_call_volume=(int(get("net_call_volume")) if get("net_call_volume") is not None else None),
-                        net_put_volume=(int(get("net_put_volume")) if get("net_put_volume") is not None else None),
+                        net_call_volume=(
+                            _safe_int(get("net_call_volume")) if get("net_call_volume") is not None else None
+                        ),
+                        net_put_volume=(
+                            _safe_int(get("net_put_volume")) if get("net_put_volume") is not None else None
+                        ),
                         call_volume_ask_side=(
-                            int(get("call_volume_ask_side")) if get("call_volume_ask_side") is not None else None
+                            _safe_int(get("call_volume_ask_side")) if get("call_volume_ask_side") is not None else None
                         ),
                         call_volume_bid_side=(
-                            int(get("call_volume_bid_side")) if get("call_volume_bid_side") is not None else None
+                            _safe_int(get("call_volume_bid_side")) if get("call_volume_bid_side") is not None else None
                         ),
                         put_volume_ask_side=(
-                            int(get("put_volume_ask_side")) if get("put_volume_ask_side") is not None else None
+                            _safe_int(get("put_volume_ask_side")) if get("put_volume_ask_side") is not None else None
                         ),
                         put_volume_bid_side=(
-                            int(get("put_volume_bid_side")) if get("put_volume_bid_side") is not None else None
+                            _safe_int(get("put_volume_bid_side")) if get("put_volume_bid_side") is not None else None
                         ),
                         tape_time=get("tape_time"),
                         provider="unusual_whales",
@@ -289,8 +293,8 @@ class UWOptionsMixin:
                         symbol=symbol.upper(),
                         expiry=str(get("expiry") or get("expiration_date") or ""),
                         max_pain_strike=Decimal(str(get("max_pain") or get("max_pain_strike") or 0)),
-                        call_oi=int(get("call_oi") or 0) if get("call_oi") else None,
-                        put_oi=int(get("put_oi") or 0) if get("put_oi") else None,
+                        call_oi=_safe_int(get("call_oi")) if get("call_oi") else None,
+                        put_oi=_safe_int(get("put_oi")) if get("put_oi") else None,
                         provider="unusual_whales",
                     )
                 )
@@ -439,12 +443,12 @@ class UWOptionsMixin:
                         "symbol": symbol.upper(),
                         "date": str(get("date") or date_str or ""),
                         "expiry": get("expiry"),
-                        "volume": int(get("volume") or 0) if get("volume") else None,
+                        "volume": _safe_int(get("volume")) if get("volume") else None,
                         "open_interest": (
-                            int(get("open_interest") or get("oi") or 0) if get("open_interest") or get("oi") else None
+                            _safe_int(get("open_interest") or get("oi")) if get("open_interest") or get("oi") else None
                         ),
-                        "call_volume": int(get("call_volume") or 0) if get("call_volume") else None,
-                        "put_volume": int(get("put_volume") or 0) if get("put_volume") else None,
+                        "call_volume": _safe_int(get("call_volume")) if get("call_volume") else None,
+                        "put_volume": _safe_int(get("put_volume")) if get("put_volume") else None,
                         "premium": float(get("premium") or 0) if get("premium") else None,
                     }
                 )
@@ -485,7 +489,7 @@ class UWOptionsMixin:
                         "high": float(get("high") or 0) if get("high") else None,
                         "low": float(get("low") or 0) if get("low") else None,
                         "close": float(get("close") or 0) if get("close") else None,
-                        "volume": int(get("volume") or 0) if get("volume") else None,
+                        "volume": _safe_int(get("volume")) if get("volume") else None,
                     }
                 )
 
@@ -526,9 +530,9 @@ class UWOptionsMixin:
                         "strike": float(get("strike") or 0) if get("strike") else None,
                         "expiry": get("expiry") or get("expiration"),
                         "type": get("option_type") or get("type"),
-                        "volume": int(get("volume") or 0) if get("volume") else None,
+                        "volume": _safe_int(get("volume")) if get("volume") else None,
                         "open_interest": (
-                            int(get("open_interest") or get("oi") or 0) if get("open_interest") or get("oi") else None
+                            _safe_int(get("open_interest") or get("oi")) if get("open_interest") or get("oi") else None
                         ),
                         "premium": float(get("premium") or 0) if get("premium") else None,
                         "iv": (
@@ -584,7 +588,7 @@ class UWOptionsMixin:
                         "mid_iv": (
                             float(get("mid_iv") or get("atm_iv") or 0) if get("mid_iv") or get("atm_iv") else None
                         ),
-                        "dte": int(get("dte") or 0) if get("dte") else None,
+                        "dte": _safe_int(get("dte")) if get("dte") else None,
                     }
                 )
 
@@ -650,8 +654,8 @@ class UWOptionsMixin:
                             if get("put_call_ratio") or get("pcr")
                             else None
                         ),
-                        "put_volume": int(get("put_volume") or 0) if get("put_volume") else None,
-                        "call_volume": int(get("call_volume") or 0) if get("call_volume") else None,
+                        "put_volume": _safe_int(get("put_volume")) if get("put_volume") else None,
+                        "call_volume": _safe_int(get("call_volume")) if get("call_volume") else None,
                     }
                 )
 
@@ -689,10 +693,10 @@ class UWOptionsMixin:
                             if get("gamma_exposure") or get("gex")
                             else None
                         ),
-                        "call_volume": int(get("call_volume") or 0) if get("call_volume") else None,
-                        "put_volume": int(get("put_volume") or 0) if get("put_volume") else None,
-                        "call_oi": int(get("call_oi") or 0) if get("call_oi") else None,
-                        "put_oi": int(get("put_oi") or 0) if get("put_oi") else None,
+                        "call_volume": _safe_int(get("call_volume")) if get("call_volume") else None,
+                        "put_volume": _safe_int(get("put_volume")) if get("put_volume") else None,
+                        "call_oi": _safe_int(get("call_oi")) if get("call_oi") else None,
+                        "put_oi": _safe_int(get("put_oi")) if get("put_oi") else None,
                     }
                 )
 
@@ -725,9 +729,9 @@ class UWOptionsMixin:
                     {
                         "symbol": symbol.upper(),
                         "price": float(get("price") or 0) if get("price") else None,
-                        "call_volume": int(get("call_volume") or 0) if get("call_volume") else None,
-                        "put_volume": int(get("put_volume") or 0) if get("put_volume") else None,
-                        "total_volume": (int(get("total_volume") or 0) if get("total_volume") else None),
+                        "call_volume": _safe_int(get("call_volume")) if get("call_volume") else None,
+                        "put_volume": _safe_int(get("put_volume")) if get("put_volume") else None,
+                        "total_volume": (_safe_int(get("total_volume")) if get("total_volume") else None),
                     }
                 )
 
@@ -762,7 +766,7 @@ class UWOptionsMixin:
                         "fill_price": (
                             float(get("fill_price") or get("price") or 0) if get("fill_price") or get("price") else None
                         ),
-                        "volume": int(get("volume") or 0) if get("volume") else None,
+                        "volume": _safe_int(get("volume")) if get("volume") else None,
                         "percentage": (
                             float(get("percentage") or get("pct") or 0) if get("percentage") or get("pct") else None
                         ),
@@ -795,7 +799,7 @@ class UWOptionsMixin:
                 results.append(
                     {
                         "symbol": symbol.upper(),
-                        "dte": int(get("dte") or 0) if get("dte") else None,
+                        "dte": _safe_int(get("dte")) if get("dte") else None,
                         "iv": (
                             float(get("iv") or get("implied_volatility") or 0)
                             if get("iv") or get("implied_volatility")
