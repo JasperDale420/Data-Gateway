@@ -472,6 +472,7 @@ version = "1.1.0"
 source = { editable = "../empire-core" }
 dependencies = [
     { name = "httpx" },
+    { name = "pandas" },
     { name = "pydantic-settings" },
     { name = "sqlalchemy" },
     { name = "structlog" },
@@ -481,6 +482,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
+    { name = "pandas", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },

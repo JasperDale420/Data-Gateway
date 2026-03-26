@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Kairos client** (`config/clients.yaml`): Added API client entry for the Kairos options swing trading system with trader role and permissions for `alpaca`/`uw` providers, bars/quotes/trades/options/option_quotes/flow/flow_alerts/greek_exposure feeds, 100 max symbols, 600 req/min rate limit.
+
+### Changed
+
+- **empire-core dependency** (`uv.lock`): Locked `empire-core` v1.1.0 now declares `pandas>=2.0` as a required dependency, reflected in the resolved lock file.
+
 ### Fixed
 
 - **`get_etf_tide` fails with `AttributeError` when SDK lacks `market.get_etf_tide`** (`gateway/providers/uw/flow.py`): Same class of bug as the `get_sector_tide` fix — the local SDK version does not expose `market.get_etf_tide`, causing `uw_etf_tide_failed` errors on every EOD poll cycle. Added a `hasattr` guard that falls back to a raw HTTP call to `/api/etf/{symbol}/tide` when the SDK attribute is absent. Extracted `_parse_etf_tide_items()` helper to deduplicate parsing logic between the SDK and raw-HTTP paths.
