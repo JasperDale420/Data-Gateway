@@ -4,7 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`uv sync` without extras uninstalls `unusualwhales-python-client`** (`pyproject.toml`, `CLAUDE.md`): The `unusualwhales-python-client`, `empire-core`, and `empire-schemas` packages are declared under `[project.optional-dependencies].local`. Running `uv sync` without `--extra local` silently uninstalls them, causing `uw_sector_tide_sdk_missing` warnings on every poll cycle and potential runtime failures. Updated the `CLAUDE.md` `Commands` section to use `uv sync --extra local --extra dev` and added a callout note explaining why this is required for local development and CI.
+
 ### Added
+
+- **Standard pytest markers registered** (`pyproject.toml`): Added `unit`, `integration`, `e2e`, and `slow` marker definitions to `[tool.pytest.ini_options]` to align with the monorepo standard. Previously only `perf` was declared, causing `-m "unit"` to deselect all 827 tests. Markers are currently reserved; no tests are tagged yet.
 
 - **Kairos client** (`config/clients.yaml`): Added API client entry for the Kairos options swing trading system with trader role and permissions for `alpaca`/`uw` providers, bars/quotes/trades/options/option_quotes/flow/flow_alerts/greek_exposure feeds, 100 max symbols, 600 req/min rate limit.
 

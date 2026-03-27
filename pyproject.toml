@@ -130,6 +130,10 @@ testpaths = ["tests"]
 addopts = "-v --tb=short -m 'not perf'"
 markers = [
     "perf: benchmark/performance tests excluded from default pytest runs",
+    "unit: fast, isolated, no I/O or network",
+    "integration: real DB, file I/O, or component interactions",
+    "e2e: full system flow",
+    "slow: tests >1s, excluded by default",
 ]
 
 [tool.coverage.run]

@@ -5,7 +5,7 @@ Data-Gateway is the unified REST/WebSocket proxy for the Empire monorepo. It nor
 ## Commands
 
 ```bash
-uv sync                              # install deps (includes local empire-core, empire-schemas)
+uv sync --extra local --extra dev    # install all deps (local SDK + dev tools)
 uv run pytest                        # run all tests (excludes perf by default)
 uv run pytest tests/test_foo.py      # single test file
 uv run pytest -k "test_name"         # single test by name
@@ -18,6 +18,10 @@ uv run python -m gateway.cli add-client <id>  # add client to clients.yaml
 uv run python -m gateway.cli list-clients     # list configured clients
 uv run uvicorn gateway.main:app --host 0.0.0.0 --port 8080  # start server
 ```
+
+> **Important**: `uv sync` without `--extra local` will uninstall `unusualwhales-python-client`,
+> `empire-core`, and `empire-schemas` (they live in `[project.optional-dependencies].local`).
+> Always use `--extra local --extra dev` for local development and CI.
 
 ### Docker
 
@@ -220,6 +224,10 @@ Pydantic Settings with `GATEWAY_` env prefix. Key variables:
 | Marker | Description |
 |--------|-------------|
 | `perf` | Benchmark/performance tests, excluded by default |
+| `unit` | Fast, isolated tests with no I/O or network (reserved for future use) |
+| `integration` | Tests with real DB, file I/O, or component interactions (reserved for future use) |
+| `e2e` | Full system flow tests (reserved for future use) |
+| `slow` | Tests exceeding 1s (reserved for future use) |
 
 Tests use `pytest-asyncio` with `asyncio_mode = "auto"`. TestClient from FastAPI with fixtures in `tests/conftest.py`. Test API key loaded from `config/clients.yaml` (client id: `test`).
 
