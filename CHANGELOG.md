@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Calendar holiday names not resolved when `exchange_calendars` is installed** (`gateway/core/calendar.py`): `_resolve_holiday_name()` was iterating `cal.regular_holidays` directly, but `HolidayCalendar` is not iterable. Fixed to iterate `cal.regular_holidays.rules`. Added a name alias map so the exchange_calendars variant `"Dr. Martin Luther King Jr. Day"` normalizes to `"Martin Luther King Jr. Day"`. Previously all holidays fell back to the generic `"Market Holiday"` string when the library was available, causing two test failures.
+
+- **Import sort order across all gateway modules** (`gateway/api/`, `gateway/core/`, `gateway/providers/`): 85 import blocks had `from gateway.core.logger import logger` placed in a trailing separate block. Removed 14 unused imports and collapsed one duplicate if-branch. Auto-fixed with `ruff --fix`.
+
 - **`uv sync` without extras uninstalls `unusualwhales-python-client`** (`pyproject.toml`, `CLAUDE.md`): The `unusualwhales-python-client`, `empire-core`, and `empire-schemas` packages are declared under `[project.optional-dependencies].local`. Running `uv sync` without `--extra local` silently uninstalls them, causing `uw_sector_tide_sdk_missing` warnings on every poll cycle and potential runtime failures. Updated the `CLAUDE.md` `Commands` section to use `uv sync --extra local --extra dev` and added a callout note explaining why this is required for local development and CI.
 
 ### Added
