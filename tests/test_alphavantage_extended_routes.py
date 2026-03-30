@@ -36,9 +36,7 @@ class _FakeProvider:
         return {"data": []}
 
     async def get_forex_daily(self, from_symbol: str, to_symbol: str, **kwargs: Any) -> list[Any]:
-        self.calls.append(
-            ("forex_daily", {"from_symbol": from_symbol, "to_symbol": to_symbol, **kwargs})
-        )
+        self.calls.append(("forex_daily", {"from_symbol": from_symbol, "to_symbol": to_symbol, **kwargs}))
         return []
 
     async def get_crypto_daily(self, symbol: str, market: str, **kwargs: Any) -> list[Any]:
@@ -148,6 +146,4 @@ async def test_crypto_daily_route_forwards_max_points_and_keys_cache(
 
     assert response["success"] is True
     assert seen["cache_key"].endswith(":120")
-    assert provider.calls == [
-        ("crypto_daily", {"symbol": "BTC", "market": "USD", "max_points": 120})
-    ]
+    assert provider.calls == [("crypto_daily", {"symbol": "BTC", "market": "USD", "max_points": 120})]

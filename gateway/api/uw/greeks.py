@@ -55,9 +55,7 @@ async def get_gex_by_strike(
         cache_key=cache_key,
         registry=registry,
         ttl=60,
-        fetcher=lambda provider: provider.get_greek_exposure_by_strike(
-            symbol=symbol, date_str=date
-        ),
+        fetcher=lambda provider: provider.get_greek_exposure_by_strike(symbol=symbol, date_str=date),
         build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
     )
 
@@ -78,8 +76,6 @@ async def get_gex_by_expiry(
         cache_key=cache_key,
         registry=registry,
         ttl=60,
-        fetcher=lambda provider: provider.get_greek_exposure_by_expiry(
-            symbol=symbol, date_str=date
-        ),
+        fetcher=lambda provider: provider.get_greek_exposure_by_expiry(symbol=symbol, date_str=date),
         build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
     )

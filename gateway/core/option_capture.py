@@ -291,17 +291,14 @@ class OptionCaptureService:
             "subscribed_contracts": len(self._subscribed_contracts),
             "last_cycle": {
                 "status": self._last_cycle_status,
-                "completed_at": (
-                    self._last_cycle_completed_at.isoformat() if self._last_cycle_completed_at else None
-                ),
+                "completed_at": (self._last_cycle_completed_at.isoformat() if self._last_cycle_completed_at else None),
                 "published": self._last_published,
                 "failed_symbols": list(self._last_failed_symbols),
                 "skipped_market_closed": self._last_skipped_market_closed,
             },
             "websocket": dict(self._ws_event_counts),
             "symbols": {
-                symbol: self._render_symbol_runtime_snapshot(symbol=symbol, now=current_time)
-                for symbol in self.symbols
+                symbol: self._render_symbol_runtime_snapshot(symbol=symbol, now=current_time) for symbol in self.symbols
             },
         }
 
@@ -491,9 +488,7 @@ class OptionCaptureService:
     @staticmethod
     def _estimate_atm_strike(contracts: list[dict[str, Any]]) -> float | None:
         filtered = sorted(
-            strike
-            for strike in (_to_float(contract.get("strike")) for contract in contracts)
-            if strike is not None
+            strike for strike in (_to_float(contract.get("strike")) for contract in contracts) if strike is not None
         )
         if not filtered:
             return None

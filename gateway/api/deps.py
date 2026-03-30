@@ -66,16 +66,6 @@ def get_audit_logger() -> AuditLogger:
     return AuditLogger.get_instance()
 
 
-def get_endpoint_rate_limiter() -> EndpointRateLimiter:
-    """Get the endpoint rate limiter singleton."""
-    return EndpointRateLimiter.get_instance()
-
-
-def get_audit_logger() -> AuditLogger:
-    """Get the audit logger singleton."""
-    return AuditLogger.get_instance()
-
-
 def require_api_key(
     request: Request,
     x_gateway_key: str | None = Header(None, alias="X-Gateway-Key"),

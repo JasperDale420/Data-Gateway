@@ -45,9 +45,7 @@ async def create_watchlist(
     symbols_list = symbols.split(",") if symbols else None
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(
-            provider.create_watchlist, name, symbols_list
-        ),
+        provider_call=lambda provider: asyncio.to_thread(provider.create_watchlist, name, symbols_list),
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -78,9 +76,7 @@ async def update_watchlist(
     symbols_list = symbols.split(",") if symbols else None
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(
-            provider.update_watchlist, watchlist_id, name, symbols_list
-        ),
+        provider_call=lambda provider: asyncio.to_thread(provider.update_watchlist, watchlist_id, name, symbols_list),
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -113,9 +109,7 @@ async def add_asset_to_watchlist(
     """Add an asset to a watchlist."""
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(
-            provider.add_asset_to_watchlist, watchlist_id, symbol
-        ),
+        provider_call=lambda provider: asyncio.to_thread(provider.add_asset_to_watchlist, watchlist_id, symbol),
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -130,8 +124,6 @@ async def remove_asset_from_watchlist(
     """Remove an asset from a watchlist."""
     data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(
-            provider.remove_asset_from_watchlist, watchlist_id, symbol
-        ),
+        provider_call=lambda provider: asyncio.to_thread(provider.remove_asset_from_watchlist, watchlist_id, symbol),
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}

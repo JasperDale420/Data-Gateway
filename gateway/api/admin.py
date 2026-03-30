@@ -40,9 +40,7 @@ _provider_health_cache: dict | None = None
 _provider_health_cache_at: datetime | None = None
 _provider_health_payload_cache_detailed: dict[str, dict[str, object]] | None = None
 _provider_health_payload_cache_minimal: dict[str, dict[str, object]] | None = None
-_status_section_stats_cache: (
-    dict[tuple[bool, bool, bool, bool, bool], dict[str, dict[str, Any]]] | None
-) = None
+_status_section_stats_cache: dict[tuple[bool, bool, bool, bool, bool], dict[str, dict[str, Any]]] | None = None
 _status_section_stats_cache_at: dict[tuple[bool, bool, bool, bool, bool], datetime] | None = None
 _stream_section_stats_cache: dict[tuple[bool, bool], dict[str, dict[str, Any]]] | None = None
 _stream_section_stats_cache_at: dict[tuple[bool, bool], datetime] | None = None
@@ -121,18 +119,14 @@ def _build_stream_tuning_summary(
     fanout_error_rate = float(fanout_derived.get("error_rate", 0.0))
 
     suggested_sink_max_pending = (
-        _suggest_up(sink_limits.get("max_pending_tasks"))
-        if sink_pending_utilization >= 0.7
-        else None
+        _suggest_up(sink_limits.get("max_pending_tasks")) if sink_pending_utilization >= 0.7 else None
     )
     suggested_sink_max_inflight = (
         _suggest_up(sink_limits.get("max_inflight_publish"))
         if sink_drop_rate >= 0.01 or sink_completion_rate < 0.95
         else None
     )
-    suggested_fanout_batch_size = (
-        _suggest_up(fanout_limits.get("batch_size")) if fanout_fill_ratio >= 0.8 else None
-    )
+    suggested_fanout_batch_size = _suggest_up(fanout_limits.get("batch_size")) if fanout_fill_ratio >= 0.8 else None
     suggested_fanout_max_inflight = (
         _suggest_up(fanout_limits.get("max_inflight")) if fanout_error_rate >= 0.005 else None
     )
@@ -222,17 +216,12 @@ async def _load_provider_health_status(
         now,
         ttl_seconds=ttl_seconds,
     ):
-        if (
-            _provider_health_payload_cache_detailed is None
-            or _provider_health_payload_cache_minimal is None
-        ):
+        if _provider_health_payload_cache_detailed is None or _provider_health_payload_cache_minimal is None:
             detailed, minimal = _build_payload_caches(_provider_health_cache or {})
             _provider_health_payload_cache_detailed = detailed
             _provider_health_payload_cache_minimal = minimal
         age_seconds = (
-            (now - _provider_health_cache_at).total_seconds()
-            if _provider_health_cache_at is not None
-            else None
+            (now - _provider_health_cache_at).total_seconds() if _provider_health_cache_at is not None else None
         )
         payload = (
             _provider_health_payload_cache_detailed
@@ -281,11 +270,7 @@ def _status_section_cache_is_fresh(
 def _prune_stale_status_section_cache(*, now: datetime, ttl_seconds: int) -> int:
     """Prune stale optional-section cache entries to bound cache growth."""
     global _status_section_stats_cache, _status_section_stats_cache_at
-    if (
-        ttl_seconds <= 0
-        or _status_section_stats_cache is None
-        or _status_section_stats_cache_at is None
-    ):
+    if ttl_seconds <= 0 or _status_section_stats_cache is None or _status_section_stats_cache_at is None:
         return 0
     stale_keys = [
         key
@@ -306,9 +291,7 @@ def _enforce_status_section_cache_limit(*, max_entries: int) -> int:
     overflow = len(_status_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
         return 0
-    oldest_keys = nsmallest(
-        overflow, _status_section_stats_cache_at, key=_status_section_stats_cache_at.get
-    )
+    oldest_keys = nsmallest(overflow, _status_section_stats_cache_at, key=_status_section_stats_cache_at.get)
     for key in oldest_keys:
         _status_section_stats_cache.pop(key, None)
         _status_section_stats_cache_at.pop(key, None)
@@ -361,9 +344,7 @@ def _load_optional_status_sections(
         include_provider_quote_batches,
     )
     now = _utcnow()
-    evictions += _prune_stale_status_section_cache(
-        now=now, ttl_seconds=status_section_cache_ttl_seconds
-    )
+    evictions += _prune_stale_status_section_cache(now=now, ttl_seconds=status_section_cache_ttl_seconds)
     if (
         status_section_cache_ttl_seconds > 0
         and not force_status_section_refresh
@@ -375,8 +356,7 @@ def _load_optional_status_sections(
     ):
         age_seconds = (
             (now - _status_section_stats_cache_at[cache_key]).total_seconds()
-            if _status_section_stats_cache_at is not None
-            and cache_key in _status_section_stats_cache_at
+            if _status_section_stats_cache_at is not None and cache_key in _status_section_stats_cache_at
             else None
         )
         cached = (_status_section_stats_cache or {}).get(cache_key, {})
@@ -395,12 +375,8 @@ def _load_optional_status_sections(
         "cache": cache.get_stats_dict() if include_cache_stats else {},
         "connections": connections.get_stats() if include_connection_stats else {},
         "registry": registry.get_stats() if include_registry_stats else {},
-        "provider_health_checks": (
-            get_provider_health_check_snapshot() if include_provider_health_checks else {}
-        ),
-        "provider_quote_batches": (
-            get_provider_quote_batch_snapshot() if include_provider_quote_batches else {}
-        ),
+        "provider_health_checks": (get_provider_health_check_snapshot() if include_provider_health_checks else {}),
+        "provider_quote_batches": (get_provider_quote_batch_snapshot() if include_provider_quote_batches else {}),
     }
     if status_section_cache_ttl_seconds > 0:
         if _status_section_stats_cache is None:
@@ -409,9 +385,7 @@ def _load_optional_status_sections(
             _status_section_stats_cache_at = {}
         _status_section_stats_cache[cache_key] = latest
         _status_section_stats_cache_at[cache_key] = now
-        evictions += _enforce_status_section_cache_limit(
-            max_entries=status_section_cache_max_entries
-        )
+        evictions += _enforce_status_section_cache_limit(max_entries=status_section_cache_max_entries)
     return (
         latest["cache"] if include_cache_stats else {},
         latest["connections"] if include_connection_stats else {},
@@ -444,11 +418,7 @@ def _stream_section_cache_is_fresh(
 def _prune_stale_stream_section_cache(*, now: datetime, ttl_seconds: int) -> int:
     """Prune stale stream-section cache entries to bound cache growth."""
     global _stream_section_stats_cache, _stream_section_stats_cache_at
-    if (
-        ttl_seconds <= 0
-        or _stream_section_stats_cache is None
-        or _stream_section_stats_cache_at is None
-    ):
+    if ttl_seconds <= 0 or _stream_section_stats_cache is None or _stream_section_stats_cache_at is None:
         return 0
     stale_keys = [
         key
@@ -469,9 +439,7 @@ def _enforce_stream_section_cache_limit(*, max_entries: int) -> int:
     overflow = len(_stream_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
         return 0
-    oldest_keys = nsmallest(
-        overflow, _stream_section_stats_cache_at, key=_stream_section_stats_cache_at.get
-    )
+    oldest_keys = nsmallest(overflow, _stream_section_stats_cache_at, key=_stream_section_stats_cache_at.get)
     for key in oldest_keys:
         _stream_section_stats_cache.pop(key, None)
         _stream_section_stats_cache_at.pop(key, None)
@@ -506,9 +474,7 @@ def _load_stream_status_sections(
         evictions += _clear_stream_section_cache()
     cache_key = (include_stream_sink_dispatch, include_stream_fanout)
     now = _utcnow()
-    evictions += _prune_stale_stream_section_cache(
-        now=now, ttl_seconds=stream_section_cache_ttl_seconds
-    )
+    evictions += _prune_stale_stream_section_cache(now=now, ttl_seconds=stream_section_cache_ttl_seconds)
     if (
         stream_section_cache_ttl_seconds > 0
         and not force_stream_section_refresh
@@ -520,8 +486,7 @@ def _load_stream_status_sections(
     ):
         age_seconds = (
             (now - _stream_section_stats_cache_at[cache_key]).total_seconds()
-            if _stream_section_stats_cache_at is not None
-            and cache_key in _stream_section_stats_cache_at
+            if _stream_section_stats_cache_at is not None and cache_key in _stream_section_stats_cache_at
             else None
         )
         cached = (_stream_section_stats_cache or {}).get(cache_key, {})
@@ -534,9 +499,7 @@ def _load_stream_status_sections(
         )
 
     latest = {
-        "stream_sink_dispatch": (
-            get_stream_sink_dispatch_snapshot() if include_stream_sink_dispatch else {}
-        ),
+        "stream_sink_dispatch": (get_stream_sink_dispatch_snapshot() if include_stream_sink_dispatch else {}),
         "stream_fanout": get_stream_fanout_snapshot() if include_stream_fanout else {},
     }
     if stream_section_cache_ttl_seconds > 0:
@@ -546,9 +509,7 @@ def _load_stream_status_sections(
             _stream_section_stats_cache_at = {}
         _stream_section_stats_cache[cache_key] = latest
         _stream_section_stats_cache_at[cache_key] = now
-        evictions += _enforce_stream_section_cache_limit(
-            max_entries=stream_section_cache_max_entries
-        )
+        evictions += _enforce_stream_section_cache_limit(max_entries=stream_section_cache_max_entries)
     return (
         latest["stream_sink_dispatch"],
         latest["stream_fanout"],
@@ -801,9 +762,7 @@ async def get_status(
         optional_cache_entries = (
             len(_status_section_stats_cache) if isinstance(_status_section_stats_cache, dict) else 0
         )
-        stream_cache_entries = (
-            len(_stream_section_stats_cache) if isinstance(_stream_section_stats_cache, dict) else 0
-        )
+        stream_cache_entries = len(_stream_section_stats_cache) if isinstance(_stream_section_stats_cache, dict) else 0
         data["status_sections"] = {
             "cache": include_cache_stats,
             "connections": include_connection_stats,

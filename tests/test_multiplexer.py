@@ -404,9 +404,7 @@ async def test_stream_multiplexer_single_client_fanout_skips_gather(
         def get_clients_for_symbol_view(self, symbol: str, _data_type: str) -> list[str]:
             return self.get_clients_for_symbol(symbol, _data_type)
 
-    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
-        Any, SimpleNamespace(subscriptions=_Subscriptions())
-    )
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(Any, SimpleNamespace(subscriptions=_Subscriptions()))
 
     await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "AAPL"})
 

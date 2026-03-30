@@ -318,9 +318,7 @@ async def get_portfolio_history(
 @router.get("/assets", response_model=SuccessResponse)
 async def get_assets(
     status: str | None = Query(default="active", description="Asset status: active, inactive"),
-    asset_class: str | None = Query(
-        default="us_equity", description="Asset class: us_equity, crypto"
-    ),
+    asset_class: str | None = Query(default="us_equity", description="Asset class: us_equity, crypto"),
     exchange: str | None = Query(default=None, description="Exchange filter"),
     client: Client = Depends(require_api_key),
     cache: InMemoryCache | HybridCache = Depends(get_cache),
@@ -333,9 +331,7 @@ async def get_assets(
     data = await _execute_trading_cached_call(
         registry=registry,
         cache=cache,
-        cache_key=(
-            f"alpaca:trading:assets:{normalized_status}:{normalized_asset_class}:{normalized_exchange}"
-        ),
+        cache_key=(f"alpaca:trading:assets:{normalized_status}:{normalized_asset_class}:{normalized_exchange}"),
         ttl=TRADING_ASSETS_CACHE_TTL_SECONDS,
         route_label="alpaca_trading_assets",
         provider_fn=lambda provider: provider.get_assets(

@@ -1,0 +1,2895 @@
+# Data-Gateway Comprehensive Data Dictionary
+# Auto-generated from FastAPI route handler source code
+# Covers all providers: Alpaca, Yahoo Finance, SEC, Unusual Whales, Finnhub, Alpha Vantage
+#
+# Router prefix mapping:
+#   Alpaca:          /api/v1/alpaca
+#   Yahoo Finance:   /api/v1/yf
+#   SEC:             /api/v1/sec
+#   Unusual Whales:  /api/v1/uw
+#   Finnhub:         /api/v1/finnhub
+#   Alpha Vantage:   /api/v1/alphavantage
+#
+# Auth: All endpoints require API key via X-API-Key header (require_api_key dependency)
+# Rate limiting: Per-provider rate limiting via require_provider_rate_limit dependency
+
+providers:
+
+  # ============================================================================
+  # ALPACA (/api/v1/alpaca)
+  # ============================================================================
+  alpaca:
+    prefix: /api/v1/alpaca
+
+    # --------------------------------------------------------------------------
+    # Stock Market Data
+    # --------------------------------------------------------------------------
+    stock:
+      - endpoint: GET /stocks/{symbol}/bars
+        description: Get historical OHLCV bars for a stock
+        path_params:
+          symbol: { type: string, description: "Stock ticker symbol" }
+        query_params:
+          timeframe: { type: string, default: "1Day", description: "Bar timeframe" }
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, max: 10000, description: "Max bars to return" }
+          feed: { type: string, default: null, description: "Data feed (iex, sip)" }
+        response_model: StockBarsResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: "list[NormalizedBar]", fields: [symbol, timestamp, open, high, low, close, volume, vwap, trade_count, provider, timeframe] }
+          meta: { type: ResponseMeta, fields: [provider, symbol, timeframe, count] }
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /stocks/{symbol}/quotes
+        description: Get latest quote for a stock
+        path_params:
+          symbol: { type: string, description: "Stock ticker symbol" }
+        response_model: StockQuoteResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: NormalizedQuote, fields: [symbol, timestamp, bid_price, bid_size, ask_price, ask_size, bid_exchange, ask_exchange, conditions, tape, provider] }
+          meta: { type: ResponseMeta }
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /stocks/{symbol}/trades
+        description: Get historical trades for a stock
+        path_params:
+          symbol: { type: string, description: "Stock ticker symbol" }
+        query_params:
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max trades to return" }
+        response_model: StockTradesResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: "list[NormalizedTrade]", fields: [symbol, timestamp, price, size, trade_id, exchange, conditions, tape, taker_side, update, provider] }
+          meta: { type: ResponseMeta }
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /stocks/{symbol}/snapshot
+        description: Get snapshot for a stock (daily bar, latest quote, latest trade, minute bar, prev daily bar)
+        path_params:
+          symbol: { type: string, description: "Stock ticker symbol" }
+        response_model: StockSnapshotResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: StockSnapshot, fields: [daily_bar, latest_quote, latest_trade, minute_bar, prev_daily_bar] }
+          meta: { type: ResponseMeta }
+        cache_ttl: 30
+        auth: require_api_key
+
+      - endpoint: GET /stocks/bars/latest
+        description: Get latest bar for multiple symbols
+        query_params:
+          symbols: { type: string, required: true, description: "Comma-separated symbols" }
+        response_model: LatestBarsResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: "dict[str, NormalizedBar]" }
+          meta: { type: ResponseMeta }
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /stocks/trades/latest
+        description: Get latest trade for multiple symbols
+        query_params:
+          symbols: { type: string, required: true, description: "Comma-separated symbols" }
+        response_model: LatestTradesResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: "dict[str, NormalizedTrade]" }
+          meta: { type: ResponseMeta }
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /stocks/quotes
+        description: Get historical quotes for multiple symbols
+        query_params:
+          symbols: { type: string, required: true, description: "Comma-separated symbols" }
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max quotes per symbol" }
+        response_model: HistoricalQuotesResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: "dict[str, list[NormalizedQuote]]" }
+          meta: { type: ResponseMeta }
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /stocks/snapshots
+        description: Get snapshots for multiple symbols
+        query_params:
+          symbols: { type: string, required: true, description: "Comma-separated symbols" }
+        response_model: SnapshotsResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: "dict[str, StockSnapshot]" }
+          meta: { type: ResponseMeta }
+        cache_ttl: 30
+        auth: require_api_key
+
+      - endpoint: GET /stocks/auctions
+        description: Get auction data for multiple symbols
+        query_params:
+          symbols: { type: string, required: true, description: "Comma-separated symbols" }
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max results" }
+        response_model: AuctionsResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: "dict[str, list[Auction]]" }
+          meta: { type: ResponseMeta }
+        cache_ttl: 300
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Options Market Data
+    # --------------------------------------------------------------------------
+    options:
+      - endpoint: GET /options/chain/{underlying}
+        description: Get option chain for an underlying symbol
+        path_params:
+          underlying: { type: string, description: "Underlying ticker" }
+        query_params:
+          expiration_date: { type: string, default: null, description: "Exact expiration (YYYY-MM-DD)" }
+          expiration_date_gte: { type: string, default: null, description: "Expiration >= date" }
+          expiration_date_lte: { type: string, default: null, description: "Expiration <= date" }
+          strike_price_gte: { type: number, default: null, description: "Strike >= value" }
+          strike_price_lte: { type: number, default: null, description: "Strike <= value" }
+          option_type: { type: string, default: null, description: "call or put" }
+        response_model: OptionChainResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: "list[NormalizedOptionContract]", fields: [contract_symbol, underlying, expiration, strike, option_type, bid, ask, last, volume, open_interest, underlying_price, delta, gamma, theta, vega, rho, iv, provider, timestamp] }
+          meta: { type: ResponseMeta }
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /options/chain/{underlying}/snapshot
+        description: Get option chain snapshot for underlying
+        path_params:
+          underlying: { type: string, description: "Underlying ticker" }
+        response_model: OptionSnapshotResponse
+        cache_ttl: 30
+        auth: require_api_key
+
+      - endpoint: GET /options/{contract}/bars
+        description: Get OHLCV bars for an option contract
+        path_params:
+          contract: { type: string, description: "OCC option symbol" }
+        query_params:
+          timeframe: { type: string, default: "1Day", description: "Bar timeframe" }
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max bars" }
+        response_model: OptionBarsResponse
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /options/{contract}/quotes
+        description: Get latest quote for an option contract
+        path_params:
+          contract: { type: string, description: "OCC option symbol" }
+        response_model: OptionQuoteResponse
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /options/{contract}/quotes/historical
+        description: Get historical quotes for an option contract
+        path_params:
+          contract: { type: string, description: "OCC option symbol" }
+        query_params:
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max quotes" }
+        response_model: OptionQuoteResponse
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /options/quotes
+        description: Get latest quotes for multiple option contracts
+        query_params:
+          symbols: { type: string, required: true, description: "Comma-separated OCC symbols" }
+        response_model: OptionQuoteResponse
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /options/trades
+        description: Get trades for multiple option contracts
+        query_params:
+          contracts: { type: string, required: true, description: "Comma-separated contracts" }
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max trades" }
+        response_model: OptionTradesResponse
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /options/trades/latest
+        description: Get latest trades for multiple option contracts
+        query_params:
+          contracts: { type: string, required: true, description: "Comma-separated contracts" }
+        response_model: OptionLatestTradesResponse
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /options/snapshots/{underlying}
+        description: Get option snapshots for an underlying
+        path_params:
+          underlying: { type: string, description: "Underlying ticker" }
+        response_model: OptionSnapshotsResponse
+        cache_ttl: 30
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Crypto Market Data
+    # --------------------------------------------------------------------------
+    crypto:
+      - endpoint: GET /crypto/{pair}/bars
+        description: Get OHLCV bars for a crypto pair
+        path_params:
+          pair: { type: string, description: "Crypto pair (e.g., BTC/USD)" }
+        query_params:
+          timeframe: { type: string, default: "1Hour", description: "Bar timeframe" }
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max bars" }
+        response_model: CryptoBarsResponse
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /crypto/{pair}/trades
+        description: Get trades for a crypto pair
+        path_params:
+          pair: { type: string, description: "Crypto pair" }
+        query_params:
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max trades" }
+        response_model: CryptoTradesResponse
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /crypto/quotes/latest
+        description: Get latest quotes for multiple crypto pairs
+        query_params:
+          pairs: { type: string, required: true, description: "Comma-separated pairs" }
+        response_model: CryptoQuoteResponse
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /crypto/{pair}/quotes/historical
+        description: Get historical quotes for a crypto pair
+        path_params:
+          pair: { type: string, description: "Crypto pair" }
+        query_params:
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max quotes" }
+        response_model: CryptoQuoteResponse
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /crypto/snapshots
+        description: Get snapshots for multiple crypto pairs
+        query_params:
+          pairs: { type: string, required: true, description: "Comma-separated pairs" }
+        response_model: CryptoSnapshotResponse
+        cache_ttl: 30
+        auth: require_api_key
+
+      - endpoint: GET /crypto/{pair}/orderbook
+        description: Get orderbook for a crypto pair
+        path_params:
+          pair: { type: string, description: "Crypto pair" }
+        response_model: CryptoOrderbookResponse
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /crypto/bars/latest
+        description: Get latest bars for multiple crypto pairs
+        query_params:
+          pairs: { type: string, required: true, description: "Comma-separated pairs" }
+        response_model: CryptoLatestBarsResponse
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /crypto/trades/latest
+        description: Get latest trades for multiple crypto pairs
+        query_params:
+          pairs: { type: string, required: true, description: "Comma-separated pairs" }
+        response_model: CryptoLatestTradesResponse
+        cache_ttl: 10
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Forex
+    # --------------------------------------------------------------------------
+    forex:
+      - endpoint: GET /forex/rates
+        description: Get latest forex rates for currency pairs
+        query_params:
+          pairs: { type: string, required: true, description: "Comma-separated pairs (e.g., EUR/USD,GBP/USD)" }
+        response_model: ForexRatesResponse
+        cache_ttl: 10
+        auth: require_api_key
+
+      - endpoint: GET /forex/rates/historical
+        description: Get historical forex bars
+        query_params:
+          pairs: { type: string, required: true, description: "Comma-separated pairs" }
+          timeframe: { type: string, default: "1Day", description: "Bar timeframe" }
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 1000, description: "Max bars" }
+        response_model: ForexHistoricalResponse
+        cache_ttl: 300
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # News
+    # --------------------------------------------------------------------------
+    news:
+      - endpoint: GET /news
+        description: Get news articles
+        query_params:
+          symbols: { type: string, default: null, description: "Comma-separated symbols" }
+          start: { type: string, default: null, description: "Start time (ISO 8601)" }
+          end: { type: string, default: null, description: "End time (ISO 8601)" }
+          limit: { type: integer, default: 10, max: 50, description: "Max articles" }
+          include_content: { type: boolean, default: false, description: "Include full article content" }
+        response_model: NewsResponse
+        response_fields:
+          success: { type: boolean }
+          data: { type: "list[NormalizedNewsArticle]" }
+          meta: { type: ResponseMeta }
+        cache_ttl: 30
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Screener
+    # --------------------------------------------------------------------------
+    screener:
+      - endpoint: GET /screener/most-actives
+        description: Get most active stocks
+        query_params:
+          by: { type: string, default: "volume", description: "Sort by: volume or trades" }
+          top: { type: integer, default: 10, max: 100, description: "Number of results" }
+        response_model: MostActivesResponse
+        cache_ttl: 30
+        auth: require_api_key
+
+      - endpoint: GET /screener/movers
+        description: Get top movers (gainers/losers)
+        query_params:
+          market_type: { type: string, default: "stocks", description: "Market type" }
+          top: { type: integer, default: 10, max: 50, description: "Number of results" }
+        response_model: MoversResponse
+        cache_ttl: 30
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Corporate Actions
+    # --------------------------------------------------------------------------
+    corporate:
+      - endpoint: GET /corporate-actions/{symbol}
+        description: Get corporate actions (splits, dividends, mergers, spinoffs)
+        path_params:
+          symbol: { type: string, description: "Stock ticker" }
+        query_params:
+          types: { type: string, default: null, description: "Comma-separated types" }
+          start: { type: string, default: null, description: "Start date" }
+          end: { type: string, default: null, description: "End date" }
+        response_model: CorporateActionsResponse
+        cache_ttl: 300
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Metadata
+    # --------------------------------------------------------------------------
+    metadata:
+      - endpoint: GET /meta/conditions
+        description: Get condition codes for trade/quote conditions
+        query_params:
+          asset_class: { type: string, default: "us_equity", description: "Asset class" }
+        response_model: ConditionCodesResponse
+        cache_ttl: 1800
+        auth: require_api_key
+
+      - endpoint: GET /meta/exchanges
+        description: Get exchange codes
+        query_params:
+          asset_class: { type: string, default: "us_equity", description: "Asset class" }
+        response_model: ExchangeCodesResponse
+        cache_ttl: 1800
+        auth: require_api_key
+
+      - endpoint: GET /logos/{symbol}
+        description: Get company logo (placeholder)
+        path_params:
+          symbol: { type: string, description: "Stock ticker" }
+        response_model: SuccessResponse
+        auth: require_api_key
+
+      - endpoint: GET /fixed-income/prices
+        description: Get fixed income prices
+        query_params:
+          isins: { type: string, required: true, description: "Comma-separated ISINs" }
+        response_model: FixedIncomeResponse
+        cache_ttl: 300
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Trading
+    # --------------------------------------------------------------------------
+    trading:
+      - endpoint: GET /account
+        description: Get trading account information
+        response_model: AccountResponse
+        response_fields:
+          data: { type: Account, fields: [id, account_number, status, currency, cash, portfolio_value, buying_power, equity, pattern_day_trader, shorting_enabled, daytrade_count] }
+        auth: require_api_key
+
+      - endpoint: POST /orders
+        description: Submit a new order
+        request_body:
+          symbol: { type: string, required: true }
+          side: { type: string, required: true, description: "buy or sell" }
+          qty: { type: string, default: null, description: "Number of shares" }
+          notional: { type: string, default: null, description: "Dollar amount" }
+          order_type: { type: string, default: "market", description: "market, limit, stop, stop_limit" }
+          time_in_force: { type: string, default: "day", description: "day, gtc, ioc, fok" }
+          limit_price: { type: string, default: null }
+          stop_price: { type: string, default: null }
+          client_order_id: { type: string, default: null }
+          extended_hours: { type: boolean, default: false }
+        response_model: OrderResponse
+        auth: require_api_key
+
+      - endpoint: GET /orders
+        description: List orders
+        query_params:
+          status: { type: string, default: null, description: "Filter by status" }
+          limit: { type: integer, default: 50, description: "Max orders" }
+          direction: { type: string, default: null, description: "asc or desc" }
+          symbols: { type: string, default: null, description: "Comma-separated symbols" }
+          nested: { type: boolean, default: null, description: "Include nested orders" }
+          side: { type: string, default: null, description: "buy or sell" }
+        response_model: OrdersListResponse
+        auth: require_api_key
+
+      - endpoint: GET /orders/{order_id}
+        description: Get a specific order
+        path_params:
+          order_id: { type: string, description: "Order UUID" }
+        response_model: OrderResponse
+        auth: require_api_key
+
+      - endpoint: GET /orders:by_client_order_id
+        description: Get order by client order ID
+        query_params:
+          client_order_id: { type: string, required: true }
+        response_model: OrderResponse
+        auth: require_api_key
+
+      - endpoint: PATCH /orders/{order_id}
+        description: Update an existing order
+        path_params:
+          order_id: { type: string }
+        request_body:
+          qty: { type: string, default: null }
+          limit_price: { type: string, default: null }
+          stop_price: { type: string, default: null }
+          time_in_force: { type: string, default: null }
+          client_order_id: { type: string, default: null }
+        response_model: OrderResponse
+        auth: require_api_key
+
+      - endpoint: DELETE /orders/{order_id}
+        description: Cancel an order
+        path_params:
+          order_id: { type: string }
+        response_model: SuccessResponse
+        auth: require_api_key
+
+      - endpoint: DELETE /orders
+        description: Cancel all open orders
+        response_model: SuccessResponse
+        auth: require_api_key
+
+      - endpoint: GET /positions
+        description: List all open positions
+        response_model: PositionsListResponse
+        response_fields:
+          data: { type: "list[Position]", fields: [asset_id, symbol, exchange, asset_class, avg_entry_price, qty, qty_available, side, market_value, cost_basis, unrealized_pl, unrealized_plpc, current_price, change_today] }
+        auth: require_api_key
+
+      - endpoint: GET /positions/{symbol}
+        description: Get position for a specific symbol
+        path_params:
+          symbol: { type: string }
+        response_model: PositionResponse
+        auth: require_api_key
+
+      - endpoint: DELETE /positions/{symbol}
+        description: Close a position
+        path_params:
+          symbol: { type: string }
+        query_params:
+          qty: { type: string, default: null, description: "Shares to close" }
+          percentage: { type: string, default: null, description: "Percentage to close" }
+        response_model: SuccessResponse
+        auth: require_api_key
+
+      - endpoint: DELETE /positions
+        description: Close all positions
+        query_params:
+          cancel_orders: { type: boolean, default: false, description: "Cancel open orders too" }
+        response_model: SuccessResponse
+        auth: require_api_key
+
+      - endpoint: GET /portfolio/history
+        description: Get portfolio value history
+        query_params:
+          period: { type: string, default: null, description: "1D, 1W, 1M, 3M, 1A, all" }
+          timeframe: { type: string, default: null, description: "1Min, 5Min, 15Min, 1H, 1D" }
+          extended_hours: { type: boolean, default: null }
+        response_model: PortfolioHistoryResponse
+        auth: require_api_key
+
+      - endpoint: GET /assets
+        description: List tradable assets
+        query_params:
+          status: { type: string, default: null, description: "active or inactive" }
+          asset_class: { type: string, default: null, description: "us_equity, crypto" }
+          exchange: { type: string, default: null }
+        response_model: AssetsResponse
+        auth: require_api_key
+
+      - endpoint: GET /assets/{symbol}
+        description: Get asset details
+        path_params:
+          symbol: { type: string }
+        response_model: AssetResponse
+        response_fields:
+          data: { type: Asset, fields: [id, class, exchange, symbol, name, status, tradable, marginable, shortable, fractionable] }
+        auth: require_api_key
+
+      - endpoint: GET /clock
+        description: Get market clock
+        response_model: ClockResponse
+        response_fields:
+          data: { type: Clock, fields: [timestamp, is_open, next_open, next_close] }
+        auth: require_api_key
+
+      - endpoint: GET /calendar
+        description: Get trading calendar
+        query_params:
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: CalendarResponse
+        response_fields:
+          data: { type: "list[Calendar]", fields: [date, open, close, settlement_date] }
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Account Config & Activities
+    # --------------------------------------------------------------------------
+    account:
+      - endpoint: GET /account/configurations
+        description: Get account configurations
+        response_model: AccountConfigResponse
+        response_fields:
+          data: { type: AccountConfigurations, fields: [dtbp_check, trade_confirm_email, suspend_trade, no_shorting, fractional_trading, max_margin_multiplier, pdt_check] }
+        auth: require_api_key
+
+      - endpoint: PATCH /account/configurations
+        description: Update account configurations
+        request_body:
+          dtbp_check: { type: string, default: null }
+          trade_confirm_email: { type: string, default: null }
+          suspend_trade: { type: boolean, default: null }
+          no_shorting: { type: boolean, default: null }
+          fractional_trading: { type: boolean, default: null }
+          max_margin_multiplier: { type: string, default: null }
+          pdt_check: { type: string, default: null }
+        response_model: AccountConfigResponse
+        auth: require_api_key
+
+      - endpoint: GET /account/activities
+        description: Get account activity history
+        query_params:
+          activity_types: { type: string, default: null, description: "Comma-separated activity types" }
+        response_model: ActivitiesResponse
+        response_fields:
+          data: { type: "list[Activity]", fields: [id, activity_type, transaction_time, symbol, qty, price, side, net_amount] }
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Watchlists
+    # --------------------------------------------------------------------------
+    watchlists:
+      - endpoint: GET /watchlists
+        description: List all watchlists
+        response_model: WatchlistsListResponse
+        auth: require_api_key
+
+      - endpoint: POST /watchlists
+        description: Create a new watchlist
+        request_body:
+          name: { type: string, required: true }
+          symbols: { type: "list[string]", default: [] }
+        response_model: WatchlistResponse
+        auth: require_api_key
+
+      - endpoint: GET /watchlists/{watchlist_id}
+        description: Get a specific watchlist
+        path_params:
+          watchlist_id: { type: string }
+        response_model: WatchlistResponse
+        auth: require_api_key
+
+      - endpoint: PUT /watchlists/{watchlist_id}
+        description: Update a watchlist
+        path_params:
+          watchlist_id: { type: string }
+        request_body:
+          name: { type: string, required: true }
+          symbols: { type: "list[string]", required: true }
+        response_model: WatchlistResponse
+        auth: require_api_key
+
+      - endpoint: DELETE /watchlists/{watchlist_id}
+        description: Delete a watchlist
+        path_params:
+          watchlist_id: { type: string }
+        response_model: SuccessResponse
+        auth: require_api_key
+
+      - endpoint: POST /watchlists/{watchlist_id}/assets
+        description: Add asset to watchlist
+        path_params:
+          watchlist_id: { type: string }
+        request_body:
+          symbol: { type: string, required: true }
+        response_model: WatchlistResponse
+        auth: require_api_key
+
+      - endpoint: DELETE /watchlists/{watchlist_id}/assets/{symbol}
+        description: Remove asset from watchlist
+        path_params:
+          watchlist_id: { type: string }
+          symbol: { type: string }
+        response_model: SuccessResponse
+        auth: require_api_key
+
+  # ============================================================================
+  # YAHOO FINANCE (/api/v1/yf)
+  # ============================================================================
+  yahoo_finance:
+    prefix: /api/v1/yf
+    cache_ttl_default: 300
+
+    endpoints:
+      - endpoint: GET /ticker/{symbol}
+        description: Get comprehensive ticker data (info, financials, earnings)
+        path_params:
+          symbol: { type: string, description: "Stock ticker" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/info
+        description: Get ticker info (price, market cap, volume, etc.)
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/financials
+        description: Get financial statements
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/earnings
+        description: Get earnings data
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/history
+        description: Get historical price data
+        path_params:
+          symbol: { type: string }
+        query_params:
+          period: { type: string, default: "1mo", description: "1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max" }
+          interval: { type: string, default: "1d", description: "1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo" }
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/options
+        description: Get available option expiration dates
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/options/{expiration}
+        description: Get option chain for a specific expiration
+        path_params:
+          symbol: { type: string }
+          expiration: { type: string, description: "Expiration date" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/recommendations
+        description: Get analyst recommendations
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/holders
+        description: Get institutional and mutual fund holders
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/calendar
+        description: Get earnings and ex-dividend dates
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/dividends
+        description: Get dividend history
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/splits
+        description: Get stock split history
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/actions
+        description: Get dividends + splits combined
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/news
+        description: Get news for a ticker
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/sustainability
+        description: Get ESG/sustainability scores
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /ticker/{symbol}/major-holders
+        description: Get major holders breakdown
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+  # ============================================================================
+  # SEC (/api/v1/sec)
+  # ============================================================================
+  sec:
+    prefix: /api/v1/sec
+    cache_ttl_default: 3600
+
+    endpoints:
+      - endpoint: GET /company/{cik}
+        description: Get company info by CIK number
+        path_params:
+          cik: { type: string, description: "CIK number (zero-padded to 10 digits)" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /company/ticker/{ticker}
+        description: Get company info by ticker symbol
+        path_params:
+          ticker: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /filings/{cik}
+        description: Get SEC filings for a company
+        path_params:
+          cik: { type: string }
+        query_params:
+          form_type: { type: string, default: null, description: "Filter by form type (10-K, 10-Q, 8-K, etc.)" }
+          limit: { type: integer, default: 40, description: "Max filings to return" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /filings/{cik}/{form_type}
+        description: Get specific form type filings
+        path_params:
+          cik: { type: string }
+          form_type: { type: string, description: "e.g., 10-K, 10-Q, 8-K" }
+        query_params:
+          limit: { type: integer, default: 10 }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /13f/{cik}
+        description: Get 13F institutional holdings
+        path_params:
+          cik: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /insiders/{cik}
+        description: Get insider transactions
+        path_params:
+          cik: { type: string }
+        query_params:
+          limit: { type: integer, default: 20 }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /facts/{cik}
+        description: Get XBRL facts for a company
+        path_params:
+          cik: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /concept/{cik}/{concept}
+        description: Get specific XBRL concept values
+        path_params:
+          cik: { type: string }
+          concept: { type: string, description: "XBRL concept name (e.g., Revenue)" }
+        query_params:
+          taxonomy: { type: string, default: "us-gaap", description: "Taxonomy: us-gaap, ifrs-full, dei" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /frames/{concept}/{period}
+        description: Get XBRL frames (all companies for a concept/period)
+        path_params:
+          concept: { type: string }
+          period: { type: string, description: "e.g., CY2023Q1, CY2023" }
+        query_params:
+          taxonomy: { type: string, default: "us-gaap" }
+          unit: { type: string, default: "USD" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /search
+        description: Search EDGAR full-text
+        query_params:
+          q: { type: string, required: true, description: "Search query" }
+          form_type: { type: string, default: null, description: "Filter form type" }
+          limit: { type: integer, default: 10 }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+  # ============================================================================
+  # UNUSUAL WHALES (/api/v1/uw)
+  # ============================================================================
+  unusual_whales:
+    prefix: /api/v1/uw
+
+    # --------------------------------------------------------------------------
+    # Flow Data
+    # --------------------------------------------------------------------------
+    flow:
+      - endpoint: GET /flow/all
+        description: Get all options flow alerts
+        query_params:
+          limit: { type: integer, default: 50, description: "Max results" }
+          cursor: { type: string, default: null, description: "Pagination cursor" }
+        response_model: SuccessResponse
+        cache_ttl: 30
+        auth: require_api_key
+
+      - endpoint: GET /flow/{symbol}
+        description: Get flow alerts for a specific symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+          cursor: { type: string, default: null }
+          date: { type: string, default: null, description: "Filter by date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 30
+        auth: require_api_key
+
+      - endpoint: GET /darkpool/all
+        description: Get all dark pool trades
+        query_params:
+          limit: { type: integer, default: 50 }
+          cursor: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /darkpool/{symbol}
+        description: Get dark pool trades for a symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+          cursor: { type: string, default: null }
+          date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 60
+        auth: require_api_key
+
+      - endpoint: GET /flow/full-tape
+        description: Get full options trade tape
+        query_params:
+          limit: { type: integer, default: 100, min: 1, max: 1000, description: "Max results" }
+        response_model: SuccessResponse
+        cache_ttl: 30
+        auth: require_api_key
+
+      - endpoint: GET /flow/contract/{option_symbol}
+        description: Get flow for a specific contract
+        path_params:
+          option_symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 60
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Flow Analytics
+    # --------------------------------------------------------------------------
+    flow_analytics:
+      - endpoint: GET /{symbol}/spot-exposures
+        description: Get gamma and volume confluence per strike
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/flow-strike
+        description: Get flow data aggregated by strike price
+        path_params:
+          symbol: { type: string }
+        query_params:
+          date: { type: string, default: null, description: "Date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/flow-expiry
+        description: Get flow data aggregated by expiration date
+        path_params:
+          symbol: { type: string }
+        query_params:
+          date: { type: string, default: null, description: "Date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/greek-flow
+        description: Get greek flow data for a ticker
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /market/net-flow-expiry
+        description: Get net premium flow by expiration category
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /{symbol}/interpolated-iv
+        description: Get interpolated implied volatility
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Options Data
+    # --------------------------------------------------------------------------
+    options:
+      - endpoint: GET /{symbol}/net-premium
+        description: Get net premium for a symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /{symbol}/max-pain
+        description: Get max pain strike for a symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          expiry: { type: string, default: null, description: "Expiration date" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/iv-rank
+        description: Get IV rank for a symbol
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/oi-change
+        description: Get open interest change
+        path_params:
+          symbol: { type: string }
+        query_params:
+          date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /options/{symbol}/iv-rank
+        description: Get IV rank (alias endpoint)
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Options Contracts
+    # --------------------------------------------------------------------------
+    contracts:
+      - endpoint: GET /option-contract/{option_symbol}/flow
+        description: Get flow for a specific option contract
+        path_params:
+          option_symbol: { type: string, description: "OCC option symbol" }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /option-contract/{option_symbol}/historic
+        description: Get historic data for a contract
+        path_params:
+          option_symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /option-contract/{option_symbol}/intraday
+        description: Get intraday data for a contract
+        path_params:
+          option_symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /option-contract/{option_symbol}/volume-profile
+        description: Get volume profile for a contract
+        path_params:
+          option_symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /contract/{option_symbol}/price-history
+        description: Get price history for a contract
+        path_params:
+          option_symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /screener/option-contracts
+        description: Get option contracts from screener
+        query_params:
+          limit: { type: integer, default: 50, min: 1, max: 500 }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+    # --------------------------------------------------------------------------
+    # Options Additional Data
+    # --------------------------------------------------------------------------
+    options_data:
+      - endpoint: GET /{symbol}/option-volume
+        description: Get option volume for a date
+        path_params:
+          symbol: { type: string }
+        query_params:
+          date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /contract/{contract_id}/intraday
+        description: Get intraday data for a contract ID
+        path_params:
+          contract_id: { type: string }
+        query_params:
+          date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /screener/contracts
+        description: Screen option contracts
+        query_params:
+          min_volume: { type: integer, default: null }
+          min_premium: { type: number, default: null }
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+    # --------------------------------------------------------------------------
+    # Greeks
+    # --------------------------------------------------------------------------
+    greeks:
+      - endpoint: GET /gex/{symbol}
+        description: Get GEX (gamma exposure) for a symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /gex/{symbol}/strike
+        description: Get GEX per strike
+        path_params:
+          symbol: { type: string }
+        query_params:
+          date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /gex/{symbol}/expiry
+        description: Get GEX per expiry
+        path_params:
+          symbol: { type: string }
+        query_params:
+          date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Volatility
+    # --------------------------------------------------------------------------
+    volatility:
+      - endpoint: GET /{symbol}/iv-term-structure
+        description: Get IV term structure
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/realized-vol
+        description: Get realized volatility
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/vol-stats
+        description: Get volatility statistics
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/iv-surface
+        description: Get implied volatility surface
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Shorts
+    # --------------------------------------------------------------------------
+    shorts:
+      - endpoint: GET /{symbol}/short-interest
+        description: Get short interest data
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/ftds
+        description: Get failure-to-deliver data
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/short-volume
+        description: Get short volume data
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /shorts/{symbol}/data
+        description: Get short data for a ticker
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /shorts/{symbol}/interest-float
+        description: Get short interest as percentage of float
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /shorts/{symbol}/volumes-by-exchange
+        description: Get short volumes by exchange
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Stock Data (UW)
+    # --------------------------------------------------------------------------
+    stock:
+      - endpoint: GET /stock/{symbol}/info
+        description: Get stock info from UW
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/candles
+        description: Get stock candles
+        path_params:
+          symbol: { type: string }
+        query_params:
+          timeframe: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/option-chains
+        description: Get option chains for a stock
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/option-contracts
+        description: Get option contracts for a stock
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/oi-per-strike
+        description: Get open interest per strike
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/oi-per-expiry
+        description: Get open interest per expiry
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/greeks-by-strike/{expiry}
+        description: Get greeks by strike for an expiry
+        path_params:
+          symbol: { type: string }
+          expiry: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/greek-exposure-by-strike-expiry/{expiry}
+        description: Get greek exposure by strike for an expiry
+        path_params:
+          symbol: { type: string }
+          expiry: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/atm-options
+        description: Get ATM options for a stock
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/daily-expiry-breakdown
+        description: Get daily expiry breakdown
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/flow-per-strike-intraday
+        description: Get intraday flow per strike
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /stock/{symbol}/risk-reversal-skew/{expiry}
+        description: Get risk reversal skew
+        path_params:
+          symbol: { type: string }
+          expiry: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/state
+        description: Get stock state/overview
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/volume-price-levels
+        description: Get volume price levels
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/options-volume
+        description: Get options volume for a stock
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/insider-trades
+        description: Get insider trades for a stock
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /stock/{symbol}/flow-recent
+        description: Get recent flow for a stock
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+    # --------------------------------------------------------------------------
+    # Market Data & Calendar
+    # --------------------------------------------------------------------------
+    market:
+      - endpoint: GET /institutions/{symbol}
+        description: Get institutional ownership for a symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+          cursor: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /congress/{symbol}
+        description: Get congressional trades for a symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+          cursor: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /insiders/{symbol}
+        description: Get insider trades for a symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+          cursor: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /market/tide
+        description: Get market tide (bull/bear sentiment)
+        query_params:
+          date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+    market_data:
+      - endpoint: GET /market/calendar
+        description: Get market calendar events
+        query_params:
+          start_date: { type: string, default: null }
+          end_date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /market/sector/{sector}/tide
+        description: Get sector-level tide data
+        path_params:
+          sector: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /market/top-impact
+        description: Get top market impact events
+        query_params:
+          limit: { type: integer, default: 20 }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /alerts
+        description: Get market alerts
+        query_params:
+          min_premium: { type: number, default: null }
+          min_volume: { type: integer, default: null }
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 30
+
+      - endpoint: GET /market/correlations
+        description: Get market correlations
+        query_params:
+          start_date: { type: string, default: null }
+          end_date: { type: string, default: null }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    calendar:
+      - endpoint: GET /market/economic-calendar
+        description: Get economic calendar events
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /market/fda-calendar
+        description: Get FDA calendar events
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /market/holidays
+        description: Get market holidays
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /market/imbalances
+        description: Get market imbalances data
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /market/options-volume
+        description: Get total market options volume
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /market/insider-trades
+        description: Get market-wide insider trades
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /market/sector-stats
+        description: Get sector statistics
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /market/{etf}/etf-tide
+        description: Get market tide for a specific ETF
+        path_params:
+          etf: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /market/spike
+        description: Get market spike data
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+    # --------------------------------------------------------------------------
+    # Earnings
+    # --------------------------------------------------------------------------
+    earnings:
+      - endpoint: GET /earnings/premarket
+        description: Get premarket earnings
+        query_params:
+          date: { type: string, default: null }
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /earnings/afterhours
+        description: Get after-hours earnings
+        query_params:
+          date: { type: string, default: null }
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /earnings/{symbol}
+        description: Get earnings history for a symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 10 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Screener
+    # --------------------------------------------------------------------------
+    screener:
+      - endpoint: GET /screener/stocks
+        description: Get screened stocks
+        query_params:
+          limit: { type: integer, default: 50, min: 1, max: 500 }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /screener/options
+        description: Get screened options
+        query_params:
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /screener/analysts
+        description: Get analyst ratings from screener
+        query_params:
+          limit: { type: integer, default: 50, min: 1, max: 200 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Alerts
+    # --------------------------------------------------------------------------
+    alerts:
+      - endpoint: GET /alerts/all
+        description: Get all alerts
+        query_params:
+          limit: { type: integer, default: 50, min: 1, max: 200 }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /alerts/configuration
+        description: Get alerts configuration
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    # --------------------------------------------------------------------------
+    # Insiders & Institutions
+    # --------------------------------------------------------------------------
+    insiders:
+      - endpoint: GET /insider/transactions
+        description: Get insider transactions
+        query_params:
+          limit: { type: integer, default: 100, max: 500 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /insider/sector-flow
+        description: Get insider sector flow
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /insider/ticker-flow
+        description: Get insider ticker flow
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /insider/{symbol}/insiders
+        description: Get insiders for a symbol
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    institutions:
+      - endpoint: GET /institutions
+        description: List institutions
+        query_params:
+          limit: { type: integer, default: 100, max: 500 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /institutions/latest-filings
+        description: Get latest institutional filings
+        query_params:
+          limit: { type: integer, default: 50, max: 200 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /institutions/{institution_id}/activity
+        description: Get institution activity
+        path_params:
+          institution_id: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /institutions/{institution_id}/holdings
+        description: Get institution holdings
+        path_params:
+          institution_id: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /institutions/{institution_id}/sectors
+        description: Get institution sector exposure
+        path_params:
+          institution_id: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /institutions/{symbol}/ownership
+        description: Get institutional ownership for a symbol
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Politicians & Congress
+    # --------------------------------------------------------------------------
+    politicians:
+      - endpoint: GET /politicians/people
+        description: List politician traders
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /politicians/recent-trades
+        description: Get recent politician trades
+        query_params:
+          limit: { type: integer, default: 50, max: 200 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /politicians/{politician_id}/portfolios
+        description: Get politician portfolios
+        path_params:
+          politician_id: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /politicians/{symbol}/holders
+        description: Get politician holders of a symbol
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /congress/late-reports
+        description: Get late congressional reports
+        query_params:
+          limit: { type: integer, default: 50, min: 1, max: 500 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /congress/reports
+        description: Get congressional reports
+        query_params:
+          limit: { type: integer, default: 50, min: 1, max: 500 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /congress/recent
+        description: Get recent congressional trades
+        query_params:
+          limit: { type: integer, default: 50, max: 200 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # ETF
+    # --------------------------------------------------------------------------
+    etf:
+      - endpoint: GET /etf/{symbol}/holdings
+        description: Get ETF holdings
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /etf/{symbol}/exposure
+        description: Get ETF sector exposure
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /etf/{symbol}/flows
+        description: Get ETF inflows/outflows
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 50 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /etf/{symbol}/info
+        description: Get ETF information
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /etf/{symbol}/inflow-outflow
+        description: Get ETF inflow/outflow data
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /etf/{symbol}/ticker-exposure
+        description: Get ticker exposure within an ETF
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /etf/{symbol}/country-weights
+        description: Get ETF country weights
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /etf/{symbol}/tide
+        description: Get ETF-level tide data
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+    # --------------------------------------------------------------------------
+    # Seasonality
+    # --------------------------------------------------------------------------
+    seasonality:
+      - endpoint: GET /seasonality/market
+        description: Get market-wide seasonality
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /seasonality/{symbol}
+        description: Get seasonality for a symbol
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /seasonality/monthly-top-performers/{month}
+        description: Get top performers by month (1-12)
+        path_params:
+          month: { type: integer, description: "Month number 1-12" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /seasonality/{symbol}/price-changes-by-month
+        description: Get price changes by month/year
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    # --------------------------------------------------------------------------
+    # Intelligence & Misc
+    # --------------------------------------------------------------------------
+    intelligence:
+      - endpoint: GET /darkpool/{symbol}/levels
+        description: Get dark pool volume per price level
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/nope
+        description: Get NOPE (Net Options Pricing Effect)
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /{symbol}/pc-ratio
+        description: Get historical put/call ratio
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    misc:
+      - endpoint: GET /{symbol}/volume-levels
+        description: Get option volume levels per price
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /trades/full-tape/{date}
+        description: Get full options trade tape for a date
+        path_params:
+          date: { type: string, description: "Date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /contract/{contract_id}/volume-profile
+        description: Get volume profile by fill price
+        path_params:
+          contract_id: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /{symbol}/greek-flow-expiry
+        description: Get greek flow by expiration
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /news/headlines
+        description: Get financial news headlines
+        query_params:
+          sources: { type: string, default: null, description: "Comma-separated sources" }
+          search_term: { type: string, default: null, description: "Search term" }
+          major_only: { type: boolean, default: null, description: "Major news only" }
+          limit: { type: integer, default: 50, min: 1, max: 200 }
+          page: { type: integer, default: null, description: "Page number" }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+  # ============================================================================
+  # FINNHUB (/api/v1/finnhub)
+  # ============================================================================
+  finnhub:
+    prefix: /api/v1/finnhub
+
+    # --------------------------------------------------------------------------
+    # Quotes & Bars
+    # --------------------------------------------------------------------------
+    quotes:
+      - endpoint: GET /quote/{symbol}
+        description: Get real-time quote for a symbol
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 15
+        auth: require_api_key
+
+      - endpoint: GET /bars/{symbol}
+        description: Get historical OHLCV bars
+        path_params:
+          symbol: { type: string }
+        query_params:
+          resolution: { type: string, default: "D", description: "1, 5, 15, 30, 60, D, W, M" }
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Company Fundamentals
+    # --------------------------------------------------------------------------
+    fundamentals:
+      - endpoint: GET /profile/{symbol}
+        description: Get company profile information
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /financials/{symbol}
+        description: Get financial metrics (P/E, EPS, beta, etc.)
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /peers/{symbol}
+        description: Get peer companies
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /metrics/{symbol}
+        description: Get key financial metrics
+        path_params:
+          symbol: { type: string }
+        query_params:
+          metric: { type: string, default: "all", description: "all, margin, valuation, price, profitability" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /executives/{symbol}
+        description: Get company executives and compensation
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /ownership/{symbol}
+        description: Get institutional ownership
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 20, max: 100, description: "Max owners" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /fund-ownership/{symbol}
+        description: Get mutual fund and ETF ownership
+        path_params:
+          symbol: { type: string }
+        query_params:
+          limit: { type: integer, default: 20, max: 100, description: "Max fund owners" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /insider-transactions/{symbol}
+        description: Get insider transactions (SEC Form 4)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    # --------------------------------------------------------------------------
+    # News
+    # --------------------------------------------------------------------------
+    news:
+      - endpoint: GET /news/{symbol}
+        description: Get company news articles
+        path_params:
+          symbol: { type: string }
+        query_params:
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /news/market/{category}
+        description: Get general market news
+        path_params:
+          category: { type: string, default: "general", description: "general, forex, crypto, merger" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Earnings & Estimates
+    # --------------------------------------------------------------------------
+    earnings:
+      - endpoint: GET /earnings
+        description: Get earnings calendar
+        query_params:
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /recommendations/{symbol}
+        description: Get analyst recommendation trends
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /estimates/eps/{symbol}
+        description: Get EPS estimates
+        path_params:
+          symbol: { type: string }
+        query_params:
+          freq: { type: string, default: "quarterly", description: "quarterly or annual" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /estimates/revenue/{symbol}
+        description: Get revenue estimates
+        path_params:
+          symbol: { type: string }
+        query_params:
+          freq: { type: string, default: "quarterly", description: "quarterly or annual" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /estimates/ebit/{symbol}
+        description: Get EBIT estimates
+        path_params:
+          symbol: { type: string }
+        query_params:
+          freq: { type: string, default: "quarterly", description: "quarterly or annual" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /estimates/ebitda/{symbol}
+        description: Get EBITDA estimates
+        path_params:
+          symbol: { type: string }
+        query_params:
+          freq: { type: string, default: "quarterly", description: "quarterly or annual" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /price-target/{symbol}
+        description: Get analyst price target
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    # --------------------------------------------------------------------------
+    # Analysis & Sentiment
+    # --------------------------------------------------------------------------
+    analysis:
+      - endpoint: GET /insider-sentiment/{symbol}
+        description: Get aggregate insider sentiment
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /upgrade-downgrade/{symbol}
+        description: Get analyst upgrade/downgrade history
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /social-sentiment/{symbol}
+        description: Get social media sentiment
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 1800
+
+      - endpoint: GET /support-resistance/{symbol}
+        description: Get support/resistance levels
+        path_params:
+          symbol: { type: string }
+        query_params:
+          resolution: { type: string, default: "D", description: "1, 5, 15, 30, 60, D, W, M" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /patterns/{symbol}
+        description: Get recognized chart patterns
+        path_params:
+          symbol: { type: string }
+        query_params:
+          resolution: { type: string, default: "D", description: "1, 5, 15, 30, 60, D, W, M" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    # --------------------------------------------------------------------------
+    # ETF & Indices
+    # --------------------------------------------------------------------------
+    etf:
+      - endpoint: GET /etf/{symbol}/profile
+        description: Get ETF profile
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /etf/{symbol}/holdings
+        description: Get ETF holdings
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /etf/{symbol}/sector
+        description: Get ETF sector exposure
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /etf/{symbol}/country
+        description: Get ETF country exposure
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /index/{symbol}/constituents
+        description: Get index constituents
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /index/{symbol}/historical
+        description: Get historical index constituent changes
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+    # --------------------------------------------------------------------------
+    # Forex
+    # --------------------------------------------------------------------------
+    forex:
+      - endpoint: GET /forex/rates
+        description: Get all forex rates for a base currency
+        query_params:
+          base: { type: string, default: "USD", description: "Base currency" }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /forex/exchanges
+        description: List supported forex exchanges
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /forex/symbols
+        description: Get forex symbols for an exchange
+        query_params:
+          exchange: { type: string, required: true, description: "Exchange name" }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /forex/candles/{symbol}
+        description: Get forex OHLC candles
+        path_params:
+          symbol: { type: string }
+        query_params:
+          resolution: { type: string, default: "D", description: "1, 5, 15, 30, 60, D, W, M" }
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+    # --------------------------------------------------------------------------
+    # Crypto
+    # --------------------------------------------------------------------------
+    crypto:
+      - endpoint: GET /crypto/exchanges
+        description: List supported crypto exchanges
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /crypto/symbols
+        description: Get crypto symbols for an exchange
+        query_params:
+          exchange: { type: string, required: true }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /crypto/candles/{symbol}
+        description: Get crypto OHLC candles
+        path_params:
+          symbol: { type: string }
+        query_params:
+          resolution: { type: string, default: "D", description: "1, 5, 15, 30, 60, D, W, M" }
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+
+      - endpoint: GET /crypto/{symbol}/profile
+        description: Get crypto profile/metadata
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+    # --------------------------------------------------------------------------
+    # Mutual Funds
+    # --------------------------------------------------------------------------
+    funds:
+      - endpoint: GET /mutual-fund/{symbol}/profile
+        description: Get mutual fund profile
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /mutual-fund/{symbol}/holdings
+        description: Get mutual fund holdings
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+      - endpoint: GET /mutual-fund/{symbol}/sector
+        description: Get mutual fund sector exposure
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+    # --------------------------------------------------------------------------
+    # Alternative Data
+    # --------------------------------------------------------------------------
+    alternative:
+      - endpoint: GET /fda-calendar
+        description: Get FDA drug approval calendar
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /congress-trading
+        description: Get congressional trading data (STOCK Act)
+        query_params:
+          symbol: { type: string, default: null, description: "Filter by symbol" }
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /lobbying/{symbol}
+        description: Get lobbying data for a symbol
+        path_params:
+          symbol: { type: string }
+        query_params:
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /usa-spending/{symbol}
+        description: Get USA government spending data
+        path_params:
+          symbol: { type: string }
+        query_params:
+          start: { type: string, default: null, description: "Start date (YYYY-MM-DD)" }
+          end: { type: string, default: null, description: "End date (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+  # ============================================================================
+  # ALPHA VANTAGE (/api/v1/alphavantage)
+  # ============================================================================
+  alphavantage:
+    prefix: /api/v1/alphavantage
+
+    # --------------------------------------------------------------------------
+    # Time Series
+    # --------------------------------------------------------------------------
+    timeseries:
+      - endpoint: GET /quote/{symbol}
+        description: Get real-time quote for a symbol
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 30
+        auth: require_api_key
+
+      - endpoint: GET /intraday/{symbol}
+        description: Get intraday time series data
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "5min", description: "1min, 5min, 15min, 30min, 60min" }
+          outputsize: { type: string, default: "compact", description: "compact (100 points) or full" }
+          max_points: { type: integer, default: null, min: 1, description: "Optional max bars" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+        auth: require_api_key
+
+      - endpoint: GET /daily/{symbol}
+        description: Get daily time series data
+        path_params:
+          symbol: { type: string }
+        query_params:
+          outputsize: { type: string, default: "compact", description: "compact (100 days) or full" }
+          adjusted: { type: boolean, default: true, description: "Include split/dividend adjustments" }
+          max_points: { type: integer, default: null, min: 1, description: "Optional max bars" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+        auth: require_api_key
+
+      - endpoint: GET /weekly/{symbol}
+        description: Get weekly time series data
+        path_params:
+          symbol: { type: string }
+        query_params:
+          adjusted: { type: boolean, default: true, description: "Include adjustments" }
+          max_points: { type: integer, default: null, min: 1, description: "Optional max bars" }
+        response_model: SuccessResponse
+        cache_ttl: 300
+        auth: require_api_key
+
+      - endpoint: GET /monthly/{symbol}
+        description: Get monthly time series data
+        path_params:
+          symbol: { type: string }
+        query_params:
+          adjusted: { type: boolean, default: true, description: "Use adjusted close prices" }
+          max_points: { type: integer, default: null, min: 1 }
+        response_model: SuccessResponse
+        cache_ttl: 300
+        auth: require_api_key
+
+      - endpoint: GET /search
+        description: Search for symbols by keywords
+        query_params:
+          q: { type: string, required: true, min_length: 1, description: "Search keywords" }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+        auth: require_api_key
+
+    # --------------------------------------------------------------------------
+    # Fundamentals
+    # --------------------------------------------------------------------------
+    fundamentals:
+      - endpoint: GET /overview/{symbol}
+        description: Get company overview (fundamentals, ratios)
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /earnings/{symbol}
+        description: Get earnings data (annual and quarterly)
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /income-statement/{symbol}
+        description: Get income statement data
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /balance-sheet/{symbol}
+        description: Get balance sheet data
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /cash-flow/{symbol}
+        description: Get cash flow statement data
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    # --------------------------------------------------------------------------
+    # Technical Indicators
+    # --------------------------------------------------------------------------
+    indicators:
+      - endpoint: GET /indicator/{indicator}/{symbol}
+        description: "Get technical indicator. Supports: SMA, EMA, RSI, MACD, BBANDS, STOCH, ADX, CCI, ATR, OBV"
+        path_params:
+          indicator: { type: string, description: "Indicator name (SMA, EMA, RSI, etc.)" }
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily", description: "1min, 5min, 15min, 30min, 60min, daily, weekly, monthly" }
+          time_period: { type: integer, default: 14, min: 1, max: 200, description: "Time period" }
+          series_type: { type: string, default: "close", description: "close, open, high, low" }
+          max_points: { type: integer, default: 100, min: 1, description: "Max points to return" }
+        response_model: SuccessResponse
+        cache_ttl: 600
+
+      - endpoint: GET /indicator/sma/{symbol}
+        description: Simple Moving Average (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          time_period: { type: integer, default: 20 }
+          series_type: { type: string, default: "close" }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+      - endpoint: GET /indicator/ema/{symbol}
+        description: Exponential Moving Average (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          time_period: { type: integer, default: 20 }
+          series_type: { type: string, default: "close" }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+      - endpoint: GET /indicator/rsi/{symbol}
+        description: Relative Strength Index (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          time_period: { type: integer, default: 14 }
+          series_type: { type: string, default: "close" }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+      - endpoint: GET /indicator/macd/{symbol}
+        description: Moving Average Convergence Divergence (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          series_type: { type: string, default: "close" }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+      - endpoint: GET /indicator/bbands/{symbol}
+        description: Bollinger Bands (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          time_period: { type: integer, default: 20 }
+          series_type: { type: string, default: "close" }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+      - endpoint: GET /indicator/stoch/{symbol}
+        description: Stochastic Oscillator (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+      - endpoint: GET /indicator/adx/{symbol}
+        description: Average Directional Index (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          time_period: { type: integer, default: 14 }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+      - endpoint: GET /indicator/cci/{symbol}
+        description: Commodity Channel Index (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          time_period: { type: integer, default: 20 }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+      - endpoint: GET /indicator/atr/{symbol}
+        description: Average True Range (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          time_period: { type: integer, default: 14 }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+      - endpoint: GET /indicator/obv/{symbol}
+        description: On Balance Volume (convenience)
+        path_params:
+          symbol: { type: string }
+        query_params:
+          interval: { type: string, default: "daily" }
+          max_points: { type: integer, default: 100, min: 1 }
+        response_model: SuccessResponse
+
+    # --------------------------------------------------------------------------
+    # Forex
+    # --------------------------------------------------------------------------
+    forex:
+      - endpoint: GET /forex/rate/{from_currency}/{to_currency}
+        description: Get real-time exchange rate
+        path_params:
+          from_currency: { type: string, description: "Source currency (e.g., EUR)" }
+          to_currency: { type: string, description: "Target currency (e.g., USD)" }
+        response_model: SuccessResponse
+        cache_ttl: 60
+
+      - endpoint: GET /forex/daily/{from_symbol}/{to_symbol}
+        description: Get daily forex time series
+        path_params:
+          from_symbol: { type: string }
+          to_symbol: { type: string }
+        query_params:
+          max_points: { type: integer, default: 100, min: 1, description: "Max points" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    # --------------------------------------------------------------------------
+    # Crypto
+    # --------------------------------------------------------------------------
+    crypto:
+      - endpoint: GET /crypto/rating/{symbol}
+        description: Get crypto health rating (FCAS)
+        path_params:
+          symbol: { type: string }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /crypto/daily/{symbol}
+        description: Get daily crypto time series
+        path_params:
+          symbol: { type: string }
+        query_params:
+          market: { type: string, default: "USD", description: "Market currency" }
+          max_points: { type: integer, default: 100, min: 1, description: "Max points" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    # --------------------------------------------------------------------------
+    # Economic Indicators
+    # --------------------------------------------------------------------------
+    economic:
+      - endpoint: GET /economic/{indicator}
+        description: "Get economic indicator. Supported: REAL_GDP, REAL_GDP_PER_CAPITA, TREASURY_YIELD, FEDERAL_FUNDS_RATE, CPI, INFLATION, RETAIL_SALES, DURABLES, UNEMPLOYMENT, NONFARM_PAYROLL"
+        path_params:
+          indicator: { type: string, description: "Indicator name" }
+        query_params:
+          interval: { type: string, default: "annual", description: "annual, quarterly, monthly" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+    # --------------------------------------------------------------------------
+    # Calendars & Listings
+    # --------------------------------------------------------------------------
+    calendars:
+      - endpoint: GET /calendar/earnings
+        description: Get upcoming earnings calendar
+        query_params:
+          symbol: { type: string, default: null, description: "Filter by symbol" }
+          horizon: { type: string, default: "3month", description: "3month, 6month, 12month" }
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /calendar/ipo
+        description: Get upcoming IPO calendar
+        response_model: SuccessResponse
+        cache_ttl: 3600
+
+      - endpoint: GET /listing-status
+        description: Get listing status (active or delisted stocks)
+        query_params:
+          state: { type: string, default: "active", description: "active or delisted" }
+          date: { type: string, default: null, description: "Historical date for delisted (YYYY-MM-DD)" }
+        response_model: SuccessResponse
+        cache_ttl: 86400
+
+# ==============================================================================
+# Schema Reference
+# ==============================================================================
+schemas:
+  NormalizedBar:
+    fields:
+      symbol: { type: string }
+      timestamp: { type: datetime }
+      open: { type: Decimal }
+      high: { type: Decimal }
+      low: { type: Decimal }
+      close: { type: Decimal }
+      volume: { type: Decimal }
+      vwap: { type: "Decimal | null" }
+      trade_count: { type: "int | null" }
+      provider: { type: string }
+      timeframe: { type: string, default: "1Min" }
+
+  NormalizedQuote:
+    fields:
+      symbol: { type: string }
+      timestamp: { type: datetime }
+      bid_price: { type: Decimal }
+      bid_size: { type: Decimal }
+      ask_price: { type: Decimal }
+      ask_size: { type: Decimal }
+      bid_exchange: { type: "string | null" }
+      ask_exchange: { type: "string | null" }
+      conditions: { type: "list[string]" }
+      tape: { type: "string | null", description: "A=NYSE, B=ARCA, C=NASDAQ" }
+      provider: { type: string }
+
+  NormalizedTrade:
+    fields:
+      symbol: { type: string }
+      timestamp: { type: datetime }
+      price: { type: Decimal }
+      size: { type: Decimal }
+      trade_id: { type: "string | null" }
+      exchange: { type: "string | null" }
+      conditions: { type: "list[string]" }
+      tape: { type: "string | null" }
+      taker_side: { type: "string | null", description: "Crypto only: B=buy, S=sell" }
+      update: { type: "string | null", description: "canceled, incorrect, corrected" }
+      provider: { type: string }
+
+  NormalizedOptionContract:
+    fields:
+      contract_symbol: { type: string, description: "OCC format (e.g., AAPL250117C00200000)" }
+      underlying: { type: string }
+      expiration: { type: string, description: "YYYY-MM-DD" }
+      strike: { type: Decimal }
+      option_type: { type: string, description: "call or put" }
+      bid: { type: Decimal }
+      ask: { type: Decimal }
+      last: { type: Decimal }
+      volume: { type: int }
+      open_interest: { type: int }
+      underlying_price: { type: "Decimal | null" }
+      delta: { type: "Decimal | null" }
+      gamma: { type: "Decimal | null" }
+      theta: { type: "Decimal | null" }
+      vega: { type: "Decimal | null" }
+      rho: { type: "Decimal | null" }
+      iv: { type: "Decimal | null" }
+      provider: { type: string }
+      timestamp: { type: datetime }
+
+  NormalizedOptionTrade:
+    fields:
+      underlying_symbol: { type: string }
+      option_symbol: { type: "string | null" }
+      timestamp: { type: datetime }
+      strike: { type: Decimal }
+      expiry: { type: string }
+      option_type: { type: string }
+      price: { type: Decimal }
+      size: { type: int }
+      premium: { type: Decimal }
+      volume: { type: "int | null" }
+      open_interest: { type: "int | null" }
+      underlying_price: { type: "Decimal | null" }
+      delta: { type: "Decimal | null" }
+      gamma: { type: "Decimal | null" }
+      theta: { type: "Decimal | null" }
+      vega: { type: "Decimal | null" }
+      rho: { type: "Decimal | null" }
+      implied_volatility: { type: "Decimal | null" }
+      nbbo_ask: { type: "Decimal | null" }
+      nbbo_bid: { type: "Decimal | null" }
+      ask_vol: { type: "int | null" }
+      bid_vol: { type: "int | null" }
+      mid_vol: { type: "int | null" }
+      multi_vol: { type: "int | null" }
+      stock_multi_vol: { type: "int | null" }
+      no_side_vol: { type: "int | null" }
+      exchange: { type: "string | null" }
+      trade_id: { type: "string | null" }
+      canceled: { type: boolean, default: false }
+      er_time: { type: "string | null" }
+      next_earnings_date: { type: "string | null" }
+      sector: { type: "string | null" }
+      tags: { type: "list[string]" }
+      provider: { type: string, default: "unusual_whales" }
+
+  NormalizedMostActive:
+    fields:
+      symbol: { type: string }
+      volume: { type: int }
+      trade_count: { type: int }
+      provider: { type: string }
+
+  NormalizedMover:
+    fields:
+      symbol: { type: string }
+      price: { type: Decimal }
+      change: { type: Decimal }
+      percent_change: { type: Decimal }
+      provider: { type: string }
+
+  NormalizedOrderbook:
+    fields:
+      symbol: { type: string }
+      timestamp: { type: datetime }
+      bids: { type: "list[NormalizedOrderbookLevel]" }
+      asks: { type: "list[NormalizedOrderbookLevel]" }
+      provider: { type: string }
+
+  NormalizedOrderbookLevel:
+    fields:
+      price: { type: Decimal }
+      size: { type: Decimal }
+      side: { type: string, description: "bid or ask" }
+
+  NormalizedForexRate:
+    fields:
+      pair: { type: string, description: "e.g., EUR/USD" }
+      timestamp: { type: datetime }
+      bid: { type: Decimal }
+      ask: { type: Decimal }
+      mid: { type: "Decimal | null" }
+      open: { type: "Decimal | null" }
+      high: { type: "Decimal | null" }
+      low: { type: "Decimal | null" }
+      close: { type: "Decimal | null" }
+      provider: { type: string }
+
+  StockSnapshot:
+    fields:
+      daily_bar: { type: "NormalizedBar | null" }
+      latest_quote: { type: "NormalizedQuote | null" }
+      latest_trade: { type: "NormalizedTrade | null" }
+      minute_bar: { type: "NormalizedBar | null" }
+      prev_daily_bar: { type: "NormalizedBar | null" }
+
+  NormalizedNewsArticle:
+    fields:
+      id: { type: string }
+      headline: { type: string }
+      author: { type: "string | null" }
+      created_at: { type: datetime }
+      updated_at: { type: "datetime | null" }
+      summary: { type: "string | null" }
+      content: { type: "string | null" }
+      url: { type: "string | null" }
+      images: { type: "list[NormalizedNewsImage]" }
+      symbols: { type: "list[string]" }
+      source: { type: "string | null" }
+      provider: { type: string }
+
+  NormalizedCorporateAction:
+    fields:
+      id: { type: string }
+      corporate_actions_type: { type: string }
+      sub_type: { type: "string | null" }
+      symbol: { type: string }
+      initiating_symbol: { type: "string | null" }
+      target_symbol: { type: "string | null" }
+      ex_date: { type: "string | null" }
+      record_date: { type: "string | null" }
+      payable_date: { type: "string | null" }
+      effective_date: { type: "string | null" }
+      old_rate: { type: "Decimal | null" }
+      new_rate: { type: "Decimal | null" }
+      cash: { type: "Decimal | null" }
+      description: { type: "string | null" }
+      provider: { type: string }
+
+  NormalizedGreekExposure:
+    fields:
+      symbol: { type: string }
+      timestamp: { type: datetime }
+      call_gamma: { type: Decimal }
+      put_gamma: { type: "Decimal | null" }
+      call_delta: { type: "Decimal | null" }
+      put_delta: { type: "Decimal | null" }
+      call_vanna: { type: "Decimal | null" }
+      put_vanna: { type: "Decimal | null" }
+      call_charm: { type: "Decimal | null" }
+      put_charm: { type: "Decimal | null" }
+      strike: { type: "Decimal | null" }
+      expiry: { type: "string | null" }
+      dte: { type: "int | null" }
+      provider: { type: string, default: "unusual_whales" }
+
+  NormalizedMaxPain:
+    fields:
+      symbol: { type: string }
+      expiry: { type: string }
+      max_pain_strike: { type: Decimal }
+      call_oi: { type: "int | null" }
+      put_oi: { type: "int | null" }
+      provider: { type: string }
+
+  NormalizedIVRank:
+    fields:
+      symbol: { type: string }
+      iv_rank: { type: Decimal }
+      iv_percentile: { type: "Decimal | null" }
+      current_iv: { type: "Decimal | null" }
+      one_year_high: { type: "Decimal | null" }
+      one_year_low: { type: "Decimal | null" }
+      provider: { type: string }
+
+  NormalizedSeasonality:
+    fields:
+      symbol: { type: "string | null" }
+      month: { type: int }
+      avg_return: { type: Decimal }
+      median_return: { type: "Decimal | null" }
+      win_rate: { type: Decimal }
+      sample_years: { type: "int | null" }
+      provider: { type: string }
+
+  ResponseMeta:
+    fields:
+      provider: { type: string, default: "alpaca" }
+      symbol: { type: "string | null" }
+      timeframe: { type: "string | null" }
+      count: { type: "int | null" }
+
+  SuccessResponse:
+    fields:
+      success: { type: boolean, default: true }
+      data: { type: "dict | list | null" }
+      meta: { type: "dict | null" }
+      pagination: { type: "dict | null" }
+
+  ErrorResponse:
+    fields:
+      success: { type: boolean, default: false }
+      error: { type: dict }
+
+  Account:
+    fields:
+      id: { type: string }
+      account_number: { type: string }
+      status: { type: string }
+      currency: { type: string }
+      cash: { type: Decimal }
+      portfolio_value: { type: Decimal }
+      buying_power: { type: Decimal }
+      equity: { type: Decimal }
+      pattern_day_trader: { type: boolean, default: false }
+      shorting_enabled: { type: boolean, default: false }
+      daytrade_count: { type: int, default: 0 }
+
+  Order:
+    fields:
+      id: { type: string }
+      client_order_id: { type: "string | null" }
+      created_at: { type: datetime }
+      updated_at: { type: "datetime | null" }
+      submitted_at: { type: "datetime | null" }
+      filled_at: { type: "datetime | null" }
+      expired_at: { type: "datetime | null" }
+      canceled_at: { type: "datetime | null" }
+      symbol: { type: string }
+      qty: { type: "string | null" }
+      filled_qty: { type: "string | null" }
+      notional: { type: "string | null" }
+      side: { type: string }
+      type: { type: string }
+      time_in_force: { type: string }
+      limit_price: { type: "string | null" }
+      stop_price: { type: "string | null" }
+      filled_avg_price: { type: "string | null" }
+      status: { type: string }
+      extended_hours: { type: boolean, default: false }
+
+  Position:
+    fields:
+      asset_id: { type: string }
+      symbol: { type: string }
+      exchange: { type: "string | null" }
+      asset_class: { type: string }
+      avg_entry_price: { type: Decimal }
+      qty: { type: Decimal }
+      qty_available: { type: "Decimal | null" }
+      side: { type: string }
+      market_value: { type: Decimal }
+      cost_basis: { type: Decimal }
+      unrealized_pl: { type: Decimal }
+      unrealized_plpc: { type: Decimal }
+      current_price: { type: Decimal }
+      change_today: { type: "Decimal | null" }

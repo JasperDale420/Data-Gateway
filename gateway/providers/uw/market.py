@@ -1,0 +1,876 @@
+"""UW Market mixin — shorts, volatility, seasonality, alerts, market data, news, calendar."""
+
+from decimal import Decimal
+from typing import Any
+
+import structlog
+
+from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
+
+logger = structlog.get_logger()
+
+
+class UWMarketMixin:
+    """Shorts, volatility, seasonality, alerts, market info, sector, news, economic calendar."""
+
+    # ─────────────────────────────────────────────────────────────────
+    # Phase 2: Shorts Data
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_short_interest(self, symbol: str) -> list:
+        """Get short interest data."""
+        from gateway.schemas import NormalizedShortData
+
+        if not self._client:
+            logger.warning("uw_client_not_initialized")
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import shorts
+
+            response = await self._call_sync(
+                shorts.get_data.sync,
+                symbol.upper(),
+                client=self._client,
+            )
+
+            results = []
+            for item in self._extract_data(response):
+                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                results.append(
+                    NormalizedShortData(
+                        symbol=symbol.upper(),
+                        date=str(get("date") or ""),
+                        short_interest=_safe_int(get("short_interest")),
+                        days_to_cover=(Decimal(str(get("days_to_cover") or 0)) if get("days_to_cover") else None),
+                        short_percent_float=(
+                            Decimal(str(get("short_percent_float") or 0)) if get("short_percent_float") else None
+                        ),
+                        short_percent_outstanding=(
+                            Decimal(str(get("short_percent_outstanding") or 0))
+                            if get("short_percent_outstanding")
+                            else None
+                        ),
+                        provider="unusual_whales",
+                    )
+                )
+
+            logger.info("uw_short_interest_fetched", symbol=symbol, count=len(results))
+            return results
+
+        except Exception as e:
+            logger.error("uw_short_interest_failed", symbol=symbol, error=str(e))
+            raise
+
+    async def get_ftds(self, symbol: str) -> list:
+        """Get failures to deliver data."""
+        from gateway.schemas import NormalizedFTD
+
+        if not self._client:
+            logger.warning("uw_client_not_initialized")
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import shorts
+
+            response = await self._call_sync(
+                shorts.get_ftds.sync,
+                symbol.upper(),
+                client=self._client,
+            )
+
+            results = []
+            for item in self._extract_data(response):
+                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                quantity = _safe_int(get("quantity") or get("fails"))
+                price = Decimal(str(get("price") or 0)) if get("price") else None
+                results.append(
+                    NormalizedFTD(
+                        symbol=symbol.upper(),
+                        date=str(get("date") or ""),
+                        quantity=quantity,
+                        price=price,
+                        value=price * quantity if price else None,
+                        provider="unusual_whales",
+                    )
+                )
+
+            logger.info("uw_ftds_fetched", symbol=symbol, count=len(results))
+            return results
+
+        except Exception as e:
+            logger.error("uw_ftds_failed", symbol=symbol, error=str(e))
+            raise
+
+    async def get_short_volume(self, symbol: str) -> list:
+        """Get short volume data."""
+        from gateway.schemas import NormalizedShortData
+
+        if not self._client:
+            logger.warning("uw_client_not_initialized")
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import shorts
+
+            response = await self._call_sync(
+                shorts.get_volume_and_ratio.sync,
+                symbol.upper(),
+                client=self._client,
+            )
+
+            results = []
+            for item in self._extract_data(response):
+                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                results.append(
+                    NormalizedShortData(
+                        symbol=symbol.upper(),
+                        date=str(get("date") or ""),
+                        short_interest=_safe_int(get("short_volume")),
+                        short_percent_float=(Decimal(str(get("short_ratio") or 0)) if get("short_ratio") else None),
+                        provider="unusual_whales",
+                    )
+                )
+
+            logger.info("uw_short_volume_fetched", symbol=symbol, count=len(results))
+            return results
+
+        except Exception as e:
+            logger.error("uw_short_volume_failed", symbol=symbol, error=str(e))
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Phase 3: Volatility Analytics
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_iv_term_structure(self, symbol: str) -> list:
+        """Get IV term structure for a ticker."""
+        from gateway.schemas import NormalizedIVTermStructure
+
+        if not self._client:
+            logger.warning("uw_client_not_initialized")
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import stock
+
+            response = await self._call_sync(
+                stock.get_volatility_term_structure.sync,
+                client=self._client,
+                ticker=symbol.upper(),
+            )
+
+            results = []
+            for item in self._extract_data(response):
+                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                results.append(
+                    NormalizedIVTermStructure(
+                        symbol=symbol.upper(),
+                        expiry=str(get("expiry") or get("expiration_date") or ""),
+                        iv=Decimal(str(get("iv") or get("implied_volatility") or 0)),
+                        days_to_expiry=_safe_int(get("days_to_expiry") or get("dte")),
+                        call_iv=Decimal(str(get("call_iv") or 0)) if get("call_iv") else None,
+                        put_iv=Decimal(str(get("put_iv") or 0)) if get("put_iv") else None,
+                        provider="unusual_whales",
+                    )
+                )
+
+            logger.info("uw_iv_term_structure_fetched", symbol=symbol, count=len(results))
+            return results
+
+        except Exception as e:
+            logger.error("uw_iv_term_structure_failed", symbol=symbol, error=str(e))
+            raise
+
+    async def get_realized_volatility(self, symbol: str):
+        """Get realized volatility for a ticker."""
+        from gateway.schemas import NormalizedVolatilityStats
+
+        if not self._client:
+            logger.warning("uw_client_not_initialized")
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import stock
+
+            response = await self._call_sync(
+                stock.get_candles.sync,
+                client=self._client,
+                ticker=symbol.upper(),
+                candle_size="1D",
+            )
+
+            data = self._get_data_safe(response)
+            if not data:
+                return None
+
+            get = data.get if isinstance(data, dict) else lambda k, d=None: getattr(data, k, d)
+            result = NormalizedVolatilityStats(
+                symbol=symbol.upper(),
+                realized_vol_30d=(
+                    Decimal(str(get("realized_vol_30d") or get("rv_30") or 0))
+                    if get("realized_vol_30d") or get("rv_30")
+                    else None
+                ),
+                realized_vol_60d=(
+                    Decimal(str(get("realized_vol_60d") or get("rv_60") or 0))
+                    if get("realized_60d") or get("rv_60")
+                    else None
+                ),
+                realized_vol_90d=(
+                    Decimal(str(get("realized_vol_90d") or get("rv_90") or 0))
+                    if get("realized_vol_90d") or get("rv_90")
+                    else None
+                ),
+                provider="unusual_whales",
+            )
+
+            logger.info("uw_realized_volatility_fetched", symbol=symbol)
+            return result
+
+        except Exception as e:
+            logger.error("uw_realized_volatility_failed", symbol=symbol, error=str(e))
+            raise
+
+    async def get_volatility_stats(self, symbol: str):
+        """Get volatility stats for a ticker."""
+        from gateway.schemas import NormalizedVolatilityStats
+
+        if not self._client:
+            logger.warning("uw_client_not_initialized")
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import stock
+
+            response = await self._call_sync(
+                stock.get_info.sync,
+                client=self._client,
+                ticker=symbol.upper(),
+            )
+
+            data = self._get_data_safe(response)
+            if not data:
+                return None
+
+            get = data.get if isinstance(data, dict) else lambda k, d=None: getattr(data, k, d)
+            result = NormalizedVolatilityStats(
+                symbol=symbol.upper(),
+                realized_vol_30d=(
+                    Decimal(str(get("realized_vol_30d") or get("hv_30") or 0))
+                    if get("realized_vol_30d") or get("hv_30")
+                    else None
+                ),
+                iv_30d=(Decimal(str(get("iv_30d") or get("iv_30") or 0)) if get("iv_30d") or get("iv_30") else None),
+                iv_percentile=(Decimal(str(get("iv_percentile") or 0)) if get("iv_percentile") else None),
+                hv_iv_ratio=Decimal(str(get("hv_iv_ratio") or 0)) if get("hv_iv_ratio") else None,
+                provider="unusual_whales",
+            )
+
+            logger.info("uw_volatility_stats_fetched", symbol=symbol)
+            return result
+
+        except Exception as e:
+            logger.error("uw_volatility_stats_failed", symbol=symbol, error=str(e))
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Phase 3: Seasonality
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_market_seasonality(self) -> list:
+        """Get market-wide seasonality data."""
+        from gateway.schemas import NormalizedSeasonality
+
+        if not self._client:
+            logger.warning("uw_client_not_initialized")
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import seasonality
+
+            response = await self._call_sync(seasonality.get_market_average_returns_by_month.sync, client=self._client)
+
+            results = []
+            for item in self._extract_data(response):
+                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                results.append(
+                    NormalizedSeasonality(
+                        symbol=None,
+                        month=_safe_int(get("month")),
+                        avg_return=Decimal(str(get("avg_return") or get("average_return") or 0)),
+                        median_return=(Decimal(str(get("median_return") or 0)) if get("median_return") else None),
+                        win_rate=Decimal(str(get("win_rate") or get("positive_rate") or 0)),
+                        sample_years=(
+                            _safe_int(get("sample_years") or get("years"))
+                            if get("sample_years") or get("years")
+                            else None
+                        ),
+                        provider="unusual_whales",
+                    )
+                )
+
+            logger.info("uw_market_seasonality_fetched", count=len(results))
+            return results
+
+        except Exception as e:
+            logger.error("uw_market_seasonality_failed", error=str(e))
+            raise
+
+    async def get_monthly_returns(self, symbol: str) -> list:
+        """Get monthly returns for a ticker."""
+        from gateway.schemas import NormalizedSeasonality
+
+        if not self._client:
+            logger.warning("uw_client_not_initialized")
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import seasonality
+
+            response = await self._call_sync(
+                seasonality.get_monthly_average_returns.sync,
+                symbol.upper(),
+                client=self._client,
+            )
+
+            results = []
+            for item in self._extract_data(response):
+                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                results.append(
+                    NormalizedSeasonality(
+                        symbol=symbol.upper(),
+                        month=_safe_int(get("month")),
+                        avg_return=Decimal(str(get("avg_return") or get("average_return") or 0)),
+                        median_return=(Decimal(str(get("median_return") or 0)) if get("median_return") else None),
+                        win_rate=Decimal(str(get("win_rate") or get("positive_rate") or 0)),
+                        sample_years=(
+                            _safe_int(get("sample_years") or get("years"))
+                            if get("sample_years") or get("years")
+                            else None
+                        ),
+                        provider="unusual_whales",
+                    )
+                )
+
+            logger.info("uw_monthly_returns_fetched", symbol=symbol, count=len(results))
+            return results
+
+        except Exception as e:
+            logger.error("uw_monthly_returns_failed", symbol=symbol, error=str(e))
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Economic Calendar
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_economic_calendar(
+        self, start_date: str | None = None, end_date: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get economic calendar events."""
+        if not self._client:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import market
+
+            response = await self._call_sync(
+                market.get_economic_calendar.sync,
+                client=self._client,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            data = self._get_data_safe(response)
+            if not data:
+                return []
+
+            results = []
+            for item in data:
+                get = item.get if isinstance(item, dict) else lambda k, d=None, i=item: getattr(i, k, d)
+                results.append(
+                    {
+                        "date": str(get("date") or get("event_date") or ""),
+                        "time": get("time"),
+                        "event": get("event") or get("name"),
+                        "country": get("country"),
+                        "impact": get("impact") or get("importance"),
+                        "previous": get("previous"),
+                        "forecast": get("forecast"),
+                        "actual": get("actual"),
+                    }
+                )
+
+            logger.info("uw_economic_calendar_fetched", count=len(results))
+            return results
+
+        except Exception as e:
+            logger.error("uw_economic_calendar_failed", error=str(e))
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Custom Alerts / Market Correlations
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_custom_alerts(
+        self, _min_premium: float | None = None, _min_volume: int | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Get custom filtered flow alerts."""
+        if not self._client:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import alerts
+
+            response = await self._call_sync(alerts.get_alerts.sync, client=self._client)
+            data = self._get_data_safe(response)
+            if not data:
+                return []
+
+            results = []
+            for item in data[:limit]:
+                get = item.get if isinstance(item, dict) else lambda k, d=None, i=item: getattr(i, k, d)
+                results.append(
+                    {
+                        "symbol": get("ticker") or get("symbol"),
+                        "strike": float(get("strike") or 0) if get("strike") else None,
+                        "expiry": get("expiry") or get("expiration"),
+                        "type": get("option_type") or get("type"),
+                        "premium": float(get("premium") or 0) if get("premium") else None,
+                        "volume": _safe_int(get("volume")) if get("volume") else None,
+                        "rule": get("rule_name") or get("alert_type"),
+                        "timestamp": str(get("timestamp") or get("date") or ""),
+                    }
+                )
+
+            logger.info("uw_custom_alerts_fetched", count=len(results))
+            return results
+
+        except Exception as e:
+            logger.error("uw_custom_alerts_failed", error=str(e))
+            raise
+
+    async def get_market_correlations(
+        self, start_date: str | None = None, end_date: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get cross-asset correlations."""
+        if not self._client:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        try:
+            from unusualwhales.api import market
+
+            response = await self._call_sync(
+                market.get_correlations.sync,
+                client=self._client,
+            )
+            data = self._get_data_safe(response)
+            if not data:
+                data = response if isinstance(response, list) else []
+
+            results = []
+            for item in data:
+                get = item.get if isinstance(item, dict) else lambda k, d=None, i=item: getattr(i, k, d)
+                results.append(
+                    {
+                        "symbol_1": get("symbol_1") or get("ticker_1"),
+                        "symbol_2": get("symbol_2") or get("ticker_2"),
+                        "correlation": (float(get("correlation") or 0) if get("correlation") else None),
+                        "period": get("period"),
+                    }
+                )
+
+            logger.info("uw_market_correlations_fetched", count=len(results))
+            return results
+
+        except Exception as e:
+            logger.error("uw_market_correlations_failed", error=str(e))
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # News Headlines
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_news_headlines(
+        self,
+        sources: list[str] | None = None,
+        search_term: str | None = None,
+        major_only: bool | None = None,
+        limit: int = 50,
+        page: int | None = None,
+    ) -> list[dict]:
+        """Get latest news headlines for financial markets."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.news import get_headlines
+
+        try:
+            response = await self._call_sync(
+                get_headlines.sync,
+                client=self._client,
+                sources=_or_unset(sources),
+                search_term=_or_unset(search_term),
+                major_only=_or_unset(major_only),
+                limit=limit,
+                page=_or_unset(page),
+            )
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_news_headlines_failed", error=str(e))
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Phase 2: Market Calendar & Data Endpoints
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_economic_calendar_simple(self) -> list[dict]:
+        """Get economic calendar events."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_economic_calendar
+
+        try:
+            response = await self._call_sync(get_economic_calendar.sync, client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_economic_calendar_failed", error=str(e))
+            raise
+
+    async def get_fda_calendar(self) -> list[dict]:
+        """Get FDA calendar events."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_fda_calendar
+
+        try:
+            response = await self._call_sync(get_fda_calendar.sync, client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_fda_calendar_failed", error=str(e))
+            raise
+
+    async def get_market_holidays(self) -> list[dict]:
+        """Get market holidays."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_holidays
+
+        try:
+            response = await self._call_sync(get_holidays.sync, client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_market_holidays_failed", error=str(e))
+            raise
+
+    async def get_market_imbalances(self) -> list[dict]:
+        """Get market imbalances data."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_imbalances
+
+        try:
+            response = await self._call_sync(get_imbalances.sync, client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_market_imbalances_failed", error=str(e))
+            raise
+
+    async def get_market_options_volume(self) -> list[dict]:
+        """Get total market options volume."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_market_options_volume
+
+        try:
+            response = await self._call_sync(get_market_options_volume.sync, client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_market_options_volume_failed", error=str(e))
+            raise
+
+    async def get_sector_stats(self) -> list[dict]:
+        """Get sector statistics."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_sector_stats
+
+        try:
+            response = await self._call_sync(get_sector_stats.sync, client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_sector_stats_failed", error=str(e))
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Phase 5: Screener/Alerts Endpoints
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_all_alerts(self, limit: int = 50) -> list[dict]:
+        """Get all alerts."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.alerts import get_alerts
+
+        try:
+            response = await self._call_sync(get_alerts.sync, client=self._client)
+            data = self._extract_data(response)
+            result = data
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_alerts_failed", error=str(e))
+            raise
+
+    async def get_alerts_configuration(self) -> dict | None:
+        """Get alerts configuration."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.alerts import get_configurations
+
+        try:
+            response = await self._call_sync(get_configurations.sync, client=self._client)
+            data = self._extract_data(response)
+            return data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
+        except Exception as e:
+            logger.error("uw_alerts_config_failed", error=str(e))
+            raise
+
+    async def get_analyst_ratings(self, limit: int = 50) -> list[dict]:
+        """Get analyst ratings from screener."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.screener import get_analyst_ratings
+
+        try:
+            response = await self._call_sync(get_analyst_ratings.sync, client=self._client)
+            data = self._extract_data(response)
+            result = data
+            return result[:limit]
+        except Exception as e:
+            logger.error("uw_analyst_ratings_failed", error=str(e))
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Phase 4: Stock Module - Additional Endpoints
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_stock_info(self, symbol: str) -> dict | None:
+        """Get stock/ticker information."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_info
+
+        try:
+            response = await self._call_sync(get_info.sync, symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
+        except Exception as e:
+            logger.error("uw_stock_info_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_stock_candles(self, symbol: str, timeframe: str = "1d") -> list[dict]:
+        """Get OHLC candle data for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_candles
+
+        try:
+            response = await self._call_sync(get_candles.sync, symbol.upper(), client=self._client, timeframe=timeframe)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_stock_candles_failed", error=str(e), symbol=symbol)
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Sector Tickers / Stock State / Volume Price Levels
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_sector_tickers(self, sector: str) -> list[dict]:
+        """Get tickers for a given sector."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_sector_tickers
+
+        try:
+            response = await self._call_sync(
+                get_sector_tickers.sync,
+                sector,
+                client=self._client,
+            )
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_sector_tickers_failed", error=str(e), sector=sector)
+            raise
+
+    async def get_stock_state(self, symbol: str) -> dict | None:
+        """Get stock OHLC and volume state."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_stock_state
+
+        try:
+            response = await self._call_sync(get_stock_state.sync, symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
+        except Exception as e:
+            logger.error("uw_stock_state_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_stock_volume_price_levels(self, symbol: str) -> list[dict]:
+        """Get stock volume price levels."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.stock import get_stock_volume_price_levels
+
+        try:
+            response = await self._call_sync(get_stock_volume_price_levels.sync, symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_stock_volume_price_levels_failed", error=str(e), symbol=symbol)
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Final Batch: Seasonality Module
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_monthly_top_performers(self, month: int) -> list[dict]:
+        """Get top performing stocks by month."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.seasonality import get_monthly_top_performers
+
+        try:
+            response = await self._call_sync(
+                get_monthly_top_performers.sync,
+                month,
+                client=self._client,
+            )
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_monthly_top_performers_failed", error=str(e), month=month)
+            raise
+
+    async def get_price_changes_by_month_year(self, symbol: str) -> list[dict]:
+        """Get price changes by month and year for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.seasonality import get_price_changes_by_month_and_year
+
+        try:
+            response = await self._call_sync(
+                get_price_changes_by_month_and_year.sync, symbol.upper(), client=self._client
+            )
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_price_changes_by_month_year_failed", error=str(e), symbol=symbol)
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Final Batch: Shorts Module
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_shorts_data(self, symbol: str) -> list[dict]:
+        """Get short data for a ticker."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.shorts import get_data
+
+        try:
+            response = await self._call_sync(get_data.sync, symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_shorts_data_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_short_interest_float(self, symbol: str) -> dict | None:
+        """Get short interest as percentage of float."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.shorts import get_interest_float
+
+        try:
+            response = await self._call_sync(get_interest_float.sync, symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
+        except Exception as e:
+            logger.error("uw_short_interest_float_failed", error=str(e), symbol=symbol)
+            raise
+
+    async def get_short_volumes_by_exchange(self, symbol: str) -> list[dict]:
+        """Get short volumes by exchange."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.shorts import get_volumes_by_exchange
+
+        try:
+            response = await self._call_sync(get_volumes_by_exchange.sync, symbol.upper(), client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_short_volumes_by_exchange_failed", error=str(e), symbol=symbol)
+            raise
+
+    # ─────────────────────────────────────────────────────────────────
+    # Final Batch: Market Module
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_market_spike(self) -> list[dict]:
+        """Get market spike data."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_spike
+
+        try:
+            response = await self._call_sync(get_spike.sync, client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_market_spike_failed", error=str(e))
+            raise
+
+    async def get_sector_etfs(self) -> list[dict]:
+        """Get current trading day statistics for SPDR sector ETFs."""
+        if not self._initialized:
+            raise RuntimeError(ERR_NOT_INITIALIZED)
+
+        from unusualwhales.api.market import get_sector_etfs
+
+        try:
+            response = await self._call_sync(get_sector_etfs.sync, client=self._client)
+            data = self._extract_data(response)
+            return data
+        except Exception as e:
+            logger.error("uw_sector_etfs_failed", error=str(e))
+            raise

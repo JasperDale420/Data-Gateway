@@ -36,9 +36,7 @@ def _reset_calendar_provider_degraded_state() -> None:
 def test_calendar_provider_degraded_state_window() -> None:
     _reset_calendar_provider_degraded_state()
 
-    calendar_api._mark_calendar_provider_failure(
-        "market_hours", RuntimeError("boom"), now_monotonic=100.0
-    )
+    calendar_api._mark_calendar_provider_failure("market_hours", RuntimeError("boom"), now_monotonic=100.0)
 
     assert calendar_api._calendar_provider_is_degraded("market_hours", now_monotonic=110.0) is True
     assert calendar_api._calendar_provider_is_degraded("market_hours", now_monotonic=131.0) is False

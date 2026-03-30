@@ -77,9 +77,7 @@ async def test_set_account_configurations_threads_all_fields(
     provider = _FakeProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
-    ):
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
         assert registry is cast(ProviderRegistry, route_registry)
         assert block is False
         provider_obj = registry.get("alpaca")
@@ -113,9 +111,7 @@ async def test_get_account_activities_splits_activity_types(
     provider = _FakeProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(
-        *, registry: ProviderRegistry, provider_call: Any, block: bool = False
-    ):
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
         assert registry is cast(ProviderRegistry, route_registry)
         assert block is False
         provider_obj = registry.get("alpaca")

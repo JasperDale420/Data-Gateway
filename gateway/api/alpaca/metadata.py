@@ -87,9 +87,7 @@ async def get_logo(
 
     logo_bytes = await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: provider.get_logo(
-            symbol=symbol.upper(), placeholder=placeholder
-        ),
+        provider_call=lambda provider: provider.get_logo(symbol=symbol.upper(), placeholder=placeholder),
     )
     if logo_bytes is None:
         raise HTTPException(status_code=404, detail="Logo not found")

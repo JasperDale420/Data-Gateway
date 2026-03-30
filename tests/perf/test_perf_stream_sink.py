@@ -115,7 +115,7 @@ async def test_sink_publish_backpressure_task_growth_profile() -> None:
     """Validate sink fire-and-forget backlog stays bounded under blocked sink I/O."""
     release_event = asyncio.Event()
     max_in_flight = 32
-    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
+    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight, slot_wait_timeout=0.0)
     registry.register(_BlockingSink(release_event, sink_name="blocking-single"))
 
     total_events = 300
@@ -145,7 +145,7 @@ async def test_sink_publish_backpressure_multi_sink_bounds() -> None:
     """Validate aggregate in-flight bounds with multiple blocked sinks."""
     release_event = asyncio.Event()
     max_in_flight = 16
-    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
+    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight, slot_wait_timeout=0.0)
     registry.register(_BlockingSink(release_event, sink_name="blocking-a"))
     registry.register(_BlockingSink(release_event, sink_name="blocking-b"))
 
@@ -178,7 +178,7 @@ async def test_sink_publish_backpressure_multi_sink_bounds() -> None:
 async def test_sink_publish_backpressure_with_slow_backend_profile() -> None:
     """Validate bounded scheduling under slower sink publish latency."""
     max_in_flight = 8
-    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
+    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight, slot_wait_timeout=0.0)
     registry.register(_DelayedSink("slow-a", delay_seconds=0.02))
     registry.register(_DelayedSink("slow-b", delay_seconds=0.02))
 
