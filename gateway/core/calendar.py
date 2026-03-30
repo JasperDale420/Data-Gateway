@@ -14,11 +14,9 @@ from enum import Enum
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import structlog
-
 from gateway.config import get_settings
+from gateway.core.logger import logger
 
-logger = structlog.get_logger()
 # ─────────────────────────────────────────────────────────────────────────────
 # exchange_calendars integration (optional — graceful degradation)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -513,7 +511,8 @@ class TradingCalendar:
 
         current_time = local_dt.time()
 
-        if query_date in US_EARLY_CLOSES:
+        is_early, _ = self._is_early_close(query_date)
+        if is_early:
             return self.REGULAR_START <= current_time < self.REGULAR_EARLY_END
 
         return self.REGULAR_START <= current_time < self.REGULAR_END
