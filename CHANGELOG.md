@@ -6,13 +6,45 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **Calendar holiday names not resolved when `exchange_calendars` is installed** (`gateway/core/calendar.py`): `_resolve_holiday_name()` was iterating `cal.regular_holidays` directly, but `HolidayCalendar` is not iterable. Fixed to iterate `cal.regular_holidays.rules`. Added a name alias map so the exchange_calendars variant `"Dr. Martin Luther King Jr. Day"` normalizes to `"Martin Luther King Jr. Day"`. Previously all holidays fell back to the generic `"Market Holiday"` string when the library was available, causing two test failures.
-
-- **Import sort order across all gateway modules** (`gateway/api/`, `gateway/core/`, `gateway/providers/`): 85 import blocks had `from gateway.core.logger import logger` placed in a trailing separate block. Removed 14 unused imports and collapsed one duplicate if-branch. Auto-fixed with `ruff --fix`.
+- **UW options endpoints returning 404 (2K+ daily)** (`gateway/api/uw/options.py`, `options_data.py`): The UW options routers had no prefix, causing `/{symbol}/max-pain` and similar routes to be shadowed by other routers' `/{symbol}` catch-all. Added `prefix="/options"` to both routers so `/api/v1/uw/options/SPY/max-pain` resolves correctly. Removed redundant `/options/{symbol}/iv-rank` alias.
+- **Invalid order `side` silently defaults to SELL** (`gateway/providers/alpaca/trading.py`): Any value other than `"buy"` — including typos — mapped to `OrderSide.SELL`. Added explicit validation that raises `ValueError` for invalid side values.
+- **`replace_order` truncates fractional shares** (`gateway/providers/alpaca/trading.py`): `int(qty)` silently dropped fractional quantities. Removed the cast so Alpaca receives the exact quantity.
+- **`compute_event_id` hash instability from Decimal→float** (`gateway/core/envelope.py`): `str(float(field))` produced non-deterministic representations for certain Decimal values, causing duplicate events to get different hashes. Changed to `str(field)` for exact Decimal serialization.
+- **Crypto misclassification of equities containing "USD"** (`gateway/core/envelope.py`): The `_infer_instrument_type` substring check for `"USD"` matched equity tickers. Tightened to require prefix/suffix match on `BTC`, `ETH`, `USDT` only.
+- **REST events incorrectly tagged as "cached"** (`gateway/core/envelope.py`): All REST-sourced events received a `"cached"` quality flag regardless of whether data came from cache. Removed the unconditional flag.
+- **`UnboundLocalError` in Redis sink health check** (`gateway/core/redis_sink.py`): If `_ensure_connected()` raised before `client` was assigned, the except handler referenced an unbound variable. Initialized `client = None` before the try block.
+- **Non-atomic drain lock check** (`gateway/core/redis_sink.py`): `_drain_buffer` checked `.locked()` then acquired — allowing double-drain or missed drain. Simplified to always acquire the lock.
+- **`ttl=0` silently uses default TTL** (`gateway/core/cache.py`): The truthiness check `if ttl` treated `0` as falsy. Changed to `if ttl is not None`.
+- **`datetime.replace(hour=24)` overflow at midnight** (`gateway/core/replay.py`): Mock data generator crashed at hour 23, minute 59. Replaced manual arithmetic with `timedelta(minutes=1)`.
+- **Market close boundary off-by-one** (`gateway/core/calendar.py`): `is_market_open` used `<=` on closing time, counting 16:00:00 as open. Changed to strict `<`.
+- **`cancel_job` never cancels the background task** (`gateway/core/bulk.py`): Set status to FAILED but left the asyncio task running. Now calls `task.cancel()`.
+- **UW `realized_vol_60d` typo** (`gateway/providers/uw/market.py`): Guard checked `realized_60d` (missing `_vol_`), so the field was always `None`.
+- **UW `get_market_correlations` ignores date params** (`gateway/providers/uw/market.py`): `start_date` and `end_date` were accepted but never forwarded to the API.
+- **UW `get_intraday_option_data` passes `None` instead of UNSET** (`gateway/providers/uw/options.py`): `date_str` was passed directly instead of via `_or_unset()`.
+- **UW `min_premium` truncated to int** (`gateway/providers/uw/options.py`): `int(min_premium)` discarded fractional values. Removed the cast.
+- **SEC `get_filings` under-delivers when `form_type` is set** (`gateway/providers/sec.py`): Loop bound was `min(len(forms), limit)`, skipping filtered entries counted against the limit. Now iterates the full list, breaking only when enough matching filings are collected.
+- **Alpha Vantage health check inverted logic** (`gateway/providers/alphavantage.py`): Declared healthy when `"Note"` key was absent, even for error payloads. Now requires `"Global Quote"` present AND no `"Note"` or `"Information"` keys.
+- **`check_permission` default-allows unlisted paths** (`gateway/core/security.py`): New endpoints were accessible without auth. Changed to default-deny.
+- **Catalog endpoints publicly accessible** (`gateway/api/catalog.py`): Duplicate `router` definition at line 339 replaced the authenticated router with an unauthenticated one. Removed the duplicate.
+- **`get_asset` passes un-normalized symbol** (`gateway/api/alpaca/trading.py`): Provider received raw lowercase input instead of the uppercased `normalized_symbol`.
+- **`size % 100` TypeError on null trade size** (`gateway/core/quality.py`): Added type guard for `None` and non-numeric sizes.
+- **`date.today()` uses local time for option expiry** (`gateway/core/symbology.py`): Replaced with `datetime.now(UTC).date()` for consistent UTC behavior.
+- **Debug log fires every poll cycle** (`gateway/core/uw_poller.py`): Removed `INFO`-level `uw_poller_debug_first_alert` log that serialized the first alert on every 5-minute poll.
+- **Sink registry never closed in shutdown** (`gateway/main.py`): Added `sink_registry.close_all()` to the shutdown sequence to close Redis connection pool.
+- **Plaintext API key echoed to stdout** (`gateway/cli.py`): `hash-key` command now masks the key as `xxxx...xxxx`.
+- **Missing `exc_info=True` on replay failure** (`gateway/core/replay.py`): Stack trace was lost on replay errors.
+- **Type annotation `RequestDeduplicator = None`** (`gateway/core/dedup.py`): Fixed to `RequestDeduplicator | None = None`.
+- **Calendar holiday names not resolved when `exchange_calendars` is installed** (`gateway/core/calendar.py`): `_resolve_holiday_name()` was iterating `cal.regular_holidays` directly, but `HolidayCalendar` is not iterable. Fixed to iterate `cal.regular_holidays.rules`.
+- **Import sort order across all gateway modules** (`gateway/api/`, `gateway/core/`, `gateway/providers/`): 85 import blocks reordered, 14 unused imports removed. Auto-fixed with `ruff --fix`.
 
 - **`uv sync` without extras uninstalls `unusualwhales-python-client`** (`pyproject.toml`, `CLAUDE.md`): The `unusualwhales-python-client`, `empire-core`, and `empire-schemas` packages are declared under `[project.optional-dependencies].local`. Running `uv sync` without `--extra local` silently uninstalls them, causing `uw_sector_tide_sdk_missing` warnings on every poll cycle and potential runtime failures. Updated the `CLAUDE.md` `Commands` section to use `uv sync --extra local --extra dev` and added a callout note explaining why this is required for local development and CI.
 
 ### Added
+
+- **Centralized logger shim** (`gateway/core/logger.py`): All ~80 gateway modules now import from a single shim that delegates to `empire_core.logger`, enabling structured JSON output, daily log rotation, and trace/correlation ID propagation across the entire service.
+- **Dynamic trading calendar via `exchange_calendars`** (`gateway/core/calendar.py`): Holiday and early-close detection now uses the NYSE calendar from `exchange_calendars` (XNYS) instead of hardcoded dicts. The 2024–2026 dicts remain as fallback. Holidays for 2027+ now resolve correctly.
+- **WebSocket dead-client detection** (`gateway/api/websocket.py`): Heartbeat loop now tracks `last_received` timestamp from client messages and disconnects after 90s of silence, catching clients that keep TCP open but stop responding.
+- **Circuit breaker HALF_OPEN single-probe guard** (`gateway/core/circuit_breaker.py`): Added `_half_open_in_progress` flag preventing multiple concurrent probes during HALF_OPEN state.
 
 - **Standard pytest markers registered** (`pyproject.toml`): Added `unit`, `integration`, `e2e`, and `slow` marker definitions to `[tool.pytest.ini_options]` to align with the monorepo standard. Previously only `perf` was declared, causing `-m "unit"` to deselect all 827 tests. Markers are currently reserved; no tests are tagged yet.
 
