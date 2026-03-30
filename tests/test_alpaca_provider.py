@@ -35,9 +35,7 @@ def _option_chain_payload() -> dict[str, Any]:
     return {
         "snapshots": {
             "AAPL250117C00200000": {
-                "volume": 17,
                 "open_interest": 42,
-                "underlyingPrice": 198.45,
                 "latestQuote": {"bp": 1.2, "ap": 1.3},
                 "latestTrade": {"p": 1.25},
                 "greeks": {"delta": 0.51, "gamma": 0.02},
@@ -76,22 +74,6 @@ def _option_quotes_payload_with_string_conditions() -> dict[str, Any]:
     }
 
 
-def _option_trades_payload() -> dict[str, Any]:
-    return {
-        "trades": {
-            "SPY260618C00700000": [
-                {
-                    "t": datetime(2026, 2, 12, 21, 35, tzinfo=UTC).isoformat(),
-                    "p": 12.2,
-                    "s": 3,
-                    "x": "OPRA",
-                    "c": " ",
-                }
-            ]
-        }
-    }
-
-
 @pytest.mark.asyncio
 async def test_get_option_chain_uses_default_limit_when_not_provided() -> None:
     provider = AlpacaProvider()
@@ -103,7 +85,6 @@ async def test_get_option_chain_uses_default_limit_when_not_provided() -> None:
     assert len(contracts) == 1
     assert fake_client.last_path == "/v1beta1/options/snapshots/AAPL"
     assert fake_client.last_params is not None
-    assert fake_client.last_params["feed"] == "opra"
     assert fake_client.last_params["limit"] == 1000
     assert "underlying_symbols" not in fake_client.last_params
 
@@ -154,24 +135,9 @@ async def test_get_option_snapshot_contracts_normalizes_full_snapshot_without_li
 
     assert len(contracts) == 1
     assert fake_client.last_path == "/v1beta1/options/snapshots/AAPL"
-    assert fake_client.last_params == {"feed": "opra"}
+    assert fake_client.last_params == {"feed": "indicative"}
     assert contracts[0].contract_symbol == "AAPL250117C00200000"
     assert contracts[0].underlying == "AAPL"
-
-
-@pytest.mark.asyncio
-async def test_get_option_snapshot_contracts_maps_volume_open_interest_and_underlying_price() -> None:
-    provider = AlpacaProvider()
-    fake_client = _FakeClient(_option_chain_payload())
-    provider._client = cast(Any, fake_client)
-
-    contracts = await provider.get_option_snapshot_contracts("aapl")
-
-    assert len(contracts) == 1
-    contract = contracts[0]
-    assert contract.volume == 17
-    assert contract.open_interest == 42
-    assert float(contract.underlying_price) == pytest.approx(198.45)
 
 
 @pytest.mark.asyncio
@@ -216,7 +182,7 @@ async def test_get_quotes_records_requested_batch_size(monkeypatch: pytest.Monke
     recorded: list[tuple[str, int]] = []
 
     monkeypatch.setattr(
-        "gateway.providers.alpaca.market.record_provider_quote_batch_size",
+        "gateway.providers.alpaca.record_provider_quote_batch_size",
         lambda provider_name, batch_size: recorded.append((provider_name, batch_size)),
     )
 
@@ -229,46 +195,10 @@ async def test_get_quotes_records_requested_batch_size(monkeypatch: pytest.Monke
 @pytest.mark.asyncio
 async def test_get_option_quotes_coerces_string_conditions_to_list() -> None:
     provider = AlpacaProvider()
-    fake_client = _FakeClient(_option_quotes_payload_with_string_conditions())
-    provider._client = cast(Any, fake_client)
+    provider._client = cast(Any, _FakeClient(_option_quotes_payload_with_string_conditions()))
 
     quotes = await provider.get_option_quotes(["SPY260618C00700000"])
 
     assert len(quotes) == 1
-    assert fake_client.last_path == "/v1beta1/options/quotes/latest"
-    assert fake_client.last_params == {"symbols": "SPY260618C00700000", "feed": "opra"}
     assert quotes[0].symbol == "SPY260618C00700000"
     assert quotes[0].conditions == []
-
-
-@pytest.mark.asyncio
-async def test_get_option_trades_uses_opra_feed_by_default() -> None:
-    provider = AlpacaProvider()
-    fake_client = _FakeClient(_option_trades_payload())
-    provider._client = cast(Any, fake_client)
-
-    trades = await provider.get_option_trades(["SPY260618C00700000"])
-
-    assert len(trades) == 1
-    assert fake_client.last_path == "/v1beta1/options/trades"
-    assert fake_client.last_params == {"symbols": "SPY260618C00700000", "feed": "opra", "limit": 1000}
-
-
-@pytest.mark.asyncio
-async def test_initialize_allows_explicit_option_feed_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APCA_API_KEY_ID", "dummy-id")  # pragma: allowlist secret
-    monkeypatch.setenv("APCA_API_SECRET_KEY", "dummy-passphrase")  # pragma: allowlist secret
-
-    provider = AlpacaProvider()
-
-    await provider.initialize(
-        {
-            "api_key_env": "APCA_API_KEY_ID",  # pragma: allowlist secret
-            "secret_key_env": "APCA_API_SECRET_KEY",  # pragma: allowlist secret
-            "options_feed": "indicative",
-        }
-    )
-
-    assert provider._options_feed == "indicative"
-
-    await provider.shutdown()

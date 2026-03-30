@@ -168,13 +168,6 @@ class ConnectionManager:
                             conn = self._connections.get(conn_id)
                             if conn and conn.authenticated:
                                 targets.append(conn)
-                    else:
-                        # Fallback: cid may be a connection_id (UUID) from the
-                        # stream multiplexer, which tracks subscriptions by
-                        # connection_id rather than application-level client_id.
-                        conn = self._connections.get(cid)
-                        if conn and conn.authenticated:
-                            targets.append(conn)
         else:
             # Broadcast to all authenticated
             targets = [c for c in self._connections.values() if c.authenticated]

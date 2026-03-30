@@ -386,7 +386,6 @@ class OptionCaptureService:
         call_open_interest: list[float] = []
         put_open_interest: list[float] = []
         atm_candidates: list[tuple[float, float]] = []
-        underlying_price: float | None = None
 
         for contract in sorted(contracts, key=lambda item: self._contract_symbol(item)):
             serialized = self._serialize_contract(contract)
@@ -399,9 +398,6 @@ class OptionCaptureService:
             ts_value = _parse_timestamp(serialized.get("timestamp"))
             if ts_value is not None:
                 timestamps.append(ts_value.astimezone(UTC))
-
-            if underlying_price is None:
-                underlying_price = _to_float(serialized.get("underlying_price"))
 
             option_type = str(serialized.get("option_type", "")).lower()
             volume = _to_float(serialized.get("volume")) or 0.0
@@ -425,7 +421,6 @@ class OptionCaptureService:
         return {
             "timestamp": snapshot_ts,
             "underlying": symbol,
-            "underlying_price": underlying_price,
             "expiry": nearest_expiry,
             "chain_json": {"data": {"contracts": serialized_contracts}},
             "total_call_volume": float(sum(call_volumes)),

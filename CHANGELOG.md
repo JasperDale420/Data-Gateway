@@ -2,73 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
-
-### Fixed
-
-- **WebSocket bar relay completely broken — zero bars delivered to downstream clients** (`gateway/core/connections.py`): `ConnectionManager.broadcast()` looked up client IDs in `_client_map` (keyed by application-level client IDs like `"3roses"`), but the stream multiplexer's `SubscriptionManager` stores and passes **connection UUIDs**. Every lookup returned `None`, so `targets` was always empty and zero bars were ever sent. Added fallback: when a provided ID is not found in `_client_map`, check `_connections` directly (which is keyed by connection UUID). Confirmed fix with live market test — SPY and AAPL bars now flow correctly.
-
-
-- **`_safe_int` undefined in four UW provider modules** (`gateway/providers/uw/earnings.py`, `market.py`, `flow.py`, `institutional.py`): All four modules called `_safe_int()` but only imported `ERR_NOT_INITIALIZED` and `_or_unset` from `._base`. At runtime this would raise `NameError: name '_safe_int' is not defined` for any endpoint that processes volume, open interest, short interest, or OI data. Added `_safe_int` to the import in each affected file.
-
-- **Unused import `ERR_PROVIDER_NOT_INITIALIZED`** (`gateway/providers/alpaca/trading.py`): `ERR_PROVIDER_NOT_INITIALIZED` was imported but never referenced in the module. Removed it to keep the import clean.
-
-- **Incomplete historical data from crypto, options, and forex endpoints** (`gateway/providers/alpaca/crypto.py`, `options.py`, `forex.py`): Five historical data methods were making a single API request and silently truncating results at the `limit` parameter instead of paginating through all available data. Added `next_page_token` pagination loops (matching the pattern already used by stock bars/trades/quotes) to: `get_crypto_bars()`, `get_crypto_trades()`, `get_option_bars()`, `get_option_trades()`, and `get_forex_rates_historical()`. Also normalized per-request limits to `max(1, min(limit, 10000))` for consistency.
-
-- **Option chain and snapshots missing pagination** (`gateway/providers/alpaca/options.py`): `get_option_chain()` and `get_option_snapshots()` made single requests, silently truncating chains at 1000 contracts. AAPL can have 5000+ contracts. Added `next_page_token` pagination loops to both methods.
-
-- **News endpoint missing pagination** (`gateway/providers/alpaca/news.py`): `get_news()` made a single request capped at 50 articles. Added pagination loop with caller-specified `limit` as the total cap.
-
-- **`do_not_exercise_option` hitting wrong API URL** (`gateway/providers/alpaca/trading.py`, `_base.py`): The do-not-exercise REST call was using `self._base_url` (`data.alpaca.markets`, the data API) instead of the trading API (`api.alpaca.markets`). Added `_trading_base_url` field to `AlpacaBaseMixin` and fixed the method to use it. Also fixed the guard clause to check `_trading_client` instead of `_client`.
-
-- **Missing `@http_retry` on paginated methods** (`gateway/providers/alpaca/crypto.py`, `options.py`): `get_historical_crypto_quotes()` and `get_historical_option_quotes()` were missing the `@http_retry` decorator, meaning transient failures mid-pagination were not retried.
-
-- **Pagination `limit` parameter ignored as total cap** (`gateway/providers/alpaca/market.py`, `crypto.py`, `options.py`, `forex.py`): All paginated methods used the caller's `limit` as the per-page size only — the pagination loop continued fetching ALL data regardless. For example, `limit=100` would still fetch all 10,000+ bars across multiple pages. Added total-result capping to all 8 paginated methods: `get_bars()`, `get_trades()`, `get_historical_quotes()`, `get_crypto_bars()`, `get_crypto_trades()`, `get_historical_crypto_quotes()`, `get_option_bars()`, `get_option_trades()`, `get_historical_option_quotes()`, and `get_forex_rates_historical()`. The loop now breaks when `len(results) >= limit` and trims to exact limit.
-
-- **Streaming bars missing `timeframe` field** (`gateway/core/stream.py`): Alpaca WebSocket bar messages don't include a `timeframe` field. The streaming handler passed raw messages to `fast_wrap_streaming_event` without injecting it, so Heber wrote all streaming bars with `timeframe=null` — making it impossible to distinguish 1Min bars from other timeframes in Silver. Added `timeframe="1Min"` injection for streaming bars.
-
-- **UW `bool()` treats string `"false"` as True** (`gateway/providers/uw/_base.py`): Seven boolean fields (`is_sweep`, `is_unusual`, `all_opening_trades`, `has_floor`, `has_multileg`, `has_singleleg`, `canceled`) used Python's `bool()` which treats any non-empty string as True. If the UW API returns `"false"` (string), trades would be incorrectly marked as sweeps, canceled, etc. Added `_safe_bool()` helper that parses string boolean representations correctly.
-
-- **OPRA options streaming `ts_event` broken by msgpack.Timestamp** (`gateway/core/envelope.py`): `fast_wrap_streaming_event` failed to convert `msgpack.Timestamp` objects from the OPRA options stream to ISO strings. The fallback `str(ts_event)` produced `"Timestamp(seconds=..., nanoseconds=0)"` which caused Heber's Pydantic validation to fail, sending all OPRA events to the DLQ. Added explicit handling for `msgpack.Timestamp` (via `to_datetime().isoformat()`) and epoch integers.
-
-- **Trading API defaults to LIVE instead of paper** (`gateway/providers/alpaca/_base.py`): `TRADING_BASE_URL` was set to `https://api.alpaca.markets` (live trading), while `config.py` defaults to `https://paper-api.alpaca.markets`. When `APCA_API_BASE_URL` env var is unset, the provider would connect to the live trading API instead of paper, violating the "paper/noop mode must be the default" safety rule. Changed the constant to default to paper.
-
-- **AlphaVantage `adjusted` close price ignored for daily/weekly bars** (`gateway/providers/alphavantage.py`): When `adjusted=True`, `get_daily` and `get_weekly` used field `"4. close"` (raw close) instead of `"5. adjusted close"` (dividend-adjusted). The `adjusted` parameter was effectively non-functional for close prices on these timeframes. Monthly was already correct. Fixed daily and weekly to use `"5. adjusted close"` when adjusted data is available.
-
-- **NaN/Inf prices bypass data validator** (`gateway/core/validator.py`): The `_to_float` method converted `"NaN"` to `float('nan')`, which silently passed all price validation checks because NaN comparisons always return False in IEEE 754 (e.g., `nan <= 0` is False). Bars with NaN/Inf prices flowed through to Heber as corrupt data. Added `math.isnan`/`math.isinf` rejection in `_to_float` and explicit non-finite detection before price validation.
-
-- **Treasury yield poller `maturity` parameter silently ignored** (`gateway/providers/alphavantage.py`, `gateway/core/treasury_poller.py`): The `get_economic_indicator` method didn't accept a `maturity` parameter, but the treasury poller passed `maturity=maturity` as a kwarg. This caused a `TypeError` caught by the generic exception handler, silently skipping ALL maturities. All treasury yield polls produced zero data. Added `maturity` parameter to `get_economic_indicator` with proper passthrough to the Alpha Vantage API.
-
-- **Bulk bars `format=parquet` silently returns JSON** (`gateway/core/bulk.py`, `gateway/api/bulk.py`): The bulk bars endpoint accepted `format=parquet` as valid, but no parquet serialization code exists. Users requesting parquet silently received JSONL data. Removed `parquet` from accepted formats until implementation exists.
-
-- **UW provider `int()` crash on float strings** (`gateway/providers/uw/*.py`, `_base.py`): The UW API returns numeric fields as float strings (e.g., `'12345.67'` for volume), but 47 callsites across the UW provider used bare `int(get(...))` which crashes with `ValueError` on float strings. Added `_safe_int()` helper that uses `int(float())` to handle both integer and float string formats, and applied it across all UW provider files (options, flow, market, institutional, earnings, _base).
-
-- **WebSocket symbol validation rejects crypto/options** (`gateway/core/security.py`): `validate_symbols_array()` defaulted to stock validation (`^[A-Z]{1,5}$`) when called without `symbol_type`, rejecting valid crypto pairs (`BTC/USD`) and option contracts (`AAPL250117C00200000`). This blocked WebSocket clients from subscribing to crypto and options feeds. Fixed to accept any known symbol format when no type is specified.
-
-- **AlphaVantage `max_points` parameter ignored** (`gateway/providers/alphavantage.py`): Three methods (`get_crypto_daily`, `get_forex_daily`, `get_indicator`) accepted `max_points` as a parameter but hardcoded `limit=100` internally, silently ignoring the caller's request. Fixed to use `max_points`.
-
-- **Rate limiter phantom request inflation** (`gateway/core/rate_limiter.py`): `ProviderRateLimiter.try_acquire()` recorded timestamps in the per-second bucket before checking per-minute/per-day limits. When per-minute rejected the request, the per-second bucket was already inflated with a phantom entry. Over time this caused premature throttling. Refactored to two-phase check-then-record: all buckets are checked for capacity first, then all are recorded atomically.
-
-- **Inconsistent `model_dump()` serialization across API endpoints** (`gateway/api/alpaca/crypto.py`, `options.py`, `news.py`, `screener.py`, `corporate.py`, `market.py`): Stock endpoints used `model_dump(mode="json")` producing JSON-safe types (strings for Decimal/datetime), while crypto, options, news, screener, corporate, and market endpoints used bare `model_dump()` producing Python-native types. Standardized all API response serialization to use `mode="json"`.
-
-- **DataSinkRegistry backpressure test timeout** (`gateway/core/data_sink.py`, `tests/perf/test_perf_stream_sink.py`): The 2-second `slot_wait_timeout` introduced in the UW burst fix caused three perf tests to time out (>30s) or produce incorrect peak-task assertions when tested with a permanently-blocking sink. Added a `slot_wait_timeout` parameter to `DataSinkRegistry.__init__` (default `2.0s` preserves production burst-tolerance) and updated the three perf tests that exercise blocked/slow sinks to use `slot_wait_timeout=0.0` (immediate drop), matching their original intended behavior. All 819 unit tests now pass.
-
-- **Dev environment bootstrap** (`pyproject.toml`): `unusualwhales-python-client` (a local path package) was missing from `uv.sources` and `[project.optional-dependencies] local`, causing `ModuleNotFoundError: No module named 'unusualwhales'` on fresh `uv sync`. Package added to the `local` extras group alongside `empire-schemas` so `uv sync --all-extras` installs it correctly.
-- **Import sort in `gateway/main.py`**: Sorted stdlib/third-party/local import blocks to satisfy ruff `I001`.
-
 ### Changed
 
-- **Option chain snapshot payload contract** (`gateway/core/option_capture.py`, `gateway/schemas/__init__.py`): Added optional `underlying_price` to normalized option contracts and publish it at the top level of `option_chain_snapshot` envelopes so downstream storage and replay do not need to infer spot from per-contract prices.
 - **Option capture quality telemetry** (`gateway/core/option_capture.py`, `gateway/core/metrics.py`, `gateway/api/admin.py`): Added per-symbol snapshot quality stats for contract count, Greeks coverage, IV coverage, non-zero open-interest coverage, bid/ask coverage, snapshot age, and websocket add/remove counts. These now show up in the option capture runtime snapshot for admin status and in Prometheus metrics.
 - **OPRA-first option streaming** (`gateway/config.py`, `gateway/core/stream.py`, `gateway/main.py`, `docker-compose.yml`): Added `stream_options_feed` / `GATEWAY_STREAM_OPTIONS_FEED` with `opra` as the default, and pass the configured options feed into the Alpaca multiplexer at startup.
 - **Budgeted option websocket universe** (`gateway/config.py`, `gateway/core/option_capture.py`): Added `option_capture_ws_contract_limit_per_symbol` with a default budget of 40 contracts per underlying. Full chain snapshots still land in Heber, while websocket `quotes`/`trades` subscriptions are capped to the nearest-expiry, near-ATM, tighter-spread, more-liquid contracts per symbol.
 
 ### Fixed
 
-- **UW OI change parsing crash** (`gateway/providers/uw/options.py`): The UW API returns OI change values as float strings (e.g., `'0.73297002724795640327'`), which caused `int()` to raise `ValueError: invalid literal for int() with base 10`. Replaced bare `int()` casts with `int(float(...))` for all numeric fields in `get_oi_change()` — `call_oi`, `put_oi`, `call_oi_change`, `put_oi_change`, `prev_oi`, `volume`, and `trades`. This was causing 100% failure on the EOD OI change poller (29/29 tickers every cycle).
-
-- **OPRA option REST alignment** (`gateway/providers/alpaca.py`, `tests/test_alpaca_provider.py`): Option chain snapshots, option quotes, option trades, and option snapshot REST calls now use the configured options feed instead of being hardcoded to `indicative`. The provider defaults to `opra`, honors explicit overrides, and now coerces string trade conditions into the normalized list form required by `NormalizedTrade`.
-- **Alpaca option snapshot normalization** (`gateway/providers/alpaca.py`, `tests/test_alpaca_provider.py`): Fixed `volume` being populated from `open_interest`, added fallback parsing for snapshot `volume`, `openInterest`, and `underlyingPrice`, and stopped dropping zero-valued Greeks or IV when Alpaca returns `0.0`.
 - **Invalid option websocket bars subscriptions** (`gateway/core/option_capture.py`, `gateway/core/stream.py`): The option capture service no longer subscribes to option `bars`, and the upstream options connection now strips any accidental option `bars` subscriptions before sending to Alpaca. Alpaca option websockets support `quotes` and `trades`, not `bars`.
 - **Stream Timestamp serialization crash** (`gateway/core/stream.py`): All WebSocket streaming messages (800K+/day) failed with `Type is not JSON serializable: Timestamp` because `orjson.dumps` could not serialize `msgpack.Timestamp` objects from the OPRA options stream. Added `_orjson_default` fallback handler that converts `pandas.Timestamp` (`.isoformat()`) and `msgpack.Timestamp` (`.to_datetime().isoformat()`) to ISO 8601 strings.
 

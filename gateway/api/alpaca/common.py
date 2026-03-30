@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, TypeVar
 
 # Query description constants
 import structlog
@@ -29,6 +29,7 @@ DESC_COMMA_SYMBOLS = "Comma-separated symbols"
 
 # Error message constants
 ERR_PROVIDER_NOT_AVAILABLE = "Alpaca provider not available"
+T = TypeVar("T")
 CacheBackend = InMemoryCache | HybridCache
 _ALPACA_CACHE_INFLIGHT: dict[str, asyncio.Task[Any]] = {}
 _ALPACA_CACHE_LOCK = asyncio.Lock()
@@ -62,7 +63,7 @@ import httpx
 from alpaca.common.exceptions import APIError
 
 
-async def execute_alpaca_provider_call[T](
+async def execute_alpaca_provider_call(
     *,
     registry: ProviderRegistry,
     provider_call: Callable[[Any], Awaitable[T]],
@@ -97,7 +98,7 @@ async def execute_alpaca_provider_call[T](
         raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
-async def execute_alpaca_cached_call[T](
+async def execute_alpaca_cached_call(
     *,
     registry: ProviderRegistry,
     cache: CacheBackend,

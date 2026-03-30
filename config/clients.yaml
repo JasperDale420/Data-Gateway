@@ -47,17 +47,6 @@ clients:
       rate_limit: 600
     enabled: true
 
-  # ORBIT options-flow trading system
-  - id: orbit
-    key: gw_orbit_trading_key_77742
-    role: trader
-    permissions:
-      providers: ["alpaca", "uw", "yfinance", "finnhub"]
-      feeds: ["bars", "quotes", "trades", "flow", "options", "flow_alerts"]
-      max_symbols: 100
-      rate_limit: 600
-    enabled: true
-
   # Development/testing client
   - id: test
     key: gw_test_dev_key_67890

@@ -26,7 +26,7 @@ dependencies = [
     "alpaca-py>=0.34",
     "msgpack>=1.0",
     "orjson>=3.9",
-    "aiofiles>=25.1.0",
+    # unusualwhales SDK is installed separately in Docker via copied local package
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -39,7 +39,6 @@ local = [
     # or Docker builds will fail silently.
     "empire-core",
     "empire-schemas",
-    "unusualwhales-python-client",
 ]
 dev = [
     "pytest>=8.0",
@@ -63,7 +62,6 @@ skips = ["B101", "B104", "B110", "B311", "B324"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
 
 [tool.ruff]
 extend = "../ruff-base.toml"
@@ -102,12 +100,12 @@ plugins = ["pydantic.mypy"]
 # Provider routers access methods not in base DataProvider class
 # These are implemented in concrete providers
 [[tool.mypy.overrides]]
-module = ["gateway.api", "gateway.api.__init__", "gateway.api.alpaca", "gateway.api.alpaca.*", "gateway.api.alphavantage", "gateway.api.alphavantage.*", "gateway.api.finnhub", "gateway.api.finnhub.*", "gateway.api.uw", "gateway.api.uw.*", "gateway.api.admin", "gateway.api.yf", "gateway.api.sec", "gateway.api.market"]
+module = ["gateway.api", "gateway.api.__init__", "gateway.api.alpaca", "gateway.api.alpaca.*", "gateway.api.alphavantage", "gateway.api.alphavantage.*", "gateway.api.finnhub", "gateway.api.finnhub.*", "gateway.api.uw", "gateway.api.uw.*", "gateway.api.admin", "gateway.api.yf", "gateway.api.sec"]
 disable_error_code = ["attr-defined", "call-arg", "arg-type"]
 
 # Core modules with pre-existing type issues
 [[tool.mypy.overrides]]
-module = ["gateway.core.labels", "gateway.core.symbology", "gateway.core.ring_buffer", "gateway.core.quality", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream", "gateway.core.quotes_poller", "gateway.core.uw_poller"]
+module = ["gateway.core.labels", "gateway.core.symbology", "gateway.core.ring_buffer", "gateway.core.quality", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream"]
 disable_error_code = ["assignment", "union-attr", "var-annotated", "index", "operator", "return-value", "arg-type", "attr-defined", "call-overload", "dict-item"]
 
 # Provider modules with complex dynamic typing
@@ -117,18 +115,13 @@ disable_error_code = ["list-item", "return-value", "assignment", "union-attr", "
 
 # Provider modules with SDK type stub mismatches
 [[tool.mypy.overrides]]
-module = ["gateway.providers.uw", "gateway.providers.uw.*", "gateway.providers.alpaca", "gateway.providers.alpaca.*"]
+module = ["gateway.providers.uw", "gateway.providers.alpaca"]
 disable_error_code = ["call-arg", "attr-defined", "arg-type", "misc"]
-
-# Middleware and app entry point with ASGI/Starlette typing patterns
-[[tool.mypy.overrides]]
-module = ["gateway.api.middleware", "gateway.main"]
-disable_error_code = ["assignment", "union-attr", "var-annotated", "has-type", "arg-type"]
 
 # Tests - don't need strict typing
 [[tool.mypy.overrides]]
 module = ["tests.*"]
-disable_error_code = ["var-annotated", "arg-type", "assignment", "override", "union-attr", "index", "misc", "return-value", "attr-defined", "call-overload", "unused-ignore"]
+disable_error_code = ["var-annotated"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -157,4 +150,3 @@ exclude_lines = [
 [tool.uv.sources]
 empire-core = { path = "../empire-core", editable = true }
 empire-schemas = { path = "../empire-schemas", editable = true }
-unusualwhales-python-client = { path = "../unusualwhales_python_client-5.1" }

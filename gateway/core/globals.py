@@ -61,8 +61,8 @@ def get_multiplexer() -> StreamMultiplexer:
 _sink_registry: DataSinkRegistry | None = None
 
 
-def set_sink_registry(registry: DataSinkRegistry | None) -> None:
-    """Set the global data sink registry (called during startup or to clear on teardown)."""
+def set_sink_registry(registry: DataSinkRegistry) -> None:
+    """Set the global data sink registry (called during startup)."""
     global _sink_registry
     _sink_registry = registry
 

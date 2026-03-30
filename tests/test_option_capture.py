@@ -29,7 +29,6 @@ class _FakeContract:
     iv: float | None
     timestamp: datetime
     provider: str = "alpaca"
-    underlying_price: float | None = None
 
     def model_dump(self, mode: str = "json") -> dict[str, Any]:
         return {
@@ -43,7 +42,6 @@ class _FakeContract:
             "last": self.last,
             "volume": self.volume,
             "open_interest": self.open_interest,
-            "underlying_price": self.underlying_price,
             "delta": self.delta,
             "gamma": self.gamma,
             "theta": self.theta,
@@ -154,7 +152,6 @@ def _contract(
         last=2.05,
         volume=1000,
         open_interest=2500,
-        underlying_price=500.25,
         delta=0.51 if option_type == "call" else -0.49,
         gamma=0.09,
         theta=-0.02,
@@ -263,7 +260,6 @@ async def test_run_cycle_publishes_one_snapshot_envelope_per_symbol() -> None:
     assert spy_envelope["payload"]["total_call_oi"] == pytest.approx(2500.0)
     assert spy_envelope["payload"]["total_put_oi"] == pytest.approx(2500.0)
     assert spy_envelope["payload"]["atm_iv"] == pytest.approx(0.24)
-    assert spy_envelope["payload"]["underlying_price"] == pytest.approx(500.25)
     assert spy_envelope["payload"]["chain_json"]["data"]["contracts"][0]["contract_symbol"] == "SPY260310C00500000"
 
     assert len(multiplexer.subscribe_calls) == 1
