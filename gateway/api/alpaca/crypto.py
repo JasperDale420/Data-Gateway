@@ -2,7 +2,6 @@
 
 from datetime import datetime
 
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alpaca.common import (
@@ -21,7 +20,8 @@ from gateway.core.security import InputValidator
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
-logger = structlog.get_logger(__name__)
+from gateway.core.logger import logger
+
 _INPUT_VALIDATOR = InputValidator()
 
 
@@ -79,7 +79,7 @@ async def get_crypto_bars(
         "data": {
             "pair": normalized_pair,
             "timeframe": timeframe,
-            "bars": [bar.model_dump() for bar in bars],
+            "bars": [bar.model_dump(mode="json") for bar in bars],
         },
         "meta": {"count": len(bars), "provider": "alpaca"},
     }
@@ -110,7 +110,7 @@ async def get_crypto_trades(
         "success": True,
         "data": {
             "pair": normalized_pair,
-            "trades": [trade.model_dump() for trade in trades],
+            "trades": [trade.model_dump(mode="json") for trade in trades],
         },
         "meta": {"count": len(trades), "provider": "alpaca"},
     }
@@ -160,7 +160,7 @@ async def get_historical_crypto_quotes(
         "success": True,
         "data": {
             "pair": normalized_pair,
-            "quotes": [quote.model_dump() for quote in quotes],
+            "quotes": [quote.model_dump(mode="json") for quote in quotes],
         },
         "meta": {"count": len(quotes), "provider": "alpaca"},
     }
@@ -200,7 +200,7 @@ async def get_crypto_orderbook(
 
     # Handle both dict and NormalizedOrderbook
     if hasattr(data, "model_dump"):
-        data_dict = data.model_dump()
+        data_dict = data.model_dump(mode="json")
     else:
         data_dict = data
 

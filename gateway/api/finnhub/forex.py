@@ -1,6 +1,5 @@
 """Finnhub forex endpoints."""
 
-import structlog
 from fastapi import APIRouter, Depends, Query
 
 from gateway.api.finnhub.common import (
@@ -16,8 +15,6 @@ from gateway.api.finnhub.common import (
 )
 from gateway.core.metrics import record_route_cache
 from gateway.schemas import SuccessResponse
-
-logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 

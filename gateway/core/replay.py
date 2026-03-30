@@ -11,16 +11,12 @@ import tempfile
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
-import structlog
-
 from gateway.config import get_settings
-
-logger = structlog.get_logger()
-
+from gateway.core.logger import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Replay Session State
@@ -425,6 +421,7 @@ class ReplaySessionManager:
                 "replay_failed",
                 session_id=session.session_id,
                 error=str(e),
+                exc_info=True,
             )
 
     def _iter_loaded_messages(
@@ -571,10 +568,7 @@ class ReplaySessionManager:
                     )
 
             # Advance by 1 minute
-            current = current.replace(
-                minute=current.minute + 1 if current.minute < 59 else 0,
-                hour=current.hour + 1 if current.minute >= 59 else current.hour,
-            )
+            current = current + timedelta(minutes=1)
 
             # Limit mock data
             if len(messages) >= 100:

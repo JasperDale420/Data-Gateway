@@ -4,13 +4,11 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-import structlog
 
 from gateway.core.http_client import http_retry
+from gateway.core.logger import logger
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED
 from gateway.schemas import NormalizedBar
-
-logger = structlog.get_logger()
 
 
 class AlpacaForexMixin:
@@ -57,7 +55,7 @@ class AlpacaForexMixin:
         end: datetime | None = None,
         limit: int = 1000,
     ) -> dict[str, list[NormalizedBar]]:
-        """Fetch historical forex rates from Alpaca."""
+        """Fetch historical forex rates from Alpaca with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
@@ -67,7 +65,7 @@ class AlpacaForexMixin:
         params: dict[str, Any] = {
             "currency_pairs": ",".join(pairs),
             "timeframe": alpaca_timeframe,
-            "limit": limit,
+            "limit": max(1, min(limit, 10000)),
         }
         if start:
             params["start"] = start.isoformat()
@@ -75,12 +73,21 @@ class AlpacaForexMixin:
             params["end"] = end.isoformat()
 
         try:
-            response = await self._client.get("/v1beta1/forex/bars", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v1beta1/forex/bars", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for pair, bars in data.get("bars", {}).items():
-                results[pair] = [self._normalize_bar(pair, bar, timeframe=alpaca_timeframe) for bar in bars]
+                for pair, bars in data.get("bars", {}).items():
+                    if pair not in results:
+                        results[pair] = []
+                    results[pair].extend(self._normalize_bar(pair, bar, timeframe=alpaca_timeframe) for bar in bars)
+
+                next_token = data.get("next_page_token")
+                total_bars = sum(len(b) for b in results.values())
+                if not next_token or total_bars >= limit:
+                    break
+                params["page_token"] = next_token
 
             logger.info(
                 "alpaca_forex_historical_fetched",

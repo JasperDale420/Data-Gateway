@@ -2,7 +2,6 @@
 
 from typing import Any
 
-import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from gateway.api.deps import require_api_key
@@ -11,8 +10,6 @@ from gateway.core.backfill import (
     BackfillStatus,
     get_backfill_engine,
 )
-
-logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/backfill", tags=["backfill"])
 

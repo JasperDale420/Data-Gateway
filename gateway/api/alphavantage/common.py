@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
-import structlog
 from fastapi import Depends, HTTPException
 
 from gateway.api.deps import (
@@ -17,13 +16,12 @@ from gateway.api.deps import (
 )
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
+from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_alphavantage_payload_bytes,
     record_alphavantage_route_cache,
 )
 from gateway.core.registry import ProviderRegistry
-
-logger = structlog.get_logger()
 
 PROVIDER_NOT_AVAILABLE = "Alpha Vantage provider not available"
 CACHE_TTL_QUOTE = 60  # 1 minute for quotes

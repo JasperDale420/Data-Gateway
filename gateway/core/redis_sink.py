@@ -13,12 +13,10 @@ from collections import deque
 from typing import Any
 
 import orjson
-import structlog
 
 from gateway.core.data_sink import DataSink
+from gateway.core.logger import logger
 from gateway.core.metrics import record_sink_publish
-
-logger = structlog.get_logger()
 
 DEFAULT_OPERATION_TIMEOUT_SECONDS = 5.0
 DEFAULT_POOL_SIZE = 64
@@ -232,6 +230,20 @@ class RedisStreamsSink(DataSink):
                 total_evicted=self._buffer_stats["evicted"],
             )
 
+    def buffer_event(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
+        """Buffer an event from the registry when circuit breaker is OPEN.
+
+        Serializes the data and delegates to _buffer_failed_event so it
+        participates in the same drain logic on reconnect.
+        """
+        if isinstance(data, str):
+            payload = data.encode()
+        elif isinstance(data, bytes):
+            payload = data
+        else:
+            payload = orjson.dumps(data, default=str)
+        self._buffer_failed_event(topic, payload)
+
     async def _drain_buffer(self) -> None:
         """Drain buffered failed events after a successful reconnect.
 
@@ -242,9 +254,8 @@ class RedisStreamsSink(DataSink):
         if not self._failed_buffer:
             return
 
-        if not self._drain_lock.locked():
-            async with self._drain_lock:
-                await self._do_drain()
+        async with self._drain_lock:
+            await self._do_drain()
 
     async def _do_drain(self) -> None:
         """Execute the actual drain.  Separated for lock clarity."""
@@ -541,6 +552,7 @@ class RedisStreamsSink(DataSink):
 
     async def health_check(self) -> bool:
         """Check Redis connection health."""
+        client = None
         try:
             await self._ensure_connected()
             client = self._redis

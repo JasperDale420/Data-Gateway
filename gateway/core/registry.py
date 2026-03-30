@@ -5,12 +5,10 @@ import importlib
 from pathlib import Path
 from typing import Any
 
-import structlog
 import yaml
 
+from gateway.core.logger import logger
 from gateway.core.provider import DataProvider, HealthStatus
-
-logger = structlog.get_logger()
 
 
 class ProviderRegistry:

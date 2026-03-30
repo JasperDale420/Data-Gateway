@@ -1,8 +1,8 @@
 """UW Flow mixin — flow alerts, darkpool, tide, greek flow, tape, net flow."""
 
+from datetime import datetime
 from typing import Any
-
-import structlog
+from zoneinfo import ZoneInfo
 
 from gateway.schemas import (
     NormalizedDarkpoolTrade,
@@ -12,7 +12,9 @@ from gateway.schemas import (
 
 from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
 
-logger = structlog.get_logger()
+_ET = ZoneInfo("America/New_York")
+
+from gateway.core.logger import logger
 
 
 class UWFlowMixin:
@@ -413,9 +415,9 @@ class UWFlowMixin:
         try:
             from unusualwhales.api import stock
 
-            # Default date to today if not provided
+            # Default date to today (ET) if not provided
             if not date_str:
-                date_str = datetime.now().strftime("%Y-%m-%d")
+                date_str = datetime.now(_ET).strftime("%Y-%m-%d")
 
             response = await self._call_sync(
                 stock.get_stock_volume_price_levels.sync,
@@ -457,13 +459,11 @@ class UWFlowMixin:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
-            from datetime import datetime
-
             from unusualwhales.api import stock
 
-            # Default to today if not provided
+            # Default to today (ET) if not provided
             if not date_str:
-                date_str = datetime.now().strftime("%Y-%m-%d")
+                date_str = datetime.now(_ET).strftime("%Y-%m-%d")
 
             response = await self._call_sync(
                 stock.get_flow_per_strike_intraday.sync,
@@ -503,13 +503,11 @@ class UWFlowMixin:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
-            from datetime import datetime
-
             from unusualwhales.api import stock
 
-            # Default to today if not provided
+            # Default to today (ET) if not provided
             if not date_str:
-                date_str = datetime.now().strftime("%Y-%m-%d")
+                date_str = datetime.now(_ET).strftime("%Y-%m-%d")
 
             response = await self._call_sync(
                 stock.get_oi_per_expiry.sync,
@@ -611,10 +609,70 @@ class UWFlowMixin:
             logger.error("uw_net_flow_expiry_failed", error=str(e))
             raise
 
+    def _parse_sector_tide_items(self, items: list[Any], sector: str) -> list[dict]:
+        """Parse raw sector tide data items into normalized dicts."""
+        tides = []
+        for item in items:
+            get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+
+            net_call = float(get("net_call_premium") or 0)
+            net_put = float(get("net_put_premium") or 0)
+
+            if net_call > abs(net_put):
+                sentiment = "bullish"
+            elif abs(net_put) > net_call:
+                sentiment = "bearish"
+            else:
+                sentiment = "neutral"
+
+            tides.append(
+                {
+                    "tide_type": "sector",
+                    "sector": sector,
+                    "date": get("date"),
+                    "timestamp": get("timestamp"),
+                    "net_call_premium": net_call,
+                    "net_put_premium": net_put,
+                    "net_volume": _safe_int(get("net_volume")) if get("net_volume") else None,
+                    "sentiment": sentiment,
+                }
+            )
+        return tides
+
+    async def _get_sector_tide_raw(self, sector: str, date_str: str | None = None) -> list[dict]:
+        """Fetch sector tide via raw HTTP when SDK version lacks get_sector_tide."""
+        if not self._client:
+            return []
+
+        try:
+            http_client = self._client.get_httpx_client()
+            params: dict[str, str] = {}
+            if date_str:
+                params["date"] = date_str
+
+            response = await self._call_sync(
+                http_client.get,
+                f"/api/market/{sector}/sector-tide",
+                params=params,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as e:
+            logger.error("uw_sector_tide_raw_failed", sector=sector, error=str(e))
+            raise
+
+        data_items = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(data_items, list):
+            data_items = [data_items] if isinstance(data_items, dict) else []
+
+        return self._parse_sector_tide_items(data_items, sector)
+
     async def get_sector_tide(self, sector: str, date_str: str | None = None) -> list[dict]:
         """Get market tide for a specific sector.
 
         Returns data in same format as market/tide (Daily Market Tide schema).
+        Falls back to raw HTTP if the installed SDK version lacks get_sector_tide
+        (requires unusualwhales-python-client >= 5.1).
         """
         if not self._client:
             raise RuntimeError(ERR_NOT_INITIALIZED)
@@ -622,38 +680,19 @@ class UWFlowMixin:
         try:
             from unusualwhales.api import market
 
+            if not hasattr(market, "get_sector_tide"):
+                logger.warning(
+                    "uw_sector_tide_sdk_missing",
+                    detail="unusualwhales-python-client < 5.1 — falling back to raw HTTP",
+                )
+                return await self._get_sector_tide_raw(sector, date_str)
+
             kwargs = {"sector": sector}
             if date_str:
                 kwargs["date"] = date_str
             response = await self._call_sync(market.get_sector_tide.sync, client=self._client, **kwargs)
 
-            tides = []
-            for item in self._extract_data(response):
-                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
-
-                net_call = float(get("net_call_premium") or 0)
-                net_put = float(get("net_put_premium") or 0)
-
-                # Compute sentiment
-                if net_call > abs(net_put):
-                    sentiment = "bullish"
-                elif abs(net_put) > net_call:
-                    sentiment = "bearish"
-                else:
-                    sentiment = "neutral"
-
-                tides.append(
-                    {
-                        "tide_type": "sector",
-                        "sector": sector,
-                        "date": get("date"),
-                        "timestamp": get("timestamp"),
-                        "net_call_premium": net_call,
-                        "net_put_premium": net_put,
-                        "net_volume": _safe_int(get("net_volume")) if get("net_volume") else None,
-                        "sentiment": sentiment,
-                    }
-                )
+            tides = self._parse_sector_tide_items(list(self._extract_data(response)), sector)
 
             logger.info("uw_sector_tide_fetched", sector=sector, count=len(tides))
             return tides
@@ -705,10 +744,69 @@ class UWFlowMixin:
             logger.error("uw_top_net_impact_failed", error=str(e))
             raise
 
+    def _parse_etf_tide_items(self, items: list[Any], symbol: str) -> list[dict]:
+        """Parse raw ETF tide data items into normalized dicts."""
+        tides = []
+        for item in items:
+            get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+
+            net_call = float(get("net_call_premium") or 0)
+            net_put = float(get("net_put_premium") or 0)
+
+            if net_call > abs(net_put):
+                sentiment = "bullish"
+            elif abs(net_put) > net_call:
+                sentiment = "bearish"
+            else:
+                sentiment = "neutral"
+
+            tides.append(
+                {
+                    "tide_type": "etf",
+                    "ticker": symbol.upper(),
+                    "date": get("date"),
+                    "timestamp": get("timestamp"),
+                    "net_call_premium": net_call,
+                    "net_put_premium": net_put,
+                    "net_volume": _safe_int(get("net_volume")) if get("net_volume") else None,
+                    "sentiment": sentiment,
+                }
+            )
+        return tides
+
+    async def _get_etf_tide_raw(self, symbol: str, date_str: str | None = None) -> list[dict]:
+        """Fetch ETF tide via raw HTTP when SDK version lacks get_etf_tide."""
+        if not self._client:
+            return []
+
+        try:
+            http_client = self._client.get_httpx_client()
+            params: dict[str, str] = {}
+            if date_str:
+                params["date"] = date_str
+
+            response = await self._call_sync(
+                http_client.get,
+                f"/api/etf/{symbol.upper()}/tide",
+                params=params,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as e:
+            logger.error("uw_etf_tide_raw_failed", symbol=symbol, error=str(e))
+            raise
+
+        data_items = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(data_items, list):
+            data_items = [data_items] if isinstance(data_items, dict) else []
+
+        return self._parse_etf_tide_items(data_items, symbol)
+
     async def get_etf_tide(self, symbol: str, date_str: str | None = None) -> list[dict]:
         """Get ETF-level tide data (premium flow sentiment).
 
         Returns data in same format as market/tide (Daily Market Tide schema).
+        Falls back to raw HTTP if the installed SDK version lacks get_etf_tide.
         """
         if not self._client:
             raise RuntimeError(ERR_NOT_INITIALIZED)
@@ -716,38 +814,19 @@ class UWFlowMixin:
         try:
             from unusualwhales.api import market
 
+            if not hasattr(market, "get_etf_tide"):
+                logger.warning(
+                    "uw_etf_tide_sdk_missing",
+                    detail="unusualwhales-python-client lacks get_etf_tide — falling back to raw HTTP",
+                )
+                return await self._get_etf_tide_raw(symbol, date_str)
+
             kwargs = {"ticker": symbol.upper()}
             if date_str:
                 kwargs["date"] = date_str
             response = await self._call_sync(market.get_etf_tide.sync, client=self._client, **kwargs)
 
-            tides = []
-            for item in self._extract_data(response):
-                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
-
-                net_call = float(get("net_call_premium") or 0)
-                net_put = float(get("net_put_premium") or 0)
-
-                # Compute sentiment
-                if net_call > abs(net_put):
-                    sentiment = "bullish"
-                elif abs(net_put) > net_call:
-                    sentiment = "bearish"
-                else:
-                    sentiment = "neutral"
-
-                tides.append(
-                    {
-                        "tide_type": "etf",
-                        "ticker": symbol.upper(),
-                        "date": get("date"),
-                        "timestamp": get("timestamp"),
-                        "net_call_premium": net_call,
-                        "net_put_premium": net_put,
-                        "net_volume": _safe_int(get("net_volume")) if get("net_volume") else None,
-                        "sentiment": sentiment,
-                    }
-                )
+            tides = self._parse_etf_tide_items(list(self._extract_data(response)), symbol)
 
             logger.info("uw_etf_tide_fetched", symbol=symbol, count=len(tides))
             return tides

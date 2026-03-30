@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 from heapq import nsmallest
 from typing import Annotated, Any
 
-import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from gateway.api.deps import (
@@ -19,6 +18,7 @@ from gateway.api.deps import (
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
+from gateway.core.logger import logger
 from gateway.core.metrics import (
     get_provider_health_check_snapshot,
     get_provider_quote_batch_snapshot,
@@ -28,7 +28,6 @@ from gateway.core.metrics import (
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
-logger = structlog.get_logger()
 router = APIRouter(tags=["admin"])
 
 # In-memory error log buffer

@@ -6,13 +6,11 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
-import structlog
 
 from gateway.core.http_client import http_retry
+from gateway.core.logger import logger
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
-
-logger = structlog.get_logger()
 
 
 class AlpacaOptionsMixin:
@@ -30,7 +28,7 @@ class AlpacaOptionsMixin:
         option_type: str | None = None,
         limit: int | None = None,
     ) -> list:
-        """Get option chain with greeks for an underlying."""
+        """Get option chain with greeks for an underlying with automatic pagination."""
         from gateway.schemas import NormalizedOptionContract
 
         if not self._client:
@@ -42,34 +40,40 @@ class AlpacaOptionsMixin:
         results: list[NormalizedOptionContract] = []
 
         try:
-            response = await self._client.get(
-                f"/v1beta1/options/snapshots/{underlying.upper()}",
-                params=params,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            for contract_symbol, snapshot in data.get("snapshots", {}).items():
-                parsed_contract = self._parse_occ_contract(contract_symbol)
-                if parsed_contract is None:
-                    continue
-                if not self._matches_option_chain_filters(
-                    parsed_contract,
-                    expiration_date=expiration_date,
-                    expiration_gte=expiration_gte,
-                    expiration_lte=expiration_lte,
-                    strike_gte=strike_gte,
-                    strike_lte=strike_lte,
-                    option_type=option_type,
-                ):
-                    continue
-                contract = self._normalize_option_contract(
-                    contract_symbol,
-                    snapshot,
-                    parsed_contract=parsed_contract,
+            while True:
+                response = await self._client.get(
+                    f"/v1beta1/options/snapshots/{underlying.upper()}",
+                    params=params,
                 )
-                if contract:
-                    results.append(contract)
+                response.raise_for_status()
+                data = response.json()
+
+                for contract_symbol, snapshot in data.get("snapshots", {}).items():
+                    parsed_contract = self._parse_occ_contract(contract_symbol)
+                    if parsed_contract is None:
+                        continue
+                    if not self._matches_option_chain_filters(
+                        parsed_contract,
+                        expiration_date=expiration_date,
+                        expiration_gte=expiration_gte,
+                        expiration_lte=expiration_lte,
+                        strike_gte=strike_gte,
+                        strike_lte=strike_lte,
+                        option_type=option_type,
+                    ):
+                        continue
+                    contract = self._normalize_option_contract(
+                        contract_symbol,
+                        snapshot,
+                        parsed_contract=parsed_contract,
+                    )
+                    if contract:
+                        results.append(contract)
+
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
 
             logger.info(
                 "alpaca_option_chain_fetched",
@@ -96,7 +100,7 @@ class AlpacaOptionsMixin:
         end: datetime,
         limit: int = 1000,
     ) -> list[NormalizedBar]:
-        """Get historical bars for option contracts."""
+        """Get historical bars for option contracts with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
@@ -109,20 +113,28 @@ class AlpacaOptionsMixin:
             "timeframe": alpaca_timeframe,
             "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
             "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
-            "limit": limit,
+            "limit": max(1, min(limit, 10000)),
         }
 
         try:
-            response = await self._client.get(
-                "/v1beta1/options/bars",
-                params=params,
-            )
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get(
+                    "/v1beta1/options/bars",
+                    params=params,
+                )
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, bars in data.get("bars", {}).items():
-                for bar in bars:
-                    results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
+                for symbol, bars in data.get("bars", {}).items():
+                    for bar in bars:
+                        results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
+
+                next_token = data.get("next_page_token")
+                if not next_token or len(results) >= limit:
+                    break
+                params["page_token"] = next_token
+
+            results = results[:limit]
 
             logger.info(
                 "alpaca_option_bars_fetched",
@@ -176,6 +188,7 @@ class AlpacaOptionsMixin:
 
         return results
 
+    @http_retry
     async def get_historical_option_quotes(
         self,
         contracts: list[str],
@@ -215,9 +228,11 @@ class AlpacaOptionsMixin:
                         results.append(self._normalize_quote(symbol, quote))
 
                 next_token = data.get("next_page_token")
-                if not next_token:
+                if not next_token or len(results) >= limit:
                     break
                 params["page_token"] = next_token
+
+            results = results[:limit]
 
             logger.info("alpaca_historical_option_quotes_fetched", count=len(results))
 
@@ -239,26 +254,38 @@ class AlpacaOptionsMixin:
         end: datetime | None = None,
         limit: int = 1000,
     ) -> list[NormalizedTrade]:
-        """Get historical trades for option contracts."""
+        """Get historical trades for option contracts with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         results: list[NormalizedTrade] = []
         symbols_param = ",".join(contracts)
-        params: dict[str, Any] = {"symbols": symbols_param, "feed": self._options_feed, "limit": limit}
+        params: dict[str, Any] = {
+            "symbols": symbols_param,
+            "feed": self._options_feed,
+            "limit": max(1, min(limit, 10000)),
+        }
         if start:
             params["start"] = start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat()
         if end:
             params["end"] = end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat()
 
         try:
-            response = await self._client.get("/v1beta1/options/trades", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v1beta1/options/trades", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, trades in data.get("trades", {}).items():
-                for trade in trades:
-                    results.append(self._normalize_trade(symbol, trade))
+                for symbol, trades in data.get("trades", {}).items():
+                    for trade in trades:
+                        results.append(self._normalize_trade(symbol, trade))
+
+                next_token = data.get("next_page_token")
+                if not next_token or len(results) >= limit:
+                    break
+                params["page_token"] = next_token
+
+            results = results[:limit]
 
             logger.info("alpaca_option_trades_fetched", count=len(results))
 
@@ -298,24 +325,35 @@ class AlpacaOptionsMixin:
 
     @http_retry
     async def get_option_snapshots(self, underlying: str) -> dict[str, Any]:
-        """Get snapshots for all options on an underlying."""
+        """Get snapshots for all options on an underlying with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
+        all_snapshots: dict[str, Any] = {}
+        params: dict[str, Any] = {"feed": self._options_feed, "limit": 1000}
+
         try:
-            response = await self._client.get(
-                f"/v1beta1/options/snapshots/{underlying.upper()}",
-                params={"feed": self._options_feed},
-            )
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get(
+                    f"/v1beta1/options/snapshots/{underlying.upper()}",
+                    params=params,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                all_snapshots.update(data.get("snapshots", {}))
+
+                next_token = data.get("next_page_token")
+                if not next_token:
+                    break
+                params["page_token"] = next_token
 
             logger.info(
                 "alpaca_option_snapshots_fetched",
                 underlying=underlying,
-                count=len(data.get("snapshots", {})),
+                count=len(all_snapshots),
             )
-            return data.get("snapshots", {})
+            return all_snapshots
 
         except httpx.HTTPStatusError as e:
             logger.error("alpaca_option_snapshots_error", status=e.response.status_code)

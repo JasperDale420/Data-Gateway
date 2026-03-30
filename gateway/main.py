@@ -6,22 +6,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
-import logging
 from contextlib import asynccontextmanager, suppress
 
 import orjson
 
 # uvloop removed — incompatible with container environment (causes deadlocks).
 # Standard asyncio event loop is used instead.
+from empire_core.logger import setup_logging
 
+setup_logging("data-gateway")
 
-# Configure stdlib logging for structlog integration
-logging.basicConfig(
-    format="%(message)s",
-    level=logging.INFO,
-)
-
-import structlog
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -66,6 +60,7 @@ from gateway.api.middleware import (
 )
 from gateway.config import get_settings
 from gateway.core.globals import set_multiplexer, set_registry
+from gateway.core.logger import logger
 from gateway.core.metrics import (
     init_metrics,
     init_uptime,
@@ -77,24 +72,6 @@ from gateway.core.metrics import (
 from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import StreamMultiplexer
 
-# Configure structlog
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.JSONRenderer(),
-    ],
-    wrapper_class=structlog.stdlib.BoundLogger,
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    cache_logger_on_first_use=True,
-)
-
-logger = structlog.get_logger()
 attach_error_buffer_handler()
 
 
@@ -459,8 +436,10 @@ async def lifespan(app: FastAPI):
     # Step 5: Close client connections with 1001 Going Away
     await connections.close_all(code=1001, reason="Going Away")
 
-    # Step 6: Flush stream-to-sink publish tasks
+    # Step 6: Flush stream-to-sink publish tasks and close sink connections
     await _drain_stream_sink_publish_tasks()
+    if sink_registry:
+        await sink_registry.close_all()
 
     # Step 7: Shutdown remaining services
     if uw_poller:
@@ -511,7 +490,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RateLimitMiddleware, default_limit=settings.rate_limit_default)
     # Global rate limit (PRD 7.5.1-2) before per-client limits
-    app.add_middleware(GlobalRateLimitMiddleware)
+    app.add_middleware(GlobalRateLimitMiddleware, trust_proxy_headers=settings.behind_trusted_proxy)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if settings.debug else [],

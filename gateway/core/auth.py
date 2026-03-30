@@ -4,12 +4,10 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import structlog
 import yaml
 
 from gateway.core.audit import get_audit_logger
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 
 @dataclass

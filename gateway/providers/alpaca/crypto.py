@@ -5,13 +5,11 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
-import structlog
 
 from gateway.core.http_client import http_retry
+from gateway.core.logger import logger
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
-
-logger = structlog.get_logger()
 
 
 class AlpacaCryptoMixin:
@@ -26,7 +24,7 @@ class AlpacaCryptoMixin:
         end: datetime | None = None,
         limit: int = 1000,
     ) -> list[NormalizedBar]:
-        """Fetch historical crypto bars from Alpaca."""
+        """Fetch historical crypto bars from Alpaca with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
@@ -34,8 +32,9 @@ class AlpacaCryptoMixin:
 
         alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, Any] = {
+            "symbols": pair,
             "timeframe": alpaca_timeframe,
-            "limit": limit,
+            "limit": max(1, min(limit, 10000)),
         }
         if start:
             params["start"] = start.isoformat()
@@ -43,14 +42,21 @@ class AlpacaCryptoMixin:
             params["end"] = end.isoformat()
 
         try:
-            # Crypto endpoint uses v1beta3
-            response = await self._client.get("/v1beta3/crypto/us/bars", params={"symbols": pair, **params})
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v1beta3/crypto/us/bars", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, bars in data.get("bars", {}).items():
-                for bar in bars:
-                    results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
+                for symbol, bars in data.get("bars", {}).items():
+                    for bar in bars:
+                        results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
+
+                next_token = data.get("next_page_token")
+                if not next_token or len(results) >= limit:
+                    break
+                params["page_token"] = next_token
+
+            results = results[:limit]
 
             logger.info("alpaca_crypto_bars_fetched", pair=pair, bars=len(results))
 
@@ -72,26 +78,34 @@ class AlpacaCryptoMixin:
         end: datetime | None = None,
         limit: int = 1000,
     ) -> list[NormalizedTrade]:
-        """Fetch historical crypto trades from Alpaca."""
+        """Fetch historical crypto trades from Alpaca with automatic pagination."""
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
         results: list[NormalizedTrade] = []
 
-        params: dict[str, Any] = {"symbols": pair, "limit": limit}
+        params: dict[str, Any] = {"symbols": pair, "limit": max(1, min(limit, 10000))}
         if start:
             params["start"] = start.isoformat()
         if end:
             params["end"] = end.isoformat()
 
         try:
-            response = await self._client.get("/v1beta3/crypto/us/trades", params=params)
-            response.raise_for_status()
-            data = response.json()
+            while True:
+                response = await self._client.get("/v1beta3/crypto/us/trades", params=params)
+                response.raise_for_status()
+                data = response.json()
 
-            for symbol, trades in data.get("trades", {}).items():
-                for trade in trades:
-                    results.append(self._normalize_trade(symbol, trade))
+                for symbol, trades in data.get("trades", {}).items():
+                    for trade in trades:
+                        results.append(self._normalize_trade(symbol, trade))
+
+                next_token = data.get("next_page_token")
+                if not next_token or len(results) >= limit:
+                    break
+                params["page_token"] = next_token
+
+            results = results[:limit]
 
             logger.info("alpaca_crypto_trades_fetched", pair=pair, trades=len(results))
 
@@ -131,6 +145,7 @@ class AlpacaCryptoMixin:
             )
             raise
 
+    @http_retry
     async def get_historical_crypto_quotes(
         self,
         pair: str,
@@ -165,9 +180,11 @@ class AlpacaCryptoMixin:
                         results.append(self._normalize_quote(symbol, quote))
 
                 next_token = data.get("next_page_token")
-                if not next_token:
+                if not next_token or len(results) >= limit:
                     break
                 params["page_token"] = next_token
+
+            results = results[:limit]
 
             logger.info("alpaca_historical_crypto_quotes_fetched", pair=pair, quotes=len(results))
 

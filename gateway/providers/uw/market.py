@@ -3,11 +3,9 @@
 from decimal import Decimal
 from typing import Any
 
-import structlog
+from gateway.core.logger import logger
 
 from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
-
-logger = structlog.get_logger()
 
 
 class UWMarketMixin:
@@ -214,7 +212,7 @@ class UWMarketMixin:
                 ),
                 realized_vol_60d=(
                     Decimal(str(get("realized_vol_60d") or get("rv_60") or 0))
-                    if get("realized_60d") or get("rv_60")
+                    if get("realized_vol_60d") or get("rv_60")
                     else None
                 ),
                 realized_vol_90d=(
@@ -462,6 +460,8 @@ class UWMarketMixin:
             response = await self._call_sync(
                 market.get_correlations.sync,
                 client=self._client,
+                start_date=_or_unset(start_date),
+                end_date=_or_unset(end_date),
             )
             data = self._get_data_safe(response)
             if not data:

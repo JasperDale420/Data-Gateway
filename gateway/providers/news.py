@@ -5,13 +5,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-import structlog
 
 from gateway.core.http_client import create_async_http_client
+from gateway.core.logger import logger
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
-
-logger = structlog.get_logger()
 
 
 class NewsProvider(DataProvider):

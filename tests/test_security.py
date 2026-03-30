@@ -115,7 +115,8 @@ class TestInputValidator:
 
         monkeypatch.setattr(validator, "validate_symbol", _count)
 
-        error = validator.validate_symbols_array(["AAPL", "aapl", "MSFT", "AAPL"])
+        # With explicit symbol_type, validate_symbol is called per unique symbol
+        error = validator.validate_symbols_array(["AAPL", "aapl", "MSFT", "AAPL"], symbol_type="stock")
 
         assert error is None
         assert calls == ["AAPL", "MSFT"]

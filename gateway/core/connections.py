@@ -5,12 +5,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import orjson
-import structlog
 from fastapi import WebSocket
 
 from gateway.core.auth import Client
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 
 @dataclass

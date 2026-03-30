@@ -177,7 +177,7 @@ class TestWrapEvent:
         assert envelope["feed"] == "flow"
         assert envelope["source"] == "rest"
         assert envelope["instrument_type"] == "option"
-        assert "cached" in envelope["quality_flags"]  # REST source adds cached flag
+        assert "validated" in envelope["quality_flags"]
 
     def test_envelope_serializable(self):
         """Envelope can be JSON serialized."""

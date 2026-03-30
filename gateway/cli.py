@@ -145,7 +145,7 @@ def cmd_list_clients(args):
 def cmd_hash_key(args):
     """Hash a provided key."""
     hashed = hash_key(args.key)
-    print(f"Input: {args.key}")
+    print(f"Input: {args.key[:4]}...{args.key[-4:]}")
     print(f"Hash:  {hashed}")
     return 0
 

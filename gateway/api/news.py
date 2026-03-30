@@ -3,7 +3,6 @@
 from datetime import datetime
 
 import httpx
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.deps import get_cache, require_api_key, require_provider_rate_limit
@@ -16,7 +15,7 @@ from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/api/v1/news", tags=["news"])
 
-logger = structlog.get_logger(__name__)
+from gateway.core.logger import logger
 
 # Module-level provider instance
 _provider: NewsProvider | None = None

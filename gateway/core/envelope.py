@@ -8,16 +8,15 @@ Provides:
 """
 
 import hashlib
+import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-import structlog
 from pydantic import BaseModel, Field
 
+from gateway.core.logger import logger
 from gateway.core.metrics import record_envelope_created
-
-logger = structlog.get_logger()
 
 # Schema version for envelope format
 SCHEMA_VERSION = "v1"
@@ -85,13 +84,26 @@ def make_instrument_key(
 
     elif instrument_type == "crypto":
         # Normalize various crypto formats to BASE-QUOTE
-        # Handle: BTC/USD, BTCUSD, BTC-USD, BTC_USD
+        # Handle: BTC/USD, BTCUSD, BTC-USD, BTC_USD, DOGEUSD
         normalized = symbol.replace("/", "-").replace("_", "-")
         if len(normalized) >= 6 and "-" not in normalized:
-            # Try to split BTCUSD -> BTC-USD (assume 3-char base)
-            base = normalized[:3]
-            quote = normalized[3:]
-            normalized = f"{base}-{quote}"
+            # Try to split by known quote currencies (3-char first, then 4-char)
+            known_quotes_3 = ("USD", "EUR", "BTC", "ETH", "GBP")
+            known_quotes_4 = ("USDT", "USDC", "BUSD")
+            matched = False
+            for quote_len, known in ((3, known_quotes_3), (4, known_quotes_4)):
+                if len(normalized) > quote_len:
+                    candidate_quote = normalized[-quote_len:]
+                    if candidate_quote in known:
+                        base = normalized[:-quote_len]
+                        normalized = f"{base}-{candidate_quote}"
+                        matched = True
+                        break
+            if not matched:
+                # Fallback: assume 3-char base
+                base = normalized[:3]
+                quote = normalized[3:]
+                normalized = f"{base}-{quote}"
         return f"crypto:{normalized}"
 
     elif instrument_type == "forex":
@@ -144,9 +156,7 @@ def compute_event_id(
 
     # Add unique fields, converting to strings
     for field in unique_fields:
-        if isinstance(field, Decimal):
-            parts.append(str(float(field)))
-        elif field is not None:
+        if isinstance(field, Decimal) or field is not None:
             parts.append(str(field))
 
     data = "|".join(parts)
@@ -259,7 +269,7 @@ def _infer_instrument_type(feed: str, symbol: str, payload: dict) -> str:
         return "option"
 
     # Crypto indicators
-    if "/" in symbol or any(crypto in symbol for crypto in ["BTC", "ETH", "USD", "USDT"]):
+    if "/" in symbol or any(symbol.startswith(prefix) or symbol.endswith(prefix) for prefix in ["BTC", "ETH", "USDT"]):
         if len(symbol) >= 6:
             return "crypto"
 
@@ -362,8 +372,6 @@ def wrap_event(
 
     # Quality flags
     quality_flags = ["validated"]
-    if source == "rest":
-        quality_flags.append("cached")
 
     # Create envelope
     try:
@@ -464,11 +472,19 @@ def fast_wrap_streaming_event(
     if not ts_event_str:
         ts_event_str = ts_ingest.isoformat()
     elif not isinstance(ts_event_str, str):
-        # Fallback for non-string timestamps (unlikely in Alpaca V2)
+        # Handle non-string timestamps: datetime, msgpack.Timestamp, epoch int
         try:
             ts_event_str = ts_event_str.isoformat()
         except AttributeError:
-            ts_event_str = str(ts_event_str)
+            # msgpack.Timestamp has to_datetime(), not isoformat()
+            if hasattr(ts_event_str, "to_datetime"):
+                ts_event_str = ts_event_str.to_datetime().isoformat()
+            elif isinstance(ts_event_str, int | float):
+                from datetime import datetime as _dt
+
+                ts_event_str = _dt.fromtimestamp(ts_event_str, tz=UTC).isoformat()
+            else:
+                ts_event_str = ts_ingest.isoformat()
 
     # instrument_key - manual inline construction for speed
     # (Replicates make_instrument_key logic for common cases)
@@ -487,8 +503,6 @@ def fast_wrap_streaming_event(
     # Using urandom or simple string construction is faster than hashing content.
     # UUID4 is ~1-2us. Hashing 100 bytes is ~5-10us.
     # Let's use os.urandom(16).hex()
-    import os
-
     event_id = os.urandom(16).hex()
 
     lineage = {}

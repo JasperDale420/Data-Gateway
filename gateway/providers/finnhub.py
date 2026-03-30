@@ -7,14 +7,12 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
-import structlog
 
 from gateway.core.http_client import create_async_http_client, http_retry
+from gateway.core.logger import logger
 from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
-
-logger = structlog.get_logger()
 
 
 class FinnhubProvider(DataProvider):

@@ -5,7 +5,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 # Query description constants
-import structlog
 from fastapi import Depends, HTTPException
 
 from gateway.api.deps import (
@@ -16,10 +15,9 @@ from gateway.api.deps import (
 )
 from gateway.core.auth import Client
 from gateway.core.cache import HybridCache, InMemoryCache
+from gateway.core.logger import logger
 from gateway.core.metrics import record_route_cache
 from gateway.core.registry import ProviderRegistry
-
-logger = structlog.get_logger(__name__)
 
 DESC_BAR_TIMEFRAME = "Bar timeframe"
 DESC_START_TIME = "Start time (ISO 8601)"

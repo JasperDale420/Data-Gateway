@@ -11,12 +11,8 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-import structlog
-
 from gateway.config import get_settings
-
-logger = structlog.get_logger()
-
+from gateway.core.logger import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Action Types

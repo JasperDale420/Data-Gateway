@@ -10,14 +10,13 @@ from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from typing import Any
 
-import structlog
 from pydantic import BaseModel, Field
 
 from gateway.core.envelope import wrap_event
+from gateway.core.logger import logger
 from gateway.core.rate_limiter import ProviderRateLimitManager, get_rate_limiter
 from gateway.core.security import InputValidator
 
-logger = structlog.get_logger()
 _INPUT_VALIDATOR = InputValidator()
 
 HEBER_EVENTS_TOPIC = "heber:events"
@@ -571,7 +570,12 @@ class BackfillEngine:
                 )
 
         tasks = [asyncio.create_task(_bounded_process(sym)) for sym in job.request.symbols]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for sym, result in zip(job.request.symbols, results, strict=True):
+            if isinstance(result, Exception):
+                error_msg = f"{sym}: unhandled error: {result}"
+                job.errors.append(error_msg)
+                logger.error("backfill_symbol_unhandled_error", job_id=job.job_id, symbol=sym, error=str(result))
 
     async def _process_symbol(
         self,
@@ -678,7 +682,7 @@ class BackfillEngine:
             )
             messages.append((HEBER_EVENTS_TOPIC, envelope))
 
-        if type(self._sink_registry).__name__ == "DataSinkRegistry":
+        if hasattr(self._sink_registry, "publish_all_batch"):
             return await self._sink_registry.publish_all_batch(messages)
 
         # Fallback: individual publishes for registries without batch support

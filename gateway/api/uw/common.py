@@ -5,7 +5,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.deps import (
@@ -16,10 +15,9 @@ from gateway.api.deps import (
 )
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
+from gateway.core.logger import logger
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
-
-logger = structlog.get_logger()
 
 # Query description constants
 DESC_DATE = "Date (YYYY-MM-DD)"

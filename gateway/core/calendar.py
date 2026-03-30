@@ -1,7 +1,11 @@
 """Trading Calendar Service.
 
 Provides market hours, trading days, holidays, and earnings calendar.
+Uses exchange_calendars (NYSE/XNYS) for dynamic holiday/early-close data
+with a hardcoded fallback for 2024-2026 if the library is unavailable.
 """
+
+from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -10,11 +14,128 @@ from enum import Enum
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import structlog
-
 from gateway.config import get_settings
+from gateway.core.logger import logger
 
-logger = structlog.get_logger()
+# ─────────────────────────────────────────────────────────────────────────────
+# exchange_calendars integration (optional — graceful degradation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+try:
+    import exchange_calendars as xcals
+    import pandas as pd
+
+    _XCALS_AVAILABLE = True
+except ImportError:
+    _XCALS_AVAILABLE = False
+    logger.warning("exchange_calendars_unavailable", msg="Falling back to hardcoded holiday calendar (2024-2026 only)")
+
+# Module-level cached NYSE calendar instance (created once on first access)
+_nyse_cal: Any | None = None
+
+
+def _get_nyse_calendar() -> Any | None:
+    """Return the cached NYSE exchange calendar, or None if unavailable."""
+    global _nyse_cal
+    if not _XCALS_AVAILABLE:
+        return None
+    if _nyse_cal is None:
+        try:
+            _nyse_cal = xcals.get_calendar("XNYS")
+            logger.info("exchange_calendar_loaded", exchange="XNYS")
+        except Exception:
+            logger.exception("exchange_calendar_load_failed", exchange="XNYS")
+            return None
+    return _nyse_cal
+
+
+def _xcals_is_holiday(query_date: date) -> tuple[bool, str | None]:
+    """Check if a date is a NYSE holiday using exchange_calendars.
+
+    Returns (is_holiday, holiday_name_or_none).
+    """
+    cal = _get_nyse_calendar()
+    if cal is None:
+        return False, None
+
+    ts = pd.Timestamp(query_date)
+
+    # Out-of-range dates fall back to hardcoded dict
+    if ts < cal.first_session or ts > cal.last_session:
+        return False, None
+
+    if cal.is_session(ts):
+        return False, None
+
+    # It's not a session day — determine holiday name from the adhoc/regular holidays
+    name = _resolve_holiday_name(cal, ts)
+    return True, name
+
+
+# Normalize exchange_calendars holiday names to match Empire's canonical names.
+_XCALS_NAME_ALIASES: dict[str, str] = {
+    "Dr. Martin Luther King Jr. Day": "Martin Luther King Jr. Day",
+}
+
+
+def _resolve_holiday_name(cal: Any, ts: Any) -> str:
+    """Best-effort holiday name resolution from the exchange calendar."""
+    # exchange_calendars stores holidays in .regular_holidays (a HolidayCalendar)
+    # which exposes its individual Holiday rules via .rules
+    try:
+        rules = getattr(cal.regular_holidays, "rules", None)
+        if rules is not None:
+            for holiday_rule in rules:
+                dates = holiday_rule.dates(ts - pd.Timedelta(days=1), ts + pd.Timedelta(days=1))
+                if ts in dates:
+                    name = str(holiday_rule.name)
+                    return _XCALS_NAME_ALIASES.get(name, name)
+        for holiday_rule in getattr(cal, "adhoc_holidays", []):
+            if hasattr(holiday_rule, "__iter__") and ts in holiday_rule:
+                return "Ad-hoc Holiday"
+    except Exception:
+        pass
+    return "Market Holiday"
+
+
+def _xcals_is_early_close(query_date: date) -> tuple[bool, str | None]:
+    """Check if a date is an NYSE early close using exchange_calendars.
+
+    Returns (is_early_close, reason_or_none).
+    """
+    cal = _get_nyse_calendar()
+    if cal is None:
+        return False, None
+
+    ts = pd.Timestamp(query_date)
+
+    if ts < cal.first_session or ts > cal.last_session:
+        return False, None
+
+    if not cal.is_session(ts):
+        return False, None
+
+    close_time = cal.session_close(ts)
+    # NYSE regular close is 16:00 ET. Early closes are typically 13:00 ET.
+    et = ZoneInfo("America/New_York")
+    close_local = close_time.to_pydatetime().astimezone(et)
+    if close_local.hour < 16:
+        return True, "Early Close"
+
+    return False, None
+
+
+def _xcals_is_session(query_date: date) -> bool | None:
+    """Check if a date is a trading session. Returns None if xcals unavailable or out of range."""
+    cal = _get_nyse_calendar()
+    if cal is None:
+        return None
+
+    ts = pd.Timestamp(query_date)
+    if ts < cal.first_session or ts > cal.last_session:
+        return None
+
+    return bool(cal.is_session(ts))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -152,10 +273,11 @@ class EarningsEvent:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# US Market Calendar (NYSE/NASDAQ)
+# US Market Calendar — hardcoded fallback (used only when exchange_calendars
+# is unavailable or the requested date is outside its supported range)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 2024-2026 NYSE holidays
+# 2024-2026 NYSE holidays (fallback)
 US_HOLIDAYS: dict[date, str] = {
     # 2024
     date(2024, 1, 1): "New Year's Day",
@@ -192,7 +314,7 @@ US_HOLIDAYS: dict[date, str] = {
     date(2026, 12, 25): "Christmas Day",
 }
 
-# Early closes (1pm ET)
+# Early closes (1pm ET) (fallback)
 US_EARLY_CLOSES: dict[date, str] = {
     # 2024
     date(2024, 7, 3): "Independence Day Eve",
@@ -231,6 +353,38 @@ class TradingCalendar:
         self.timezone = "America/New_York"
         self._tz = ZoneInfo(self.timezone)
 
+    # ── internal helpers for holiday / early-close resolution ──────────
+
+    def _is_holiday(self, query_date: date) -> tuple[bool, str | None]:
+        """Return (is_holiday, name) using exchange_calendars first, then fallback."""
+        xcals_holiday, xcals_name = _xcals_is_holiday(query_date)
+        if xcals_holiday:
+            return True, xcals_name
+        # If xcals had a definitive answer (date in range), trust it
+        xcals_session = _xcals_is_session(query_date)
+        if xcals_session is not None:
+            return False, None
+        # Fallback to hardcoded dict (xcals unavailable or date out of range)
+        if query_date in US_HOLIDAYS:
+            return True, US_HOLIDAYS[query_date]
+        return False, None
+
+    def _is_early_close(self, query_date: date) -> tuple[bool, str | None]:
+        """Return (is_early_close, reason) using exchange_calendars first, then fallback."""
+        xcals_early, xcals_reason = _xcals_is_early_close(query_date)
+        if xcals_early:
+            return True, xcals_reason
+        # If xcals had a definitive answer for this date, trust it
+        xcals_session = _xcals_is_session(query_date)
+        if xcals_session is not None:
+            return False, None
+        # Fallback to hardcoded dict
+        if query_date in US_EARLY_CLOSES:
+            return True, US_EARLY_CLOSES[query_date]
+        return False, None
+
+    # ── public interface ─────────────────────────────────────────────
+
     def get_market_hours(self, query_date: date) -> MarketHours:
         """Get market hours for a specific date."""
         # Check if weekend
@@ -247,8 +401,9 @@ class TradingCalendar:
                 is_early_close=False,
             )
 
-        # Check if holiday
-        if query_date in US_HOLIDAYS:
+        # Check if holiday (dynamic via exchange_calendars, fallback to hardcoded)
+        is_holiday, holiday_name = self._is_holiday(query_date)
+        if is_holiday:
             return MarketHours(
                 date=query_date,
                 market=self.market,
@@ -259,11 +414,11 @@ class TradingCalendar:
                 timezone=self.timezone,
                 is_holiday=True,
                 is_early_close=False,
-                holiday_name=US_HOLIDAYS[query_date],
+                holiday_name=holiday_name,
             )
 
-        # Check if early close
-        is_early = query_date in US_EARLY_CLOSES
+        # Check if early close (dynamic via exchange_calendars, fallback to hardcoded)
+        is_early, _reason = self._is_early_close(query_date)
         regular_end = self.REGULAR_EARLY_END if is_early else self.REGULAR_END
         afterhours_start = self.REGULAR_EARLY_END if is_early else self.AFTERHOURS_START
 
@@ -303,22 +458,24 @@ class TradingCalendar:
         current = start
         while current <= end:
             if current.weekday() < 5:  # Weekday
-                if current in US_HOLIDAYS:
+                is_holiday, holiday_name = self._is_holiday(current)
+                if is_holiday:
                     holidays.append(
                         Holiday(
                             date=current,
-                            name=US_HOLIDAYS[current],
+                            name=holiday_name or "Market Holiday",
                         )
                     )
                 else:
                     trading_days.append(current)
 
-                    if current in US_EARLY_CLOSES:
+                    is_early, early_reason = self._is_early_close(current)
+                    if is_early:
                         early_closes.append(
                             EarlyClose(
                                 date=current,
                                 close_time=self.REGULAR_EARLY_END,
-                                reason=US_EARLY_CLOSES[current],
+                                reason=early_reason or "Early Close",
                             )
                         )
 
@@ -335,7 +492,8 @@ class TradingCalendar:
         """Check if a date is a trading day."""
         if query_date.weekday() >= 5:
             return False
-        return query_date not in US_HOLIDAYS
+        is_holiday, _ = self._is_holiday(query_date)
+        return not is_holiday
 
     def is_market_open(self, dt: datetime | None = None) -> bool:
         """Check if market is currently open."""
@@ -353,10 +511,11 @@ class TradingCalendar:
 
         current_time = local_dt.time()
 
-        if query_date in US_EARLY_CLOSES:
-            return self.REGULAR_START <= current_time <= self.REGULAR_EARLY_END
+        is_early, _ = self._is_early_close(query_date)
+        if is_early:
+            return self.REGULAR_START <= current_time < self.REGULAR_EARLY_END
 
-        return self.REGULAR_START <= current_time <= self.REGULAR_END
+        return self.REGULAR_START <= current_time < self.REGULAR_END
 
     def next_trading_day(self, from_date: date | None = None) -> date:
         """Get the next trading day."""

@@ -57,7 +57,7 @@ async def get_news(
     return {
         "success": True,
         "data": {
-            "articles": [a.model_dump() for a in articles],
+            "articles": [a.model_dump(mode="json") for a in articles],
         },
         "meta": {
             "count": len(articles),

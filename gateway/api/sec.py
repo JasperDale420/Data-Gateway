@@ -4,18 +4,16 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 import httpx
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.deps import get_cache, get_registry, require_api_key, require_provider_rate_limit
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.dedup import get_deduplicator
+from gateway.core.logger import logger
 from gateway.core.metrics import record_route_cache
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
-
-logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/sec", tags=["sec"])
 

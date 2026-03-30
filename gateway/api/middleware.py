@@ -7,21 +7,19 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-import structlog
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from gateway.core.envelope import wrap_event
+from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_cache_hit,
     record_cache_miss,
     record_rate_limit_exceeded,
     record_request,
 )
-
-logger = structlog.get_logger()
 
 
 class RequestMetricsMiddleware:
@@ -759,6 +757,7 @@ class EventEnvelopeMiddleware:
     def __init__(self, app: ASGIApp, max_body_bytes: int = 524288) -> None:
         self.app = app
         self.max_body_bytes = max_body_bytes
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -901,8 +900,6 @@ class EventEnvelopeMiddleware:
                 if sink_envelopes:
                     tasks = [sink_registry.publish_all(topic, se) for se in sink_envelopes]
                     task = asyncio.create_task(self._publish_sink_batch(tasks, path=path))
-                    # Prevent GC by storing reference
-                    self._background_tasks = getattr(self, "_background_tasks", set())
                     self._background_tasks.add(task)
                     task.add_done_callback(self._background_tasks.discard)
                 else:
@@ -1233,12 +1230,14 @@ class GlobalRateLimitMiddleware:
         per_ip_limit: int = 1000,
         max_connections_per_ip: int = 10,
         window_seconds: int = 60,
+        trust_proxy_headers: bool = False,
     ) -> None:
         self.app = app
         self.global_limit = global_limit
         self.per_ip_limit = per_ip_limit
         self.max_connections_per_ip = max_connections_per_ip
         self.window_seconds = window_seconds
+        self._trust_proxy_headers = trust_proxy_headers
 
         # Tracking state
         self._global_requests = 0
@@ -1250,10 +1249,11 @@ class GlobalRateLimitMiddleware:
 
     def _get_client_ip(self, scope: Scope) -> str:
         """Extract client IP from ASGI scope."""
-        headers = dict(scope.get("headers", []))
-        forwarded = headers.get(b"x-forwarded-for")
-        if forwarded:
-            return forwarded.decode().split(",")[0].strip()
+        if self._trust_proxy_headers:
+            headers = dict(scope.get("headers", []))
+            forwarded = headers.get(b"x-forwarded-for")
+            if forwarded:
+                return forwarded.decode().split(",")[0].strip()
         client = scope.get("client")
         return client[0] if client else "unknown"
 

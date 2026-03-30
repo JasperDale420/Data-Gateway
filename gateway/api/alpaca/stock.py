@@ -3,7 +3,6 @@
 from datetime import UTC, datetime, timedelta
 
 import httpx
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alpaca.common import (
@@ -18,12 +17,174 @@ from gateway.api.alpaca.common import (
     require_api_key,
     require_provider_rate_limit,
 )
+from gateway.core.logger import logger
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
-logger = structlog.get_logger(__name__)
-
 router = APIRouter()
+
+
+# --- Static-segment routes MUST be registered before parameterized routes ---
+
+
+@router.get("/stocks/bars/latest", response_model=SuccessResponse)
+async def get_latest_bars(
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get latest bar for each symbol."""
+    provider = registry.get("alpaca")
+    if not provider:
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
+
+    try:
+        await require_provider_rate_limit("alpaca", block=True)
+        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        bars = await provider.get_latest_bars(symbols_list)
+        return {
+            "success": True,
+            "data": [b.model_dump(mode="json") for b in bars],
+            "meta": {"count": len(bars), "provider": "alpaca"},
+        }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
+
+
+@router.get("/stocks/trades/latest", response_model=SuccessResponse)
+async def get_latest_trades(
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get latest trade for each symbol."""
+    provider = registry.get("alpaca")
+    if not provider:
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
+
+    try:
+        await require_provider_rate_limit("alpaca", block=True)
+        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        trades = await provider.get_latest_trades(symbols_list)
+        return {
+            "success": True,
+            "data": [t.model_dump(mode="json") for t in trades],
+            "meta": {"count": len(trades), "provider": "alpaca"},
+        }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
+
+
+@router.get("/stocks/quotes", response_model=SuccessResponse)
+async def get_historical_quotes(
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
+    start: datetime = Query(..., description=DESC_START_TIME),
+    end: datetime = Query(..., description=DESC_END_TIME),
+    limit: int = Query(default=10000, le=10000, description="Max quotes"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get historical quotes for symbols."""
+    provider = registry.get("alpaca")
+    if not provider:
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
+
+    # Ensure timezone-aware datetimes (Alpaca rejects naive timestamps)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+
+    try:
+        await require_provider_rate_limit("alpaca", block=True)
+        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        quotes = await provider.get_historical_quotes(symbols_list, start, end, limit)
+        return {
+            "success": True,
+            "data": [q.model_dump(mode="json") for q in quotes],
+            "meta": {"count": len(quotes), "provider": "alpaca"},
+        }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
+
+
+@router.get("/stocks/snapshots", response_model=SuccessResponse)
+async def get_snapshots(
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get current snapshots for symbols."""
+    provider = registry.get("alpaca")
+    if not provider:
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
+
+    try:
+        await require_provider_rate_limit("alpaca", block=True)
+        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        snapshots = await provider.get_snapshots(symbols_list)
+        return {
+            "success": True,
+            "data": snapshots,
+            "meta": {"count": len(snapshots), "provider": "alpaca"},
+        }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
+
+
+@router.get("/stocks/auctions", response_model=SuccessResponse)
+async def get_auctions(
+    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
+    limit: int = Query(default=1000, le=10000, description="Max auctions per symbol"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get auction data for symbols."""
+    provider = registry.get("alpaca")
+    if not provider:
+        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
+
+    try:
+        await require_provider_rate_limit("alpaca", block=True)
+        symbols_list = [s.strip().upper() for s in symbols.split(",")]
+        auctions = await provider.get_auctions(symbols_list, start, end, limit)
+        return {
+            "success": True,
+            "data": auctions,
+            "meta": {"count": len(auctions), "provider": "alpaca"},
+        }
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
+    except Exception:
+        logger.error("provider_request_failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
+
+
+# --- Parameterized routes below ---
 
 
 @router.get("/stocks/{symbol}/bars", response_model=SuccessResponse)
@@ -215,163 +376,6 @@ async def get_stock_snapshot(
             "meta": {"provider": "alpaca"},
         }
 
-    except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code
-        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
-        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
-
-
-@router.get("/stocks/bars/latest", response_model=SuccessResponse)
-async def get_latest_bars(
-    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-):
-    """Get latest bar for each symbol."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
-        bars = await provider.get_latest_bars(symbols_list)
-        return {
-            "success": True,
-            "data": [b.model_dump(mode="json") for b in bars],
-            "meta": {"count": len(bars), "provider": "alpaca"},
-        }
-    except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code
-        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
-        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
-
-
-@router.get("/stocks/trades/latest", response_model=SuccessResponse)
-async def get_latest_trades(
-    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-):
-    """Get latest trade for each symbol."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
-        trades = await provider.get_latest_trades(symbols_list)
-        return {
-            "success": True,
-            "data": [t.model_dump(mode="json") for t in trades],
-            "meta": {"count": len(trades), "provider": "alpaca"},
-        }
-    except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code
-        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
-        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
-
-
-@router.get("/stocks/quotes", response_model=SuccessResponse)
-async def get_historical_quotes(
-    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
-    start: datetime = Query(..., description=DESC_START_TIME),
-    end: datetime = Query(..., description=DESC_END_TIME),
-    limit: int = Query(default=10000, le=10000, description="Max quotes"),
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-):
-    """Get historical quotes for symbols."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    # Ensure timezone-aware datetimes (Alpaca rejects naive timestamps)
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=UTC)
-    if end.tzinfo is None:
-        end = end.replace(tzinfo=UTC)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
-        quotes = await provider.get_historical_quotes(symbols_list, start, end, limit)
-        return {
-            "success": True,
-            "data": [q.model_dump(mode="json") for q in quotes],
-            "meta": {"count": len(quotes), "provider": "alpaca"},
-        }
-    except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code
-        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
-        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
-
-
-@router.get("/stocks/snapshots", response_model=SuccessResponse)
-async def get_snapshots(
-    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-):
-    """Get current snapshots for symbols."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
-        snapshots = await provider.get_snapshots(symbols_list)
-        return {
-            "success": True,
-            "data": snapshots,
-            "meta": {"count": len(snapshots), "provider": "alpaca"},
-        }
-    except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code
-        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
-        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
-
-
-@router.get("/stocks/auctions", response_model=SuccessResponse)
-async def get_auctions(
-    symbols: str = Query(..., description=DESC_COMMA_SYMBOLS),
-    start: datetime | None = Query(default=None, description=DESC_START_TIME),
-    end: datetime | None = Query(default=None, description=DESC_END_TIME),
-    limit: int = Query(default=1000, le=10000, description="Max auctions per symbol"),
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-):
-    """Get auction data for symbols."""
-    provider = registry.get("alpaca")
-    if not provider:
-        raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
-
-    try:
-        await require_provider_rate_limit("alpaca", block=True)
-        symbols_list = [s.strip().upper() for s in symbols.split(",")]
-        auctions = await provider.get_auctions(symbols_list, start, end, limit)
-        return {
-            "success": True,
-            "data": auctions,
-            "meta": {"count": len(auctions), "provider": "alpaca"},
-        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("provider_request_failed", exc_info=True, status_code=status_code)

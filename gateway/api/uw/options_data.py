@@ -16,7 +16,7 @@ from gateway.api.uw.common import (
     require_api_key,
 )
 
-router = APIRouter(tags=["unusual_whales"])
+router = APIRouter(prefix="/options", tags=["unusual_whales"])
 
 
 @router.get("/{symbol}/option-volume", response_model=SuccessResponse)

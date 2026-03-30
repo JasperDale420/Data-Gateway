@@ -19,9 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
 
-import structlog
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 
 class RateLimitExceeded(Exception):  # noqa: N818
@@ -56,7 +54,7 @@ PROVIDER_LIMITS: dict[str, ProviderLimits] = {
     ),
     "finnhub": ProviderLimits(
         requests_per_minute=60,
-        requests_per_second=30,
+        requests_per_second=1,
         market_data_per_minute=900,
         fundamentals_per_minute=300,
     ),
@@ -144,20 +142,35 @@ class ProviderRateLimiter:
 
         Returns:
             (allowed, retry_after_seconds)
-        """
-        # Check per-second limit first (most restrictive window)
-        if self.per_second and not self.per_second.try_acquire():
-            return False, max(1, int(self.per_second.reset_after) + 1)
 
-        # Check per-minute limit
-        if not self.per_minute.try_acquire():
+        Uses two-phase check-then-record to avoid phantom request inflation:
+        first checks all buckets have capacity, then records in all of them.
+        """
+        now = time.time()
+
+        # Phase 1: Check all buckets have capacity (without recording)
+        if self.per_second:
+            self.per_second._cleanup(now)
+            if len(self.per_second.timestamps) >= self.per_second.limit:
+                return False, max(1, int(self.per_second.reset_after) + 1)
+
+        self.per_minute._cleanup(now)
+        if len(self.per_minute.timestamps) >= self.per_minute.limit:
             retry = max(1, int(self.per_minute.reset_after) + 1)
             return False, retry
 
-        # Check per-day limit
-        if self.per_day and not self.per_day.try_acquire():
-            retry = max(60, int(self.per_day.reset_after) + 1)
-            return False, retry
+        if self.per_day:
+            self.per_day._cleanup(now)
+            if len(self.per_day.timestamps) >= self.per_day.limit:
+                retry = max(60, int(self.per_day.reset_after) + 1)
+                return False, retry
+
+        # Phase 2: All checks passed — record in all buckets
+        if self.per_second:
+            self.per_second.timestamps.append(now)
+        self.per_minute.timestamps.append(now)
+        if self.per_day:
+            self.per_day.timestamps.append(now)
 
         self.total_requests += 1
         return True, 0

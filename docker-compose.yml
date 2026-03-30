@@ -44,22 +44,17 @@ services:
       retries: 3
       start_period: 5s
 
-  # Redis for Heber data sink
+  # Redis for Heber data sink (ephemeral — no persistence)
   redis:
     image: redis:7-alpine
     container_name: data-gateway-redis
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --save "" --appendonly no --maxmemory 512mb --maxmemory-policy allkeys-lru
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 300s
-
-volumes:
-  redis_data:
+      retries: 5
+      start_period: 10s

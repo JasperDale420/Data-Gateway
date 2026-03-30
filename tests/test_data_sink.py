@@ -166,3 +166,80 @@ class TestPublishAllDisabledAndEmpty:
 
         # Should not raise
         await registry.publish_all("topic", {"data": 1})
+
+
+class _BufferingSink(_TrackingSink):
+    """Sink that supports buffering (like RedisStreamsSink)."""
+
+    def __init__(self, sink_name: str = "buffering") -> None:
+        super().__init__(sink_name)
+        self.buffered: list[tuple[str, Any]] = []
+
+    def buffer_event(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
+        self.buffered.append((topic, data))
+
+
+class TestCircuitOpenBuffering:
+    """Tests that events are buffered (not dropped) when circuit is OPEN."""
+
+    @pytest.mark.asyncio
+    async def test_publish_all_buffers_when_circuit_open(self) -> None:
+        """When circuit is OPEN and sink supports buffering, events go to buffer."""
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:buffering")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = 9999999999.0
+
+        sink = _BufferingSink(sink_name="buffering")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            await registry.publish_all("heber:events", {"event_id": "test1", "symbol": "AAPL"})
+
+        await asyncio.sleep(0.05)
+
+        assert len(sink.published) == 0
+        assert len(sink.buffered) == 1
+        assert sink.buffered[0] == ("heber:events", {"event_id": "test1", "symbol": "AAPL"})
+
+    @pytest.mark.asyncio
+    async def test_publish_all_drops_when_circuit_open_no_buffer(self) -> None:
+        """When circuit is OPEN and sink has no buffer_event, events are dropped (existing behavior)."""
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:tracking")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = 9999999999.0
+
+        sink = _TrackingSink(sink_name="tracking")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            await registry.publish_all("heber:events", {"event_id": "test1"})
+
+        await asyncio.sleep(0.05)
+        assert len(sink.published) == 0
+
+    @pytest.mark.asyncio
+    async def test_publish_all_batch_buffers_when_circuit_open(self) -> None:
+        """Batch publish buffers events when circuit is OPEN."""
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:buffering")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = 9999999999.0
+
+        sink = _BufferingSink(sink_name="buffering")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        messages = [
+            ("heber:events", {"event_id": "e1"}),
+            ("heber:events", {"event_id": "e2"}),
+        ]
+
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            result = await registry.publish_all_batch(messages)
+
+        assert result == 0
+        assert len(sink.buffered) == 2

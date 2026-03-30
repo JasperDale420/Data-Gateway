@@ -9,16 +9,12 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-import structlog
-
 from gateway.core.corporate_actions import (
     ActionType,
     CorporateAction,
     get_corporate_actions_service,
 )
-
-logger = structlog.get_logger()
-
+from gateway.core.logger import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Adjustment Factor

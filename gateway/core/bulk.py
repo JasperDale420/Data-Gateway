@@ -17,12 +17,8 @@ from enum import Enum
 from itertools import islice
 from typing import Any
 
-import structlog
-
 from gateway.config import get_settings
-
-logger = structlog.get_logger()
-
+from gateway.core.logger import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Job Status
@@ -52,7 +48,7 @@ class BulkBarsRequest:
     end: str
     timeframe: str = "1Day"
     adjusted: bool = False
-    format: str = "jsonl"  # jsonl or parquet
+    format: str = "jsonl"  # jsonl or json (parquet not yet implemented)
 
     def validate(self) -> list[str]:
         """Validate request. Returns list of error messages."""
@@ -65,8 +61,8 @@ class BulkBarsRequest:
             errors.append("start date is required")
         if not self.end:
             errors.append("end date is required")
-        if self.format not in ("jsonl", "parquet", "json"):
-            errors.append(f"Invalid format: {self.format}, must be jsonl, json, or parquet")
+        if self.format not in ("jsonl", "json"):
+            errors.append(f"Invalid format: {self.format}, must be jsonl or json")
         if self.start and self.end:
             try:
                 start_dt = datetime.fromisoformat(self.start)
@@ -222,6 +218,8 @@ class BulkJob:
             return None
 
         elapsed = (datetime.now(UTC) - self.started_at).total_seconds()
+        if elapsed <= 0:
+            return None
         rate = self.symbols_complete / elapsed
         remaining = self.symbols_total - self.symbols_complete
 
@@ -459,6 +457,8 @@ class BulkJobManager:
         """Cancel a job if it's still running."""
         job = self._jobs.get(job_id)
         if job and job.status in (BulkJobStatus.PENDING, BulkJobStatus.RUNNING):
+            if hasattr(job, "_task") and job._task and not job._task.done():
+                job._task.cancel()
             job.status = BulkJobStatus.FAILED
             job.error = "Cancelled by user"
             return True

@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     # Rate Limiting
     rate_limit_enabled: bool = True
     rate_limit_default: int = Field(default=600, ge=1)  # requests per minute
+    behind_trusted_proxy: bool = False  # Only trust X-Forwarded-For when behind a known proxy
 
     # Per-provider rate limits (override hardcoded defaults via env)
     alpaca_rate_limit_per_minute: int = Field(default=10000, ge=1)

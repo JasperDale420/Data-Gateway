@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-import structlog
 from fastapi import Depends, HTTPException
 
 from gateway.api.deps import (
@@ -16,9 +15,8 @@ from gateway.api.deps import (
 )
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
+from gateway.core.logger import logger
 from gateway.core.registry import ProviderRegistry
-
-logger = structlog.get_logger()
 
 PROVIDER_NOT_AVAILABLE = "Finnhub provider not available"
 CACHE_TTL = 60  # 1 minute for real-time data

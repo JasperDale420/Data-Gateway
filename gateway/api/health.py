@@ -5,7 +5,6 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-import structlog
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
@@ -13,9 +12,8 @@ from gateway import __version__
 from gateway.api.deps import get_cache, get_connection_manager, get_sink_registry
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
+from gateway.core.logger import logger
 from gateway.core.shutdown import ShutdownCoordinator
-
-logger = structlog.get_logger()
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -114,18 +112,33 @@ async def detailed_status(
     connections: ConnectionManager = Depends(get_connection_manager),
 ) -> dict[str, Any]:
     """Detailed status with component health and stats."""
+    components: dict[str, Any] = {
+        "cache": {
+            "status": "ok",
+            "stats": cache.get_stats_dict(),
+        },
+        "connections": {
+            "status": "ok",
+            "stats": connections.get_stats(),
+        },
+    }
+
+    # Include data sink health if configured
+    sink_registry = get_sink_registry()
+    if sink_registry:
+        try:
+            sink_results = await sink_registry.health_check_all()
+            all_healthy = all(sink_results.values())
+            components["data_sink"] = {
+                "status": "ok" if all_healthy else "degraded",
+                "sinks": {name: "ok" if healthy else "degraded" for name, healthy in sink_results.items()},
+            }
+        except Exception:
+            components["data_sink"] = {"status": "degraded"}
+
     return {
         "status": "ok",
         "version": __version__,
         "timestamp": datetime.now(UTC).isoformat(),
-        "components": {
-            "cache": {
-                "status": "ok",
-                "stats": cache.get_stats_dict(),
-            },
-            "connections": {
-                "status": "ok",
-                "stats": connections.get_stats(),
-            },
-        },
+        "components": components,
     }

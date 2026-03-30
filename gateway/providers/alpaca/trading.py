@@ -4,7 +4,6 @@ from datetime import date, datetime
 from typing import Any
 
 import httpx
-import structlog
 from alpaca.common.enums import Sort
 from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import (
@@ -26,13 +25,14 @@ from alpaca.trading.requests import (
     MarketOrderRequest,
     ReplaceOrderRequest,
     StopLimitOrderRequest,
+    StopLossRequest,
     StopOrderRequest,
+    TakeProfitRequest,
     UpdateWatchlistRequest,
 )
 
+from gateway.core.logger import logger
 from gateway.providers.alpaca._base import ERR_TRADING_CLIENT_NOT_INITIALIZED
-
-logger = structlog.get_logger()
 
 
 class AlpacaTradingMixin:
@@ -64,13 +64,20 @@ class AlpacaTradingMixin:
         stop_price: float | None = None,
         client_order_id: str | None = None,
         extended_hours: bool = False,
+        order_class: str | None = None,
+        take_profit_limit_price: float | None = None,
+        stop_loss_stop_price: float | None = None,
+        stop_loss_limit_price: float | None = None,
     ) -> dict[str, Any]:
         """Create a new order using SDK."""
         if not self._trading_client:
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
         # Map string enums to SDK enums
-        order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+        side_lower = side.lower()
+        if side_lower not in ("buy", "sell"):
+            raise ValueError(f"Invalid order side: {side!r}. Must be 'buy' or 'sell'.")
+        order_side = OrderSide.BUY if side_lower == "buy" else OrderSide.SELL
         tif_map = {
             "day": TimeInForce.DAY,
             "gtc": TimeInForce.GTC,
@@ -80,6 +87,22 @@ class AlpacaTradingMixin:
             "cls": TimeInForce.CLS,
         }
         tif = tif_map.get(time_in_force.lower(), TimeInForce.DAY)
+
+        # Build bracket sub-objects when order_class is set
+        tp_request = None
+        sl_request = None
+        if order_class and order_class.lower() in ("bracket", "oco", "oto"):
+            if take_profit_limit_price is not None:
+                tp_request = TakeProfitRequest(limit_price=take_profit_limit_price)
+            if stop_loss_stop_price is not None:
+                sl_request = StopLossRequest(
+                    stop_price=stop_loss_stop_price,
+                    limit_price=stop_loss_limit_price,
+                )
+
+        from alpaca.trading.enums import OrderClass as AlpacaOrderClass
+
+        oc = AlpacaOrderClass(order_class.lower()) if order_class else None
 
         try:
             request: MarketOrderRequest | LimitOrderRequest | StopOrderRequest | StopLimitOrderRequest
@@ -92,6 +115,9 @@ class AlpacaTradingMixin:
                     time_in_force=tif,
                     extended_hours=extended_hours,
                     client_order_id=client_order_id,
+                    order_class=oc,
+                    take_profit=tp_request,
+                    stop_loss=sl_request,
                 )
             elif order_type.lower() == "limit":
                 request = LimitOrderRequest(
@@ -103,6 +129,9 @@ class AlpacaTradingMixin:
                     limit_price=limit_price,
                     extended_hours=extended_hours,
                     client_order_id=client_order_id,
+                    order_class=oc,
+                    take_profit=tp_request,
+                    stop_loss=sl_request,
                 )
             elif order_type.lower() == "stop":
                 request = StopOrderRequest(
@@ -127,11 +156,18 @@ class AlpacaTradingMixin:
                     client_order_id=client_order_id,
                 )
             else:
+                logger.error("alpaca_order_unsupported_type", order_type=order_type, symbol=symbol)
                 raise ValueError(f"Unsupported order type: {order_type}")
 
             order = self._trading_client.submit_order(request)
             data = self._model_to_dict(order)
-            logger.info("alpaca_order_created", order_id=data.get("id"), symbol=symbol, side=side)
+            logger.info(
+                "alpaca_order_created",
+                order_id=data.get("id"),
+                symbol=symbol,
+                side=side,
+                order_class=order_class,
+            )
             return data
 
         except APIError as e:
@@ -236,7 +272,7 @@ class AlpacaTradingMixin:
         try:
             tif = TimeInForce(time_in_force) if time_in_force else None
             request = ReplaceOrderRequest(
-                qty=int(qty) if qty else None,
+                qty=qty if qty else None,
                 limit_price=limit_price,
                 stop_price=stop_price,
                 time_in_force=tif,

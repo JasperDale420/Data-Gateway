@@ -17,8 +17,6 @@ from time import monotonic as _monotonic
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-import structlog
-
 from gateway.config import get_settings
 from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
@@ -28,7 +26,7 @@ from gateway.core.ticker_universe import TickerUniverse
 if TYPE_CHECKING:
     from gateway.providers.uw import UnusualWhalesProvider
 
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 # Stream name for Heber integration
 HEBER_STREAM = "heber:events"
@@ -276,7 +274,7 @@ class UWPoller:
         messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, envelope) for envelope, _, _ in to_publish]
 
         try:
-            if type(sink_registry).__name__ == "DataSinkRegistry":
+            if hasattr(sink_registry, "publish_all_batch"):
                 published = await sink_registry.publish_all_batch(messages)
             else:
                 # Fallback for mocks / non-registry objects
@@ -348,8 +346,12 @@ class UWPoller:
 
     def get_runtime_snapshot(self) -> dict[str, Any]:
         """Return lightweight runtime/tuning telemetry for admin surfaces."""
+        from gateway.core.globals import get_sink_registry
+
+        sink_registry = get_sink_registry()
         return {
             "running": self._running,
+            "sink_available": sink_registry is not None,
             "enabled": True,
             "publish_max_inflight": self._publish_max_inflight,
             "dedupe_cache_entries": len(self._seen_ids),
@@ -441,7 +443,7 @@ class UWPoller:
             try:
                 sink_registry = get_sink_registry()
                 if not sink_registry:
-                    logger.debug("uw_poller_no_sink")
+                    logger.warning("uw_poller_no_sink")
                     await asyncio.sleep(base_interval)
                     continue
 
@@ -502,11 +504,6 @@ class UWPoller:
             envelopes: list[dict[str, Any]] = []
 
             for alert in alerts:
-                if not envelopes and alerts:
-                    logger.info(
-                        "uw_poller_debug_first_alert", alert_type=type(alerts[0]), alert_dump=alerts[0].model_dump()
-                    )
-
                 envelope = wrap_event(
                     event=alert.model_dump(),
                     provider="unusual_whales",

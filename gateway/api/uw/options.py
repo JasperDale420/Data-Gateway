@@ -16,7 +16,7 @@ from gateway.api.uw.common import (
     require_api_key,
 )
 
-router = APIRouter(tags=["unusual_whales"])
+router = APIRouter(prefix="/options", tags=["unusual_whales"])
 
 
 @router.get("/{symbol}/net-premium", response_model=SuccessResponse)
@@ -112,14 +112,3 @@ async def get_oi_change(
         fetcher=lambda provider: provider.get_oi_change(symbol=symbol, date_str=date),
         build_response=lambda data: make_response(data, symbol=symbol, count=len(data)),
     )
-
-
-@router.get("/options/{symbol}/iv-rank", response_model=SuccessResponse)
-async def get_iv_rank_options_alias(
-    symbol: str,
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-    cache: InMemoryCache = Depends(get_cache),
-):
-    """Alias for IV rank under /options/ prefix."""
-    return await get_iv_rank(symbol=symbol, client=client, registry=registry, cache=cache)

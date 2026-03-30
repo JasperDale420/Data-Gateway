@@ -65,7 +65,7 @@ class BulkBarsRequestModel(BaseModel):
     )
     format: str = Field(
         default="jsonl",
-        description="Output format: jsonl, json, or parquet",
+        description="Output format: jsonl or json",
     )
 
 

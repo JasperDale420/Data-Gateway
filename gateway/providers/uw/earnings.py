@@ -2,11 +2,9 @@
 
 from decimal import Decimal
 
-import structlog
+from gateway.core.logger import logger
 
 from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
-
-logger = structlog.get_logger()
 
 
 class UWEarningsMixin:

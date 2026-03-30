@@ -22,11 +22,8 @@ import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
-import structlog
-
 from gateway.core.envelope import wrap_event
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 # Stream name for Heber integration (same as other pollers)
 HEBER_STREAM = "heber:events"

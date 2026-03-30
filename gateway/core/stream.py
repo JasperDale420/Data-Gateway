@@ -15,19 +15,17 @@ from typing import Any
 
 import msgpack
 import orjson
-import structlog
 import websockets
 from websockets.asyncio.client import ClientConnection
 
 from gateway.core.envelope import fast_wrap_streaming_event
+from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_stream_fanout_batch_size,
     record_stream_fanout_dispatch_event,
     set_stream_fanout_limits_metrics,
 )
 from gateway.core.validator import get_validator
-
-logger = structlog.get_logger()
 
 DEFAULT_FANOUT_MAX_INFLIGHT = 100
 DEFAULT_FANOUT_BATCH_SIZE = 32
@@ -61,6 +59,10 @@ class SequenceTracker:
     Clients see monotonically increasing integers starting at 1.
     A gap (new_seq != last_seq + 1) signals missed messages.
     All counters reset on gateway restart.
+
+    Thread safety: Both next_seq() and reset() are synchronous with no await
+    points, so they execute atomically within a single asyncio event loop
+    iteration. No lock is needed.
     """
 
     def __init__(self) -> None:
@@ -506,13 +508,13 @@ class UpstreamConnection:
         quotes: set[str] | None = None,
         trades: set[str] | None = None,
         news: set[str] | None = None,
-    ) -> None:
-        """Subscribe to symbols upstream."""
+    ) -> list[str]:
+        """Subscribe to symbols upstream. Returns list of warnings (if any)."""
         if not self.is_connected:
             logger.warning("subscribe_not_connected", stream=self.stream_type.value)
-            return
+            return []
 
-        bars, quotes, trades, news = self._sanitize_subscription_request(bars, quotes, trades, news)
+        bars, quotes, trades, news, warnings = self._sanitize_subscription_request(bars, quotes, trades, news)
 
         msg: dict[str, Any] = {"action": "subscribe"}
         if bars:
@@ -535,6 +537,8 @@ class UpstreamConnection:
                 news=list(news) if news else [],
             )
 
+        return warnings
+
     async def unsubscribe(
         self,
         bars: set[str] | None = None,
@@ -546,7 +550,7 @@ class UpstreamConnection:
         if not self.is_connected:
             return
 
-        bars, quotes, trades, news = self._sanitize_subscription_request(bars, quotes, trades, news)
+        bars, quotes, trades, news, _warnings = self._sanitize_subscription_request(bars, quotes, trades, news)
 
         msg: dict[str, Any] = {"action": "unsubscribe"}
         if bars:
@@ -575,15 +579,21 @@ class UpstreamConnection:
         quotes: set[str] | None,
         trades: set[str] | None,
         news: set[str] | None,
-    ) -> tuple[set[str] | None, set[str] | None, set[str] | None, set[str] | None]:
+    ) -> tuple[set[str] | None, set[str] | None, set[str] | None, set[str] | None, list[str]]:
+        """Sanitize subscription request, returning (bars, quotes, trades, news, warnings)."""
+        warnings: list[str] = []
         if self.stream_type == AlpacaStreamType.OPTIONS and bars:
+            warnings.append(
+                f"Options stream does not support bars subscriptions ({len(bars)} symbols ignored). "
+                "Use option_quotes or option_trades instead."
+            )
             logger.warning(
                 "options_stream_ignoring_bars_subscription",
                 count=len(bars),
                 hint="Alpaca options websocket supports quotes and trades, not bars",
             )
             bars = None
-        return bars, quotes, trades, news
+        return bars, quotes, trades, news, warnings
 
     async def start(self) -> None:
         """Start the connection and receive loop."""
@@ -693,6 +703,12 @@ class UpstreamConnection:
         """Receive and dispatch messages.
 
         Handles both JSON (stocks, crypto, news) and MessagePack (OPRA options) formats.
+
+        Note: This loop is inherently sequential — `async for message in ws` yields
+        one frame at a time and `on_message` is awaited inline. Backpressure is applied
+        via a per-message timeout: if on_message takes longer than the threshold, we
+        log a warning. The websockets library itself applies TCP-level backpressure
+        by not reading from the socket while we're blocked in on_message.
         """
         if not self._ws:
             return
@@ -709,7 +725,11 @@ class UpstreamConnection:
                     await self.on_message(data)
 
             except Exception as e:
-                logger.error("message_parse_error", error=str(e))
+                logger.error(
+                    "message_parse_error",
+                    stream=self.stream_type.value,
+                    error=str(e),
+                )
 
     # Auth error messages that indicate account-level issues, not transient failures
     _NON_RECOVERABLE_ERRORS = ("connection limit exceeded",)
@@ -760,14 +780,18 @@ class UpstreamConnection:
                     self._running = False
                     return
 
-                logger.warning(
+                is_last_attempt = attempt + 1 >= self.max_retries
+                log_fn = logger.error if is_last_attempt else logger.warning
+                log_fn(
                     "reconnect_failed",
                     stream=self.stream_type.value,
                     attempt=attempt + 1,
+                    max_retries=self.max_retries,
                     error=error_msg,
+                    exhausted=is_last_attempt,
                 )
 
-        logger.error("max_retries_exceeded", stream=self.stream_type.value)
+        # All retries exhausted — enter dormant state
         self._running = False
 
 
@@ -928,25 +952,43 @@ class StreamMultiplexer:
         if conn.is_connected:
             return True
 
-        # Connection task is actively running (connecting or retrying)
+        # Connection task is actively running (connecting or retrying) —
+        # wait for it to finish establishing rather than returning True blindly
         if conn._running:
-            return True
+            try:
+                await asyncio.wait_for(conn._connected_event.wait(), timeout=10.0)
+                return conn.is_connected
+            except TimeoutError:
+                logger.warning(
+                    "lazy_connect_wait_timeout",
+                    stream=stream_type.value,
+                    hint="Connection task is running but hasn't authenticated yet",
+                )
+                # Still running, let subscription proceed optimistically —
+                # messages will queue and deliver once connected
+                return True
 
         # Stream is dormant (gave up after max retries) — restart it
         logger.info("restarting_dormant_stream", stream=stream_type.value)
 
-        # Start connection for this stream
-        logger.info("lazy_connect_starting", stream=stream_type.value)
+        # Reset the event before starting so we get a clean wait
+        conn._connected_event.clear()
+
         task = asyncio.create_task(conn.start())
         self._tasks.append(task)
 
-        # Wait briefly for connection to establish
+        # Wait for connection to establish with generous timeout
         try:
-            await asyncio.wait_for(conn._connected_event.wait(), timeout=5.0)
+            await asyncio.wait_for(conn._connected_event.wait(), timeout=10.0)
             logger.info("lazy_connect_established", stream=stream_type.value)
             return True
         except TimeoutError:
-            logger.warning("lazy_connect_timeout", stream=stream_type.value)
+            logger.warning(
+                "lazy_connect_timeout",
+                stream=stream_type.value,
+                hint="Stream task started but connection not established within timeout. "
+                "Client should retry subscription.",
+            )
             return False
 
     async def client_subscribe(
@@ -987,16 +1029,20 @@ class StreamMultiplexer:
         new_bars, new_quotes, new_trades, new_news = conn.subscriptions.subscribe(client_id, bars, quotes, trades, news)
 
         # Subscribe upstream only for new symbols
+        warnings: list[str] = []
         if new_bars or new_quotes or new_trades or new_news:
-            await conn.subscribe(new_bars, new_quotes, new_trades, new_news)
+            warnings = await conn.subscribe(new_bars, new_quotes, new_trades, new_news)
 
         subscribed = list(set((bars or []) + (quotes or []) + (trades or []) + (news or [])))
-        return {
+        result: dict[str, Any] = {
             "type": "subscription_ack",
             "status": "ok",
             "subscribed": subscribed,
             "failed": [],
         }
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
     async def client_unsubscribe(
         self,
@@ -1140,6 +1186,13 @@ class StreamMultiplexer:
         ts_ingest = datetime.now(UTC)
         seq = self._seq_tracker.next_seq(symbol_for_log, data_type)
 
+        # Inject timeframe for bars — Alpaca WebSocket bars are always 1Min
+        # but the raw message doesn't include a timeframe field. Without it,
+        # Heber writes bars with timeframe=null, making them indistinguishable
+        # from daily bars in Silver.
+        if data_type == "bars" and "timeframe" not in message:
+            message["timeframe"] = "1Min"
+
         envelope = fast_wrap_streaming_event(
             event=message,
             provider="alpaca",
@@ -1166,23 +1219,34 @@ class StreamMultiplexer:
                 logger.error(
                     "broadcast_error",
                     symbol=symbol_for_log,
+                    data_type=data_type,
                     event_id=envelope.get("event_id", "unknown"),
+                    client_count=len(clients),
+                    stream_type=stream_type.value if stream_type else "unknown",
                     error=str(e),
+                    exc_info=True,
                 )
             return
 
         # Fallback to manual fanout if no broadcast callback (e.g. tests)
+        _fanout_timeout = 5.0  # per-client send timeout to prevent hung client blocking batch
+
         async def _send(client_id: str) -> None:
             try:
                 async with self._fanout_semaphore:
-                    # Send pre-serialized JSON string if possible, or envelope dict
-                    # on_data signature might need update or flexible handling
-                    # Current on_data is Callable[[str, str, dict[str, Any]], Awaitable[None]]
-                    # We should check if on_data supports string payload, but standard Multiplexer uses on_data from main.py
-                    # which calls connection_manager.send_personal_message which expects JSON-serializable
-                    # For safety in fallback mode, we pass the dict envelope
-                    await self.on_data(client_id, data_type, envelope)
+                    await asyncio.wait_for(
+                        self.on_data(client_id, data_type, envelope),
+                        timeout=_fanout_timeout,
+                    )
                 record_stream_fanout_dispatch_event("delivered")
+            except TimeoutError:
+                record_stream_fanout_dispatch_event("timeout")
+                logger.warning(
+                    "fanout_timeout",
+                    client_id=client_id,
+                    symbol=symbol_for_log,
+                    timeout=_fanout_timeout,
+                )
             except Exception as e:
                 record_stream_fanout_dispatch_event("error")
                 logger.error(

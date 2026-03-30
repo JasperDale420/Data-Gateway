@@ -9,10 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import structlog
-
-logger = structlog.get_logger()
-
+from gateway.core.logger import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Validation Error Codes
@@ -124,6 +121,20 @@ class DataValidator:
                     ValidationErrorCodes.FUTURE_TIMESTAMP,
                     f"Future timestamp: {timestamp}",
                     "timestamp",
+                )
+
+        # Non-finite price detection (NaN/Inf bypass IEEE 754 comparisons)
+        for label, raw, parsed in [
+            ("open", open_raw, open_price),
+            ("high", high_raw, high),
+            ("low", low_raw, low),
+            ("close", close_raw, close),
+        ]:
+            if raw is not None and parsed is None:
+                result.add_error(
+                    ValidationErrorCodes.INVALID_PRICE,
+                    f"Non-finite or unparseable {label} price: {raw}",
+                    label,
                 )
 
         # Price validation (GW-E7002)
@@ -290,22 +301,30 @@ class DataValidator:
         )
 
     def _to_float(self, value: Any) -> float | None:
-        """Convert value to float, handling None."""
+        """Convert value to float, handling None and rejecting NaN/Inf.
+
+        Returns None for values that cannot be converted or are non-finite
+        (NaN, Inf, -Inf), since these bypass IEEE 754 comparison checks.
+        """
+        import math
+
         if value is None:
             return None
         if isinstance(value, float):
-            return value
+            return None if math.isnan(value) or math.isinf(value) else value
         if isinstance(value, int):
             return float(value)
         if isinstance(value, str):
             if not value:
                 return None
             try:
-                return float(value)
+                result = float(value)
+                return None if math.isnan(result) or math.isinf(result) else result
             except Exception:
                 return None
         try:
-            return float(value)
+            result = float(value)
+            return None if math.isnan(result) or math.isinf(result) else result
         except Exception:
             return None
 
@@ -315,15 +334,20 @@ class DataValidator:
         return ts is not None and ts > (now_utc + timedelta(seconds=5))
 
     def _parse_timestamp(self, ts: Any) -> datetime | None:
-        """Parse timestamp to datetime."""
+        """Parse timestamp to timezone-aware datetime.
+
+        Naive datetimes (no timezone info) are assumed to be UTC to avoid
+        TypeError when comparing with timezone-aware now_utc in callers.
+        """
         if isinstance(ts, datetime):
-            return ts
+            return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
         if isinstance(ts, str):
             try:
                 # Handle Z suffix
                 if ts.endswith("Z"):
                     ts = ts[:-1] + "+00:00"
-                return datetime.fromisoformat(ts)
+                parsed = datetime.fromisoformat(ts)
+                return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
             except ValueError:
                 return None
         return None
