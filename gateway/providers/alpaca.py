@@ -1635,7 +1635,7 @@ class AlpacaProvider(DataProvider):
             return result
 
         except APIError as e:
-            logger.error("alpaca_orders_error", error=str(e))
+            logger.error("alpaca_orders_error", status=e.status_code, error=str(e))
             raise
 
     def get_order(self, order_id: str) -> dict[str, Any]:
