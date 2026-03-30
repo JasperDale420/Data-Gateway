@@ -4,9 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
-import structlog
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 T = TypeVar("T")
 
@@ -103,7 +101,7 @@ class RequestDeduplicator:
 
 
 # Singleton instance
-_deduplicator: RequestDeduplicator = None
+_deduplicator: RequestDeduplicator | None = None
 
 
 def get_deduplicator() -> RequestDeduplicator:

@@ -5,7 +5,6 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-import structlog
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
@@ -13,9 +12,8 @@ from gateway import __version__
 from gateway.api.deps import get_cache, get_connection_manager, get_sink_registry
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
+from gateway.core.logger import logger
 from gateway.core.shutdown import ShutdownCoordinator
-
-logger = structlog.get_logger()
 
 router = APIRouter(prefix="/health", tags=["health"])
 

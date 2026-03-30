@@ -5,13 +5,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-import structlog
 
 from gateway.core.http_client import create_async_http_client
+from gateway.core.logger import logger
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
-
-logger = structlog.get_logger()
 
 # SEC EDGAR API endpoints (free, no API key required)
 SEC_BASE_URL = "https://data.sec.gov"
@@ -207,7 +205,7 @@ class SECProvider(DataProvider):
         primary_documents = recent.get("primaryDocument", [])
         descriptions = recent.get("primaryDocDescription", [])
 
-        for i in range(min(len(forms), limit)):
+        for i in range(len(forms)):
             form = forms[i] if i < len(forms) else None
 
             # Filter by form type if specified

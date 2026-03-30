@@ -8,12 +8,9 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
-import structlog
-
 from gateway.core.circuit_breaker import CircuitOpenError, CircuitState, get_circuit_breaker
+from gateway.core.logger import logger
 from gateway.core.metrics import record_sink_publish
-
-logger = structlog.get_logger()
 
 
 class DataSink(ABC):

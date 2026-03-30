@@ -5,14 +5,12 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
-import structlog
 
 from gateway.core.http_client import http_retry
+from gateway.core.logger import logger
 from gateway.core.metrics import record_provider_quote_batch_size
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
-
-logger = structlog.get_logger()
 
 
 class AlpacaMarketMixin:

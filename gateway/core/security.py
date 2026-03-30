@@ -16,10 +16,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
-import structlog
-
-logger = structlog.get_logger()
-
+from gateway.core.logger import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Validation Error Codes (GW-E8xxx)
@@ -428,8 +425,8 @@ def check_permission(path: str, role: Role) -> bool:
     for pattern, perms in PERMISSION_MATRIX.items():
         if path.startswith(pattern):
             return perms.get(role, False)
-    # Default allow for unlisted paths
-    return True
+    # Default deny for unlisted paths — add to PERMISSION_MATRIX to grant access
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

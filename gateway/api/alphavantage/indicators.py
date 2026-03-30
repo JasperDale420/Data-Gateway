@@ -1,6 +1,5 @@
 """Alpha Vantage technical indicators endpoints."""
 
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alphavantage.common import (
@@ -14,9 +13,8 @@ from gateway.api.alphavantage.common import (
     get_registry,
     require_api_key,
 )
+from gateway.core.logger import logger
 from gateway.schemas import SuccessResponse
-
-logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 

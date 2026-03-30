@@ -2,12 +2,9 @@
 
 from typing import Any
 
-import structlog
 from fastapi import APIRouter, Depends
 
 from gateway.api.deps import require_api_key
-
-logger = structlog.get_logger()
 
 router = APIRouter(
     prefix="/catalog",
@@ -334,9 +331,6 @@ PROVIDER_CATALOG = {
         },
     },
 }
-
-
-router = APIRouter(prefix="/catalog", tags=["catalog"])
 
 
 # WebSocket Stream Metadata

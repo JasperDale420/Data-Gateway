@@ -370,7 +370,7 @@ async def get_asset(
         cache_key=f"alpaca:trading:asset:{normalized_symbol}",
         ttl=TRADING_ASSETS_CACHE_TTL_SECONDS,
         route_label="alpaca_trading_asset",
-        provider_fn=lambda provider: provider.get_asset(symbol),
+        provider_fn=lambda provider: provider.get_asset(normalized_symbol),
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 

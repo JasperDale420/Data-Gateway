@@ -20,14 +20,11 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import structlog
-
 from gateway.config import get_settings
 from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 # Stream name for Heber integration (same as UW poller)
 HEBER_STREAM = "heber:events"

@@ -8,16 +8,15 @@ Provides:
 """
 
 import hashlib
+import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-import structlog
 from pydantic import BaseModel, Field
 
+from gateway.core.logger import logger
 from gateway.core.metrics import record_envelope_created
-
-logger = structlog.get_logger()
 
 # Schema version for envelope format
 SCHEMA_VERSION = "v1"
@@ -157,9 +156,7 @@ def compute_event_id(
 
     # Add unique fields, converting to strings
     for field in unique_fields:
-        if isinstance(field, Decimal):
-            parts.append(str(float(field)))
-        elif field is not None:
+        if isinstance(field, Decimal) or field is not None:
             parts.append(str(field))
 
     data = "|".join(parts)
@@ -272,7 +269,7 @@ def _infer_instrument_type(feed: str, symbol: str, payload: dict) -> str:
         return "option"
 
     # Crypto indicators
-    if "/" in symbol or any(crypto in symbol for crypto in ["BTC", "ETH", "USD", "USDT"]):
+    if "/" in symbol or any(symbol.startswith(prefix) or symbol.endswith(prefix) for prefix in ["BTC", "ETH", "USDT"]):
         if len(symbol) >= 6:
             return "crypto"
 
@@ -375,8 +372,6 @@ def wrap_event(
 
     # Quality flags
     quality_flags = ["validated"]
-    if source == "rest":
-        quality_flags.append("cached")
 
     # Create envelope
     try:
@@ -508,8 +503,6 @@ def fast_wrap_streaming_event(
     # Using urandom or simple string construction is faster than hashing content.
     # UUID4 is ~1-2us. Hashing 100 bytes is ~5-10us.
     # Let's use os.urandom(16).hex()
-    import os
-
     event_id = os.urandom(16).hex()
 
     lineage = {}

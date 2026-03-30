@@ -12,14 +12,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
-import structlog
 
 from gateway.core.http_client import create_async_http_client, http_retry
+from gateway.core.logger import logger
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote
-
-logger = structlog.get_logger()
 
 PROVIDER_NOT_INIT = "Provider not initialized"
 API_KEY_NOT_SET = "Alpha Vantage API key not configured"
@@ -112,7 +110,7 @@ class AlphaVantageProvider(DataProvider):
 
             if response.status_code == 200:
                 data = response.json()
-                if "Global Quote" in data or "Note" not in data:
+                if "Global Quote" in data and "Note" not in data and "Information" not in data:
                     return HealthStatus(
                         healthy=True,
                         latency_ms=latency,

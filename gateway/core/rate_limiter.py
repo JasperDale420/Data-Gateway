@@ -19,9 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
 
-import structlog
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 
 class RateLimitExceeded(Exception):  # noqa: N818

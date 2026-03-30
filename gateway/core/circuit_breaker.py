@@ -11,9 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, TypeVar
 
-import structlog
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 T = TypeVar("T")
 
@@ -124,6 +122,9 @@ class CircuitBreaker:
     # Lock for thread safety
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    # Guards against multiple concurrent HALF_OPEN probes
+    _half_open_in_progress: bool = field(default=False)
+
     async def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> T:
         """Execute a function through the circuit breaker.
 
@@ -160,9 +161,14 @@ class CircuitBreaker:
             elapsed = time.time() - (self.last_failure_time or 0)
 
             if elapsed >= self.config.recovery_timeout:
+                if self._half_open_in_progress:
+                    # Another probe is already running — reject this caller
+                    retry_after = self.config.recovery_timeout
+                    raise CircuitOpenError(self.name, retry_after)
                 # Transition to half-open
                 self.state = CircuitState.HALF_OPEN
                 self.success_count = 0
+                self._half_open_in_progress = True
                 logger.info(
                     "circuit_half_open",
                     circuit=self.name,
@@ -180,6 +186,7 @@ class CircuitBreaker:
                 self.success_count += 1
                 if self.success_count >= self.config.success_threshold:
                     self.state = CircuitState.CLOSED
+                    self._half_open_in_progress = False
                     logger.info(
                         "circuit_closed",
                         circuit=self.name,
@@ -199,6 +206,7 @@ class CircuitBreaker:
             if self.state == CircuitState.HALF_OPEN:
                 # Any failure in half-open reopens the circuit
                 self.state = CircuitState.OPEN
+                self._half_open_in_progress = False
                 logger.warning(
                     "circuit_reopened",
                     circuit=self.name,
@@ -223,6 +231,7 @@ class CircuitBreaker:
             self.failure_count = 0
             self.success_count = 0
             self.last_failure_time = None
+            self._half_open_in_progress = False
             logger.info(
                 "circuit_reset",
                 circuit=self.name,

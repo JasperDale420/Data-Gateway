@@ -23,7 +23,6 @@ import logging
 from typing import Any
 
 import httpx
-import structlog
 from tenacity import (
     before_sleep_log,
     retry,
@@ -32,7 +31,7 @@ from tenacity import (
     wait_exponential,
 )
 
-logger = structlog.get_logger(__name__)
+from gateway.core.logger import logger
 
 DEFAULT_TIMEOUT = 30.0
 

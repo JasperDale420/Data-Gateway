@@ -5,12 +5,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-import structlog
-
+from gateway.core.logger import logger
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar
-
-logger = structlog.get_logger()
 
 
 class YFinanceProvider(DataProvider):

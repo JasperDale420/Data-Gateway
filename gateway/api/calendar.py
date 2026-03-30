@@ -8,7 +8,6 @@ import time as time_module
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, cast
 
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
@@ -33,7 +32,7 @@ from gateway.types.provider_protocols import (
 )
 
 router = APIRouter(prefix="/api/v1/calendar", tags=["Trading Calendar"])
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 _CALENDAR_PROVIDER_DEGRADE_WINDOW_SECONDS = 30.0
 _CALENDAR_PROVIDER_DEGRADED_UNTIL: dict[str, float] = {}

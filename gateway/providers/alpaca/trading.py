@@ -4,7 +4,6 @@ from datetime import date, datetime
 from typing import Any
 
 import httpx
-import structlog
 from alpaca.common.enums import Sort
 from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import (
@@ -32,9 +31,8 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
+from gateway.core.logger import logger
 from gateway.providers.alpaca._base import ERR_TRADING_CLIENT_NOT_INITIALIZED
-
-logger = structlog.get_logger()
 
 
 class AlpacaTradingMixin:
@@ -76,7 +74,10 @@ class AlpacaTradingMixin:
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
         # Map string enums to SDK enums
-        order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+        side_lower = side.lower()
+        if side_lower not in ("buy", "sell"):
+            raise ValueError(f"Invalid order side: {side!r}. Must be 'buy' or 'sell'.")
+        order_side = OrderSide.BUY if side_lower == "buy" else OrderSide.SELL
         tif_map = {
             "day": TimeInForce.DAY,
             "gtc": TimeInForce.GTC,
@@ -155,6 +156,7 @@ class AlpacaTradingMixin:
                     client_order_id=client_order_id,
                 )
             else:
+                logger.error("alpaca_order_unsupported_type", order_type=order_type, symbol=symbol)
                 raise ValueError(f"Unsupported order type: {order_type}")
 
             order = self._trading_client.submit_order(request)
@@ -270,7 +272,7 @@ class AlpacaTradingMixin:
         try:
             tif = TimeInForce(time_in_force) if time_in_force else None
             request = ReplaceOrderRequest(
-                qty=int(qty) if qty else None,
+                qty=qty if qty else None,
                 limit_price=limit_price,
                 stop_price=stop_price,
                 time_in_force=tif,

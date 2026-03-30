@@ -7,9 +7,9 @@ from decimal import Decimal
 from time import perf_counter
 from typing import Any
 
-import structlog
 from unusualwhales.types import UNSET, Unset
 
+from gateway.core.logger import logger
 from gateway.core.metrics import (
     dec_provider_sync_call_inflight,
     inc_provider_sync_call_inflight,
@@ -23,8 +23,6 @@ from gateway.schemas import (
     NormalizedIVRank,
     NormalizedMarketTide,
 )
-
-logger = structlog.get_logger()
 
 # Error message constants
 ERR_NOT_INITIALIZED = "Provider not initialized"

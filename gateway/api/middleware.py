@@ -7,21 +7,19 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-import structlog
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from gateway.core.envelope import wrap_event
+from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_cache_hit,
     record_cache_miss,
     record_rate_limit_exceeded,
     record_request,
 )
-
-logger = structlog.get_logger()
 
 
 class RequestMetricsMiddleware:

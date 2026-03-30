@@ -6,9 +6,7 @@ and the lifespan handler can execute the 8-step shutdown sequence.
 
 import time
 
-import structlog
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 
 class ShutdownCoordinator:

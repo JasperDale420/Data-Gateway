@@ -4,9 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-import structlog
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 
 @dataclass

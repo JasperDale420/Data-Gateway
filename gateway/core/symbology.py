@@ -10,9 +10,8 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-import structlog
+from gateway.core.logger import logger
 
-logger = structlog.get_logger()
 _SYMBOL_RESOLVE_CACHE_MAX = 4096
 
 
@@ -287,7 +286,7 @@ class SymbolResolver:
             month = self.MONTH_MAP.get(month_str, 1)
             current_year = datetime.now(UTC).year
             expiry = date(current_year, month, day)
-            if expiry < date.today():
+            if expiry < datetime.now(UTC).date():
                 expiry = date(current_year + 1, month, day)
 
             option_type = "call" if opt_type == "C" else "put"

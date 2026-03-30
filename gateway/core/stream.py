@@ -15,19 +15,17 @@ from typing import Any
 
 import msgpack
 import orjson
-import structlog
 import websockets
 from websockets.asyncio.client import ClientConnection
 
 from gateway.core.envelope import fast_wrap_streaming_event
+from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_stream_fanout_batch_size,
     record_stream_fanout_dispatch_event,
     set_stream_fanout_limits_metrics,
 )
 from gateway.core.validator import get_validator
-
-logger = structlog.get_logger()
 
 DEFAULT_FANOUT_MAX_INFLIGHT = 100
 DEFAULT_FANOUT_BATCH_SIZE = 32

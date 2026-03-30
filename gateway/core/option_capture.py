@@ -8,11 +8,10 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
-import structlog
-
 from gateway.config import Settings, get_settings
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
+from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_option_capture_cycle,
     record_option_capture_symbol_metrics,
@@ -20,8 +19,6 @@ from gateway.core.metrics import (
 )
 from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
-
-logger = structlog.get_logger()
 
 HEBER_STREAM = "heber:events"
 CAPTURE_CLIENT_ID = "__option_capture__"

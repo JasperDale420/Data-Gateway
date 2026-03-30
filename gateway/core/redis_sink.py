@@ -13,12 +13,10 @@ from collections import deque
 from typing import Any
 
 import orjson
-import structlog
 
 from gateway.core.data_sink import DataSink
+from gateway.core.logger import logger
 from gateway.core.metrics import record_sink_publish
-
-logger = structlog.get_logger()
 
 DEFAULT_OPERATION_TIMEOUT_SECONDS = 5.0
 DEFAULT_POOL_SIZE = 64
@@ -256,9 +254,8 @@ class RedisStreamsSink(DataSink):
         if not self._failed_buffer:
             return
 
-        if not self._drain_lock.locked():
-            async with self._drain_lock:
-                await self._do_drain()
+        async with self._drain_lock:
+            await self._do_drain()
 
     async def _do_drain(self) -> None:
         """Execute the actual drain.  Separated for lock clarity."""
@@ -555,6 +552,7 @@ class RedisStreamsSink(DataSink):
 
     async def health_check(self) -> bool:
         """Check Redis connection health."""
+        client = None
         try:
             await self._ensure_connected()
             client = self._redis

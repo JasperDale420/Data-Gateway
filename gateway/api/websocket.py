@@ -6,16 +6,14 @@ import time
 import uuid
 from typing import Any
 
-import structlog
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from gateway.api.deps import get_authenticator, get_connection_manager
 from gateway.config import Settings, get_settings
 from gateway.core.auth import ClientAuthenticator
 from gateway.core.connections import ConnectionManager
+from gateway.core.logger import logger
 from gateway.core.security import get_input_validator
-
-logger = structlog.get_logger()
 
 router = APIRouter(tags=["websocket"])
 
@@ -61,8 +59,15 @@ async def websocket_endpoint(
             }
         )
 
+        # Shared timestamp updated by the message loop on every received message.
+        # Used by the heartbeat loop to detect dead clients that keep TCP open but
+        # stop sending data.  A single-element list is used so both coroutines
+        # reference the same mutable container (safe under asyncio — no true
+        # concurrency).
+        last_received: list[float] = [time.time()]
+
         # Start heartbeat task
-        heartbeat_task = asyncio.create_task(_heartbeat_loop(websocket, connection_id))
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(websocket, connection_id, last_received))
 
         # Main message loop
         await _message_loop(
@@ -70,6 +75,7 @@ async def websocket_endpoint(
             connection_id,
             connections,
             max_message_size=settings.ws_max_message_size,
+            last_received=last_received,
         )
 
     except WebSocketDisconnect:
@@ -94,17 +100,33 @@ async def websocket_endpoint(
         await connections.disconnect(connection_id)
 
 
-async def _heartbeat_loop(websocket: WebSocket, connection_id: str) -> None:
-    """Send heartbeats and monitor for pong responses.
+async def _heartbeat_loop(
+    websocket: WebSocket,
+    connection_id: str,
+    last_received: list[float],
+) -> None:
+    """Send heartbeats and disconnect clients that stop responding.
 
     Per PRD: Send heartbeat every 30s, disconnect after 3 missed.
-    Exits cleanly if WebSocket is already broken.
+
+    Detection strategy:
+    - The JSON heartbeat is still sent for backward compatibility (clients may
+      use it for keep-alive or latency measurement).
+    - The *real* liveness check is the ``last_received`` timestamp, which is
+      updated by ``_message_loop`` every time the client sends *any* message
+      (subscribe, heartbeat ack, ping, etc.).
+    - If ``last_received`` is older than ``HEARTBEAT_INTERVAL * MAX_MISSED_HEARTBEATS``
+      seconds the client is considered dead and the connection is closed.
+
+    This correctly handles the case where TCP stays open but the remote end is
+    unresponsive (e.g. laptop lid closed, network partition without RST).
     """
-    missed_heartbeats = 0
+    send_failures = 0
 
     while True:
         await asyncio.sleep(HEARTBEAT_INTERVAL)
 
+        # --- 1. Send the JSON heartbeat (best-effort, backward compat) ---
         try:
             await websocket.send_json(
                 {
@@ -112,23 +134,40 @@ async def _heartbeat_loop(websocket: WebSocket, connection_id: str) -> None:
                     "ts": int(time.time()),
                 }
             )
-            missed_heartbeats = 0
+            send_failures = 0
             logger.debug("heartbeat_sent", connection_id=connection_id)
         except Exception as e:
             logger.warning("heartbeat_send_failed", connection_id=connection_id, error=str(e))
-            missed_heartbeats += 1
+            send_failures += 1
 
-            if missed_heartbeats >= MAX_MISSED_HEARTBEATS:
+            if send_failures >= MAX_MISSED_HEARTBEATS:
                 logger.warning(
-                    "heartbeat_timeout_disconnect",
+                    "heartbeat_send_disconnect",
                     connection_id=connection_id,
-                    missed=missed_heartbeats,
+                    send_failures=send_failures,
                 )
                 try:
                     await websocket.close(code=4002, reason="Heartbeat timeout")
                 except Exception:
                     logger.debug("heartbeat_close_failed", connection_id=connection_id)
                 return
+
+        # --- 2. Check client liveness via last_received timestamp ---
+        silence = time.time() - last_received[0]
+        max_silence = HEARTBEAT_INTERVAL * MAX_MISSED_HEARTBEATS
+
+        if silence > max_silence:
+            logger.warning(
+                "heartbeat_timeout_disconnect",
+                connection_id=connection_id,
+                silence_seconds=round(silence, 1),
+                max_silence_seconds=max_silence,
+            )
+            try:
+                await websocket.close(code=4002, reason="Heartbeat timeout")
+            except Exception:
+                logger.debug("heartbeat_close_failed", connection_id=connection_id)
+            return
 
 
 async def _wait_for_auth(
@@ -212,6 +251,7 @@ async def _message_loop(
     connection_id: str,
     connections: ConnectionManager,
     max_message_size: int | None = None,
+    last_received: list[float] | None = None,
 ) -> None:
     """Handle messages after authentication."""
     resolved_max_size = max_message_size if max_message_size is not None else get_settings().ws_max_message_size
@@ -258,6 +298,10 @@ async def _message_loop(
         except Exception as e:
             logger.warning("receive_error", connection_id=connection_id, error=str(e))
             continue
+
+        # Record that we received a message from the client (liveness signal)
+        if last_received is not None:
+            last_received[0] = time.time()
 
         # Handle message based on action
         request_id = message.get("request_id")

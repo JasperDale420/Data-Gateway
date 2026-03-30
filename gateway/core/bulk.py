@@ -17,12 +17,8 @@ from enum import Enum
 from itertools import islice
 from typing import Any
 
-import structlog
-
 from gateway.config import get_settings
-
-logger = structlog.get_logger()
-
+from gateway.core.logger import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Job Status
@@ -461,6 +457,8 @@ class BulkJobManager:
         """Cancel a job if it's still running."""
         job = self._jobs.get(job_id)
         if job and job.status in (BulkJobStatus.PENDING, BulkJobStatus.RUNNING):
+            if hasattr(job, "_task") and job._task and not job._task.done():
+                job._task.cancel()
             job.status = BulkJobStatus.FAILED
             job.error = "Cancelled by user"
             return True

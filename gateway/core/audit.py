@@ -3,7 +3,7 @@
 Provides an append-only audit trail for security-relevant events with:
 - Typed methods for each of the 11 PRD-specified event types
 - In-memory ring buffer for admin queries via GET /admin/audit/recent
-- Structured JSON output via dedicated structlog logger (gateway.audit)
+- Structured JSON output via dedicated logger (gateway.audit)
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
-import structlog
-
 # Dedicated audit logger for filtering/routing
-_audit_logger = structlog.get_logger("gateway.audit")
+from gateway.core.logger import get_logger
+
+_audit_logger = get_logger("gateway.audit")
 
 
 class AuditEvent(enum.Enum):
@@ -54,7 +54,7 @@ AUDIT_EVENT_LEVELS: dict[AuditEvent, str] = {
 class AuditLogger:
     """Structured audit logger with in-memory ring buffer.
 
-    Emits PRD-formatted audit entries via structlog and stores them in a
+    Emits PRD-formatted audit entries via empire_core.logger and stores them in a
     bounded deque for admin query access.
     """
 
@@ -130,7 +130,7 @@ class AuditLogger:
             self._buffer.append(entry)
             self._stats[event.value] = self._stats.get(event.value, 0) + 1
 
-        # Emit via structlog
+        # Emit via logger
         log_method = _audit_logger.info if level == "INFO" else _audit_logger.warning
         log_method(
             event.value,

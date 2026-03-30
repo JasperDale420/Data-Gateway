@@ -17,8 +17,6 @@ from time import monotonic as _monotonic
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-import structlog
-
 from gateway.config import get_settings
 from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
@@ -28,7 +26,7 @@ from gateway.core.ticker_universe import TickerUniverse
 if TYPE_CHECKING:
     from gateway.providers.uw import UnusualWhalesProvider
 
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 # Stream name for Heber integration
 HEBER_STREAM = "heber:events"
@@ -506,11 +504,6 @@ class UWPoller:
             envelopes: list[dict[str, Any]] = []
 
             for alert in alerts:
-                if not envelopes and alerts:
-                    logger.info(
-                        "uw_poller_debug_first_alert", alert_type=type(alerts[0]), alert_dump=alerts[0].model_dump()
-                    )
-
                 envelope = wrap_event(
                     event=alert.model_dump(),
                     provider="unusual_whales",

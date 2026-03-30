@@ -2,7 +2,6 @@
 
 from datetime import datetime
 
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.alpaca.common import (
@@ -21,7 +20,8 @@ from gateway.core.security import InputValidator
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
-logger = structlog.get_logger(__name__)
+from gateway.core.logger import logger
+
 _INPUT_VALIDATOR = InputValidator()
 
 

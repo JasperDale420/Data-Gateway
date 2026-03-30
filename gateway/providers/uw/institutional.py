@@ -3,11 +3,9 @@
 from decimal import Decimal
 from typing import Any
 
-import structlog
+from gateway.core.logger import logger
 
 from ._base import ERR_NOT_INITIALIZED, _safe_int
-
-logger = structlog.get_logger()
 
 
 class UWInstitutionalMixin:

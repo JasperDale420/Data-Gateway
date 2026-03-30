@@ -22,6 +22,85 @@ from gateway.schemas import SuccessResponse
 router = APIRouter()
 
 
+# --- Static-segment routes MUST be registered before parameterized routes ---
+
+
+@router.get("/options/quotes", response_model=SuccessResponse)
+async def get_option_quotes_batch(
+    symbols: str = Query(..., description="Comma-separated option contracts"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get latest quotes for a comma-separated batch of option contracts.
+
+    This route preserves compatibility for downstream consumers that request
+    `/options/quotes?symbols=...` and expect a symbol-keyed quote payload.
+    """
+    contracts = parse_comma_values(symbols, uppercase=True)
+    quotes = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_quotes(contracts=contracts),
+        block=True,
+    )
+    quotes_by_symbol = {quote.symbol: quote.model_dump(mode="json") for quote in quotes}
+    if not quotes_by_symbol:
+        raise HTTPException(status_code=404, detail="No quotes found for requested contracts")
+
+    return {
+        "success": True,
+        "data": {"quotes": quotes_by_symbol},
+        "meta": {
+            "count": len(quotes_by_symbol),
+            "requested": len(contracts),
+            "provider": "alpaca",
+        },
+    }
+
+
+@router.get("/options/trades", response_model=SuccessResponse)
+async def get_options_trades(
+    contracts: str = Query(..., description="Comma-separated option contracts"),
+    start: datetime | None = Query(default=None, description=DESC_START_TIME),
+    end: datetime | None = Query(default=None, description=DESC_END_TIME),
+    limit: int = Query(default=1000, le=10000, description="Max trades"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get historical trades for option contracts."""
+    contracts_list = parse_comma_values(contracts, uppercase=True)
+    trades = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_trades(contracts_list, start, end, limit),
+    )
+    return {
+        "success": True,
+        "data": [t.model_dump(mode="json") for t in trades],
+        "meta": {"count": len(trades), "provider": "alpaca"},
+    }
+
+
+@router.get("/options/trades/latest", response_model=SuccessResponse)
+async def get_options_latest_trades(
+    contracts: str = Query(..., description="Comma-separated option contracts"),
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+):
+    """Get latest trades for option contracts."""
+    contracts_list = parse_comma_values(contracts, uppercase=True)
+    trades = await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=lambda provider: provider.get_option_latest_trades(contracts_list),
+    )
+    return {
+        "success": True,
+        "data": [t.model_dump(mode="json") for t in trades],
+        "meta": {"count": len(trades), "provider": "alpaca"},
+    }
+
+
+# --- Parameterized routes below ---
+
+
 @router.get("/options/chain/{underlying}", response_model=SuccessResponse)
 async def get_option_chain(
     underlying: str,
@@ -184,79 +263,6 @@ async def get_historical_option_quotes(
             "quotes": [quote.model_dump(mode="json") for quote in quotes],
         },
         "meta": {"count": len(quotes), "provider": "alpaca"},
-    }
-
-
-@router.get("/options/quotes", response_model=SuccessResponse)
-async def get_option_quotes_batch(
-    symbols: str = Query(..., description="Comma-separated option contracts"),
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-):
-    """Get latest quotes for a comma-separated batch of option contracts.
-
-    This route preserves compatibility for downstream consumers that request
-    `/options/quotes?symbols=...` and expect a symbol-keyed quote payload.
-    """
-    contracts = parse_comma_values(symbols, uppercase=True)
-    quotes = await execute_alpaca_provider_call(
-        registry=registry,
-        provider_call=lambda provider: provider.get_option_quotes(contracts=contracts),
-        block=True,
-    )
-    quotes_by_symbol = {quote.symbol: quote.model_dump(mode="json") for quote in quotes}
-    if not quotes_by_symbol:
-        raise HTTPException(status_code=404, detail="No quotes found for requested contracts")
-
-    return {
-        "success": True,
-        "data": {"quotes": quotes_by_symbol},
-        "meta": {
-            "count": len(quotes_by_symbol),
-            "requested": len(contracts),
-            "provider": "alpaca",
-        },
-    }
-
-
-@router.get("/options/trades", response_model=SuccessResponse)
-async def get_options_trades(
-    contracts: str = Query(..., description="Comma-separated option contracts"),
-    start: datetime | None = Query(default=None, description=DESC_START_TIME),
-    end: datetime | None = Query(default=None, description=DESC_END_TIME),
-    limit: int = Query(default=1000, le=10000, description="Max trades"),
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-):
-    """Get historical trades for option contracts."""
-    contracts_list = parse_comma_values(contracts, uppercase=True)
-    trades = await execute_alpaca_provider_call(
-        registry=registry,
-        provider_call=lambda provider: provider.get_option_trades(contracts_list, start, end, limit),
-    )
-    return {
-        "success": True,
-        "data": [t.model_dump(mode="json") for t in trades],
-        "meta": {"count": len(trades), "provider": "alpaca"},
-    }
-
-
-@router.get("/options/trades/latest", response_model=SuccessResponse)
-async def get_options_latest_trades(
-    contracts: str = Query(..., description="Comma-separated option contracts"),
-    client: Client = Depends(require_api_key),
-    registry: ProviderRegistry = Depends(get_registry),
-):
-    """Get latest trades for option contracts."""
-    contracts_list = parse_comma_values(contracts, uppercase=True)
-    trades = await execute_alpaca_provider_call(
-        registry=registry,
-        provider_call=lambda provider: provider.get_option_latest_trades(contracts_list),
-    )
-    return {
-        "success": True,
-        "data": [t.model_dump(mode="json") for t in trades],
-        "meta": {"count": len(trades), "provider": "alpaca"},
     }
 
 

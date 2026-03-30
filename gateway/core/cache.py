@@ -6,10 +6,9 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
-import structlog
 from cachetools import TTLCache
 
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 
 @dataclass
@@ -72,7 +71,7 @@ class InMemoryCache:
 
     async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Set value in cache with optional custom TTL."""
-        if ttl and ttl != self.default_ttl:
+        if ttl is not None and ttl != self.default_ttl:
             expires_at = time.time() + ttl
             self._custom_cache[key] = _CustomCacheEntry(value=value, expires_at=expires_at)
             self._custom_cache.move_to_end(key)

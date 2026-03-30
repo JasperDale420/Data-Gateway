@@ -8,10 +8,6 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Any
 
-import structlog
-
-logger = structlog.get_logger()
-
 _TIMEFRAME_TO_MINUTES: dict[str, int] = {
     "1Min": 1,
     "1m": 1,
@@ -305,11 +301,13 @@ class QualityAnalyzer:
         total_size = 0
 
         for trade in trades:
-            size = trade.get("size", trade.get("s", 0))
+            size = trade.get("size", trade.get("s")) or 0
+            if not isinstance(size, int | float):
+                size = 0
             total_size += size
 
             # Odd lot: not a multiple of 100 (standard round lot)
-            if size % 100 != 0:
+            if size and size % 100 != 0:
                 odd_lots += 1
 
         avg_size = total_size / total if total > 0 else 0.0

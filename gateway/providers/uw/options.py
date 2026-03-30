@@ -4,13 +4,10 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-import structlog
-
+from gateway.core.logger import logger
 from gateway.schemas import NormalizedIVRank
 
 from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_int
-
-logger = structlog.get_logger()
 
 
 class UWOptionsMixin:
@@ -472,7 +469,7 @@ class UWOptionsMixin:
                 contract.get_price_history.sync,
                 client=self._client,
                 option_symbol=contract_id,
-                date=date_str,
+                date=_or_unset(date_str),
             )
             data = self._get_data_safe(response)
             if not data:
@@ -514,7 +511,7 @@ class UWOptionsMixin:
                 screener.get_option_contracts.sync,
                 client=self._client,
                 min_volume=_or_unset(min_volume),
-                min_premium=_or_unset(int(min_premium) if min_premium else None),
+                min_premium=_or_unset(min_premium),
             )
             data = self._get_data_safe(response)
             if not data:

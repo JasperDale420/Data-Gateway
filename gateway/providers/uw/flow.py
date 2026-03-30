@@ -4,8 +4,6 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import structlog
-
 from gateway.schemas import (
     NormalizedDarkpoolTrade,
     NormalizedFlowAlert,
@@ -16,7 +14,7 @@ from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
 
 _ET = ZoneInfo("America/New_York")
 
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 
 class UWFlowMixin:

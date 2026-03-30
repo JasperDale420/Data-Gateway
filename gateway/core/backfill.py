@@ -10,14 +10,13 @@ from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from typing import Any
 
-import structlog
 from pydantic import BaseModel, Field
 
 from gateway.core.envelope import wrap_event
+from gateway.core.logger import logger
 from gateway.core.rate_limiter import ProviderRateLimitManager, get_rate_limiter
 from gateway.core.security import InputValidator
 
-logger = structlog.get_logger()
 _INPUT_VALIDATOR = InputValidator()
 
 HEBER_EVENTS_TOPIC = "heber:events"

@@ -254,8 +254,8 @@ async def test_get_asset_uses_cached_helper_key(
 
     assert observed["key"] == "alpaca:trading:asset:AAPL"
     assert observed["route_label"] == "alpaca_trading_asset"
-    assert provider.asset_calls == ["aapl"]
-    assert response["data"]["symbol"] == "aapl"
+    assert provider.asset_calls == ["AAPL"]
+    assert response["data"]["symbol"] == "AAPL"
 
 
 @pytest.mark.asyncio

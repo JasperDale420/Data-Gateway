@@ -7,9 +7,7 @@ names plus a dynamic set refreshed daily from UW's stock screener.
 import asyncio
 from datetime import UTC, datetime
 
-import structlog
-
-logger = structlog.get_logger()
+from gateway.core.logger import logger
 
 # Default core tickers: mega-caps, major ETFs, sector ETFs
 DEFAULT_CORE_TICKERS: list[str] = [

@@ -6,15 +6,13 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
-import structlog
 from alpaca.trading.client import TradingClient
 
 from gateway.core.http_client import create_async_http_client, http_retry
+from gateway.core.logger import logger
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
-
-logger = structlog.get_logger()
 
 # Alpaca API endpoints
 DATA_BASE_URL = "https://data.alpaca.markets"
