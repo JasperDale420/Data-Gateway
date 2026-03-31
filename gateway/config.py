@@ -137,6 +137,18 @@ class Settings(BaseSettings):
     bulk_rate_limit_per_hour: int = Field(default=10, ge=1)
     replay_max_concurrent_sessions: int = Field(default=5, ge=1)
 
+    # Treasury yield poller
+    treasury_poller_maturities: str = "2year,10year"  # comma-separated, e.g. "2year,10year"
+
+    @property
+    def treasury_poller_maturity_list(self) -> list[str]:
+        """Parse configured treasury maturities, filtering invalid values."""
+        from gateway.core.treasury_poller import VALID_MATURITIES
+
+        maturities = [m.strip().lower() for m in self.treasury_poller_maturities.split(",") if m.strip()]
+        valid = [m for m in maturities if m in VALID_MATURITIES]
+        return valid if valid else ["2year", "10year"]
+
     @property
     def option_capture_symbol_list(self) -> list[str]:
         """Parse configured option capture symbols into a stable uppercase list."""
