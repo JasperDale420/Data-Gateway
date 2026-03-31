@@ -354,7 +354,11 @@ async def lifespan(app: FastAPI):
     try:
         signal.signal(signal.SIGHUP, handle_sighup)
         logger.info("sighup_handler_registered")
-    except (ValueError, OSError):
+    except ValueError:
+        # signal.signal() raises ValueError when called from a non-main thread
+        # (e.g. during pytest). This is expected and not a platform limitation.
+        logger.debug("sighup_handler_skipped", reason="Not in main thread (expected during tests)")
+    except OSError:
         logger.warning("sighup_handler_failed", reason="Not supported on this platform")
 
     # Start UW background poller (if data sink is enabled)
@@ -377,6 +381,27 @@ async def lifespan(app: FastAPI):
             interval_seconds=300,
             eod_enabled=settings.uw_eod_enabled,
         )
+
+    # Start Treasury yield background poller (if data sink is enabled and AlphaVantage is ready)
+    treasury_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url:
+        av_provider = registry.get("alphavantage")
+        if av_provider is not None and getattr(av_provider, "_api_key", ""):
+            from gateway.core.treasury_poller import start_treasury_poller
+
+            treasury_poller = await start_treasury_poller(
+                maturities=settings.treasury_poller_maturity_list,
+                poll_interval_seconds=86400,
+            )
+            logger.info(
+                "treasury_poller_initialized",
+                maturities=settings.treasury_poller_maturity_list,
+            )
+        else:
+            reason = (
+                "AlphaVantage provider not available" if av_provider is None else "AlphaVantage API key not configured"
+            )
+            logger.warning("treasury_poller_skipped", reason=reason)
 
     option_capture_service = None
     if settings.option_capture_enabled:
@@ -442,6 +467,11 @@ async def lifespan(app: FastAPI):
         await sink_registry.close_all()
 
     # Step 7: Shutdown remaining services
+    if treasury_poller:
+        from gateway.core.treasury_poller import stop_treasury_poller
+
+        await stop_treasury_poller()
+
     if uw_poller:
         from gateway.core.uw_poller import stop_uw_poller
 

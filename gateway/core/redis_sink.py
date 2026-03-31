@@ -76,6 +76,8 @@ class RedisStreamsSink(DataSink):
         self._reconnect_cooldown_until: float = 0.0
         self._backoff_seconds: float = INITIAL_BACKOFF_SECONDS
 
+        self._closed = False
+
         # Failed event buffer — holds (topic, payload_bytes) for events that
         # exhausted all retries.  Drained automatically on reconnect.
         self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=FAILED_EVENT_BUFFER_CAPACITY)
@@ -95,7 +97,10 @@ class RedisStreamsSink(DataSink):
 
         Respects a reconnect cooldown set by ``_reset_connection`` to avoid
         tight reconnect-fail loops that saturate Redis with connections.
+        Refuses to reconnect after ``close()`` has been called.
         """
+        if self._closed:
+            return
         if self._redis is not None:
             return
 
@@ -569,11 +574,19 @@ class RedisStreamsSink(DataSink):
             return False
 
     async def close(self) -> None:
-        """Close Redis connection pool."""
-        if self._redis:
-            await self._redis.close()
-            self._redis = None
-            self._connected = False
+        """Close Redis connection pool.
+
+        Sets ``_closed`` so that no further operations attempt to reconnect,
+        which would fail with "Event loop is closed" during shutdown.
+        Explicitly disconnects the underlying connection pool to release
+        all TCP sockets immediately.
+        """
+        self._closed = True
+        client = self._redis
+        self._redis = None
+        self._connected = False
+        if client is not None:
+            await self._close_stale_client(client)
             logger.info("redis_sink_closed")
 
 

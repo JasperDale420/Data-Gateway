@@ -81,7 +81,8 @@ class DataValidator:
     """
 
     # Symbol patterns
-    STOCK_PATTERN = re.compile(r"^[A-Z]{1,5}$")
+    # Stock: 1-6 uppercase letters, optional class suffix (.A, .B) or preferred suffix (-PL)
+    STOCK_PATTERN = re.compile(r"^[A-Z]{1,6}(?:[.\-][A-Z]{1,2})?$")
     OCC_OPTION_PATTERN = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
     CRYPTO_PATTERN = re.compile(r"^[A-Z]{2,10}/[A-Z]{2,10}$")
 

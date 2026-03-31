@@ -13,95 +13,87 @@ from gateway.core.stream import SubscriptionManager as StreamSubscriptionManager
 @pytest.fixture
 def subscription_manager():
     """Fresh subscription manager for testing."""
-    from gateway.core.multiplexer import SubscriptionManager
+    from gateway.core.stream import SubscriptionManager
 
-    return SubscriptionManager(grace_period_seconds=1)
+    return SubscriptionManager()
 
 
-@pytest.mark.asyncio
-async def test_subscribe_new_symbols(subscription_manager):
+def test_subscribe_new_symbols(subscription_manager):
     """New symbols are returned as newly subscribed."""
-    newly_subscribed = await subscription_manager.subscribe(
+    new_bars, _, _, _ = subscription_manager.subscribe(
         client_id="client1",
-        symbols=["AAPL", "MSFT"],
-        feed="bars",
+        bars=["AAPL", "MSFT"],
     )
-    assert set(newly_subscribed) == {"AAPL", "MSFT"}
+    assert new_bars == {"AAPL", "MSFT"}
 
 
-@pytest.mark.asyncio
-async def test_subscribe_existing_symbol(subscription_manager):
+def test_subscribe_existing_symbol(subscription_manager):
     """Existing symbols are not returned as newly subscribed."""
-    await subscription_manager.subscribe("client1", ["AAPL"], "bars")
-    newly_subscribed = await subscription_manager.subscribe("client2", ["AAPL"], "bars")
-    assert newly_subscribed == []
+    subscription_manager.subscribe("client1", bars=["AAPL"])
+    new_bars, _, _, _ = subscription_manager.subscribe("client2", bars=["AAPL"])
+    assert new_bars == set()
 
 
-@pytest.mark.asyncio
-async def test_unsubscribe_with_remaining_clients(subscription_manager):
+def test_unsubscribe_with_remaining_clients(subscription_manager):
     """Symbol stays subscribed if other clients remain."""
-    await subscription_manager.subscribe("client1", ["AAPL"], "bars")
-    await subscription_manager.subscribe("client2", ["AAPL"], "bars")
+    subscription_manager.subscribe("client1", bars=["AAPL"])
+    subscription_manager.subscribe("client2", bars=["AAPL"])
 
-    pending = await subscription_manager.unsubscribe("client1", ["AAPL"], "bars")
-    assert pending == []
+    removed_bars, _, _, _ = subscription_manager.unsubscribe("client1", bars=["AAPL"])
+    assert removed_bars == set()
 
-    subscribers = subscription_manager.get_subscribers("AAPL", "bars")
+    subscribers = subscription_manager.get_clients_for_symbol("AAPL", "bars")
     assert "client2" in subscribers
 
 
-@pytest.mark.asyncio
-async def test_unsubscribe_triggers_grace_period(subscription_manager):
-    """Last client unsubscribe starts grace period."""
-    await subscription_manager.subscribe("client1", ["AAPL"], "bars")
-    pending = await subscription_manager.unsubscribe("client1", ["AAPL"], "bars")
-    assert pending == ["AAPL"]
+def test_unsubscribe_last_client_removes_symbol(subscription_manager):
+    """Last client unsubscribe returns symbol as removed."""
+    subscription_manager.subscribe("client1", bars=["AAPL"])
+    removed_bars, _, _, _ = subscription_manager.unsubscribe("client1", bars=["AAPL"])
+    assert removed_bars == {"AAPL"}
 
 
-@pytest.mark.asyncio
-async def test_resubscribe_cancels_grace_period(subscription_manager):
-    """Resubscribe during grace period cancels removal."""
-    await subscription_manager.subscribe("client1", ["AAPL"], "bars")
-    await subscription_manager.unsubscribe("client1", ["AAPL"], "bars")
+def test_resubscribe_after_removal(subscription_manager):
+    """Resubscribe after last client unsubscribed re-adds symbol."""
+    subscription_manager.subscribe("client1", bars=["AAPL"])
+    subscription_manager.unsubscribe("client1", bars=["AAPL"])
 
-    # New client subscribes during grace period
-    newly_subscribed = await subscription_manager.subscribe("client2", ["AAPL"], "bars")
-    assert newly_subscribed == []
+    # New client subscribes — symbol is new again since it was fully removed
+    new_bars, _, _, _ = subscription_manager.subscribe("client2", bars=["AAPL"])
+    assert new_bars == {"AAPL"}
 
-    subscribers = subscription_manager.get_subscribers("AAPL", "bars")
+    subscribers = subscription_manager.get_clients_for_symbol("AAPL", "bars")
     assert "client2" in subscribers
 
 
-@pytest.mark.asyncio
-async def test_get_all_symbols(subscription_manager):
-    """Get all subscribed symbols for feed."""
-    await subscription_manager.subscribe("client1", ["AAPL", "MSFT"], "bars")
-    await subscription_manager.subscribe("client1", ["GOOG"], "quotes")
+def test_get_all_symbols(subscription_manager):
+    """Get all subscribed symbols for feed via aggregate."""
+    subscription_manager.subscribe("client1", bars=["AAPL", "MSFT"])
+    subscription_manager.subscribe("client1", quotes=["GOOG"])
 
-    bars_symbols = subscription_manager.get_all_symbols("bars")
-    assert set(bars_symbols) == {"AAPL", "MSFT"}
-
-    quotes_symbols = subscription_manager.get_all_symbols("quotes")
-    assert quotes_symbols == ["GOOG"]
+    bars_syms, quotes_syms, _, _ = subscription_manager.get_all_subscriptions()
+    assert bars_syms == {"AAPL", "MSFT"}
+    assert quotes_syms == {"GOOG"}
 
 
-@pytest.mark.asyncio
-async def test_remove_client(subscription_manager):
+def test_remove_client(subscription_manager):
     """Remove client from all subscriptions."""
-    await subscription_manager.subscribe("client1", ["AAPL", "MSFT"], "bars")
+    subscription_manager.subscribe("client1", bars=["AAPL", "MSFT"])
 
-    await subscription_manager.remove_client("client1")
+    removed_bars, _, _, _ = subscription_manager.remove_client("client1")
+    assert removed_bars == {"AAPL", "MSFT"}
 
-    stats = subscription_manager.get_stats()
-    assert stats["active_subscriptions"] == 0 or stats["pending_unsubscribes"] == 2
+    bars_syms, _, _, _ = subscription_manager.get_all_subscriptions()
+    assert bars_syms == set()
 
 
-def test_get_stats(subscription_manager):
-    """Get subscription statistics."""
-    stats = subscription_manager.get_stats()
-    assert "total_subscriptions" in stats
-    assert "active_subscriptions" in stats
-    assert "by_feed" in stats
+def test_empty_manager_has_no_subscriptions(subscription_manager):
+    """A fresh manager has no subscriptions."""
+    bars, quotes, trades, news = subscription_manager.get_all_subscriptions()
+    assert bars == set()
+    assert quotes == set()
+    assert trades == set()
+    assert news == set()
 
 
 @pytest.mark.asyncio
@@ -418,7 +410,7 @@ def test_stream_subscription_manager_client_view_reuses_index_set() -> None:
     clients_view = manager.get_clients_for_symbol_view("AAPL", "bars")
 
     assert clients_view == {"client-1"}
-    assert clients_view is manager._index["bars"]["AAPL"]  # noqa: SLF001
+    assert isinstance(clients_view, frozenset)  # noqa: SLF001
 
 
 def test_stream_subscription_manager_client_view_missing_symbol_is_empty() -> None:

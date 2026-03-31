@@ -67,13 +67,24 @@ async def execute_alpaca_provider_call[T](
     provider_call: Callable[[Any], Awaitable[T]],
     block: bool = True,
 ) -> T:
-    """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling."""
+    """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling.
+
+    Acquires an upstream concurrency semaphore (default 25) so that at most N
+    requests are in-flight to Alpaca simultaneously, preventing upstream 502s
+    when multiple clients burst requests at market open.
+    """
+    from gateway.core.rate_limiter import get_rate_limiter
+
     provider = registry.get("alpaca")
     if not provider:
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca", block=block)
+        sem = get_rate_limiter().upstream_semaphore("alpaca")
+        if sem is not None:
+            async with sem:
+                return await provider_call(provider)
         return await provider_call(provider)
     except HTTPException:
         raise

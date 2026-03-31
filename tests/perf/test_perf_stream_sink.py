@@ -16,6 +16,23 @@ from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
 pytestmark = pytest.mark.perf
 
 
+def _patch_zero_slot_wait(registry: DataSinkRegistry) -> None:
+    """Override slot acquisition to drop immediately (no wait) for perf tests."""
+
+    async def _nowait(sink_name: str) -> bool:
+        sem = registry._sink_semaphores.get(sink_name)
+        if sem is None:
+            sem = asyncio.Semaphore(registry._max_in_flight_per_sink)
+            registry._sink_semaphores[sink_name] = sem
+        try:
+            await asyncio.wait_for(sem.acquire(), timeout=0.0)
+            return True
+        except TimeoutError:
+            return False
+
+    registry._try_acquire_sink_slot = _nowait  # type: ignore[assignment]
+
+
 class _BlockingSink(DataSink):
     """Sink that blocks publish until released by the test."""
 
@@ -115,7 +132,8 @@ async def test_sink_publish_backpressure_task_growth_profile() -> None:
     """Validate sink fire-and-forget backlog stays bounded under blocked sink I/O."""
     release_event = asyncio.Event()
     max_in_flight = 32
-    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight, slot_wait_timeout=0.0)
+    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
+    _patch_zero_slot_wait(registry)
     registry.register(_BlockingSink(release_event, sink_name="blocking-single"))
 
     total_events = 300
@@ -145,7 +163,8 @@ async def test_sink_publish_backpressure_multi_sink_bounds() -> None:
     """Validate aggregate in-flight bounds with multiple blocked sinks."""
     release_event = asyncio.Event()
     max_in_flight = 16
-    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight, slot_wait_timeout=0.0)
+    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
+    _patch_zero_slot_wait(registry)
     registry.register(_BlockingSink(release_event, sink_name="blocking-a"))
     registry.register(_BlockingSink(release_event, sink_name="blocking-b"))
 
@@ -178,7 +197,8 @@ async def test_sink_publish_backpressure_multi_sink_bounds() -> None:
 async def test_sink_publish_backpressure_with_slow_backend_profile() -> None:
     """Validate bounded scheduling under slower sink publish latency."""
     max_in_flight = 8
-    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight, slot_wait_timeout=0.0)
+    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
+    _patch_zero_slot_wait(registry)
     registry.register(_DelayedSink("slow-a", delay_seconds=0.02))
     registry.register(_DelayedSink("slow-b", delay_seconds=0.02))
 

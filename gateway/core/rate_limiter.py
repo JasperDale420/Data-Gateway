@@ -211,6 +211,7 @@ class ProviderRateLimitManager:
 
     def __init__(self):
         self._limiters: dict[str, ProviderRateLimiter] = {}
+        self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._lock = asyncio.Lock()
         self._initialize_limiters()
 
@@ -227,7 +228,7 @@ class ProviderRateLimitManager:
         Alpaca limits can be overridden via GATEWAY_ALPACA_RATE_LIMIT_PER_MINUTE
         and GATEWAY_ALPACA_RATE_LIMIT_PER_SECOND environment variables.
         """
-        # Apply config overrides for Alpaca limits
+        # Apply config overrides for Alpaca limits and concurrency
         try:
             from gateway.config import get_settings
 
@@ -237,7 +238,9 @@ class ProviderRateLimitManager:
                 alpaca_limits.requests_per_minute = settings.alpaca_rate_limit_per_minute
                 alpaca_limits.requests_per_second = settings.alpaca_rate_limit_per_second
                 alpaca_limits.market_data_per_minute = settings.alpaca_rate_limit_per_minute
+            self._semaphores["alpaca"] = asyncio.Semaphore(settings.alpaca_max_concurrent_requests)
         except Exception:
+            self._semaphores["alpaca"] = asyncio.Semaphore(25)
             logger.debug("rate_limiter_settings_unavailable_using_defaults", exc_info=True)
 
         for provider, limits in PROVIDER_LIMITS.items():
@@ -259,6 +262,10 @@ class ProviderRateLimitManager:
             )
 
         logger.info("provider_rate_limiters_initialized", providers=list(self._limiters.keys()))
+
+    def upstream_semaphore(self, provider: str) -> asyncio.Semaphore | None:
+        """Get the upstream concurrency semaphore for a provider, if configured."""
+        return self._semaphores.get(provider.lower())
 
     async def acquire(self, provider: str, block: bool = False, max_wait: float = 30.0) -> bool:
         """Acquire a request slot for a provider.

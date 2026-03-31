@@ -211,10 +211,17 @@ class RedisCache:
         self.default_ttl = default_ttl
         self._redis: Any | None = None
         self._connected = False
+        self._closed = False
         self._stats = CacheStats()
 
     async def _ensure_connected(self) -> None:
-        """Lazy connection to Redis."""
+        """Lazy connection to Redis.
+
+        Refuses to (re)connect after ``close()`` has been called to prevent
+        "Event loop is closed" errors during shutdown or test teardown.
+        """
+        if self._closed:
+            return
         if self._redis is None:
             try:
                 import redis.asyncio as aioredis
@@ -231,6 +238,9 @@ class RedisCache:
 
     async def get(self, key: str) -> Any | None:
         """Get value from Redis cache."""
+        if self._closed:
+            self._stats.misses += 1
+            return None
         try:
             await self._ensure_connected()
             if self._redis is None:
@@ -248,6 +258,8 @@ class RedisCache:
 
     async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Set value in Redis cache with TTL."""
+        if self._closed:
+            return
         try:
             await self._ensure_connected()
             if self._redis is None:
@@ -269,7 +281,7 @@ class RedisCache:
         Returns:
             Mapping of key -> parsed value for keys that exist.
         """
-        if not keys:
+        if not keys or self._closed:
             return {}
         try:
             await self._ensure_connected()
@@ -305,7 +317,7 @@ class RedisCache:
         Returns:
             Number of successfully set keys.
         """
-        if not items:
+        if not items or self._closed:
             return 0
         try:
             await self._ensure_connected()
@@ -332,6 +344,8 @@ class RedisCache:
         exists. Uses a single Redis SET command with NX and EX flags so there is
         no TOCTOU window between checking and setting.
         """
+        if self._closed:
+            return False
         try:
             await self._ensure_connected()
             if self._redis is None:
@@ -354,6 +368,8 @@ class RedisCache:
 
     async def delete(self, key: str) -> bool:
         """Delete key from Redis cache."""
+        if self._closed:
+            return False
         try:
             await self._ensure_connected()
             if self._redis is None:
@@ -366,6 +382,8 @@ class RedisCache:
 
     async def exists(self, key: str) -> bool:
         """Check if key exists in Redis cache."""
+        if self._closed:
+            return False
         try:
             await self._ensure_connected()
             if self._redis is None:
@@ -380,9 +398,20 @@ class RedisCache:
         return self._stats
 
     async def close(self) -> None:
-        """Close Redis connection."""
+        """Close Redis connection.
+
+        Sets ``_closed`` so that no further operations attempt to reconnect,
+        which would fail with "Event loop is closed" during shutdown.
+        """
+        self._closed = True
         if self._redis:
-            await self._redis.close()
+            try:
+                if hasattr(self._redis, "aclose"):
+                    await self._redis.aclose()
+                else:
+                    await self._redis.close()
+            except Exception:
+                pass
             self._redis = None
             self._connected = False
 

@@ -87,7 +87,6 @@ class AlphaVantageProvider(DataProvider):
             self._client = None
         logger.info("alphavantage_provider_shutdown")
 
-    @http_retry
     async def health_check(self) -> HealthStatus:
         """Health check - test API connectivity."""
         if not self._api_key:

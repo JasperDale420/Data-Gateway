@@ -1,5 +1,6 @@
 """Alpaca stock data endpoints - bars, quotes, trades, snapshots, auctions."""
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -18,8 +19,20 @@ from gateway.api.alpaca.common import (
     require_provider_rate_limit,
 )
 from gateway.core.logger import logger
+from gateway.core.rate_limiter import get_rate_limiter
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
+
+
+def _alpaca_semaphore():
+    """Get the Alpaca upstream concurrency semaphore."""
+    return get_rate_limiter().upstream_semaphore("alpaca")
+
+
+@asynccontextmanager
+async def _noop_ctx():
+    yield
+
 
 router = APIRouter()
 
@@ -218,14 +231,16 @@ async def get_stock_bars(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        bars = await provider.get_bars(
-            symbols=[symbol.upper()],
-            timeframe=timeframe,
-            start=start,
-            end=end,
-            limit=limit,
-            feed=feed,
-        )
+        sem = _alpaca_semaphore()
+        async with sem if sem is not None else _noop_ctx():
+            bars = await provider.get_bars(
+                symbols=[symbol.upper()],
+                timeframe=timeframe,
+                start=start,
+                end=end,
+                limit=limit,
+                feed=feed,
+            )
 
         return {
             "success": True,
@@ -264,7 +279,9 @@ async def get_stock_quotes(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        quotes = await provider.get_quotes(symbols=[symbol.upper()])
+        sem = _alpaca_semaphore()
+        async with sem if sem is not None else _noop_ctx():
+            quotes = await provider.get_quotes(symbols=[symbol.upper()])
 
         if not quotes:
             raise HTTPException(status_code=404, detail=f"No quote found for {symbol}")
@@ -314,11 +331,13 @@ async def get_stock_trades(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        trades = await provider.get_trades(
-            symbols=[symbol.upper()],
-            start=start,
-            end=end,
-        )
+        sem = _alpaca_semaphore()
+        async with sem if sem is not None else _noop_ctx():
+            trades = await provider.get_trades(
+                symbols=[symbol.upper()],
+                start=start,
+                end=end,
+            )
 
         return {
             "success": True,
@@ -355,16 +374,18 @@ async def get_stock_snapshot(
 
     try:
         await require_provider_rate_limit("alpaca", block=True)
-        quotes = await provider.get_quotes(symbols=[symbol.upper()])
-        end = datetime.now(UTC)
-        start = end - timedelta(minutes=5)
-        bars = await provider.get_bars(
-            symbols=[symbol.upper()],
-            timeframe="1Min",
-            start=start,
-            end=end,
-            limit=1,
-        )
+        sem = _alpaca_semaphore()
+        async with sem if sem is not None else _noop_ctx():
+            quotes = await provider.get_quotes(symbols=[symbol.upper()])
+            end = datetime.now(UTC)
+            start = end - timedelta(minutes=5)
+            bars = await provider.get_bars(
+                symbols=[symbol.upper()],
+                timeframe="1Min",
+                start=start,
+                end=end,
+                limit=1,
+            )
 
         return {
             "success": True,

@@ -340,8 +340,17 @@ class DataSinkRegistry:
         return results
 
     async def close_all(self) -> None:
-        """Close all sinks."""
+        """Close all sinks and the dedup cache."""
         self.disable()
+
+        # Close the dedup cache first to prevent new operations against a
+        # closing Redis connection (avoids "Event loop is closed" errors).
+        if self._dedup_cache is not None:
+            try:
+                await self._dedup_cache.close()
+            except Exception as e:
+                logger.warning("dedup_cache_close_failed", error=str(e))
+
         for sink in self._sinks:
             try:
                 await sink.close()

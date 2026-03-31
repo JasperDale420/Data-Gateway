@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.empire.data-gateway</string>
+
+    <key>Comment</key>
+    <string>Empire Data-Gateway (FastAPI on port 8080)</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/jacobmcmillan/Empire/Data-Gateway</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jacobmcmillan/.local/bin/uv</string>
+        <string>run</string>
+        <string>uvicorn</string>
+        <string>gateway.main:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8080</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/jacobmcmillan</string>
+        <key>PATH</key>
+        <string>/Users/jacobmcmillan/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/jacobmcmillan/Empire/Data-Gateway/logs/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jacobmcmillan/Empire/Data-Gateway/logs/launchd_stderr.log</string>
+</dict>
+</plist>
