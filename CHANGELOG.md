@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Treasury yield events missing dedup fields** (`gateway/core/envelope.py`): `treasury_yields` was absent from `FEED_UNIQUE_FIELDS`, so `compute_event_id` skipped field extraction and produced unstable hashes for treasury data. Added entry with `date`, `maturity`, and `yield_pct` fields.
+- **Treasury poller maturity list not configurable via env** (`gateway/config.py`): `Settings` had no field for treasury maturities, making it impossible to override the default 2-year/10-year list. Added `GATEWAY_TREASURY_POLLER_MATURITIES` setting (comma-separated) with automatic filtering of invalid values and a safe default fallback.
+- **`NormalizedOptionContract.underlying_price` always None** (`gateway/schemas/__init__.py`): The inline schema definition in `__init__.py` was missing the `underlying_price` field present in `gateway/schemas/options.py`. AlpacaProvider correctly extracted the value from API responses but the model silently dropped it.
+- **UP047 lint errors in generic functions** (`gateway/api/alpaca/common.py`, `gateway/providers/uw.py`): Three generic functions were using legacy `TypeVar` syntax instead of Python 3.12 type parameters, causing ruff UP047 violations.
+
 - **UW options endpoints returning 404 (2K+ daily)** (`gateway/api/uw/options.py`, `options_data.py`): The UW options routers had no prefix, causing `/{symbol}/max-pain` and similar routes to be shadowed by other routers' `/{symbol}` catch-all. Added `prefix="/options"` to both routers so `/api/v1/uw/options/SPY/max-pain` resolves correctly. Removed redundant `/options/{symbol}/iv-rank` alias.
 - **Invalid order `side` silently defaults to SELL** (`gateway/providers/alpaca/trading.py`): Any value other than `"buy"` — including typos — mapped to `OrderSide.SELL`. Added explicit validation that raises `ValueError` for invalid side values.
 - **`replace_order` truncates fractional shares** (`gateway/providers/alpaca/trading.py`): `int(qty)` silently dropped fractional quantities. Removed the cast so Alpaca receives the exact quantity.
