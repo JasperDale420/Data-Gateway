@@ -61,7 +61,7 @@ import httpx
 from alpaca.common.exceptions import APIError
 
 
-async def execute_alpaca_provider_call(
+async def execute_alpaca_provider_call[T](
     *,
     registry: ProviderRegistry,
     provider_call: Callable[[Any], Awaitable[T]],
@@ -96,7 +96,7 @@ async def execute_alpaca_provider_call(
         raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
-async def execute_alpaca_cached_call(
+async def execute_alpaca_cached_call[T](
     *,
     registry: ProviderRegistry,
     cache: CacheBackend,

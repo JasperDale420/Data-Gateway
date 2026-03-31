@@ -38,7 +38,7 @@ TZ_UTC_SUFFIX = "+00:00"
 T = TypeVar("T")
 
 
-def _or_unset(value: T | None) -> T | Unset:
+def _or_unset[T](value: T | None) -> T | Unset:
     """Convert None to UNSET for SDK compatibility."""
     return UNSET if value is None else value
 
