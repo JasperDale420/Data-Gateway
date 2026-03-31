@@ -199,6 +199,7 @@ class NormalizedOptionContract(BaseModel):
     last: Decimal
     volume: int
     open_interest: int
+    underlying_price: Decimal | None = None
     delta: Decimal | None = None
     gamma: Decimal | None = None
     theta: Decimal | None = None
