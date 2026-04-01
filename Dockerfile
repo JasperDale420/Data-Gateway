@@ -10,14 +10,22 @@ RUN groupadd -r gateway && \
     chown -R gateway:gateway /home/gateway
 
 # Copy and install patched Unusual Whales SDK v5.1 first
-COPY vendor/unusualwhales_sdk/ /tmp/unusualwhales_sdk/
+COPY Data-Gateway/vendor/unusualwhales_sdk/ /tmp/unusualwhales_sdk/
 RUN pip install --no-cache-dir /tmp/unusualwhales_sdk/ && rm -rf /tmp/unusualwhales_sdk/
+
+# Install empire-core from monorepo
+COPY empire-core/ /tmp/empire-core/
+RUN pip install --no-cache-dir /tmp/empire-core/ && rm -rf /tmp/empire-core/
+
+# Install empire-schemas from monorepo
+COPY empire-schemas/ /tmp/empire-schemas/
+RUN pip install --no-cache-dir /tmp/empire-schemas/ && rm -rf /tmp/empire-schemas/
 
 # Install curl for healthchecks and debugging
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 # Copy pyproject.toml first to cache dependency installation
-COPY pyproject.toml README.md ./
+COPY Data-Gateway/pyproject.toml Data-Gateway/README.md ./
 
 # Install only dependencies (cached until pyproject.toml changes)
 # Create a minimal package stub so pip can parse pyproject.toml dependencies
@@ -30,11 +38,14 @@ RUN mkdir -p gateway && \
 RUN pip uninstall -y uvloop 2>/dev/null || true
 
 # Copy gateway source and reinstall package only (deps already installed above)
-COPY gateway/ gateway/
+COPY Data-Gateway/gateway/ gateway/
 RUN pip install --no-cache-dir --no-deps .
 
 # Copy config files
-COPY config/ config/
+COPY Data-Gateway/config/ config/
+
+# Create logs directory writable by gateway user
+RUN mkdir -p /app/logs && chown gateway:gateway /app/logs
 
 # Switch to non-root user
 USER gateway
