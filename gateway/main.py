@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
+import socket
+import sys
 from contextlib import asynccontextmanager, suppress
 
 import orjson
@@ -15,6 +17,35 @@ import orjson
 from empire_core.logger import setup_logging
 
 setup_logging("data-gateway")
+
+
+def _check_port_available(host: str, port: int) -> None:
+    """Fail fast if another process is already listening on our port.
+
+    Prevents silent credential conflicts where two gateway instances
+    compete for the same Alpaca WebSocket connection pool.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port))
+    except OSError:
+        print(
+            f"FATAL: port {port} is already in use. "
+            "Another gateway instance (bare-metal or Docker) may be running. "
+            "Kill it first: lsof -ti :{port} | xargs kill -9",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    finally:
+        sock.close()
+
+
+# Only check port when running under uvicorn (not during test imports)
+if "uvicorn" in sys.modules:
+    from gateway.config import get_settings as _get_boot_settings
+
+    _boot = _get_boot_settings()
+    _check_port_available(_boot.host, _boot.port)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
