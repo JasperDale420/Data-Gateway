@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # Per-provider rate limits (override hardcoded defaults via env)
     alpaca_rate_limit_per_minute: int = Field(default=10000, ge=1)
     alpaca_rate_limit_per_second: int = Field(default=75, ge=1)
-    alpaca_max_concurrent_requests: int = Field(default=25, ge=1)
+    alpaca_max_concurrent_requests: int = Field(default=25, ge=1)  # see rate_limiter.DEFAULT_ALPACA_MAX_CONCURRENT
 
     # Alpaca (loaded from env, not prefixed)
     alpaca_api_key: str = Field(default="", alias="APCA_API_KEY_ID")

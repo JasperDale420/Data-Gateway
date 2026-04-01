@@ -2,7 +2,8 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from contextlib import nullcontext
+from typing import Any
 
 # Query description constants
 from fastapi import Depends, HTTPException
@@ -27,7 +28,6 @@ DESC_COMMA_SYMBOLS = "Comma-separated symbols"
 
 # Error message constants
 ERR_PROVIDER_NOT_AVAILABLE = "Alpaca provider not available"
-T = TypeVar("T")
 CacheBackend = InMemoryCache | HybridCache
 _ALPACA_CACHE_INFLIGHT: dict[str, asyncio.Task[Any]] = {}
 _ALPACA_CACHE_LOCK = asyncio.Lock()
@@ -60,6 +60,8 @@ async def get_alpaca_provider(
 import httpx
 from alpaca.common.exceptions import APIError
 
+from gateway.core.rate_limiter import get_rate_limiter
+
 
 async def execute_alpaca_provider_call[T](
     *,
@@ -73,19 +75,15 @@ async def execute_alpaca_provider_call[T](
     requests are in-flight to Alpaca simultaneously, preventing upstream 502s
     when multiple clients burst requests at market open.
     """
-    from gateway.core.rate_limiter import get_rate_limiter
-
     provider = registry.get("alpaca")
     if not provider:
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca", block=block)
-        sem = get_rate_limiter().upstream_semaphore("alpaca")
-        if sem is not None:
-            async with sem:
-                return await provider_call(provider)
-        return await provider_call(provider)
+        sem = get_rate_limiter().upstream_semaphore("alpaca") or nullcontext()
+        async with sem:
+            return await provider_call(provider)
     except HTTPException:
         raise
     except APIError as e:

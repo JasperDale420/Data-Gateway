@@ -346,6 +346,8 @@ class RedisStreamsSink(DataSink):
         Returns:
             True if successful
         """
+        if self._closed:
+            return False
         if isinstance(data, str):
             payload = {b"data": data.encode()}
         elif isinstance(data, bytes):

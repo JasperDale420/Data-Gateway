@@ -21,6 +21,8 @@ from typing import Optional
 
 from gateway.core.logger import logger
 
+DEFAULT_ALPACA_MAX_CONCURRENT = 25
+
 
 class RateLimitExceeded(Exception):  # noqa: N818
     """Raised when provider rate limit is exceeded."""
@@ -240,7 +242,7 @@ class ProviderRateLimitManager:
                 alpaca_limits.market_data_per_minute = settings.alpaca_rate_limit_per_minute
             self._semaphores["alpaca"] = asyncio.Semaphore(settings.alpaca_max_concurrent_requests)
         except Exception:
-            self._semaphores["alpaca"] = asyncio.Semaphore(25)
+            self._semaphores["alpaca"] = asyncio.Semaphore(DEFAULT_ALPACA_MAX_CONCURRENT)
             logger.debug("rate_limiter_settings_unavailable_using_defaults", exc_info=True)
 
         for provider, limits in PROVIDER_LIMITS.items():
