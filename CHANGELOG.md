@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`unusualwhales-python-client` missing from `local` optional deps and `uv.sources`** (`pyproject.toml`): Running `uv sync` (without `--all-extras`) uninstalled the vendored UW SDK, causing `ModuleNotFoundError: No module named 'unusualwhales'` on next startup. Re-added `unusualwhales-python-client` to the `local` extras group and `[tool.uv.sources]` so `uv sync --extra local --extra dev` restores it correctly.
+- **ruff scanning `trading-bot/` sub-project** (`pyproject.toml`): `ruff check .` reported 100+ violations from the `trading-bot/` directory (a separate sub-project co-located inside Data-Gateway). Added `exclude = ["trading-bot"]` to `[tool.ruff]` so only `gateway/` source is linted.
+
 ### Added
 
 - **Upstream concurrency semaphore for Alpaca** (`gateway/core/rate_limiter.py`, `gateway/config.py`, `gateway/api/alpaca/stock.py`, `gateway/api/alpaca/common.py`): Added `GATEWAY_ALPACA_MAX_CONCURRENT_REQUESTS` setting (default 25) that limits how many requests are simultaneously in-flight to the Alpaca API. At market open, 3Roses dispatches 8 workers × 248 symbols × 3 calls each = ~750 concurrent requests, which overwhelmed Alpaca and caused 81 HTTP 502 errors. The semaphore is applied to all Alpaca stock endpoints (bars, quotes, trades, snapshot) and all 39 usages of `execute_alpaca_provider_call`. Requests beyond the concurrency limit block until a slot opens, spreading the burst over time instead of hitting Alpaca all at once.
