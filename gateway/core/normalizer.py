@@ -9,11 +9,6 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-import structlog
-
-logger = structlog.get_logger()
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Normalized Data Types
 # ─────────────────────────────────────────────────────────────────────────────

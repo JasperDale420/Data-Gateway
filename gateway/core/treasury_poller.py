@@ -8,7 +8,7 @@ Treasury yields update once per business day, so the default poll interval
 is 24 hours.  The poller only emits the most recent data point per maturity
 to avoid re-publishing historical data on every poll.
 
-Pattern follows ``gateway.core.quotes_poller``:
+Pattern follows ``gateway.core.base_poller.BasePoller``:
 - Runs as an asyncio background task during application lifespan
 - Wraps each data point in an ``EventEnvelope`` via ``wrap_event``
 - Publishes to the data sink for Heber integration
@@ -18,10 +18,10 @@ Pattern follows ``gateway.core.quotes_poller``:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
+from gateway.core.base_poller import BasePoller
 from gateway.core.envelope import wrap_event
 from gateway.core.logger import logger
 
@@ -32,7 +32,7 @@ HEBER_STREAM = "heber:events"
 VALID_MATURITIES = frozenset({"3month", "2year", "5year", "7year", "10year", "30year"})
 
 
-class TreasuryYieldPoller:
+class TreasuryYieldPoller(BasePoller):
     """Background poller that fetches Treasury yield data via Alpha Vantage.
 
     Publishes ``EventEnvelope`` dicts to the data-sink for Heber consumption.
@@ -48,12 +48,52 @@ class TreasuryYieldPoller:
         if not self._maturities:
             self._maturities = ["2year", "10year"]
 
-        self._poll_interval = max(3600, poll_interval_seconds)
-        self._running = False
-        self._task: asyncio.Task | None = None
+        super().__init__(
+            poll_interval_seconds=max(3600, poll_interval_seconds),
+            poller_name="treasury_poller",
+        )
         self._provider: Any = None
         self._last_poll_time: datetime | None = None
         self._last_poll_count: int = 0
+
+    # ─────────────────────────────────────────────────────────────────────
+    # BasePoller hooks
+    # ─────────────────────────────────────────────────────────────────────
+
+    async def _on_start(self) -> bool:
+        from gateway.core.globals import get_registry
+
+        registry = get_registry()
+        self._provider = registry.get("alphavantage")
+        if self._provider is None:
+            logger.error("treasury_poller_no_alphavantage_provider")
+            return False
+
+        logger.info(
+            "treasury_poller_started",
+            interval_seconds=self._poll_interval,
+            maturities=self._maturities,
+        )
+        return True
+
+    async def stop(self) -> None:
+        await super().stop()
+        logger.info("treasury_poller_stopped")
+
+    async def _poll_loop(self) -> None:
+        """Override to add an initial 30s startup delay."""
+        await asyncio.sleep(30)
+        await super()._poll_loop()
+
+    async def _poll_once(self) -> None:
+        from gateway.core.globals import get_sink_registry
+
+        sink_registry = get_sink_registry()
+        if not sink_registry:
+            logger.debug("treasury_poller_no_sink")
+            return
+
+        await self._poll_and_publish(sink_registry)
 
     # ─────────────────────────────────────────────────────────────────────
     # Core polling
@@ -174,67 +214,12 @@ class TreasuryYieldPoller:
         )
 
     # ─────────────────────────────────────────────────────────────────────
-    # Lifecycle
+    # Telemetry
     # ─────────────────────────────────────────────────────────────────────
-
-    async def start(self) -> None:
-        """Start the background polling task."""
-        if self._running:
-            logger.warning("treasury_poller_already_running")
-            return
-
-        from gateway.core.globals import get_registry
-
-        registry = get_registry()
-        self._provider = registry.get("alphavantage")
-        if self._provider is None:
-            logger.error("treasury_poller_no_alphavantage_provider")
-            return
-
-        self._running = True
-        self._task = asyncio.create_task(self._poll_loop())
-        logger.info(
-            "treasury_poller_started",
-            interval_seconds=self._poll_interval,
-            maturities=self._maturities,
-        )
-
-    async def stop(self) -> None:
-        """Stop the background polling task."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-        logger.info("treasury_poller_stopped")
-
-    async def _poll_loop(self) -> None:
-        """Main polling loop — runs at the configured interval."""
-        from gateway.core.globals import get_sink_registry
-
-        # Run an initial poll shortly after startup (30s delay for provider init)
-        await asyncio.sleep(30)
-
-        while self._running:
-            try:
-                sink_registry = get_sink_registry()
-                if not sink_registry:
-                    logger.debug("treasury_poller_no_sink")
-                    await asyncio.sleep(60)
-                    continue
-
-                await self._poll_and_publish(sink_registry)
-
-            except Exception as e:
-                logger.error("treasury_poller_loop_error", error=str(e), exc_info=True)
-
-            await asyncio.sleep(self._poll_interval)
 
     def get_runtime_snapshot(self) -> dict[str, Any]:
         """Return lightweight runtime telemetry for admin surfaces."""
-        return {
-            "running": self._running,
-            "poll_interval_seconds": self._poll_interval,
+        return super().get_runtime_snapshot() | {
             "maturities": self._maturities,
             "last_poll_time": self._last_poll_time.isoformat() if self._last_poll_time else None,
             "last_poll_count": self._last_poll_count,

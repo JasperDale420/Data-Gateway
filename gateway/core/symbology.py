@@ -14,6 +14,13 @@ from gateway.core.logger import logger
 
 _SYMBOL_RESOLVE_CACHE_MAX = 4096
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Canonical Symbol Patterns (single source of truth)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Stock: 1-6 uppercase letters, optional class suffix (.A, .B) or preferred suffix (-PL)
+STOCK_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,6}(?:[.\-][A-Z]{1,2})?$")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Resolved Symbol
@@ -75,7 +82,7 @@ class SymbolResolver:
     """
 
     # Regex patterns per PRD
-    STOCK_PATTERN = re.compile(r"^[A-Z]{1,5}$")
+    STOCK_PATTERN = STOCK_SYMBOL_PATTERN
     OCC_PATTERN = re.compile(r"^([A-Z]{1,6})(\d{6})([CP])(\d{8})$")
     CRYPTO_PATTERN = re.compile(r"^([A-Z]{2,5})/([A-Z]{3,4})$")
     FOREX_PATTERN = re.compile(r"^([A-Z]{3})/([A-Z]{3})$")

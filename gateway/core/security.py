@@ -17,6 +17,7 @@ from enum import Enum
 from typing import Any
 
 from gateway.core.logger import logger
+from gateway.core.symbology import STOCK_SYMBOL_PATTERN
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Validation Error Codes (GW-E8xxx)
@@ -40,7 +41,7 @@ class ValidationErrorCode(str, Enum):
 # ─────────────────────────────────────────────────────────────────────────────
 
 SYMBOL_PATTERNS = {
-    "stock": re.compile(r"^[A-Z]{1,5}$"),
+    "stock": STOCK_SYMBOL_PATTERN,
     "option_occ": re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$"),
     "crypto": re.compile(r"^[A-Z]{2,5}/[A-Z]{3,4}$"),
     "forex": re.compile(r"^[A-Z]{3}/[A-Z]{3}$"),

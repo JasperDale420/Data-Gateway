@@ -5,12 +5,13 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-import httpx
 from fastapi import Depends, HTTPException
 
 from gateway.api.deps import (
+    execute_provider_cached,
     get_cache,
     get_registry,
+    make_cache_key,
     require_api_key,
     require_provider_rate_limit,
 )
@@ -55,22 +56,8 @@ __all__ = [
 ]
 
 
-def _normalize_cache_arg(value) -> str:
-    if value is None:
-        return "<none>"
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if value == "":
-        return "<empty>"
-    return str(value)
-
-
-def cache_key(prefix: str, *args) -> str:
-    """Generate cache key."""
-    parts = [prefix] + [_normalize_cache_arg(a) for a in args]
-    return ":".join(parts)
+# Delegate to shared utility (backward-compatible alias)
+cache_key = make_cache_key
 
 
 def normalize_search_query(query: str, max_chars: int = MAX_SEARCH_KEY_CHARS) -> str:
@@ -125,41 +112,47 @@ async def execute_av_cached(
     cache_mode: str = "default",
 ) -> dict[str, Any]:
     """Execute shared Alpha Vantage cache -> rate-limit -> provider flow."""
-    if cache_enabled:
-        cached = await cache.get(cache_key_value)
-        if cached:
+    # Capture raw result in closure so miss_meta_builder gets both raw + transformed
+    raw_result_holder: list[Any] = []
+
+    async def _capturing_fetcher(provider: Any) -> Any:
+        result = await fetcher(provider)
+        raw_result_holder.append(result)
+        return result
+
+    def _av_response_builder(data: Any, cached_flag: bool) -> dict[str, Any]:
+        """Build AV response, recording metrics on miss."""
+        if cached_flag:
             if endpoint:
                 record_alphavantage_route_cache(endpoint=endpoint, status="hit", cache_mode=cache_mode)
-            return make_response(cached, cached=True)
+            return make_response(data, cached=True)
+        # Miss path — record metrics
+        if endpoint:
+            record_alphavantage_route_cache(endpoint=endpoint, status="miss", cache_mode=cache_mode)
+            payload_bytes = len(json.dumps(data, default=str, separators=(",", ":")).encode())
+            record_alphavantage_payload_bytes(endpoint=endpoint, cache_mode=cache_mode, payload_bytes=payload_bytes)
+        extra = miss_meta
+        if miss_meta_builder:
+            raw = raw_result_holder[0] if raw_result_holder else data
+            built = miss_meta_builder(raw, data)
+            if built:
+                extra = {**(extra or {}), **built}
+        return make_response(data, cached=False, extra_meta=extra)
 
-    provider = get_alphavantage_provider(registry)
-    await require_provider_rate_limit("alphavantage")
-    try:
-        result = await fetcher(provider)
-    except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code
-        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
-        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
-    except RuntimeError as e:
-        _translate_provider_error(e)
-        raise
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
-    cached_value = cache_transform(result)
-    if cache_enabled:
-        await cache.set(cache_key_value, cached_value, ttl=ttl)
-    if endpoint:
-        record_alphavantage_route_cache(endpoint=endpoint, status="miss", cache_mode=cache_mode)
-        payload_bytes = len(json.dumps(cached_value, default=str, separators=(",", ":")).encode())
-        record_alphavantage_payload_bytes(
-            endpoint=endpoint,
-            cache_mode=cache_mode,
-            payload_bytes=payload_bytes,
-        )
-    extra_meta = miss_meta
-    if miss_meta_builder:
-        built_meta = miss_meta_builder(result, cached_value)
-        if built_meta:
-            extra_meta = {**(extra_meta or {}), **built_meta}
-    return make_response(cached_value, cached=False, extra_meta=extra_meta)
+    def _handle_runtime_error(exc: Exception) -> None:
+        if isinstance(exc, RuntimeError):
+            _translate_provider_error(exc)
+
+    return await execute_provider_cached(
+        provider_name="alphavantage",
+        registry=registry,
+        cache=cache,
+        cache_key=cache_key_value,
+        ttl=ttl,
+        fetcher=_capturing_fetcher,
+        cache_transform=cache_transform,
+        build_response=_av_response_builder,
+        cache_enabled=cache_enabled,
+        error_handlers=[_handle_runtime_error],
+        not_available_msg=PROVIDER_NOT_AVAILABLE,
+    )

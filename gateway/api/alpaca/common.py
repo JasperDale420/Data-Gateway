@@ -63,6 +63,17 @@ from alpaca.common.exceptions import APIError
 from gateway.core.rate_limiter import get_rate_limiter
 
 
+def _handle_alpaca_error(exc: Exception) -> None:
+    """Map Alpaca-specific exceptions (APIError) to HTTP errors."""
+    if isinstance(exc, APIError):
+        status_code = getattr(exc, "status_code", 400)
+        if status_code < 500:
+            logger.warning("provider_request_failed", error=str(exc), status_code=status_code)
+        else:
+            logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Alpaca API Error: {str(exc)}")
+
+
 async def execute_alpaca_provider_call[T](
     *,
     registry: ProviderRegistry,
@@ -116,7 +127,13 @@ async def execute_alpaca_cached_call[T](
     cache_mode: str = "alpaca",
     block: bool = True,
 ) -> T:
-    """Run Alpaca provider call with shared cache + in-flight de-dupe."""
+    """Run Alpaca provider call with shared cache + in-flight de-dupe.
+
+    Alpaca uses task-level in-flight dedup (``_ALPACA_CACHE_INFLIGHT``) on top
+    of the standard cache pipeline. This is kept as a provider-specific wrapper
+    because the asyncio.Task-based dedup pattern is unique to Alpaca's upstream
+    concurrency semaphore model.
+    """
     cached = await cache.get(cache_key)
     if cached is not None:
         record_route_cache(route_label, "hit", cache_mode)

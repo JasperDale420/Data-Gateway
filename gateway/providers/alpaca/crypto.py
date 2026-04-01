@@ -28,8 +28,6 @@ class AlpacaCryptoMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: list[NormalizedBar] = []
-
         alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, Any] = {
             "symbols": pair,
@@ -42,30 +40,17 @@ class AlpacaCryptoMixin:
             params["end"] = end.isoformat()
 
         try:
-            while True:
-                response = await self._client.get("/v1beta3/crypto/us/bars", params=params)
-                response.raise_for_status()
-                data = response.json()
-
-                for symbol, bars in data.get("bars", {}).items():
-                    for bar in bars:
-                        results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
-
-                next_token = data.get("next_page_token")
-                if not next_token or len(results) >= limit:
-                    break
-                params["page_token"] = next_token
-
-            results = results[:limit]
+            pages = await self._paginate("/v1beta3/crypto/us/bars", params, "bars", limit=limit)
+            results = [
+                self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe)
+                for symbol, bars in pages.items()
+                for bar in bars
+            ]
 
             logger.info("alpaca_crypto_bars_fetched", pair=pair, bars=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_crypto_bars_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            logger.error("alpaca_crypto_bars_error", status=e.response.status_code, error=str(e))
             raise
 
         return results
@@ -82,8 +67,6 @@ class AlpacaCryptoMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: list[NormalizedTrade] = []
-
         params: dict[str, Any] = {"symbols": pair, "limit": max(1, min(limit, 10000))}
         if start:
             params["start"] = start.isoformat()
@@ -91,30 +74,13 @@ class AlpacaCryptoMixin:
             params["end"] = end.isoformat()
 
         try:
-            while True:
-                response = await self._client.get("/v1beta3/crypto/us/trades", params=params)
-                response.raise_for_status()
-                data = response.json()
-
-                for symbol, trades in data.get("trades", {}).items():
-                    for trade in trades:
-                        results.append(self._normalize_trade(symbol, trade))
-
-                next_token = data.get("next_page_token")
-                if not next_token or len(results) >= limit:
-                    break
-                params["page_token"] = next_token
-
-            results = results[:limit]
+            pages = await self._paginate("/v1beta3/crypto/us/trades", params, "trades", limit=limit)
+            results = [self._normalize_trade(symbol, trade) for symbol, trades in pages.items() for trade in trades]
 
             logger.info("alpaca_crypto_trades_fetched", pair=pair, trades=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_crypto_trades_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            logger.error("alpaca_crypto_trades_error", status=e.response.status_code, error=str(e))
             raise
 
         return results
@@ -157,12 +123,9 @@ class AlpacaCryptoMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: list[NormalizedQuote] = []
-        request_limit = max(1, min(limit, 10000))
-
         params: dict[str, Any] = {
             "symbols": pair,
-            "limit": request_limit,
+            "limit": max(1, min(limit, 10000)),
         }
         if start:
             params["start"] = start.isoformat()
@@ -170,30 +133,13 @@ class AlpacaCryptoMixin:
             params["end"] = end.isoformat()
 
         try:
-            while True:
-                response = await self._client.get("/v1beta3/crypto/us/quotes", params=params)
-                response.raise_for_status()
-                data = response.json()
-
-                for symbol, quotes in data.get("quotes", {}).items():
-                    for quote in quotes:
-                        results.append(self._normalize_quote(symbol, quote))
-
-                next_token = data.get("next_page_token")
-                if not next_token or len(results) >= limit:
-                    break
-                params["page_token"] = next_token
-
-            results = results[:limit]
+            pages = await self._paginate("/v1beta3/crypto/us/quotes", params, "quotes", limit=limit)
+            results = [self._normalize_quote(symbol, quote) for symbol, quotes in pages.items() for quote in quotes]
 
             logger.info("alpaca_historical_crypto_quotes_fetched", pair=pair, quotes=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_historical_crypto_quotes_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            logger.error("alpaca_historical_crypto_quotes_error", status=e.response.status_code, error=str(e))
             raise
 
         return results

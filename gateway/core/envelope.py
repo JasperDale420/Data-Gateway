@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from gateway.core.logger import logger
 from gateway.core.metrics import record_envelope_created
+from gateway.core.timeutils import parse_timestamp
 
 # Schema version for envelope format
 SCHEMA_VERSION = "v1"
@@ -329,15 +330,7 @@ def wrap_event(
         payload.get("timestamp") or payload.get("t") or payload.get("published_at") or payload.get("datetime")
     )
 
-    if isinstance(ts_event_raw, datetime):
-        ts_event = ts_event_raw
-    elif isinstance(ts_event_raw, str):
-        try:
-            ts_event = datetime.fromisoformat(ts_event_raw.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
-            ts_event = datetime.now(UTC)
-    else:
-        ts_event = datetime.now(UTC)
+    ts_event = parse_timestamp(ts_event_raw) or datetime.now(UTC)
 
     # Ingest time
     if ts_ingest is None:

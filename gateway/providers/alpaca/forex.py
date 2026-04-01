@@ -59,8 +59,6 @@ class AlpacaForexMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: dict[str, list[NormalizedBar]] = {}
-
         alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, Any] = {
             "currency_pairs": ",".join(pairs),
@@ -73,21 +71,11 @@ class AlpacaForexMixin:
             params["end"] = end.isoformat()
 
         try:
-            while True:
-                response = await self._client.get("/v1beta1/forex/bars", params=params)
-                response.raise_for_status()
-                data = response.json()
-
-                for pair, bars in data.get("bars", {}).items():
-                    if pair not in results:
-                        results[pair] = []
-                    results[pair].extend(self._normalize_bar(pair, bar, timeframe=alpaca_timeframe) for bar in bars)
-
-                next_token = data.get("next_page_token")
-                total_bars = sum(len(b) for b in results.values())
-                if not next_token or total_bars >= limit:
-                    break
-                params["page_token"] = next_token
+            pages = await self._paginate("/v1beta1/forex/bars", params, "bars", limit=limit)
+            results: dict[str, list[NormalizedBar]] = {
+                pair: [self._normalize_bar(pair, bar, timeframe=alpaca_timeframe) for bar in bars]
+                for pair, bars in pages.items()
+            }
 
             logger.info(
                 "alpaca_forex_historical_fetched",
@@ -98,9 +86,5 @@ class AlpacaForexMixin:
             return results
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_forex_historical_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            logger.error("alpaca_forex_historical_error", status=e.response.status_code, error=str(e))
             raise

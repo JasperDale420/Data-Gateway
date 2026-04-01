@@ -10,14 +10,13 @@ Features:
 """
 
 import asyncio
-import contextlib
-from collections import OrderedDict
 from datetime import UTC, datetime, time
 from time import monotonic as _monotonic
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from gateway.config import get_settings
+from gateway.core.base_poller import BasePoller, DedupMixin
 from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
@@ -27,6 +26,7 @@ if TYPE_CHECKING:
     from gateway.providers.uw import UnusualWhalesProvider
 
 from gateway.core.logger import logger
+from gateway.core.timeutils import parse_timestamp
 
 # Stream name for Heber integration
 HEBER_STREAM = "heber:events"
@@ -65,7 +65,7 @@ GICS_SECTORS = [
 ]
 
 
-class UWPoller:
+class UWPoller(DedupMixin, BasePoller):
     """Background poller for Unusual Whales data.
 
     Polls UW endpoints at configured intervals during market hours
@@ -85,6 +85,11 @@ class UWPoller:
         eod_concurrency: int = 5,
     ):
         settings = get_settings()
+        super().__init__(
+            poll_interval_seconds=poll_interval_seconds,
+            poller_name="uw_poller",
+        )
+        # Keep legacy alias for code that reads self.poll_interval
         self.poll_interval = poll_interval_seconds
         self.flow_enabled = flow_enabled
         self.darkpool_enabled = darkpool_enabled
@@ -94,8 +99,6 @@ class UWPoller:
         self._eod_hour = eod_hour
         self._eod_minute = eod_minute
         self._eod_concurrency = max(1, eod_concurrency)
-        self._running = False
-        self._task: asyncio.Task | None = None
         self._provider: UnusualWhalesProvider | None = None
         self._calendar = TradingCalendar()
         self._ticker_universe: TickerUniverse | None = None
@@ -104,9 +107,7 @@ class UWPoller:
         self._last_eod_date: str | None = None
 
         # Deduplication cache — OrderedDict for O(1) FIFO eviction.
-        # Entries are appended in insertion order; cleanup pops from the front.
-        self._seen_ids: OrderedDict[str, datetime] = OrderedDict()
-        self._cache_ttl_seconds = 7200  # 2 hours
+        self._init_dedup(cache_ttl_seconds=7200)  # 2 hours
         self._publish_max_inflight = max(1, int(settings.uw_poller_publish_max_inflight))
 
         # Cache market hours lookups (30-second TTL)
@@ -165,12 +166,7 @@ class UWPoller:
 
     @staticmethod
     def _parse_ts(ts_value: str | None) -> datetime | None:
-        if not ts_value:
-            return None
-        try:
-            return datetime.fromisoformat(ts_value.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
-            return None
+        return parse_timestamp(ts_value)
 
     def _get_poll_limit(self) -> int:
         """Get poll limit based on time of day.
@@ -181,36 +177,6 @@ class UWPoller:
         Consider more frequent polling or a different strategy for complete coverage.
         """
         return 200  # API max limit
-
-    def _is_duplicate(self, event_id: str) -> bool:
-        """Check if event has already been seen."""
-        return event_id in self._seen_ids
-
-    def _mark_seen(self, event_id: str) -> None:
-        """Mark event as seen (appends to end of OrderedDict)."""
-        self._seen_ids[event_id] = datetime.now(UTC)
-        self._seen_ids.move_to_end(event_id)
-
-    def _cleanup_cache(self) -> None:
-        """Remove expired entries from dedup cache via O(1) FIFO pops.
-
-        Since entries are in insertion order, pop from the front until
-        we hit an unexpired entry.
-        """
-        now = datetime.now(UTC)
-        cutoff = self._cache_ttl_seconds
-        removed = 0
-        while self._seen_ids:
-            # Peek at the oldest entry
-            eid, ts = next(iter(self._seen_ids.items()))
-            if (now - ts).total_seconds() > cutoff:
-                del self._seen_ids[eid]
-                removed += 1
-            else:
-                break
-
-        if removed:
-            logger.debug("uw_poller_cache_cleanup", removed=removed, remaining=len(self._seen_ids))
 
     async def _load_redis_duplicate_ids(
         self,
@@ -377,13 +343,8 @@ class UWPoller:
             },
         }
 
-    async def start(self) -> None:
-        """Start the background polling task."""
-        if self._running:
-            logger.warning("uw_poller_already_running")
-            return
-
-        # Initialize UW provider
+    async def _on_start(self) -> bool:
+        """Initialize UW provider and ticker universe."""
         from gateway.providers.uw import UnusualWhalesProvider
 
         self._provider = UnusualWhalesProvider()
@@ -395,7 +356,7 @@ class UWPoller:
 
         if not self._provider._initialized:
             logger.error("uw_poller_provider_not_initialized")
-            return
+            return False
 
         # Initialize ticker universe for EOD polling
         if self.eod_enabled:
@@ -410,8 +371,6 @@ class UWPoller:
                 dynamic_count=settings.uw_dynamic_ticker_count,
             )
 
-        self._running = True
-        self._task = asyncio.create_task(self._poll_loop())
         logger.info(
             "uw_poller_started",
             interval_seconds=self.poll_interval,
@@ -420,17 +379,18 @@ class UWPoller:
             market_tide=self.market_tide_enabled,
             eod=self.eod_enabled,
         )
+        return True
 
     async def stop(self) -> None:
-        """Stop the background polling task."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+        """Stop the background polling task and shut down provider."""
+        await super().stop()
         if self._provider:
             await self._provider.shutdown()
         logger.info("uw_poller_stopped", cached_ids=len(self._seen_ids))
+
+    async def _poll_once(self) -> None:
+        """Not used — UW poller overrides _poll_loop for custom timing."""
+        raise NotImplementedError("UWPoller uses custom _poll_loop")
 
     async def _poll_loop(self) -> None:
         """Main polling loop."""

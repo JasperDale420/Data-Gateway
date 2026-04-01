@@ -29,13 +29,10 @@ class AlpacaMarketMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: list[NormalizedBar] = []
-        symbols_param = ",".join(symbols)
         total_limit = kwargs.get("limit", 10000)
-
         alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, Any] = {
-            "symbols": symbols_param,
+            "symbols": ",".join(symbols),
             "timeframe": alpaca_timeframe,
             "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
             "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
@@ -45,34 +42,17 @@ class AlpacaMarketMixin:
         }
 
         try:
-            while True:
-                response = await self._client.get("/v2/stocks/bars", params=params)
-                response.raise_for_status()
-                data = response.json()
+            pages = await self._paginate("/v2/stocks/bars", params, "bars", limit=total_limit)
+            results = [
+                self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe)
+                for symbol, bars in pages.items()
+                for bar in bars
+            ]
 
-                for symbol, bars in data.get("bars", {}).items():
-                    for bar in bars:
-                        results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
-
-                next_token = data.get("next_page_token")
-                if not next_token or len(results) >= total_limit:
-                    break
-                params["page_token"] = next_token
-
-            results = results[:total_limit]
-
-            logger.info(
-                "alpaca_bars_fetched",
-                symbols=len(symbols),
-                bars=len(results),
-            )
+            logger.info("alpaca_bars_fetched", symbols=len(symbols), bars=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_bars_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            logger.error("alpaca_bars_error", status=e.response.status_code, error=str(e))
             raise
 
         return results
@@ -120,47 +100,22 @@ class AlpacaMarketMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: list[NormalizedTrade] = []
-        symbols_param = ",".join(symbols)
-        request_limit = max(1, min(limit, 10000))
-
         params: dict[str, str | int] = {
-            "symbols": symbols_param,
+            "symbols": ",".join(symbols),
             "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
             "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": self._feed,
-            "limit": request_limit,
+            "limit": max(1, min(limit, 10000)),
         }
 
         try:
-            while True:
-                response = await self._client.get("/v2/stocks/trades", params=params)
-                response.raise_for_status()
-                data = response.json()
+            pages = await self._paginate("/v2/stocks/trades", params, "trades", limit=limit)
+            results = [self._normalize_trade(symbol, trade) for symbol, trades in pages.items() for trade in trades]
 
-                for symbol, trades in data.get("trades", {}).items():
-                    for trade in trades:
-                        results.append(self._normalize_trade(symbol, trade))
-
-                next_token = data.get("next_page_token")
-                if not next_token or len(results) >= limit:
-                    break
-                params["page_token"] = next_token
-
-            results = results[:limit]
-
-            logger.info(
-                "alpaca_trades_fetched",
-                symbols=len(symbols),
-                trades=len(results),
-            )
+            logger.info("alpaca_trades_fetched", symbols=len(symbols), trades=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_trades_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            logger.error("alpaca_trades_error", status=e.response.status_code, error=str(e))
             raise
 
         return results
@@ -233,40 +188,19 @@ class AlpacaMarketMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: list[NormalizedQuote] = []
-        symbols_param = ",".join(symbols)
-        request_limit = max(1, min(limit, 10000))
-
         params: dict[str, str | int] = {
-            "symbols": symbols_param,
+            "symbols": ",".join(symbols),
             "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
             "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
             "feed": self._feed,
-            "limit": request_limit,
+            "limit": max(1, min(limit, 10000)),
         }
 
         try:
-            while True:
-                response = await self._client.get("/v2/stocks/quotes", params=params)
-                response.raise_for_status()
-                data = response.json()
+            pages = await self._paginate("/v2/stocks/quotes", params, "quotes", limit=limit)
+            results = [self._normalize_quote(symbol, quote) for symbol, quotes in pages.items() for quote in quotes]
 
-                for symbol, quotes in data.get("quotes", {}).items():
-                    for quote in quotes:
-                        results.append(self._normalize_quote(symbol, quote))
-
-                next_token = data.get("next_page_token")
-                if not next_token or len(results) >= limit:
-                    break
-                params["page_token"] = next_token
-
-            results = results[:limit]
-
-            logger.info(
-                "alpaca_historical_quotes_fetched",
-                symbols=len(symbols),
-                quotes=len(results),
-            )
+            logger.info("alpaca_historical_quotes_fetched", symbols=len(symbols), quotes=len(results))
 
         except httpx.HTTPStatusError as e:
             logger.error("alpaca_historical_quotes_error", status=e.response.status_code)

@@ -149,15 +149,15 @@ class AlpacaStreamType(Enum):
         return "equity"
 
 
+_FEED_NAMES = ("bars", "quotes", "trades", "news")
+
+
 @dataclass
 class ClientSubscription:
     """Tracks a client's subscriptions for a stream type."""
 
     client_id: str
-    bars: set[str] = field(default_factory=set)
-    quotes: set[str] = field(default_factory=set)
-    trades: set[str] = field(default_factory=set)
-    news: set[str] = field(default_factory=set)
+    feeds: dict[str, set[str]] = field(default_factory=lambda: {name: set() for name in _FEED_NAMES})
 
 
 class SubscriptionManager:
@@ -169,12 +169,71 @@ class SubscriptionManager:
 
     def __init__(self) -> None:
         self._subscriptions: dict[str, ClientSubscription] = {}
-        self._index: dict[str, dict[str, set[str]]] = {
-            "bars": {},
-            "quotes": {},
-            "trades": {},
-            "news": {},
-        }
+        self._index: dict[str, dict[str, set[str]]] = {name: {} for name in _FEED_NAMES}
+
+    def _subscribe_feed(
+        self,
+        client_id: str,
+        sub: ClientSubscription,
+        feed: str,
+        symbols: list[str],
+    ) -> set[str]:
+        """Add symbols for a single feed. Returns newly added symbols (no other client had them)."""
+        new_symbols: set[str] = set()
+        client_set = sub.feeds[feed]
+        index = self._index[feed]
+        for symbol in symbols:
+            if symbol in client_set:
+                continue
+            client_set.add(symbol)
+            clients = index.get(symbol)
+            if clients is None:
+                index[symbol] = {client_id}
+                new_symbols.add(symbol)
+            else:
+                clients.add(client_id)
+        return new_symbols
+
+    def _unsubscribe_feed(
+        self,
+        client_id: str,
+        sub: ClientSubscription,
+        feed: str,
+        symbols: list[str],
+    ) -> set[str]:
+        """Remove symbols for a single feed. Returns symbols no longer needed upstream."""
+        removed: set[str] = set()
+        client_set = sub.feeds[feed]
+        index = self._index[feed]
+        for symbol in symbols:
+            if symbol not in client_set:
+                continue
+            client_set.discard(symbol)
+            clients = index.get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    index.pop(symbol, None)
+                    removed.add(symbol)
+        return removed
+
+    def _remove_client_feed(
+        self,
+        client_id: str,
+        sub: ClientSubscription,
+        feed: str,
+    ) -> set[str]:
+        """Remove all of a client's symbols for a feed. Returns symbols no longer needed upstream."""
+        removed: set[str] = set()
+        index = self._index[feed]
+        for symbol in sub.feeds[feed]:
+            clients = index.get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    index.pop(symbol, None)
+                    removed.add(symbol)
+        return removed
 
     def subscribe(
         self,
@@ -187,59 +246,11 @@ class SubscriptionManager:
         """Add subscriptions for a client. Returns newly added symbols."""
         if client_id not in self._subscriptions:
             self._subscriptions[client_id] = ClientSubscription(client_id=client_id)
-
         sub = self._subscriptions[client_id]
-        new_bars: set[str] = set()
-        new_quotes: set[str] = set()
-        new_trades: set[str] = set()
-        new_news: set[str] = set()
-
-        if bars:
-            for symbol in bars:
-                if symbol in sub.bars:
-                    continue
-                sub.bars.add(symbol)
-                clients = self._index["bars"].get(symbol)
-                if clients is None:
-                    self._index["bars"][symbol] = {client_id}
-                    new_bars.add(symbol)
-                else:
-                    clients.add(client_id)
-        if quotes:
-            for symbol in quotes:
-                if symbol in sub.quotes:
-                    continue
-                sub.quotes.add(symbol)
-                clients = self._index["quotes"].get(symbol)
-                if clients is None:
-                    self._index["quotes"][symbol] = {client_id}
-                    new_quotes.add(symbol)
-                else:
-                    clients.add(client_id)
-        if trades:
-            for symbol in trades:
-                if symbol in sub.trades:
-                    continue
-                sub.trades.add(symbol)
-                clients = self._index["trades"].get(symbol)
-                if clients is None:
-                    self._index["trades"][symbol] = {client_id}
-                    new_trades.add(symbol)
-                else:
-                    clients.add(client_id)
-        if news:
-            for symbol in news:
-                if symbol in sub.news:
-                    continue
-                sub.news.add(symbol)
-                clients = self._index["news"].get(symbol)
-                if clients is None:
-                    self._index["news"][symbol] = {client_id}
-                    new_news.add(symbol)
-                else:
-                    clients.add(client_id)
-
-        return new_bars, new_quotes, new_trades, new_news
+        feeds = {"bars": bars, "quotes": quotes, "trades": trades, "news": news}
+        return tuple(  # type: ignore[return-value]
+            self._subscribe_feed(client_id, sub, name, syms) if syms else set() for name, syms in feeds.items()
+        )
 
     def unsubscribe(
         self,
@@ -252,104 +263,20 @@ class SubscriptionManager:
         """Remove subscriptions for a client. Returns symbols to unsubscribe upstream."""
         if client_id not in self._subscriptions:
             return set(), set(), set(), set()
-
         sub = self._subscriptions[client_id]
-        removed_bars: set[str] = set()
-        removed_quotes: set[str] = set()
-        removed_trades: set[str] = set()
-        removed_news: set[str] = set()
-
-        if bars:
-            for symbol in bars:
-                if symbol not in sub.bars:
-                    continue
-                sub.bars.discard(symbol)
-                clients = self._index["bars"].get(symbol)
-                if clients:
-                    clients.discard(client_id)
-                    if not clients:
-                        self._index["bars"].pop(symbol, None)
-                        removed_bars.add(symbol)
-        if quotes:
-            for symbol in quotes:
-                if symbol not in sub.quotes:
-                    continue
-                sub.quotes.discard(symbol)
-                clients = self._index["quotes"].get(symbol)
-                if clients:
-                    clients.discard(client_id)
-                    if not clients:
-                        self._index["quotes"].pop(symbol, None)
-                        removed_quotes.add(symbol)
-        if trades:
-            for symbol in trades:
-                if symbol not in sub.trades:
-                    continue
-                sub.trades.discard(symbol)
-                clients = self._index["trades"].get(symbol)
-                if clients:
-                    clients.discard(client_id)
-                    if not clients:
-                        self._index["trades"].pop(symbol, None)
-                        removed_trades.add(symbol)
-        if news:
-            for symbol in news:
-                if symbol not in sub.news:
-                    continue
-                sub.news.discard(symbol)
-                clients = self._index["news"].get(symbol)
-                if clients:
-                    clients.discard(client_id)
-                    if not clients:
-                        self._index["news"].pop(symbol, None)
-                        removed_news.add(symbol)
-
-        return removed_bars, removed_quotes, removed_trades, removed_news
+        feeds = {"bars": bars, "quotes": quotes, "trades": trades, "news": news}
+        return tuple(  # type: ignore[return-value]
+            self._unsubscribe_feed(client_id, sub, name, syms) if syms else set() for name, syms in feeds.items()
+        )
 
     def remove_client(self, client_id: str) -> tuple[set[str], set[str], set[str], set[str]]:
         """Remove all subscriptions for a client."""
         if client_id not in self._subscriptions:
             return set(), set(), set(), set()
-
         sub = self._subscriptions.pop(client_id)
-        removed_bars: set[str] = set()
-        removed_quotes: set[str] = set()
-        removed_trades: set[str] = set()
-        removed_news: set[str] = set()
-
-        for symbol in sub.bars:
-            clients = self._index["bars"].get(symbol)
-            if clients:
-                clients.discard(client_id)
-                if not clients:
-                    self._index["bars"].pop(symbol, None)
-                    removed_bars.add(symbol)
-
-        for symbol in sub.quotes:
-            clients = self._index["quotes"].get(symbol)
-            if clients:
-                clients.discard(client_id)
-                if not clients:
-                    self._index["quotes"].pop(symbol, None)
-                    removed_quotes.add(symbol)
-
-        for symbol in sub.trades:
-            clients = self._index["trades"].get(symbol)
-            if clients:
-                clients.discard(client_id)
-                if not clients:
-                    self._index["trades"].pop(symbol, None)
-                    removed_trades.add(symbol)
-
-        for symbol in sub.news:
-            clients = self._index["news"].get(symbol)
-            if clients:
-                clients.discard(client_id)
-                if not clients:
-                    self._index["news"].pop(symbol, None)
-                    removed_news.add(symbol)
-
-        return removed_bars, removed_quotes, removed_trades, removed_news
+        return tuple(  # type: ignore[return-value]
+            self._remove_client_feed(client_id, sub, name) for name in _FEED_NAMES
+        )
 
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
         """Get all clients subscribed to a symbol for a data type (returns copy)."""
