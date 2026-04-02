@@ -6,8 +6,10 @@ from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
+from starlette.status import HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca import trading
+from gateway.config import Settings
 from gateway.core.cache import InMemoryCache
 from gateway.core.registry import ProviderRegistry
 
@@ -152,6 +154,47 @@ async def test_get_orders_splits_symbols_and_sets_count(
 
     assert provider.orders_calls[0]["symbols"] == ["AAPL", "MSFT"]
     assert response["meta"]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_orders_times_out_stuck_trading_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _SlowProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
+            self.orders_calls.append(kwargs)
+            import time
+
+            time.sleep(0.6)
+            return [{"id": "o-1"}]
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        assert registry is cast(ProviderRegistry, route_registry)
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_orders(
+            status="open",
+            limit=50,
+            direction="desc",
+            symbols="AAPL",
+            nested=True,
+            side=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
 
 
 @pytest.mark.asyncio

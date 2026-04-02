@@ -1,11 +1,14 @@
 """Tests for subscription manager."""
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
 import gateway.core.stream as stream_module
+from gateway.core.auth import Client, ClientPermissions
+from gateway.core.connections import ConnectionManager
 from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
 from gateway.core.stream import SubscriptionManager as StreamSubscriptionManager
 
@@ -401,6 +404,114 @@ async def test_stream_multiplexer_single_client_fanout_skips_gather(
     await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, {"T": "b", "S": "AAPL"})
 
     assert delivered == [("client-1", "bars")]
+
+
+@pytest.mark.asyncio
+async def test_stream_multiplexer_broadcasts_to_authenticated_connection_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent_bytes: list[bytes] = []
+
+        async def accept(self) -> None:
+            return
+
+        async def send_text(self, _payload: str) -> None:
+            raise AssertionError("expected bytes payload")
+
+        async def send_bytes(self, payload: bytes) -> None:
+            self.sent_bytes.append(payload)
+
+    class _Validator:
+        def validate_bar(self, _message: dict[str, str]) -> SimpleNamespace:
+            return SimpleNamespace(valid=True, error_codes=[])
+
+    monkeypatch.setattr(stream_module, "get_validator", lambda: _Validator())
+
+    connections = ConnectionManager()
+    websocket = _FakeWebSocket()
+    connection_id = "conn-1"
+    client = Client(
+        id="test-client",
+        permissions=ClientPermissions(
+            providers=["alpaca"],
+            feeds=["bars"],
+            max_symbols=10,
+            rate_limit=60,
+        ),
+        enabled=True,
+    )
+
+    await connections.connect(connection_id, cast(Any, websocket))
+    await connections.authenticate(connection_id, client)
+
+    async def _subscribe(_bars=None, _quotes=None, _trades=None, _news=None) -> list[str]:
+        return []
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=lambda *_args, **_kwargs: asyncio.sleep(0),
+        lazy_connect=False,
+        on_broadcast=connections.broadcast_to_connection_ids,
+    )
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
+        Any,
+        SimpleNamespace(
+            subscriptions=StreamSubscriptionManager(),
+            subscribe=_subscribe,
+        ),
+    )
+
+    subscribe_response = await multiplexer.client_subscribe(
+        client_id=connection_id,
+        stream_type=AlpacaStreamType.STOCKS_SIP,
+        bars=["AAPL"],
+    )
+
+    assert subscribe_response["status"] == "ok"
+
+    await multiplexer._handle_message(
+        AlpacaStreamType.STOCKS_SIP,
+        {
+            "T": "b",
+            "S": "AAPL",
+            "t": "2026-04-02T13:31:00Z",
+            "o": 10.0,
+            "h": 10.5,
+            "l": 9.9,
+            "c": 10.2,
+            "v": 1000,
+        },
+    )
+
+    assert websocket.sent_bytes
+
+
+@pytest.mark.asyncio
+async def test_lazy_connect_returns_false_while_stream_is_still_not_ready() -> None:
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
+        Any,
+        SimpleNamespace(
+            is_connected=False,
+            _running=True,
+            _connected_event=asyncio.Event(),
+        ),
+    )
+
+    connected = await multiplexer._ensure_connected(AlpacaStreamType.STOCKS_SIP)
+
+    assert connected is False
 
 
 def test_stream_subscription_manager_client_view_reuses_index_set() -> None:

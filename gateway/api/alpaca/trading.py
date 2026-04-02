@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from starlette.status import HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca.common import (
     DESC_COMMA_SYMBOLS,
@@ -16,7 +17,9 @@ from gateway.api.alpaca.common import (
     get_registry,
     require_api_key,
 )
+from gateway.config import get_settings
 from gateway.core.cache import HybridCache, InMemoryCache
+from gateway.core.logger import logger
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
@@ -29,10 +32,15 @@ async def _execute_trading_call(
     *,
     registry: ProviderRegistry,
     provider_fn: Callable[[Any], Any],
+    operation: str,
 ) -> Any:
     return await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(provider_fn, provider),
+        provider_call=lambda provider: _run_trading_provider_call(
+            provider=provider,
+            provider_fn=provider_fn,
+            operation=operation,
+        ),
     )
 
 
@@ -44,6 +52,7 @@ async def _execute_trading_cached_call(
     ttl: int,
     route_label: str,
     provider_fn: Callable[[Any], Any],
+    operation: str,
 ) -> Any:
     return await execute_alpaca_cached_call(
         registry=registry,
@@ -51,8 +60,39 @@ async def _execute_trading_cached_call(
         cache_key=cache_key,
         ttl=ttl,
         route_label=route_label,
-        provider_call=lambda provider: asyncio.to_thread(provider_fn, provider),
+        provider_call=lambda provider: _run_trading_provider_call(
+            provider=provider,
+            provider_fn=provider_fn,
+            operation=operation,
+        ),
     )
+
+
+async def _run_trading_provider_call(
+    *,
+    provider: Any,
+    provider_fn: Callable[[Any], Any],
+    operation: str,
+) -> Any:
+    timeout_seconds = get_settings().alpaca_trading_call_timeout_seconds
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(provider_fn, provider),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError as exc:
+        logger.error(
+            "alpaca_trading_call_timeout",
+            operation=operation,
+            timeout_seconds=timeout_seconds,
+        )
+        raise HTTPException(
+            status_code=HTTP_504_GATEWAY_TIMEOUT,
+            detail={
+                "code": "GW-E5004",
+                "message": f"Timed out waiting for Alpaca trading API during {operation}",
+            },
+        ) from exc
 
 
 @router.get("/account", response_model=SuccessResponse)
@@ -64,6 +104,7 @@ async def get_account(
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_account(),
+        operation="get_account",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -91,22 +132,25 @@ async def create_order(
 
     async def _call(provider: Any) -> Any:
         try:
-            return await asyncio.to_thread(
-                provider.create_order,
-                symbol=symbol,
-                qty=qty,
-                notional=notional,
-                side=side,
-                order_type=order_type,
-                time_in_force=time_in_force,
-                limit_price=limit_price,
-                stop_price=stop_price,
-                client_order_id=client_order_id,
-                extended_hours=extended_hours,
-                order_class=order_class,
-                take_profit_limit_price=take_profit_limit_price,
-                stop_loss_stop_price=stop_loss_stop_price,
-                stop_loss_limit_price=stop_loss_limit_price,
+            return await _run_trading_provider_call(
+                provider=provider,
+                provider_fn=lambda provider: provider.create_order(
+                    symbol=symbol,
+                    qty=qty,
+                    notional=notional,
+                    side=side,
+                    order_type=order_type,
+                    time_in_force=time_in_force,
+                    limit_price=limit_price,
+                    stop_price=stop_price,
+                    client_order_id=client_order_id,
+                    extended_hours=extended_hours,
+                    order_class=order_class,
+                    take_profit_limit_price=take_profit_limit_price,
+                    stop_loss_stop_price=stop_loss_stop_price,
+                    stop_loss_limit_price=stop_loss_limit_price,
+                ),
+                operation="create_order",
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -141,6 +185,7 @@ async def get_orders(
             nested=nested,
             side=side,
         ),
+        operation="get_orders",
     )
     return {
         "success": True,
@@ -159,6 +204,7 @@ async def get_order(
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_order(order_id),
+        operation="get_order",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -173,6 +219,7 @@ async def get_order_by_client_id(
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_order_by_client_id(client_order_id),
+        operation="get_order_by_client_id",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -199,6 +246,7 @@ async def replace_order(
             time_in_force=time_in_force,
             client_order_id=client_order_id,
         ),
+        operation="replace_order",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -213,6 +261,7 @@ async def cancel_order(
     success = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.cancel_order(order_id),
+        operation="cancel_order",
     )
     return {
         "success": success,
@@ -230,6 +279,7 @@ async def cancel_all_orders(
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.cancel_all_orders(),
+        operation="cancel_all_orders",
     )
     return {
         "success": True,
@@ -247,6 +297,7 @@ async def get_positions(
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_positions(),
+        operation="get_positions",
     )
     return {
         "success": True,
@@ -265,6 +316,7 @@ async def get_position(
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_position(symbol),
+        operation="get_position",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -281,6 +333,7 @@ async def close_position(
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.close_position(symbol, qty, percentage),
+        operation="close_position",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -295,6 +348,7 @@ async def close_all_positions(
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.close_all_positions(cancel_orders),
+        operation="close_all_positions",
     )
     return {
         "success": True,
@@ -319,6 +373,7 @@ async def get_portfolio_history(
             timeframe=timeframe,
             extended_hours=extended_hours,
         ),
+        operation="get_portfolio_history",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -347,6 +402,7 @@ async def get_assets(
             asset_class=asset_class,
             exchange=exchange,
         ),
+        operation="get_assets",
     )
     return {
         "success": True,
@@ -371,6 +427,7 @@ async def get_asset(
         ttl=TRADING_ASSETS_CACHE_TTL_SECONDS,
         route_label="alpaca_trading_asset",
         provider_fn=lambda provider: provider.get_asset(normalized_symbol),
+        operation="get_asset",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -384,6 +441,7 @@ async def get_clock(
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_clock(),
+        operation="get_clock",
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -406,6 +464,7 @@ async def get_calendar(
         ttl=TRADING_CALENDAR_CACHE_TTL_SECONDS,
         route_label="alpaca_trading_calendar",
         provider_fn=lambda provider: provider.get_calendar(start, end),
+        operation="get_calendar",
     )
     return {
         "success": True,

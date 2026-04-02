@@ -195,6 +195,49 @@ class ConnectionManager:
         results = await asyncio.gather(*(_send(conn) for conn in targets))
         return sum(1 for sent in results if sent)
 
+    async def broadcast_to_connection_ids(
+        self,
+        message: dict | str | bytes,
+        connection_ids: list[str] | None = None,
+    ) -> int:
+        """Broadcast message to explicitly named WebSocket connections."""
+        if isinstance(message, str | bytes):
+            payload = message
+        else:
+            payload = orjson.dumps(message)
+
+        targets: list[Connection] = []
+        if connection_ids:
+            async with self._lock:
+                for connection_id in connection_ids:
+                    conn = self._connections.get(connection_id)
+                    if conn and conn.authenticated:
+                        targets.append(conn)
+        else:
+            targets = [c for c in self._connections.values() if c.authenticated]
+
+        if not targets:
+            return 0
+
+        async def _send(connection: Connection) -> bool:
+            try:
+                async with self._broadcast_semaphore:
+                    if isinstance(payload, str):
+                        await connection.websocket.send_text(payload)
+                    else:
+                        await connection.websocket.send_bytes(payload)
+                return True
+            except Exception as e:
+                logger.warning(
+                    "broadcast_send_failed",
+                    client_id=connection.client_id,
+                    error=str(e),
+                )
+                return False
+
+        results = await asyncio.gather(*(_send(conn) for conn in targets))
+        return sum(1 for sent in results if sent)
+
     async def broadcast_shutdown(self, timeout_seconds: int = 30) -> int:
         """Send shutdown warning to all authenticated clients (PRD §Graceful Shutdown step 2).
 

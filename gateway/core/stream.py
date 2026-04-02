@@ -891,9 +891,7 @@ class StreamMultiplexer:
                     stream=stream_type.value,
                     hint="Connection task is running but hasn't authenticated yet",
                 )
-                # Still running, let subscription proceed optimistically —
-                # messages will queue and deliver once connected
-                return True
+                return False
 
         # Stream is dormant (gave up after max retries) — restart it
         logger.info("restarting_dormant_stream", stream=stream_type.value)

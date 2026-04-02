@@ -314,7 +314,7 @@ async def lifespan(app: FastAPI):
             lazy_connect=settings.stream_lazy_connect,
             fanout_max_inflight=settings.stream_fanout_max_inflight,
             fanout_batch_size=settings.stream_fanout_batch_size,
-            on_broadcast=connections.broadcast,
+            on_broadcast=connections.broadcast_to_connection_ids,
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()
