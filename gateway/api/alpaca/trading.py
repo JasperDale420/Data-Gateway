@@ -1,6 +1,7 @@
 """Alpaca trading endpoints - orders, positions, account, assets, clock, calendar."""
 
 import asyncio
+import concurrent.futures
 from collections.abc import Callable
 from datetime import date
 from typing import Any
@@ -26,6 +27,19 @@ from gateway.schemas import SuccessResponse
 router = APIRouter()
 TRADING_ASSETS_CACHE_TTL_SECONDS = 600
 TRADING_CALENDAR_CACHE_TTL_SECONDS = 3600
+
+# Module-level dedicated executor for trading calls (created lazily)
+_trading_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_trading_executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _trading_executor
+    if _trading_executor is None:
+        _trading_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=get_settings().alpaca_trading_thread_pool_size,
+            thread_name_prefix="alpaca-trading",
+        )
+    return _trading_executor
 
 
 async def _execute_trading_call(
@@ -76,8 +90,9 @@ async def _run_trading_provider_call(
 ) -> Any:
     timeout_seconds = get_settings().alpaca_trading_call_timeout_seconds
     try:
+        loop = asyncio.get_running_loop()
         return await asyncio.wait_for(
-            asyncio.to_thread(provider_fn, provider),
+            loop.run_in_executor(_get_trading_executor(), provider_fn, provider),
             timeout=timeout_seconds,
         )
     except TimeoutError as exc:

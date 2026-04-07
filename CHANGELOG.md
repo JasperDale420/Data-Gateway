@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Dedicated thread pool for Alpaca trading calls** (`gateway/api/alpaca/trading.py`, `gateway/config.py`): Trading SDK calls previously used Python's default `ThreadPoolExecutor` (~16 workers shared across all async tasks). With 5 trading systems polling concurrently, threads exhausted and requests hit the timeout. Added a dedicated 8-thread pool (`GATEWAY_ALPACA_TRADING_THREAD_POOL_SIZE`) exclusively for Alpaca trading calls, preventing thread exhaustion under concurrent load.
+
+### Changed
+
+- **Increased trading call timeout from 10s to 15s** (`gateway/config.py`): `alpaca_trading_call_timeout_seconds` default raised from 10.0 to 15.0 to accommodate slower responses under heavy concurrent load.
+- **Uvicorn now runs with 2 workers** (`Dockerfile`): Added `--workers 2` to the CMD entrypoint for better concurrency handling when multiple trading systems poll simultaneously.
+
 ### Fixed
 
 - **Redis sink connection warnings flooding test output and logs** (`gateway/core/redis_sink.py`, `gateway/core/circuit_breaker.py`, `gateway/core/data_sink.py`): Intermediate retry resets in `RedisStreamsSink.publish()` logged at WARNING for every attempt, producing 14+ `redis_sink_connection_reset` and 8+ `redis_sink_publish_error` warnings per test run. Intermediate retry resets now log at DEBUG; only the final exhaustion logs at WARNING. Circuit breaker `circuit_opened` events for data sinks downgraded from ERROR to WARNING (code `GW-W1013`) since the sink layer has its own retry/buffer logic. `DataSinkRegistry._safe_publish` no longer emits ERROR+traceback for sinks that handle their own metrics (avoids duplicate logging with RedisStreamsSink).
