@@ -115,11 +115,17 @@ def test_registry():
     from unittest.mock import AsyncMock, MagicMock
 
     registry = MagicMock()  # No spec to allow arbitrary attributes
-    # Mock common provider methods to return empty/error responses
-    mock_provider = MagicMock()
+    # Mock common provider methods to return empty/error responses.
+    # Use AsyncMock so that any un-stubbed method is still awaitable,
+    # preventing "MagicMock can't be used in 'await' expression" errors
+    # when Alpaca endpoints call provider methods via
+    # execute_alpaca_provider_call (which does ``await provider_call(provider)``).
+    mock_provider = AsyncMock()
     mock_provider.get_bars = AsyncMock(return_value={"bars": [], "symbol": "TEST"})
     mock_provider.get_quote = AsyncMock(return_value={"quote": {}, "symbol": "TEST"})
     mock_provider.get_chain = AsyncMock(return_value={"chain": []})
+    mock_provider.name = "alpaca"
+    registry.get.return_value = mock_provider
     registry.get_provider.return_value = mock_provider
     registry.list_providers.return_value = ["alpaca"]
     return registry

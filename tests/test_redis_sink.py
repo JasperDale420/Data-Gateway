@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from gateway.core.redis_sink import (
+    REDIS_LOADING_BACKOFF_SECONDS,
     RedisStreamsSink,
 )
 
@@ -891,3 +892,84 @@ async def test_buffer_event_delegates_to_failed_buffer() -> None:
     assert b"test1" in payload
     assert b"AAPL" in payload
     assert sink._buffer_stats["buffered"] == 1
+
+
+# ── Redis Loading Detection Tests ───────────────────────────────────
+
+
+def test_is_redis_loading_detects_loading_message() -> None:
+    """_is_redis_loading should detect the 'loading dataset' error."""
+    assert RedisStreamsSink._is_redis_loading(RuntimeError("Redis is loading the dataset in memory"))
+    assert RedisStreamsSink._is_redis_loading(RuntimeError("LOADING Redis is loading the dataset in memory"))
+    assert not RedisStreamsSink._is_redis_loading(ConnectionError("Connection refused"))
+    assert not RedisStreamsSink._is_redis_loading(TimeoutError("timed out"))
+
+
+@pytest.mark.asyncio
+async def test_reset_connection_uses_longer_backoff_for_loading() -> None:
+    """When Redis is loading, _reset_connection should use the loading backoff."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = _HealthyRedisClient()
+    sink._connected = True
+
+    loading_error = RuntimeError("Redis is loading the dataset in memory")
+    await sink._reset_connection(
+        operation="test",
+        error=loading_error,
+        failed_client=sink._redis,
+    )
+
+    # The cooldown should be at least REDIS_LOADING_BACKOFF_SECONDS
+    remaining = sink._reconnect_cooldown_until - time.monotonic()
+    assert remaining > 0
+    assert remaining <= REDIS_LOADING_BACKOFF_SECONDS + 0.1
+
+
+@pytest.mark.asyncio
+async def test_publish_uses_loading_backoff_between_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When Redis is loading, publish retry backoff should be longer."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+
+    call_count = 0
+    good_client = _HealthyRedisClient()
+
+    async def _loading_then_healthy() -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 1:
+            sink._redis = _LoadingRedisClient()
+        else:
+            sink._redis = good_client
+        sink._connected = True
+
+    monkeypatch.setattr(sink, "_ensure_connected", _loading_then_healthy)
+
+    start = time.perf_counter()
+    published = await sink.publish("gateway.stream.bars", {"event_id": "evt-loading"})
+    elapsed = time.perf_counter() - start
+
+    assert published is True
+    # Should have waited at least close to REDIS_LOADING_BACKOFF_SECONDS
+    assert elapsed >= REDIS_LOADING_BACKOFF_SECONDS * 0.8
+
+
+@pytest.mark.asyncio
+async def test_reset_connection_log_level_parameter() -> None:
+    """_reset_connection should accept a log_level parameter without error."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    tracking_client = _HealthyRedisClient()
+    sink._redis = tracking_client
+    sink._connected = True
+
+    # Should not raise with log_level="debug"
+    await sink._reset_connection(
+        operation="test",
+        error=RuntimeError("transient"),
+        failed_client=tracking_client,
+        log_level="debug",
+    )
+
+    assert sink._redis is None
+    assert sink._connected is False

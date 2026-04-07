@@ -341,9 +341,15 @@ class DataValidator:
         return parse_timestamp(ts)
 
     def _log_validation_failure(self, data: dict[str, Any], result: ValidationResult) -> None:
-        """Log validation failure with structured context."""
+        """Log validation failure with structured context.
+
+        Uses INFO level because rejected data is an expected operational event
+        (bad ticks, stale quotes, etc.) — not an unexpected failure.  This
+        keeps the error log (WARNING+) clean while still recording every
+        rejection in the main log for monitoring dashboards.
+        """
         for error in result.errors:
-            logger.warning(
+            logger.info(
                 "data_validation_failed",
                 error_code=error.code,
                 message=error.message,

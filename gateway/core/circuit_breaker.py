@@ -215,13 +215,26 @@ class CircuitBreaker:
                 )
             elif self.failure_count >= self.config.failure_threshold:
                 self.state = CircuitState.OPEN
-                logger.error(
-                    "circuit_opened",
-                    circuit=self.name,
-                    failure_count=self.failure_count,
-                    error=str(error),
-                    code="GW-E1011",
-                )
+                # Data sink circuits use WARNING because the sink layer has its
+                # own retry/buffer logic — opening the circuit is controlled
+                # degradation, not an unrecoverable error.  Other upstream
+                # circuits (provider REST/WS) use ERROR.
+                if self.name.startswith("data_sink:"):
+                    logger.warning(
+                        "circuit_opened",
+                        circuit=self.name,
+                        failure_count=self.failure_count,
+                        error=str(error),
+                        code="GW-W1013",
+                    )
+                else:
+                    logger.error(
+                        "circuit_opened",
+                        circuit=self.name,
+                        failure_count=self.failure_count,
+                        error=str(error),
+                        code="GW-E1011",
+                    )
 
     async def reset(self) -> None:
         """Manually reset the circuit breaker to closed state."""

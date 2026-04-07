@@ -310,8 +310,9 @@ class SymbolResolver:
                 provider_formats=self._get_option_provider_formats(underlying, expiry, strike, opt_type),
             )
 
-        # Unknown format - return as stock with warning
-        logger.warning("unknown_symbol_format", symbol=original)
+        # Unknown format — log at INFO since callers handle the "unknown" type
+        # and user-supplied symbols often don't match any pattern.
+        logger.info("unknown_symbol_format", symbol=original)
         return ResolvedSymbol(
             input=original,
             type="unknown",

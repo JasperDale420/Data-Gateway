@@ -18,9 +18,9 @@ from gateway.core.security import get_input_validator
 router = APIRouter(tags=["websocket"])
 
 # Heartbeat settings per PRD
-HEARTBEAT_INTERVAL = 30  # seconds
-HEARTBEAT_TIMEOUT = 10  # seconds
-MAX_MISSED_HEARTBEATS = 3
+HEARTBEAT_INTERVAL = 45  # seconds
+HEARTBEAT_TIMEOUT = 15  # seconds
+MAX_MISSED_HEARTBEATS = 4
 
 
 @router.websocket("/ws")

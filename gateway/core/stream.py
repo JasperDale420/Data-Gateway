@@ -370,7 +370,7 @@ class UpstreamConnection:
         self._ws = await websockets.connect(
             endpoint,
             ping_interval=30,
-            ping_timeout=10,
+            ping_timeout=30,
             close_timeout=5,
         )
         logger.info("connected_upstream", stream=self.stream_type.value)
@@ -883,7 +883,7 @@ class StreamMultiplexer:
         # wait for it to finish establishing rather than returning True blindly
         if conn._running:
             try:
-                await asyncio.wait_for(conn._connected_event.wait(), timeout=10.0)
+                await asyncio.wait_for(conn._connected_event.wait(), timeout=30.0)
                 return conn.is_connected
             except TimeoutError:
                 logger.warning(
@@ -904,7 +904,7 @@ class StreamMultiplexer:
 
         # Wait for connection to establish with generous timeout
         try:
-            await asyncio.wait_for(conn._connected_event.wait(), timeout=10.0)
+            await asyncio.wait_for(conn._connected_event.wait(), timeout=30.0)
             logger.info("lazy_connect_established", stream=stream_type.value)
             return True
         except TimeoutError:
@@ -1095,7 +1095,7 @@ class StreamMultiplexer:
                 )
 
             if not result.valid:
-                logger.warning(
+                logger.info(
                     "stream_validation_failed",
                     error_codes=result.error_codes,
                     data_type=data_type,

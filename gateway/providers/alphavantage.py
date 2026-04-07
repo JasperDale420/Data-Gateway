@@ -23,6 +23,24 @@ PROVIDER_NOT_INIT = "Provider not initialized"
 API_KEY_NOT_SET = "Alpha Vantage API key not configured"
 DEFAULT_QUOTES_MAX_CONCURRENCY = 2
 
+
+class AlphaVantageRateLimitError(RuntimeError):
+    """Raised when Alpha Vantage returns a rate-limit response.
+
+    Separated from generic RuntimeError so callers can distinguish
+    rate-limit failures from other provider errors and apply appropriate
+    backoff without retrying immediately.
+    """
+
+
+class AlphaVantagePremiumError(RuntimeError):
+    """Raised when an Alpha Vantage endpoint requires a premium subscription.
+
+    These errors are permanent for the current API key tier and should
+    never be retried.
+    """
+
+
 # Alpha Vantage returns intraday timestamps in US/Eastern
 _ET = ZoneInfo("America/New_York")
 
@@ -79,6 +97,11 @@ class AlphaVantageProvider(DataProvider):
             event_hooks=httpx_event_hooks("alphavantage"),
         )
         logger.info("alphavantage_provider_initialized")
+
+    @property
+    def api_key_configured(self) -> bool:
+        """Return True if the Alpha Vantage API key is set."""
+        return bool(self._api_key)
 
     async def shutdown(self) -> None:
         """Shutdown provider."""
@@ -167,16 +190,16 @@ class AlphaVantageProvider(DataProvider):
                 )
 
                 if key == "Note":
-                    raise RuntimeError("Rate limit exceeded")
+                    raise AlphaVantageRateLimitError("Rate limit exceeded")
                 if (
                     "consider spreading out your free api requests" in normalized_message
                     or "calls per minute" in normalized_message
                     or "requests per second" in normalized_message
                     or "rate limit" in normalized_message
                 ):
-                    raise RuntimeError("Rate limit exceeded")
+                    raise AlphaVantageRateLimitError("Rate limit exceeded")
                 if "premium endpoint" in normalized_message or "premium" in normalized_message:
-                    raise RuntimeError("Premium endpoint requires Alpha Vantage subscription")
+                    raise AlphaVantagePremiumError("Premium endpoint requires Alpha Vantage subscription")
                 raise RuntimeError(f"Alpha Vantage error: {message}")
 
         if not isinstance(data, dict):
@@ -186,12 +209,16 @@ class AlphaVantageProvider(DataProvider):
     @staticmethod
     def _is_premium_endpoint_error(error: Exception) -> bool:
         """Return True when provider error indicates premium-only endpoint access."""
+        if isinstance(error, AlphaVantagePremiumError):
+            return True
         normalized_error = str(error).lower()
         return "premium endpoint" in normalized_error and "subscription" in normalized_error
 
     @staticmethod
     def _is_rate_limit_error(error: Exception) -> bool:
         """Return True when provider error indicates rate limiting."""
+        if isinstance(error, AlphaVantageRateLimitError):
+            return True
         return "rate limit exceeded" in str(error).lower()
 
     @http_retry
@@ -206,7 +233,7 @@ class AlphaVantageProvider(DataProvider):
         """Fetch time-series data and retry with non-adjusted function when premium-gated."""
         try:
             return await self._fetch_json(params), adjusted
-        except RuntimeError as e:
+        except (RuntimeError, AlphaVantagePremiumError) as e:
             if not adjusted or not fallback_function or not self._is_premium_endpoint_error(e):
                 raise
 
