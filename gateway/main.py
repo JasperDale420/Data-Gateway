@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
+import os
 import socket
 import sys
 from contextlib import asynccontextmanager, suppress
@@ -40,12 +41,16 @@ def _check_port_available(host: str, port: int) -> None:
         sock.close()
 
 
-# Only check port when running under uvicorn (not during test imports)
+# Only check port when running under uvicorn as a single worker (not during
+# test imports or multi-worker mode where the master process binds the port).
 if "uvicorn" in sys.modules:
     from gateway.config import get_settings as _get_boot_settings
 
     _boot = _get_boot_settings()
-    _check_port_available(_boot.host, _boot.port)
+    # Skip port check when running as a forked worker (WEB_CONCURRENCY or
+    # parent process already holds the socket).
+    if os.environ.get("WEB_CONCURRENCY") is None and os.getppid() != 1:
+        _check_port_available(_boot.host, _boot.port)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

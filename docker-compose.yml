@@ -14,6 +14,8 @@ services:
       - GATEWAY_CACHE_REDIS_URL=redis://redis:6379/0
       - GATEWAY_DATA_SINK_REDIS_URL=redis://redis:6379/0
       - REDIS_URL=redis://redis:6379/0
+      # Increase stream buffer for large backfills (default 100K too small for 300K+ record jobs)
+      - GATEWAY_DATA_SINK_MAX_STREAM_LEN=500000
       # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.)
       - GATEWAY_UW_EOD_ENABLED=true
       # Enable minute-level Alpaca option chain capture for Heber replay.
