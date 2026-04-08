@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Backfill engine loop-variable closure bug** (`gateway/core/backfill.py`): The `_bounded_chunk` async function defined inside the date-chunk loop captured `chunk_start` and `chunk_end` by reference. Because tasks are scheduled asynchronously, all tasks for a given symbol batch could see the final loop values rather than the intended chunk boundaries. Fixed by binding both variables as default arguments so each closure captures the correct chunk range at definition time.
+- **Stress test dead code cleaned up** (`scripts/stress_test.py`): Removed unused `statistics` import, unused `placed_order_ids` list, and two unused local variable assignments (`data`, `resp`) left over from a partially-removed order-ID-tracking feature.
+
+### Changed
+
+- **Backfill engine now iterates date-first for partition locality** (`gateway/core/backfill.py`): Previously symbols were processed concurrently with each symbol iterating its own date chunks, interleaving events from different dates in the Redis stream. Now the outer loop iterates date chunks and the inner loop processes symbols concurrently within each chunk. This ensures Heber's consumer receives all events for a given date together, enabling larger partition flushes and fewer tiny parquet files.
+- **Backfill events sorted by timestamp before publishing** (`gateway/core/backfill.py`): Items within each chunk are sorted by timestamp before wrapping in envelopes, further improving downstream partition locality.
+- **Increased Redis stream MAXLEN to 500K** (`docker-compose.yml`): Previous 100K limit caused trimming during 300K+ record backfills before Heber could consume them.
+
 ### Added
 
 - **Dedicated thread pool for Alpaca trading calls** (`gateway/api/alpaca/trading.py`, `gateway/config.py`): Trading SDK calls previously used Python's default `ThreadPoolExecutor` (~16 workers shared across all async tasks). With 5 trading systems polling concurrently, threads exhausted and requests hit the timeout. Added a dedicated 8-thread pool (`GATEWAY_ALPACA_TRADING_THREAD_POOL_SIZE`) exclusively for Alpaca trading calls, preventing thread exhaustion under concurrent load.
