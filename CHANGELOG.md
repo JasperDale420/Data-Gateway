@@ -6,6 +6,25 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Stale position close now returns terminal 404 instead of retryable error** (`gateway/providers/alpaca/trading.py`, `gateway/providers/alpaca_legacy.py`): When Alpaca returns error code `40410000` (position does not exist), the gateway now returns HTTP 404 with `"code": "POSITION_NOT_FOUND"` in the error body instead of bubbling up as a generic error. This prevents callers from retrying close requests for positions that no longer exist (e.g., expired SPY put contracts). The log level for these events is downgraded from ERROR to WARNING since they represent expected terminal states.
+- **Downgraded WebSocket dead-connection errors from ERROR/WARNING to DEBUG** (`gateway/api/websocket.py`, `gateway/core/connections.py`): Orion reconnect cycles (close code 1006, missing `transfer_data_task`) generated ~300 errors and ~500 warnings per day. These are normal reconnect behavior and now log at DEBUG, eliminating the noise while preserving genuine error visibility.
+- **Added top-level IV-rank route alias to eliminate 404 flood** (`gateway/api/uw/volatility.py`): Heber-watch and Kairos called `/api/v1/uw/{symbol}/iv-rank` but the endpoint only existed at `/api/v1/uw/options/{symbol}/iv-rank`, causing ~3,390 404s/day. Added a convenience alias at the top-level path that shares the same cache key and provider call.
+- **Filtered empty insider_trades records before publishing** (`gateway/providers/uw/institutional.py`): The UW API returns filing-date index records with null ticker, owner_name, and transaction_code alongside real insider transactions. These 405 empty-payload events were being published to Redis and failing Heber Silver validation (missing insider_name, trade_date, trade_type), flooding the DLQ. Records missing ticker, owner_name, or transaction_code are now skipped at the provider level with a warning log.
+- **Increased option capture snapshot timeout from 10s to 30s** (`gateway/config.py`, `gateway/core/option_capture.py`): SPY/QQQ/IWM option chains are extremely large and consistently timed out at the 10s default, causing ~100 `option_capture_symbol_failed` warnings per day. Default raised to 30s via `GATEWAY_OPTION_CAPTURE_SNAPSHOT_TIMEOUT_SECONDS`.
+
+### Added
+
+- **Makefile for local development** — `make setup` runs `uv sync --extra local --extra dev` (the required invocation); also includes `test`, `lint`, `format`, `typecheck`, `run`, and `clean` targets. Bare `uv sync` leaves the venv broken because empire-core, empire-schemas, and the UW SDK are in optional extras.
+
+- **Per-symbol snapshot timeout overrides for option capture** (`gateway/config.py`, `gateway/core/option_capture.py`): New `GATEWAY_OPTION_CAPTURE_SYMBOL_TIMEOUT_OVERRIDES` env var accepts comma-separated `SYMBOL:SECONDS` pairs (e.g. `SPY:45,QQQ:45`) for symbols that need longer timeouts than the default.
+
+### Changed
+
+- **Increased Redis maxmemory from 512mb to 1gb** (`docker-compose.yml`): Redis was at 346MB/512MB usage with the stream buffer recently increased to 500K entries. The tight headroom caused OOM-driven restarts (~8/day), which forced the Heber consumer group to be recreated each time. Doubling to 1gb provides adequate room for stream growth.
+
+### Fixed
+
+- **Increased sink backpressure limit from 256 to 512** (`gateway/core/data_sink.py`, `gateway/config.py`): 296 events were silently dropped when the in-flight publish cap was exceeded during peak data flow. Default raised to 512 and made configurable via `GATEWAY_DATA_SINK_MAX_INFLIGHT_PER_SINK`.
 - **Backfill engine loop-variable closure bug** (`gateway/core/backfill.py`): The `_bounded_chunk` async function defined inside the date-chunk loop captured `chunk_start` and `chunk_end` by reference. Because tasks are scheduled asynchronously, all tasks for a given symbol batch could see the final loop values rather than the intended chunk boundaries. Fixed by binding both variables as default arguments so each closure captures the correct chunk range at definition time.
 - **Stress test dead code cleaned up** (`scripts/stress_test.py`): Removed unused `statistics` import, unused `placed_order_ids` list, and two unused local variable assignments (`data`, `resp`) left over from a partially-removed order-ID-tracking feature.
 
