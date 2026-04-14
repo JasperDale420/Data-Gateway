@@ -25,6 +25,9 @@ TRADING_ASSETS_CACHE_TTL_SECONDS = 600
 TRADING_CALENDAR_CACHE_TTL_SECONDS = 3600
 
 
+TRADING_CALL_TIMEOUT_SECONDS = 30.0
+
+
 async def _execute_trading_call(
     *,
     registry: ProviderRegistry,
@@ -32,7 +35,10 @@ async def _execute_trading_call(
 ) -> Any:
     return await execute_alpaca_provider_call(
         registry=registry,
-        provider_call=lambda provider: asyncio.to_thread(provider_fn, provider),
+        provider_call=lambda provider: asyncio.wait_for(
+            asyncio.to_thread(provider_fn, provider),
+            timeout=TRADING_CALL_TIMEOUT_SECONDS,
+        ),
     )
 
 

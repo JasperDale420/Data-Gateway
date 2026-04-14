@@ -1,0 +1,106 @@
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:23.731585Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:23.736910Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:23.742411Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:23.746990Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:23.750809Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:23.754820Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:23.758966Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:23.763167Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.428751Z", "message": "clients_loaded"}
+{"count": 7, "plaintext_keys": 7, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.439373Z", "message": "clients_loaded"}
+{"actor": {"client_id": "test", "ip": "unknown"}, "action": "authenticate", "result": "success", "resource": null, "metadata": null, "correlation_id": null, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.439574Z", "message": "auth_success"}
+{"actor": {"client_id": "test", "ip": "unknown", "user_agent": "testclient"}, "action": "authenticate", "result": "success", "resource": null, "metadata": null, "correlation_id": null, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.441338Z", "message": "auth_success"}
+{"providers": ["alpaca", "finnhub", "alphavantage", "news", "unusual_whales", "sec", "yfinance"], "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.442510Z", "message": "provider_rate_limiters_initialized"}
+{"level": "ERROR", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.442692Z", "exception": "Traceback (most recent call last):\n  File \"/private/tmp/hippocrates-worktrees/Data-Gateway-e3e7cc26250d411d/gateway/api/alpaca/stock.py\", line 221, in get_stock_bars\n    bars = await provider.get_bars(\n           ^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: object MagicMock can't be used in 'await' expression", "message": "provider_request_failed"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.448734Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.455639Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.459303Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.464489Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.467262Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.469695Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.472614Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.475852Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.478730Z", "message": "clients_loaded"}
+{"level": "ERROR", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.479524Z", "exception": "Traceback (most recent call last):\n  File \"/private/tmp/hippocrates-worktrees/Data-Gateway-e3e7cc26250d411d/gateway/api/alpaca/common.py\", line 77, in execute_alpaca_provider_call\n    return await provider_call(provider)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/hippocrates-worktrees/Data-Gateway-e3e7cc26250d411d/tests/test_alpaca_common.py\", line 107, in _failing_call\n    raise RuntimeError(\"boom\")\nRuntimeError: boom", "message": "provider_request_failed"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.481721Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.484555Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.487206Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.493465Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.510714Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.513596Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.516589Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.520184Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.523826Z", "message": "clients_loaded"}
+{"pair": "AAPL", "normalized_pair": "AAPL", "error_code": "GW-E8001", "level": "WARNING", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.525269Z", "message": "alpaca_invalid_crypto_pair"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.527268Z", "message": "clients_loaded"}
+{"pair": "AAPL", "normalized_pair": "AAPL", "error_code": "GW-E8001", "level": "WARNING", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.528280Z", "message": "alpaca_invalid_crypto_pair"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.530908Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.534522Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.537740Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.540871Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.546391Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.566494Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.585417Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.607210Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.631997Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.648225Z", "message": "clients_loaded"}
+{"underlying": "aapl", "contracts": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.654627Z", "message": "alpaca_option_chain_fetched"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.670604Z", "message": "clients_loaded"}
+{"underlying": "aapl", "contracts": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.674685Z", "message": "alpaca_option_chain_fetched"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.689580Z", "message": "clients_loaded"}
+{"underlying": "aapl", "contracts": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.698464Z", "message": "alpaca_option_chain_fetched"}
+{"underlying": "aapl", "contracts": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.699538Z", "message": "alpaca_option_chain_fetched"}
+{"underlying": "aapl", "contracts": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.700405Z", "message": "alpaca_option_chain_fetched"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.714620Z", "message": "clients_loaded"}
+{"underlying": "aapl", "count": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.721026Z", "message": "alpaca_option_snapshots_fetched"}
+{"underlying": "aapl", "contracts": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.722292Z", "message": "alpaca_option_snapshot_contracts_fetched"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.745407Z", "message": "clients_loaded"}
+{"underlying": "aapl", "count": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.750774Z", "message": "alpaca_option_snapshots_fetched"}
+{"underlying": "aapl", "contracts": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.751447Z", "message": "alpaca_option_snapshot_contracts_fetched"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.872724Z", "message": "clients_loaded"}
+{"symbols": 1, "trades": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.873718Z", "message": "alpaca_trades_fetched"}
+{"symbols": 1, "trades": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.873818Z", "message": "alpaca_trades_fetched"}
+{"symbols": 1, "trades": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.873883Z", "message": "alpaca_trades_fetched"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.875882Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.879024Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.883149Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.886783Z", "message": "clients_loaded"}
+{"contracts": 1, "quotes": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.887748Z", "message": "alpaca_option_quotes_fetched"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.890002Z", "message": "clients_loaded"}
+{"count": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.891481Z", "message": "alpaca_option_trades_fetched"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.894939Z", "message": "clients_loaded"}
+{"feed": "sip", "options_feed": "indicative", "paper": true, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.903242Z", "message": "alpaca_provider_initialized"}
+{"level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.903678Z", "message": "alpaca_provider_shutdown"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.906940Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.911215Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.914136Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.917751Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.921693Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.950991Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.958827Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.966225Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.971769Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.980596Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.985980Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.989366Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.993298Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:35.999316Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.003600Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.008661Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.015341Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.021012Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.025472Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.029197Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.033872Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.039793Z", "message": "clients_loaded"}
+{"instance_id": "1e78d683", "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.040483Z", "message": "backfill_engine_init"}
+{"provider": "alpaca", "feed": "crypto_bars", "invalid_symbols": ["AAPL", "MSFT"], "total_symbols": 2, "level": "WARNING", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.041154Z", "message": "backfill_invalid_crypto_symbols"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.043745Z", "message": "clients_loaded"}
+{"instance_id": "c7325ed8", "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.044389Z", "message": "backfill_engine_init"}
+{"instance_id": "c7325ed8", "job_id": "bf-7510d23e5849", "job_obj_id": 5374259232, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.044959Z", "message": "backfill_job_created"}
+{"job_id": "bf-7510d23e5849", "provider": "alpaca", "feed": "crypto_bars", "symbols": 2, "chunks": 1, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.045094Z", "message": "backfill_job_submitted"}
+{"job_id": "bf-7510d23e5849", "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.045338Z", "message": "backfill_job_cancelled"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.047626Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.050667Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.053657Z", "message": "clients_loaded"}
+{"count": 2, "plaintext_keys": 2, "hashed_keys": 0, "level": "INFO", "service": "data-gateway", "timestamp": "2026-04-14T17:57:36.057462Z", "message": "clients_loaded"}

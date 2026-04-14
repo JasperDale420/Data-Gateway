@@ -111,6 +111,11 @@ class AlpacaBaseMixin(DataProvider):
                 secret_key=self._secret_key,
                 paper=self._paper,
             )
+            # The Alpaca SDK's TradingClient uses requests.Session internally,
+            # which defaults to no timeout (hangs indefinitely on stale connections).
+            # Set a read timeout to prevent trading calls from blocking forever.
+            trading_timeout = get_settings().alpaca_trading_timeout_seconds
+            self._trading_client._session.timeout = trading_timeout  # type: ignore[attr-defined]
         else:
             self._trading_client = None
 
