@@ -432,21 +432,26 @@ class UWOptionsMixin:
             if not data:
                 return []
 
+            now_iso = datetime.now(UTC).isoformat()
             results = []
             for item in data:
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                item_date = str(get("date") or date_str or "")
                 results.append(
                     {
                         "symbol": symbol.upper(),
-                        "date": str(get("date") or date_str or ""),
+                        "timestamp": str(get("timestamp") or now_iso),
+                        "date": item_date,
                         "expiry": get("expiry"),
-                        "volume": _safe_int(get("volume")) if get("volume") else None,
+                        "volume": _safe_int(get("volume")) if get("volume") is not None else 0,
                         "open_interest": (
-                            _safe_int(get("open_interest") or get("oi")) if get("open_interest") or get("oi") else None
+                            _safe_int(get("open_interest") or get("oi"))
+                            if get("open_interest") is not None or get("oi") is not None
+                            else None
                         ),
-                        "call_volume": _safe_int(get("call_volume")) if get("call_volume") else None,
-                        "put_volume": _safe_int(get("put_volume")) if get("put_volume") else None,
-                        "premium": float(get("premium") or 0) if get("premium") else None,
+                        "call_volume": _safe_int(get("call_volume")) if get("call_volume") is not None else None,
+                        "put_volume": _safe_int(get("put_volume")) if get("put_volume") is not None else None,
+                        "premium": float(get("premium") or 0) if get("premium") is not None else None,
                     }
                 )
 

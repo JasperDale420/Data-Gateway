@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
     data_sink_operation_timeout_seconds: float = Field(default=5.0, ge=0.5)
     data_sink_redis_pool_size: int = Field(default=8, ge=1, le=32)
+    data_sink_max_inflight_per_sink: int = Field(default=512, ge=64, le=4096)
     data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
     data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
 
@@ -130,7 +131,8 @@ class Settings(BaseSettings):
     option_capture_symbols: str = "SPY,QQQ,IWM"
     option_capture_interval_seconds: int = Field(default=60, ge=1)
     option_capture_market_hours_only: bool = True
-    option_capture_snapshot_timeout_seconds: float = Field(default=10.0, ge=0.5)
+    option_capture_snapshot_timeout_seconds: float = Field(default=90.0, ge=5.0)
+    option_capture_symbol_timeout_overrides: str = ""  # comma-separated SYMBOL:SECONDS pairs, e.g. "SPY:45,QQQ:45"
     option_capture_ws_enabled: bool = True
     option_capture_ws_contract_limit_per_symbol: int = Field(default=40, ge=1)
 
@@ -164,6 +166,30 @@ class Settings(BaseSettings):
                 continue
             symbols.append(symbol)
         return symbols
+
+    @property
+    def option_capture_symbol_timeout_map(self) -> dict[str, float]:
+        """Parse per-symbol timeout overrides into {SYMBOL: seconds} dict.
+
+        Format: comma-separated SYMBOL:SECONDS pairs, e.g. "SPY:45,QQQ:45".
+        Invalid entries are silently skipped.
+        """
+        overrides: dict[str, float] = {}
+        if not self.option_capture_symbol_timeout_overrides.strip():
+            return overrides
+        for entry in self.option_capture_symbol_timeout_overrides.split(","):
+            entry = entry.strip()
+            if ":" not in entry:
+                continue
+            parts = entry.split(":", 1)
+            symbol = parts[0].strip().upper()
+            try:
+                timeout = float(parts[1].strip())
+            except (ValueError, IndexError):
+                continue
+            if symbol and timeout >= 5.0:
+                overrides[symbol] = timeout
+        return overrides
 
     @field_validator("stream_options_feed", mode="before")
     @classmethod

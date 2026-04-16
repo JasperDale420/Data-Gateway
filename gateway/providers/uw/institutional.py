@@ -136,10 +136,20 @@ class UWInstitutionalMixin:
             )
 
             transactions = []
+            skipped = 0
             for item in self._extract_data(response):
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
 
                 ticker = get("ticker") or ""
+
+                # Skip records with empty essential fields — the UW API returns
+                # filing-date index records where ticker/owner_name/transaction_code
+                # are all null, which fail Heber Silver validation downstream.
+                owner_name = get("owner_name")
+                transaction_code = get("transaction_code")
+                if not ticker or not owner_name or not transaction_code:
+                    skipped += 1
+                    continue
 
                 # Filter by symbol if provided
                 if symbol and ticker.upper() != symbol.upper():
@@ -149,9 +159,9 @@ class UWInstitutionalMixin:
                 transactions.append(
                     {
                         "ticker": ticker,
-                        "owner_name": get("owner_name"),
+                        "owner_name": owner_name,
                         "officer_title": get("officer_title"),
-                        "transaction_code": get("transaction_code"),
+                        "transaction_code": transaction_code,
                         "amount": get("amount"),
                         "price": get("price"),
                         "transaction_date": get("transaction_date"),
@@ -174,6 +184,13 @@ class UWInstitutionalMixin:
                     }
                 )
 
+            if skipped:
+                logger.warning(
+                    "uw_insiders_skipped_empty",
+                    symbol=symbol,
+                    skipped=skipped,
+                    kept=len(transactions),
+                )
             logger.info("uw_insiders_fetched", symbol=symbol, count=len(transactions))
             return transactions
 

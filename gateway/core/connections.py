@@ -184,11 +184,11 @@ class ConnectionManager:
                         await connection.websocket.send_bytes(payload)
                 return True
             except Exception as e:
-                logger.warning(
-                    "broadcast_send_failed",
-                    client_id=connection.client_id,
-                    error=str(e),
-                )
+                err_str = str(e)
+                if "1006" in err_str or "transfer_data_task" in err_str or "disconnect" in err_str.lower():
+                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=err_str)
+                else:
+                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=err_str)
                 return False
 
         # Gather all sends
@@ -228,11 +228,11 @@ class ConnectionManager:
                         await connection.websocket.send_bytes(payload)
                 return True
             except Exception as e:
-                logger.warning(
-                    "broadcast_send_failed",
-                    client_id=connection.client_id,
-                    error=str(e),
-                )
+                err_str = str(e)
+                if "1006" in err_str or "transfer_data_task" in err_str or "disconnect" in err_str.lower():
+                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=err_str)
+                else:
+                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=err_str)
                 return False
 
         results = await asyncio.gather(*(_send(conn) for conn in targets))

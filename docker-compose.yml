@@ -21,9 +21,12 @@ services:
       # Enable minute-level Alpaca option chain capture for Heber replay.
       - GATEWAY_OPTION_CAPTURE_ENABLED=true
       - GATEWAY_OPTION_CAPTURE_SYMBOLS=SPY,QQQ,IWM
-      - GATEWAY_OPTION_CAPTURE_INTERVAL_SECONDS=60
+      - GATEWAY_OPTION_CAPTURE_INTERVAL_SECONDS=300
       - GATEWAY_OPTION_CAPTURE_MARKET_HOURS_ONLY=true
       - GATEWAY_OPTION_CAPTURE_WS_ENABLED=true
+      # SPY=13K contracts (~14 pages), QQQ=10K (~11 pages) need longer timeouts
+      - GATEWAY_OPTION_CAPTURE_SNAPSHOT_TIMEOUT_SECONDS=90
+      - GATEWAY_OPTION_CAPTURE_SYMBOL_TIMEOUT_OVERRIDES=SPY:120,QQQ:90
     env_file:
       - .env
     volumes:
@@ -52,7 +55,7 @@ services:
     container_name: data-gateway-redis
     ports:
       - "6379:6379"
-    command: redis-server --save "" --appendonly no --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy allkeys-lru
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]

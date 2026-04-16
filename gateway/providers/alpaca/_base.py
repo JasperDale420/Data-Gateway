@@ -89,13 +89,21 @@ class AlpacaBaseMixin(DataProvider):
             )
 
         # Create HTTP client for Market Data API
+        # Pool limits prevent connection storms during option capture bursts.
+        # keepalive_expiry=30 bridges the 60s capture interval so connections
+        # are reused instead of re-established each cycle.
         self._client = create_async_http_client(
             base_url=self._base_url,
             headers={
                 "APCA-API-KEY-ID": self._api_key,
                 "APCA-API-SECRET-KEY": self._secret_key,
             },
-            timeout=30.0,
+            timeout=httpx.Timeout(30.0, connect=5.0),
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=30.0,
+            ),
             event_hooks=httpx_event_hooks("alpaca"),
         )
 

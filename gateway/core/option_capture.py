@@ -90,7 +90,8 @@ class OptionCaptureService:
         symbols: list[str],
         interval_seconds: int = 60,
         market_hours_only: bool = True,
-        snapshot_timeout_seconds: float = 10.0,
+        snapshot_timeout_seconds: float = 30.0,
+        symbol_timeout_overrides: dict[str, float] | None = None,
         websocket_enabled: bool = True,
         option_ws_contract_limit_per_symbol: int = 40,
         calendar: SupportsMarketHours | None = None,
@@ -103,7 +104,8 @@ class OptionCaptureService:
         self.symbols = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
         self.interval_seconds = max(1, int(interval_seconds))
         self.market_hours_only = market_hours_only
-        self.snapshot_timeout_seconds = max(0.5, float(snapshot_timeout_seconds))
+        self.snapshot_timeout_seconds = max(5.0, float(snapshot_timeout_seconds))
+        self.symbol_timeout_overrides: dict[str, float] = symbol_timeout_overrides or {}
         self.websocket_enabled = websocket_enabled
         self.option_ws_contract_limit_per_symbol = max(1, int(option_ws_contract_limit_per_symbol))
         self._calendar = calendar or TradingCalendar()
@@ -146,6 +148,7 @@ class OptionCaptureService:
             interval_seconds=settings.option_capture_interval_seconds,
             market_hours_only=settings.option_capture_market_hours_only,
             snapshot_timeout_seconds=settings.option_capture_snapshot_timeout_seconds,
+            symbol_timeout_overrides=settings.option_capture_symbol_timeout_map,
             websocket_enabled=settings.option_capture_ws_enabled,
             option_ws_contract_limit_per_symbol=settings.option_capture_ws_contract_limit_per_symbol,
         )
@@ -199,11 +202,16 @@ class OptionCaptureService:
         envelopes: list[dict[str, Any]] = []
         failed_symbols: list[str] = []
 
-        for symbol in self.symbols:
+        for idx, symbol in enumerate(self.symbols):
+            # Stagger symbols to reduce Alpaca connection contention
+            if idx > 0:
+                await asyncio.sleep(2.0)
+
             try:
+                symbol_timeout = self._timeout_for_symbol(symbol)
                 contracts = await asyncio.wait_for(
                     self._alpaca_provider.get_option_snapshot_contracts(symbol),
-                    timeout=self.snapshot_timeout_seconds,
+                    timeout=symbol_timeout,
                 )
                 if not contracts:
                     raise RuntimeError("empty_snapshot")
@@ -244,11 +252,14 @@ class OptionCaptureService:
                 )
             except Exception as exc:
                 failed_symbols.append(symbol)
+                # TimeoutError/asyncio.TimeoutError produce empty str(); include type name
+                error_desc = str(exc) or type(exc).__name__
                 logger.warning(
                     "option_capture_symbol_failed",
                     symbol=symbol,
-                    error=str(exc),
-                    snapshot_timeout_seconds=self.snapshot_timeout_seconds,
+                    error=error_desc,
+                    error_type=type(exc).__name__,
+                    snapshot_timeout_seconds=self._timeout_for_symbol(symbol),
                 )
 
         published = await self._publish_envelopes(envelopes)
@@ -310,6 +321,10 @@ class OptionCaptureService:
                 except Exception as exc:
                     logger.error("option_capture_cycle_error", error=str(exc), exc_info=True)
             await asyncio.sleep(self._loop_sleep_seconds)
+
+    def _timeout_for_symbol(self, symbol: str) -> float:
+        """Return the snapshot timeout for a symbol, using per-symbol override if configured."""
+        return self.symbol_timeout_overrides.get(symbol, self.snapshot_timeout_seconds)
 
     def _validate_dependencies(self) -> None:
         if not self.symbols:

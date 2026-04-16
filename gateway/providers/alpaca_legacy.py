@@ -35,6 +35,7 @@ from alpaca.trading.requests import (
     StopOrderRequest,
     UpdateWatchlistRequest,
 )
+from fastapi import HTTPException
 
 from gateway.core.http_client import create_async_http_client, http_retry
 from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
@@ -42,6 +43,10 @@ from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabiliti
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
 logger = structlog.get_logger()
+
+# Alpaca error codes that indicate a terminal (non-retryable) state.
+# 40410000 — position does not exist (already closed/expired/never existed)
+_POSITION_NOT_FOUND_CODES = {40410000}
 
 # Alpaca API endpoints
 DATA_BASE_URL = "https://data.alpaca.markets"
@@ -1939,6 +1944,14 @@ class AlpacaProvider(DataProvider):
             logger.error("alpaca_positions_error", error=str(e))
             raise
 
+    @staticmethod
+    def _extract_alpaca_error_code(exc: APIError) -> int | None:
+        """Extract the numeric Alpaca error code from an APIError, or None if unparseable."""
+        try:
+            return exc.code
+        except Exception:
+            return None
+
     def get_position(self, symbol: str) -> dict[str, Any]:
         """Get position for a specific symbol."""
         if not self._trading_client:
@@ -1948,6 +1961,18 @@ class AlpacaProvider(DataProvider):
             position = self._trading_client.get_open_position(symbol.upper())
             return self._model_to_dict(position)
         except APIError as e:
+            alpaca_code = self._extract_alpaca_error_code(e)
+            if alpaca_code in _POSITION_NOT_FOUND_CODES:
+                logger.warning("alpaca_position_not_found", symbol=symbol, alpaca_code=alpaca_code)
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "code": "POSITION_NOT_FOUND",
+                        "message": f"No open position for '{symbol}' at broker",
+                        "alpaca_code": alpaca_code,
+                        "symbol": symbol,
+                    },
+                ) from e
             logger.error("alpaca_position_error", symbol=symbol, error=str(e))
             raise
 
@@ -1970,6 +1995,22 @@ class AlpacaProvider(DataProvider):
             logger.info("alpaca_position_closed", symbol=symbol, qty=qty, percentage=percentage)
             return data
         except APIError as e:
+            alpaca_code = self._extract_alpaca_error_code(e)
+            if alpaca_code in _POSITION_NOT_FOUND_CODES:
+                logger.warning(
+                    "alpaca_position_not_found",
+                    symbol=symbol,
+                    alpaca_code=alpaca_code,
+                )
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "code": "POSITION_NOT_FOUND",
+                        "message": f"Position for '{symbol}' does not exist at broker (already closed or expired)",
+                        "alpaca_code": alpaca_code,
+                        "symbol": symbol,
+                    },
+                ) from e
             logger.error("alpaca_position_close_error", symbol=symbol, error=str(e))
             raise
 

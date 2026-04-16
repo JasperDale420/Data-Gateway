@@ -81,7 +81,14 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         logger.info("client_disconnected", connection_id=connection_id)
     except Exception as e:
-        logger.error("websocket_error", connection_id=connection_id, error=str(e))
+        # Downgrade to debug for errors on already-dead connections (close code 1006,
+        # missing transfer_data_task, etc.) — these are normal during reconnect cycles
+        # and generate massive log noise at ERROR level.
+        err_str = str(e)
+        if "1006" in err_str or "transfer_data_task" in err_str or "disconnect" in err_str.lower():
+            logger.debug("websocket_error_on_closed", connection_id=connection_id, error=err_str)
+        else:
+            logger.error("websocket_error", connection_id=connection_id, error=err_str)
     finally:
         if heartbeat_task:
             heartbeat_task.cancel()
@@ -137,7 +144,13 @@ async def _heartbeat_loop(
             send_failures = 0
             logger.debug("heartbeat_sent", connection_id=connection_id)
         except Exception as e:
-            logger.warning("heartbeat_send_failed", connection_id=connection_id, error=str(e))
+            err_str = str(e)
+            # Downgrade to debug when sending to an already-closed connection —
+            # the reconnect cycle handles recovery, no need to alarm.
+            if "1006" in err_str or "transfer_data_task" in err_str or "disconnect" in err_str.lower():
+                logger.debug("heartbeat_send_failed_closed", connection_id=connection_id, error=err_str)
+            else:
+                logger.warning("heartbeat_send_failed", connection_id=connection_id, error=err_str)
             send_failures += 1
 
             if send_failures >= MAX_MISSED_HEARTBEATS:

@@ -67,7 +67,7 @@ class DataSinkRegistry:
     def __init__(
         self,
         dedup_cache: Any | None = None,
-        max_in_flight_per_sink: int = 256,
+        max_in_flight_per_sink: int = 512,
     ) -> None:
         """Initialize registry.
 

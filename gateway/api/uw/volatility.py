@@ -18,6 +18,42 @@ from gateway.api.uw.common import (
 router = APIRouter(tags=["unusual_whales"])
 
 
+@router.get("/{symbol}/iv-rank", response_model=SuccessResponse)
+async def get_iv_rank_alias(
+    symbol: str,
+    client: Client = Depends(require_api_key),
+    registry: ProviderRegistry = Depends(get_registry),
+    cache: InMemoryCache = Depends(get_cache),
+):
+    """Get IV rank for a ticker (convenience alias for /options/{symbol}/iv-rank).
+
+    Multiple clients (Heber-watch, Kairos) call /uw/{symbol}/iv-rank directly.
+    This alias avoids 404 floods by routing to the same provider call.
+    """
+    symbol = symbol.upper()
+    cache_key = f"uw:iv-rank:{symbol}"
+
+    def _build_response(data):
+        if not data:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"IV rank not found for {symbol}. This may be due to market hours, "
+                    "data unavailability, or subscription tier."
+                ),
+            )
+        return make_response(data, symbol=symbol)
+
+    return await execute_uw_cached(
+        cache=cache,
+        cache_key=cache_key,
+        registry=registry,
+        ttl=300,
+        fetcher=lambda provider: provider.get_iv_rank(symbol=symbol),
+        build_response=_build_response,
+    )
+
+
 @router.get("/{symbol}/iv-term-structure", response_model=SuccessResponse)
 async def get_iv_term_structure(
     symbol: str,
