@@ -30,19 +30,33 @@ class Connection:
 class ConnectionManager:
     """Manages active WebSocket connections."""
 
-    def __init__(self):
+    def __init__(self, max_clients: int = 1000):
         self._connections: dict[str, Connection] = {}
         self._client_map: dict[str, set[str]] = {}  # client_id -> set of connection_ids
         self._lock = asyncio.Lock()
         self._broadcast_semaphore = asyncio.Semaphore(100)
+        self._max_clients = max_clients
 
-    async def connect(self, connection_id: str, websocket: WebSocket) -> Connection:
-        """Register a new connection."""
-        await websocket.accept()
+    async def connect(self, connection_id: str, websocket: WebSocket) -> Connection | None:
+        """Register a new connection.
 
-        connection = Connection(websocket=websocket)
-
+        Returns None if the server is at capacity (ws_max_clients).
+        """
         async with self._lock:
+            if len(self._connections) >= self._max_clients:
+                logger.warning(
+                    "connection_limit_reached",
+                    connection_id=connection_id,
+                    active=len(self._connections),
+                    max_clients=self._max_clients,
+                )
+                await websocket.accept()
+                await websocket.close(code=4010, reason="Connection limit reached")
+                return None
+
+            await websocket.accept()
+
+            connection = Connection(websocket=websocket)
             self._connections[connection_id] = connection
             # Anonymous connections are not in client_map yet
 

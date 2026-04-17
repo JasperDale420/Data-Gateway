@@ -57,7 +57,8 @@ def get_cache() -> InMemoryCache | HybridCache:
 @lru_cache
 def get_connection_manager() -> ConnectionManager:
     """Get cached connection manager."""
-    return ConnectionManager()
+    settings = get_settings()
+    return ConnectionManager(max_clients=settings.ws_max_clients)
 
 
 def get_endpoint_rate_limiter() -> EndpointRateLimiter:

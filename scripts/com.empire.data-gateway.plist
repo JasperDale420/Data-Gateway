@@ -30,6 +30,13 @@
         <string>0.0.0.0</string>
         <string>--port</string>
         <string>8080</string>
+        <!-- Relax server-side WebSocket keepalive so transient event-loop lag
+             during high-volatility bursts doesn't trigger mass client
+             disconnects. Defaults (20s/20s) are too tight; clients use 30s/90s. -->
+        <string>--ws-ping-interval</string>
+        <string>30</string>
+        <string>--ws-ping-timeout</string>
+        <string>90</string>
     </array>
 
     <key>EnvironmentVariables</key>

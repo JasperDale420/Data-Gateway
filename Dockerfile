@@ -58,4 +58,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()"
 
 # Run application
-CMD ["python", "-m", "uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# --ws-ping-interval / --ws-ping-timeout: relax server-side WebSocket keepalive so
+# transient event-loop lag during high-volatility bursts doesn't trigger mass
+# client disconnects (default 20s/20s is too tight under load; clients use 30s/90s).
+CMD ["python", "-m", "uvicorn", "gateway.main:app", \
+    "--host", "0.0.0.0", \
+    "--port", "8080", \
+    "--ws-ping-interval", "30", \
+    "--ws-ping-timeout", "90"]

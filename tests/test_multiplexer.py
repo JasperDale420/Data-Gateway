@@ -530,3 +530,176 @@ def test_stream_subscription_manager_client_view_missing_symbol_is_empty() -> No
     clients_view = manager.get_clients_for_symbol_view("MSFT", "bars")
 
     assert tuple(clients_view) == ()
+
+
+# ---------------------------------------------------------------------------
+# Reconnect loop — regression test for the "double-connect" bug where a
+# successful reconnect would immediately be torn down and re-established by
+# the outer loop, doubling Alpaca connection churn and losing bars after
+# every flap. Apr 15–17, 2026.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_and_run_does_not_double_connect_after_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single disconnect triggers exactly ONE reconnect, not two.
+
+    Before the fix, `_reconnect_with_backoff` established a working WS and
+    returned, then `_connect_and_run`'s outer loop called `connect()` again,
+    tearing the fresh WS down to open another. This counted connect() calls
+    across one disconnect event: we should see 2 (initial + reconnect), not 3.
+    """
+    import websockets
+
+    from gateway.core.stream import AlpacaStreamType, UpstreamConnection
+
+    async def _noop_on_message(_msg: dict) -> None:
+        return
+
+    conn = UpstreamConnection(
+        stream_type=AlpacaStreamType.STOCKS_SIP,
+        api_key="k",  # pragma: allowlist secret
+        api_secret="s",  # pragma: allowlist secret
+        on_message=_noop_on_message,
+        base_delay=0.0,  # no real backoff — speed up the test
+        max_delay=0.0,
+        max_retries=3,
+    )
+
+    connect_calls = 0
+    auth_calls = 0
+
+    async def _mock_connect() -> None:
+        nonlocal connect_calls
+        connect_calls += 1
+        # Pretend the WS is live; the receive_loop below simulates its lifetime.
+        conn._ws = cast(Any, SimpleNamespace(close=lambda *a, **kw: asyncio.sleep(0)))
+
+    async def _mock_authenticate() -> None:
+        nonlocal auth_calls
+        auth_calls += 1
+        conn._authenticated = True
+
+    async def _mock_close_ws() -> None:
+        conn._ws = None
+        conn._authenticated = False
+        conn._connected_event.clear()
+
+    # First receive_loop raises ConnectionClosed (simulates a 1006 flap).
+    # Second call blocks until we flip _running = False to end the test.
+    receive_call = {"n": 0}
+    stop_event = asyncio.Event()
+
+    async def _mock_receive_loop() -> None:
+        receive_call["n"] += 1
+        if receive_call["n"] == 1:
+            raise websockets.exceptions.ConnectionClosed(rcvd=None, sent=None)
+        # On the SECOND connect, hold the "connection" open until we stop.
+        await stop_event.wait()
+
+    monkeypatch.setattr(conn, "connect", _mock_connect)
+    monkeypatch.setattr(conn, "authenticate", _mock_authenticate)
+    monkeypatch.setattr(conn, "_close_ws", _mock_close_ws)
+    monkeypatch.setattr(conn, "_receive_loop", _mock_receive_loop)
+
+    # Drive the loop. It will: connect (1), receive_loop raises, backoff,
+    # connect (2), receive_loop blocks on stop_event. We then stop it.
+    conn._running = True
+    task = asyncio.create_task(conn._connect_and_run())
+
+    # Give the loop enough time to hit the second receive_loop.
+    for _ in range(50):
+        if receive_call["n"] >= 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert receive_call["n"] == 2, "second receive_loop should have started"
+
+    # Stop the loop cleanly.
+    conn._running = False
+    stop_event.set()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    # One initial connect + one reconnect = 2 connect() calls. The old code
+    # would produce 3 (initial + reconnect_with_backoff + outer loop's
+    # redundant connect).
+    assert connect_calls == 2, f"expected exactly 2 connect() calls, got {connect_calls}"
+    assert auth_calls == 2, f"expected exactly 2 authenticate() calls, got {auth_calls}"
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_and_run_stops_on_non_recoverable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'connection limit exceeded' halts the loop instead of retrying forever."""
+    from gateway.core.stream import AlpacaStreamType, UpstreamConnection
+
+    async def _noop_on_message(_msg: dict) -> None:
+        return
+
+    conn = UpstreamConnection(
+        stream_type=AlpacaStreamType.STOCKS_SIP,
+        api_key="k",  # pragma: allowlist secret
+        api_secret="s",  # pragma: allowlist secret
+        on_message=_noop_on_message,
+        base_delay=0.0,
+        max_delay=0.0,
+        max_retries=5,
+    )
+
+    async def _raising_connect() -> None:
+        raise RuntimeError("connection limit exceeded")
+
+    async def _noop_close() -> None:
+        return
+
+    monkeypatch.setattr(conn, "connect", _raising_connect)
+    monkeypatch.setattr(conn, "_close_ws", _noop_close)
+
+    conn._running = True
+    await asyncio.wait_for(conn._connect_and_run(), timeout=2.0)
+
+    assert conn._running is False
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_and_run_exhausts_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After `max_retries` transient failures, the loop gives up and goes dormant."""
+    from gateway.core.stream import AlpacaStreamType, UpstreamConnection
+
+    async def _noop_on_message(_msg: dict) -> None:
+        return
+
+    conn = UpstreamConnection(
+        stream_type=AlpacaStreamType.STOCKS_SIP,
+        api_key="k",  # pragma: allowlist secret
+        api_secret="s",  # pragma: allowlist secret
+        on_message=_noop_on_message,
+        base_delay=0.0,
+        max_delay=0.0,
+        max_retries=3,
+    )
+
+    connect_calls = 0
+
+    async def _raising_connect() -> None:
+        nonlocal connect_calls
+        connect_calls += 1
+        raise RuntimeError("transient network error")
+
+    async def _noop_close() -> None:
+        return
+
+    monkeypatch.setattr(conn, "connect", _raising_connect)
+    monkeypatch.setattr(conn, "_close_ws", _noop_close)
+
+    conn._running = True
+    await asyncio.wait_for(conn._connect_and_run(), timeout=2.0)
+
+    # Initial connect + max_retries reconnect attempts = max_retries + 1
+    assert connect_calls == conn.max_retries + 1
+    assert conn._running is False

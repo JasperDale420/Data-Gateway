@@ -586,7 +586,25 @@ class UpstreamConnection:
             )
 
     async def _connect_and_run(self) -> None:
-        """Main connection loop with reconnection."""
+        """Main connection loop with reconnection.
+
+        Each loop iteration performs **exactly one** connect attempt. A
+        successful connection is held until ``_receive_loop`` returns (clean
+        disconnect, transport error, or cancellation); at that point we
+        release Alpaca's connection slot, sleep for exponential backoff, and
+        try again.
+
+        Previously this loop was paired with a separate
+        ``_reconnect_with_backoff()`` helper that also did its own
+        connect/auth/subscribe. After a successful reconnect it returned,
+        and the outer loop would then call ``connect()`` a second time —
+        tearing down the just-established WS (via ``_close_ws()``) and
+        opening a fresh one. That doubled Alpaca-side connection churn on
+        every flap and left a 1–3s window after each recovery where bars
+        were lost, which was the proximate cause of the simultaneous
+        stale-data events we saw across downstream clients on Apr 15–17.
+        """
+        attempt = 0
         while self._running:
             try:
                 await self.connect()
@@ -598,7 +616,16 @@ class UpstreamConnection:
                 if bars or quotes or trades or news:
                     await self.subscribe(bars, quotes, trades, news)
 
-                # Start receive loop
+                if attempt > 0:
+                    logger.info(
+                        "reconnected",
+                        stream=self.stream_type.value,
+                        attempt=attempt,
+                    )
+                # A successful connection resets the retry budget. The outer
+                # loop continues to _receive_loop which runs until the WS dies.
+                attempt = 0
+
                 await self._receive_loop()
 
             except websockets.exceptions.ConnectionClosed as e:
@@ -608,23 +635,58 @@ class UpstreamConnection:
                     code=e.code,
                     reason=e.reason,
                 )
-            except Exception:
-                logger.exception("connection_error", stream=self.stream_type.value)
-
-            self._authenticated = False
-            # Close the WebSocket to release Alpaca's connection slot before reconnecting
-            await self._close_ws()
-
-            if self._running:
-                await self._reconnect_with_backoff()
-                if not self._running:
-                    # Reconnect gave up (max retries or non-recoverable error)
+            except Exception as exc:
+                error_msg = str(exc)
+                if any(msg in error_msg for msg in self._NON_RECOVERABLE_ERRORS):
+                    logger.error(
+                        "non_recoverable_error",
+                        stream=self.stream_type.value,
+                        error=error_msg,
+                        hint="Check for stale connections or competing applications using the same Alpaca credentials.",
+                    )
+                    self._running = False
+                    self._authenticated = False
+                    await self._close_ws()
                     logger.info(
                         "stream_dormant",
                         stream=self.stream_type.value,
                         hint="Will restart on next client subscription",
                     )
                     return
+                logger.exception("connection_error", stream=self.stream_type.value)
+
+            self._authenticated = False
+            # Release Alpaca's connection slot before backing off / retrying.
+            await self._close_ws()
+
+            if not self._running:
+                return
+
+            attempt += 1
+            if attempt > self.max_retries:
+                logger.error(
+                    "reconnect_exhausted",
+                    stream=self.stream_type.value,
+                    max_retries=self.max_retries,
+                )
+                self._running = False
+                logger.info(
+                    "stream_dormant",
+                    stream=self.stream_type.value,
+                    hint="Will restart on next client subscription",
+                )
+                return
+
+            delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)
+            jitter = delay * 0.2 * (random.random() * 2 - 1)  # ±20%
+            wait = max(0.0, delay + jitter)
+            logger.info(
+                "reconnecting",
+                stream=self.stream_type.value,
+                attempt=attempt,
+                delay=round(wait, 3),
+            )
+            await asyncio.sleep(wait)
 
     async def _receive_loop(self) -> None:
         """Receive and dispatch messages.
@@ -660,66 +722,6 @@ class UpstreamConnection:
 
     # Auth error messages that indicate account-level issues, not transient failures
     _NON_RECOVERABLE_ERRORS = ("connection limit exceeded",)
-
-    async def _reconnect_with_backoff(self) -> None:
-        """Reconnect with exponential backoff per PRD.
-
-        Sets self._running = False if retries are exhausted or a non-recoverable
-        error is detected, signaling the outer loop to stop.
-        """
-        for attempt in range(self.max_retries):
-            delay = min(self.base_delay * (2**attempt), self.max_delay)
-            jitter = delay * 0.2 * (random.random() * 2 - 1)  # ±20%
-
-            logger.info(
-                "reconnecting",
-                stream=self.stream_type.value,
-                attempt=attempt + 1,
-                delay=delay + jitter,
-            )
-
-            await asyncio.sleep(delay + jitter)
-
-            if not self._running:
-                return
-
-            try:
-                await self.connect()
-                await self.authenticate()
-
-                bars, quotes, trades, news = self._subscriptions.get_all_subscriptions()
-                if bars or quotes or trades or news:
-                    await self.subscribe(bars, quotes, trades, news)
-
-                logger.info("reconnected", stream=self.stream_type.value, attempt=attempt + 1)
-                return
-
-            except Exception as e:
-                error_msg = str(e)
-                # Detect non-recoverable auth errors — stop immediately
-                if any(msg in error_msg for msg in self._NON_RECOVERABLE_ERRORS):
-                    logger.error(
-                        "non_recoverable_error",
-                        stream=self.stream_type.value,
-                        error=error_msg,
-                        hint="Check for stale connections or competing applications using the same Alpaca credentials.",
-                    )
-                    self._running = False
-                    return
-
-                is_last_attempt = attempt + 1 >= self.max_retries
-                log_fn = logger.error if is_last_attempt else logger.warning
-                log_fn(
-                    "reconnect_failed",
-                    stream=self.stream_type.value,
-                    attempt=attempt + 1,
-                    max_retries=self.max_retries,
-                    error=error_msg,
-                    exhausted=is_last_attempt,
-                )
-
-        # All retries exhausted — enter dormant state
-        self._running = False
 
 
 class StreamMultiplexer:

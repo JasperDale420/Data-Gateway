@@ -66,7 +66,17 @@ class Settings(BaseSettings):
     alpaca_max_concurrent_requests: int = Field(default=25, ge=1)  # see rate_limiter.DEFAULT_ALPACA_MAX_CONCURRENT
     alpaca_trading_call_timeout_seconds: float = Field(default=15.0, ge=0.5)
     alpaca_trading_thread_pool_size: int = Field(
-        default=8, ge=2, description="Dedicated thread pool for Alpaca trading SDK calls"
+        default=16, ge=2, description="Dedicated thread pool for Alpaca trading SDK calls"
+    )
+    alpaca_trading_max_inflight: int = Field(
+        default=24,
+        ge=2,
+        description=(
+            "Upper bound on concurrent in-flight Alpaca trading calls. When exceeded, "
+            "new calls fast-fail with 503 instead of piling up in the executor queue. "
+            "Should be >= alpaca_trading_thread_pool_size; the difference is the allowed "
+            "short-term queue depth before backpressure kicks in."
+        ),
     )
 
     # Alpaca (loaded from env, not prefixed)

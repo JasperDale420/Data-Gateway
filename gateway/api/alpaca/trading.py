@@ -7,7 +7,7 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from starlette.status import HTTP_504_GATEWAY_TIMEOUT
+from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca.common import (
     DESC_COMMA_SYMBOLS,
@@ -31,6 +31,14 @@ TRADING_CALENDAR_CACHE_TTL_SECONDS = 3600
 # Module-level dedicated executor for trading calls (created lazily)
 _trading_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
+# Bounded semaphore that caps concurrent in-flight trading calls. When all
+# permits are held the next call fast-fails with 503 rather than queueing in
+# the executor's unbounded internal queue. Queue pile-up during Alpaca
+# slowdowns holds outstanding asyncio tasks/timers that contend with the
+# WebSocket keepalive task for event-loop CPU, causing clients to disconnect
+# with "keepalive ping timeout".
+_trading_inflight_sem: asyncio.BoundedSemaphore | None = None
+
 
 def _get_trading_executor() -> concurrent.futures.ThreadPoolExecutor:
     global _trading_executor
@@ -40,6 +48,24 @@ def _get_trading_executor() -> concurrent.futures.ThreadPoolExecutor:
             thread_name_prefix="alpaca-trading",
         )
     return _trading_executor
+
+
+def _get_trading_inflight_sem() -> asyncio.BoundedSemaphore:
+    global _trading_inflight_sem
+    if _trading_inflight_sem is None:
+        _trading_inflight_sem = asyncio.BoundedSemaphore(get_settings().alpaca_trading_max_inflight)
+    return _trading_inflight_sem
+
+
+def _reset_trading_inflight_sem_for_tests() -> None:
+    """Reset the in-flight semaphore so test-level settings overrides apply.
+
+    Module-level lazy singletons don't observe monkeypatched settings after
+    first initialisation; tests that tweak ``alpaca_trading_max_inflight``
+    should call this between cases.
+    """
+    global _trading_inflight_sem
+    _trading_inflight_sem = None
 
 
 async def _execute_trading_call(
@@ -88,26 +114,52 @@ async def _run_trading_provider_call(
     provider_fn: Callable[[Any], Any],
     operation: str,
 ) -> Any:
-    timeout_seconds = get_settings().alpaca_trading_call_timeout_seconds
-    try:
-        loop = asyncio.get_running_loop()
-        return await asyncio.wait_for(
-            loop.run_in_executor(_get_trading_executor(), provider_fn, provider),
-            timeout=timeout_seconds,
-        )
-    except TimeoutError as exc:
-        logger.error(
-            "alpaca_trading_call_timeout",
+    settings = get_settings()
+    timeout_seconds = settings.alpaca_trading_call_timeout_seconds
+    sem = _get_trading_inflight_sem()
+
+    # Fast-fail when the in-flight cap is fully reserved. ``locked()`` is safe
+    # to inspect without a lock: asyncio is single-threaded so no other
+    # coroutine can change the permit count between this check and the
+    # subsequent acquire (acquire does not suspend when a permit is free).
+    if sem.locked():
+        logger.warning(
+            "alpaca_trading_backpressure_reject",
             operation=operation,
-            timeout_seconds=timeout_seconds,
+            max_inflight=settings.alpaca_trading_max_inflight,
         )
         raise HTTPException(
-            status_code=HTTP_504_GATEWAY_TIMEOUT,
+            status_code=HTTP_503_SERVICE_UNAVAILABLE,
             detail={
-                "code": "GW-E5004",
-                "message": f"Timed out waiting for Alpaca trading API during {operation}",
+                "code": "GW-E5005",
+                "message": (
+                    f"Alpaca trading API backpressure during {operation}: "
+                    f"{settings.alpaca_trading_max_inflight} calls already in-flight. "
+                    "Retry shortly."
+                ),
             },
-        ) from exc
+        )
+
+    async with sem:
+        try:
+            loop = asyncio.get_running_loop()
+            return await asyncio.wait_for(
+                loop.run_in_executor(_get_trading_executor(), provider_fn, provider),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError as exc:
+            logger.error(
+                "alpaca_trading_call_timeout",
+                operation=operation,
+                timeout_seconds=timeout_seconds,
+            )
+            raise HTTPException(
+                status_code=HTTP_504_GATEWAY_TIMEOUT,
+                detail={
+                    "code": "GW-E5004",
+                    "message": f"Timed out waiting for Alpaca trading API during {operation}",
+                },
+            ) from exc
 
 
 @router.get("/account", response_model=SuccessResponse)
