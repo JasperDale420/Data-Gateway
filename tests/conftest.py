@@ -121,9 +121,11 @@ def test_registry():
     # when Alpaca endpoints call provider methods via
     # execute_alpaca_provider_call (which does ``await provider_call(provider)``).
     mock_provider = AsyncMock()
-    mock_provider.get_bars = AsyncMock(return_value={"bars": [], "symbol": "TEST"})
+    mock_provider.get_bars = AsyncMock(return_value=[])
     mock_provider.get_quote = AsyncMock(return_value={"quote": {}, "symbol": "TEST"})
     mock_provider.get_chain = AsyncMock(return_value={"chain": []})
+    # get_calendar is called via asyncio.to_thread (sync context) — must be MagicMock, not AsyncMock
+    mock_provider.get_calendar = MagicMock(return_value=[])
     mock_provider.name = "alpaca"
     registry.get.return_value = mock_provider
     registry.get_provider.return_value = mock_provider
