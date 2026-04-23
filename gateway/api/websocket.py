@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from gateway.api.deps import get_authenticator, get_connection_manager
 from gateway.config import Settings, get_settings
 from gateway.core.auth import ClientAuthenticator
-from gateway.core.connections import ConnectionManager
+from gateway.core.connections import ConnectionManager, is_benign_ws_close_error
 from gateway.core.logger import logger
 from gateway.core.security import get_input_validator
 
@@ -85,11 +85,10 @@ async def websocket_endpoint(
         # Downgrade to debug for errors on already-dead connections (close code 1006,
         # missing transfer_data_task, etc.) — these are normal during reconnect cycles
         # and generate massive log noise at ERROR level.
-        err_str = str(e)
-        if "1006" in err_str or "transfer_data_task" in err_str or "disconnect" in err_str.lower():
-            logger.debug("websocket_error_on_closed", connection_id=connection_id, error=err_str)
+        if is_benign_ws_close_error(e):
+            logger.debug("websocket_error_on_closed", connection_id=connection_id, error=str(e))
         else:
-            logger.error("websocket_error", connection_id=connection_id, error=err_str)
+            logger.error("websocket_error", connection_id=connection_id, error=str(e))
     finally:
         if heartbeat_task:
             heartbeat_task.cancel()
@@ -151,13 +150,12 @@ async def _heartbeat_loop(
             send_failures = 0
             logger.debug("heartbeat_sent", connection_id=connection_id)
         except Exception as e:
-            err_str = str(e)
             # Downgrade to debug when sending to an already-closed connection —
             # the reconnect cycle handles recovery, no need to alarm.
-            if "1006" in err_str or "transfer_data_task" in err_str or "disconnect" in err_str.lower():
-                logger.debug("heartbeat_send_failed_closed", connection_id=connection_id, error=err_str)
+            if is_benign_ws_close_error(e):
+                logger.debug("heartbeat_send_failed_closed", connection_id=connection_id, error=str(e))
             else:
-                logger.warning("heartbeat_send_failed", connection_id=connection_id, error=err_str)
+                logger.warning("heartbeat_send_failed", connection_id=connection_id, error=str(e))
             send_failures += 1
 
             if send_failures >= MAX_MISSED_HEARTBEATS:
@@ -223,8 +221,23 @@ async def _wait_for_auth(
             }
         )
         return False
+    except WebSocketDisconnect as e:
+        # Client dropped the connection before sending auth (TCP reset, tab closed,
+        # 1006 unclean close). Not an error — just a short-lived connection.
+        logger.info(
+            "auth_client_disconnected",
+            connection_id=connection_id,
+            code=getattr(e, "code", None),
+        )
+        return False
     except Exception as e:
-        logger.error("auth_receive_error", connection_id=connection_id, error=str(e))
+        # Downgrade benign close races (1006, transport gone, "not connected")
+        # to info — the client went away before completing auth, which is noise
+        # rather than a server-side problem to alert on.
+        if is_benign_ws_close_error(e):
+            logger.info("auth_client_disconnected", connection_id=connection_id, error=str(e))
+        else:
+            logger.error("auth_receive_error", connection_id=connection_id, error=str(e))
         return False
 
     # Validate message format

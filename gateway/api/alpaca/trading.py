@@ -229,6 +229,11 @@ async def create_order(
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
 
+_VALID_ORDER_QUERY_STATUSES = frozenset({"open", "closed", "all"})
+_VALID_ORDER_SORT_DIRECTIONS = frozenset({"asc", "desc"})
+_VALID_ORDER_SIDES = frozenset({"buy", "sell"})
+
+
 @router.get("/orders", response_model=SuccessResponse)
 async def get_orders(
     status: str = Query(default="open", description="Order status: open, closed, all"),
@@ -241,6 +246,22 @@ async def get_orders(
     registry: ProviderRegistry = Depends(get_registry),
 ):
     """Get all orders with optional filters."""
+    if status not in _VALID_ORDER_QUERY_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{status}'. Must be one of: {sorted(_VALID_ORDER_QUERY_STATUSES)}",
+        )
+    if direction not in _VALID_ORDER_SORT_DIRECTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid direction '{direction}'. Must be one of: {sorted(_VALID_ORDER_SORT_DIRECTIONS)}",
+        )
+    if side is not None and side not in _VALID_ORDER_SIDES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid side '{side}'. Must be one of: {sorted(_VALID_ORDER_SIDES)}",
+        )
+
     symbols_list = symbols.split(",") if symbols else None
     data = await _execute_trading_call(
         registry=registry,

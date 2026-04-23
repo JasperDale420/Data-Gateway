@@ -168,6 +168,43 @@ async def test_get_orders_splits_symbols_and_sets_count(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "direction", "side", "bad_field"),
+    [
+        ("filled", "desc", None, "status"),
+        ("open", "descending", None, "direction"),
+        ("open", "desc", "long", "side"),
+    ],
+)
+async def test_get_orders_rejects_invalid_enum_params(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    direction: str,
+    side: str | None,
+    bad_field: str,
+) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_orders(
+            status=status,
+            limit=50,
+            direction=direction,
+            symbols=None,
+            nested=True,
+            side=side,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert bad_field in str(exc.value.detail).lower()
+    assert provider.orders_calls == []
+
+
+@pytest.mark.asyncio
 async def test_get_orders_times_out_stuck_trading_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

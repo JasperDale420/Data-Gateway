@@ -11,6 +11,27 @@ from gateway.core.auth import Client
 from gateway.core.logger import logger
 
 
+def is_benign_ws_close_error(exc: BaseException) -> bool:
+    """Return True when a send-side WebSocket exception reflects a normal close.
+
+    These show up as a race between the peer initiating a close and our own
+    background tasks (heartbeat, broadcast, response writes) calling ``send``
+    a moment later. They are not actionable errors, just the tail end of a
+    disconnect, and should not pollute ERROR/WARNING logs.
+    """
+    err = str(exc)
+    if "1006" in err or "transfer_data_task" in err:
+        return True
+    err_lower = err.lower()
+    return (
+        "disconnect" in err_lower
+        # websockets protocol: "Cannot call 'send' once a close message has been sent."
+        or "once a close message" in err_lower
+        # starlette/fastapi: "WebSocket is not connected." / "not connected"
+        or "is not connected" in err_lower
+    )
+
+
 @dataclass
 class Connection:
     """Active WebSocket connection."""
@@ -198,11 +219,10 @@ class ConnectionManager:
                         await connection.websocket.send_bytes(payload)
                 return True
             except Exception as e:
-                err_str = str(e)
-                if "1006" in err_str or "transfer_data_task" in err_str or "disconnect" in err_str.lower():
-                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=err_str)
+                if is_benign_ws_close_error(e):
+                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=str(e))
                 else:
-                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=err_str)
+                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=str(e))
                 return False
 
         # Gather all sends
@@ -242,11 +262,10 @@ class ConnectionManager:
                         await connection.websocket.send_bytes(payload)
                 return True
             except Exception as e:
-                err_str = str(e)
-                if "1006" in err_str or "transfer_data_task" in err_str or "disconnect" in err_str.lower():
-                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=err_str)
+                if is_benign_ws_close_error(e):
+                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=str(e))
                 else:
-                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=err_str)
+                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=str(e))
                 return False
 
         results = await asyncio.gather(*(_send(conn) for conn in targets))
