@@ -1,17 +1,21 @@
 """SEC EDGAR API endpoints for filings and company data."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import TypeVar
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from gateway.api.deps import get_cache, get_registry, require_api_key, require_provider_rate_limit
+from gateway.api.deps import (
+    execute_provider_cached,
+    get_cache,
+    get_registry,
+    make_cache_key,
+    require_api_key,
+)
 from gateway.core.auth import Client
 from gateway.core.cache import InMemoryCache
 from gateway.core.dedup import get_deduplicator
-from gateway.core.logger import logger
-from gateway.core.metrics import record_route_cache
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
@@ -21,68 +25,67 @@ PROVIDER_NOT_AVAILABLE = "SEC provider not available"
 CACHE_TTL = 3600  # 1 hour (filings update infrequently)
 
 
-def _normalize_cache_arg(value) -> str:
-    if value is None:
-        return "<none>"
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if value == "":
-        return "<empty>"
-    return str(value)
-
-
 def _cache_key(prefix: str, *args) -> str:
     """Generate cache key for SEC data."""
-    parts = [prefix] + [_normalize_cache_arg(a) for a in args]
-    return ":".join(parts)
+    return make_cache_key(prefix, *args)
 
 
 T = TypeVar("T")
 
 
-async def execute_sec_cached(
-    provider_method: Callable[[], Awaitable[T]],
+def _sec_error_handler(exc: Exception) -> None:
+    """Map SEC-specific HTTP status codes to user-friendly errors."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == 404:
+            raise HTTPException(status_code=404, detail="SEC resource not found")
+        if status == 429:
+            raise HTTPException(status_code=429, detail="SEC rate limit exceeded")
+        if status == 403:
+            raise HTTPException(status_code=403, detail="SEC access forbidden")
+    if isinstance(exc, ValueError):
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+async def execute_sec_cached[T](
+    *,
+    registry: ProviderRegistry,
     cache: InMemoryCache,
     cache_key: str,
     route_name: str,
+    fetcher: Callable,
     cache_ttl: int = CACHE_TTL,
     miss_meta_builder: Callable[[T], dict] | None = None,
 ) -> dict:
-    """Centralized SEC execution wrapper with caching, dedup, and error handling."""
-    cached = await cache.get(cache_key)
-    if cached:
-        record_route_cache(route_name, "hit")
-        meta: dict = {"cached": True, "provider": "sec"}
-        if miss_meta_builder:
-            meta.update(miss_meta_builder(cached))
-        return {"success": True, "data": cached, "meta": meta}
+    """Centralized SEC execution wrapper with caching, dedup, and error handling.
 
-    record_route_cache(route_name, "miss")
-    try:
-        data = await get_deduplicator().dedupe(cache_key, provider_method)
-        await cache.set(cache_key, data, ttl=cache_ttl)
-        meta = {"cached": False, "provider": "sec"}
-        if miss_meta_builder:
-            meta.update(miss_meta_builder(data))
-        return {"success": True, "data": data, "meta": meta}
-    except httpx.HTTPStatusError as e:
-        logger.error("sec_request_failed", route=route_name, error=str(e), status_code=e.response.status_code)
-        if e.response.status_code == 404:
-            raise HTTPException(status_code=404, detail="SEC resource not found")
-        if e.response.status_code == 429:
-            raise HTTPException(status_code=429, detail="SEC rate limit exceeded")
-        if e.response.status_code == 403:
-            raise HTTPException(status_code=403, detail="SEC access forbidden")
-        raise HTTPException(status_code=502, detail="Upstream SEC error")
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception:
-        logger.error("sec_request_failed", route=route_name, exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
+    Args:
+        registry: Provider registry for provider lookup.
+        cache: Cache backend.
+        cache_key: Pre-built cache key.
+        route_name: Label for cache-hit/miss metrics.
+        fetcher: ``async (provider) -> data`` callable.
+        cache_ttl: Cache TTL in seconds.
+        miss_meta_builder: Optional ``(data) -> dict`` for extra metadata.
+    """
+    deduplicator = get_deduplicator()
+
+    async def _deduped_fetcher(provider):
+        return await deduplicator.dedupe(cache_key, lambda: fetcher(provider))
+
+    return await execute_provider_cached(
+        provider_name="sec",
+        registry=registry,
+        cache=cache,
+        cache_key=cache_key,
+        ttl=cache_ttl,
+        fetcher=_deduped_fetcher,
+        miss_meta_builder=miss_meta_builder,
+        route_label=route_name,
+        error_label="sec_request_failed",
+        error_handlers=[_sec_error_handler],
+        not_available_msg=PROVIDER_NOT_AVAILABLE,
+    )
 
 
 @router.get("/company/{cik}", response_model=SuccessResponse)
@@ -93,19 +96,12 @@ async def get_company_info(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get company info by CIK."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
-    async def _fetch():
-        await require_provider_rate_limit("sec")
-        return await provider.get_company_info(cik)
-
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:company", cik),
         route_name="sec_company",
+        fetcher=lambda p: p.get_company_info(cik),
     )
 
 
@@ -117,19 +113,12 @@ async def get_company_by_ticker(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Lookup company info by ticker symbol."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
-    async def _fetch():
-        await require_provider_rate_limit("sec")
-        return await provider.get_company_by_ticker(ticker)
-
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:ticker", ticker.upper()),
         route_name="sec_ticker",
+        fetcher=lambda p: p.get_company_by_ticker(ticker),
     )
 
 
@@ -143,20 +132,17 @@ async def get_filings(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get company filings by CIK."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
-    async def _fetch():
-        await require_provider_rate_limit("sec")
+    async def _fetch(provider):
         filings = await provider.get_filings(cik, form_type=form_type, limit=limit)
         return {"cik": cik, "form_type": form_type, "filings": filings}
 
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:filings", cik, form_type, str(limit)),
         route_name="sec_filings",
+        fetcher=_fetch,
         miss_meta_builder=lambda d: {"count": len(d.get("filings", []))},
     )
 
@@ -171,20 +157,17 @@ async def get_filings_by_type(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get company filings filtered by form type."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
-    async def _fetch():
-        await require_provider_rate_limit("sec")
+    async def _fetch(provider):
         filings = await provider.get_filings(cik, form_type=form_type.upper(), limit=limit)
         return {"cik": cik, "form_type": form_type.upper(), "filings": filings}
 
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:filings", cik, form_type.upper(), str(limit)),
         route_name="sec_filings_by_type",
+        fetcher=_fetch,
         miss_meta_builder=lambda d: {"count": len(d.get("filings", []))},
     )
 
@@ -197,20 +180,17 @@ async def get_13f_holdings(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get 13F institutional holdings filings for an investment manager."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
-    async def _fetch():
-        await require_provider_rate_limit("sec")
+    async def _fetch(provider):
         filings = await provider.get_13f_holdings(cik)
         return {"cik": cik, "filings": filings}
 
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:13f", cik),
         route_name="sec_13f",
+        fetcher=_fetch,
         miss_meta_builder=lambda d: {"count": len(d.get("filings", []))},
     )
 
@@ -224,20 +204,17 @@ async def get_insider_trades(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get insider trading filings (Form 3, 4, 5)."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
-    async def _fetch():
-        await require_provider_rate_limit("sec")
+    async def _fetch(provider):
         filings = await provider.get_insider_trades(cik, limit=limit)
         return {"cik": cik, "filings": filings}
 
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:insiders", cik, str(limit)),
         route_name="sec_insiders",
+        fetcher=_fetch,
         miss_meta_builder=lambda d: {"count": len(d.get("filings", []))},
     )
 
@@ -250,19 +227,12 @@ async def get_company_facts(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get XBRL company facts (structured financial data from filings)."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
-    async def _fetch():
-        await require_provider_rate_limit("sec")
-        return await provider.get_company_facts(cik)
-
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:facts", cik),
         route_name="sec_facts",
+        fetcher=lambda p: p.get_company_facts(cik),
     )
 
 
@@ -281,19 +251,12 @@ async def get_company_concept(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get historical values for a single XBRL concept (e.g., Revenues, EarningsPerShareBasic)."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
-    async def _fetch():
-        await require_provider_rate_limit("sec")
-        return await provider.get_company_concept(cik, taxonomy=taxonomy, concept=concept)
-
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:concept", cik, taxonomy, concept),
         route_name="sec_concept",
+        fetcher=lambda p: p.get_company_concept(cik, taxonomy=taxonomy, concept=concept),
     )
 
 
@@ -308,19 +271,12 @@ async def get_xbrl_frames(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get aggregated XBRL data across all companies for a period (e.g., CY2023Q1)."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
-    async def _fetch():
-        await require_provider_rate_limit("sec")
-        return await provider.get_xbrl_frames(taxonomy=taxonomy, concept=concept, unit=unit, period=period)
-
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:frames", taxonomy, concept, unit, period),
         route_name="sec_frames",
+        fetcher=lambda p: p.get_xbrl_frames(taxonomy=taxonomy, concept=concept, unit=unit, period=period),
         miss_meta_builder=lambda d: {"count": len(d.get("data", []))},
     )
 
@@ -335,20 +291,17 @@ async def search_filings(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Search filings by keywords using EDGAR full-text search."""
-    provider = registry.get("sec")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
 
-    async def _fetch():
-        await require_provider_rate_limit("sec")
+    async def _fetch(provider):
         results = await provider.search_filings(query=q, form_type=form_type, limit=limit)
         return {"query": q, "results": results}
 
     return await execute_sec_cached(
-        provider_method=_fetch,
+        registry=registry,
         cache=cache,
         cache_key=_cache_key("sec:search", q, form_type, str(limit)),
         route_name="sec_search",
+        fetcher=_fetch,
         cache_ttl=300,  # Shorter TTL for search results
         miss_meta_builder=lambda d: {"count": len(d.get("results", []))},
     )

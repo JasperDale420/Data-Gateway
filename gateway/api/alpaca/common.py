@@ -2,7 +2,8 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from contextlib import nullcontext
+from typing import Any
 
 # Query description constants
 from fastapi import Depends, HTTPException
@@ -27,7 +28,6 @@ DESC_COMMA_SYMBOLS = "Comma-separated symbols"
 
 # Error message constants
 ERR_PROVIDER_NOT_AVAILABLE = "Alpaca provider not available"
-T = TypeVar("T")
 CacheBackend = InMemoryCache | HybridCache
 _ALPACA_CACHE_INFLIGHT: dict[str, asyncio.Task[Any]] = {}
 _ALPACA_CACHE_LOCK = asyncio.Lock()
@@ -60,21 +60,41 @@ async def get_alpaca_provider(
 import httpx
 from alpaca.common.exceptions import APIError
 
+from gateway.core.rate_limiter import get_rate_limiter
 
-async def execute_alpaca_provider_call(
+
+def _handle_alpaca_error(exc: Exception) -> None:
+    """Map Alpaca-specific exceptions (APIError) to HTTP errors."""
+    if isinstance(exc, APIError):
+        status_code = getattr(exc, "status_code", 400)
+        if status_code < 500:
+            logger.warning("provider_request_failed", error=str(exc), status_code=status_code)
+        else:
+            logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+        raise HTTPException(status_code=status_code, detail=f"Alpaca API Error: {str(exc)}")
+
+
+async def execute_alpaca_provider_call[T](
     *,
     registry: ProviderRegistry,
     provider_call: Callable[[Any], Awaitable[T]],
     block: bool = True,
 ) -> T:
-    """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling."""
+    """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling.
+
+    Acquires an upstream concurrency semaphore (default 25) so that at most N
+    requests are in-flight to Alpaca simultaneously, preventing upstream 502s
+    when multiple clients burst requests at market open.
+    """
     provider = registry.get("alpaca")
     if not provider:
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     try:
         await require_provider_rate_limit("alpaca", block=block)
-        return await provider_call(provider)
+        sem = get_rate_limiter().upstream_semaphore("alpaca") or nullcontext()
+        async with sem:
+            return await provider_call(provider)
     except HTTPException:
         raise
     except APIError as e:
@@ -96,7 +116,7 @@ async def execute_alpaca_provider_call(
         raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
-async def execute_alpaca_cached_call(
+async def execute_alpaca_cached_call[T](
     *,
     registry: ProviderRegistry,
     cache: CacheBackend,
@@ -107,7 +127,13 @@ async def execute_alpaca_cached_call(
     cache_mode: str = "alpaca",
     block: bool = True,
 ) -> T:
-    """Run Alpaca provider call with shared cache + in-flight de-dupe."""
+    """Run Alpaca provider call with shared cache + in-flight de-dupe.
+
+    Alpaca uses task-level in-flight dedup (``_ALPACA_CACHE_INFLIGHT``) on top
+    of the standard cache pipeline. This is kept as a provider-specific wrapper
+    because the asyncio.Task-based dedup pattern is unique to Alpaca's upstream
+    concurrency semaphore model.
+    """
     cached = await cache.get(cache_key)
     if cached is not None:
         record_route_cache(route_label, "hit", cache_mode)

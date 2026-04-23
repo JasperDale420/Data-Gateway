@@ -30,7 +30,7 @@ def _validate_crypto_pair_or_raise(pair: str) -> str:
     normalized_pair = pair.strip().upper()
     error = _INPUT_VALIDATOR.validate_symbol(normalized_pair, symbol_type="crypto")
     if error is not None:
-        logger.warning(
+        logger.info(
             "alpaca_invalid_crypto_pair",
             pair=pair,
             normalized_pair=normalized_pair,

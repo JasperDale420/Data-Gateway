@@ -11,16 +11,15 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from gateway.api.deps import get_authenticator, get_connection_manager
 from gateway.config import Settings, get_settings
 from gateway.core.auth import ClientAuthenticator
-from gateway.core.connections import ConnectionManager
+from gateway.core.connections import ConnectionManager, is_benign_ws_close_error
 from gateway.core.logger import logger
 from gateway.core.security import get_input_validator
 
 router = APIRouter(tags=["websocket"])
 
 # Heartbeat settings per PRD
-HEARTBEAT_INTERVAL = 30  # seconds
-HEARTBEAT_TIMEOUT = 10  # seconds
-MAX_MISSED_HEARTBEATS = 3
+HEARTBEAT_TIMEOUT = 15  # seconds
+MAX_MISSED_HEARTBEATS = 4
 
 
 @router.websocket("/ws")
@@ -33,6 +32,8 @@ async def websocket_endpoint(
     """Main WebSocket endpoint with authentication."""
     connection_id = str(uuid.uuid4())
     connection = await connections.connect(connection_id, websocket)
+    if connection is None:
+        return
     heartbeat_task = None
 
     try:
@@ -67,7 +68,7 @@ async def websocket_endpoint(
         last_received: list[float] = [time.time()]
 
         # Start heartbeat task
-        heartbeat_task = asyncio.create_task(_heartbeat_loop(websocket, connection_id, last_received))
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(websocket, connection_id, last_received, settings))
 
         # Main message loop
         await _message_loop(
@@ -81,7 +82,13 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         logger.info("client_disconnected", connection_id=connection_id)
     except Exception as e:
-        logger.error("websocket_error", connection_id=connection_id, error=str(e))
+        # Downgrade to debug for errors on already-dead connections (close code 1006,
+        # missing transfer_data_task, etc.) — these are normal during reconnect cycles
+        # and generate massive log noise at ERROR level.
+        if is_benign_ws_close_error(e):
+            logger.debug("websocket_error_on_closed", connection_id=connection_id, error=str(e))
+        else:
+            logger.error("websocket_error", connection_id=connection_id, error=str(e))
     finally:
         if heartbeat_task:
             heartbeat_task.cancel()
@@ -104,10 +111,13 @@ async def _heartbeat_loop(
     websocket: WebSocket,
     connection_id: str,
     last_received: list[float],
+    settings: Settings,
 ) -> None:
     """Send heartbeats and disconnect clients that stop responding.
 
-    Per PRD: Send heartbeat every 30s, disconnect after 3 missed.
+    Per PRD: Send heartbeat every ``ws_heartbeat_interval`` seconds,
+    disconnect after ``MAX_MISSED_HEARTBEATS`` missed, or after
+    ``ws_idle_timeout`` seconds of silence.
 
     Detection strategy:
     - The JSON heartbeat is still sent for backward compatibility (clients may
@@ -115,16 +125,19 @@ async def _heartbeat_loop(
     - The *real* liveness check is the ``last_received`` timestamp, which is
       updated by ``_message_loop`` every time the client sends *any* message
       (subscribe, heartbeat ack, ping, etc.).
-    - If ``last_received`` is older than ``HEARTBEAT_INTERVAL * MAX_MISSED_HEARTBEATS``
+    - If ``last_received`` is older than ``heartbeat_interval * MAX_MISSED_HEARTBEATS``
       seconds the client is considered dead and the connection is closed.
+    - If ``last_received`` exceeds ``ws_idle_timeout`` the connection is closed
+      with code 4003 (idle timeout).
 
     This correctly handles the case where TCP stays open but the remote end is
     unresponsive (e.g. laptop lid closed, network partition without RST).
     """
+    heartbeat_interval = settings.ws_heartbeat_interval
     send_failures = 0
 
     while True:
-        await asyncio.sleep(HEARTBEAT_INTERVAL)
+        await asyncio.sleep(heartbeat_interval)
 
         # --- 1. Send the JSON heartbeat (best-effort, backward compat) ---
         try:
@@ -137,7 +150,12 @@ async def _heartbeat_loop(
             send_failures = 0
             logger.debug("heartbeat_sent", connection_id=connection_id)
         except Exception as e:
-            logger.warning("heartbeat_send_failed", connection_id=connection_id, error=str(e))
+            # Downgrade to debug when sending to an already-closed connection —
+            # the reconnect cycle handles recovery, no need to alarm.
+            if is_benign_ws_close_error(e):
+                logger.debug("heartbeat_send_failed_closed", connection_id=connection_id, error=str(e))
+            else:
+                logger.warning("heartbeat_send_failed", connection_id=connection_id, error=str(e))
             send_failures += 1
 
             if send_failures >= MAX_MISSED_HEARTBEATS:
@@ -154,7 +172,7 @@ async def _heartbeat_loop(
 
         # --- 2. Check client liveness via last_received timestamp ---
         silence = time.time() - last_received[0]
-        max_silence = HEARTBEAT_INTERVAL * MAX_MISSED_HEARTBEATS
+        max_silence = heartbeat_interval * MAX_MISSED_HEARTBEATS
 
         if silence > max_silence:
             logger.warning(
@@ -167,6 +185,15 @@ async def _heartbeat_loop(
                 await websocket.close(code=4002, reason="Heartbeat timeout")
             except Exception:
                 logger.debug("heartbeat_close_failed", connection_id=connection_id)
+            return
+
+        # --- 3. Check idle timeout (ws_idle_timeout) ---
+        if silence > settings.ws_idle_timeout:
+            logger.info("ws_idle_disconnect", connection_id=connection_id, idle_seconds=round(silence, 1))
+            try:
+                await websocket.close(code=4003, reason="Idle timeout")
+            except Exception:
+                logger.debug("idle_close_failed", connection_id=connection_id)
             return
 
 
@@ -194,8 +221,23 @@ async def _wait_for_auth(
             }
         )
         return False
+    except WebSocketDisconnect as e:
+        # Client dropped the connection before sending auth (TCP reset, tab closed,
+        # 1006 unclean close). Not an error — just a short-lived connection.
+        logger.info(
+            "auth_client_disconnected",
+            connection_id=connection_id,
+            code=getattr(e, "code", None),
+        )
+        return False
     except Exception as e:
-        logger.error("auth_receive_error", connection_id=connection_id, error=str(e))
+        # Downgrade benign close races (1006, transport gone, "not connected")
+        # to info — the client went away before completing auth, which is noise
+        # rather than a server-side problem to alert on.
+        if is_benign_ws_close_error(e):
+            logger.info("auth_client_disconnected", connection_id=connection_id, error=str(e))
+        else:
+            logger.error("auth_receive_error", connection_id=connection_id, error=str(e))
         return False
 
     # Validate message format

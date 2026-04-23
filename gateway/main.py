@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
+import os
+import socket
+import sys
 from contextlib import asynccontextmanager, suppress
 
 import orjson
@@ -15,6 +18,39 @@ import orjson
 from empire_core.logger import setup_logging
 
 setup_logging("data-gateway")
+
+
+def _check_port_available(host: str, port: int) -> None:
+    """Fail fast if another process is already listening on our port.
+
+    Prevents silent credential conflicts where two gateway instances
+    compete for the same Alpaca WebSocket connection pool.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port))
+    except OSError:
+        print(
+            f"FATAL: port {port} is already in use. "
+            "Another gateway instance (bare-metal or Docker) may be running. "
+            "Kill it first: lsof -ti :{port} | xargs kill -9",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    finally:
+        sock.close()
+
+
+# Only check port when running under uvicorn as a single worker (not during
+# test imports or multi-worker mode where the master process binds the port).
+if "uvicorn" in sys.modules:
+    from gateway.config import get_settings as _get_boot_settings
+
+    _boot = _get_boot_settings()
+    # Skip port check when running as a forked worker (WEB_CONCURRENCY or
+    # parent process already holds the socket).
+    if os.environ.get("WEB_CONCURRENCY") is None and os.getppid() != 1:
+        _check_port_available(_boot.host, _boot.port)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -283,7 +319,7 @@ async def lifespan(app: FastAPI):
             lazy_connect=settings.stream_lazy_connect,
             fanout_max_inflight=settings.stream_fanout_max_inflight,
             fanout_batch_size=settings.stream_fanout_batch_size,
-            on_broadcast=connections.broadcast,
+            on_broadcast=connections.broadcast_to_connection_ids,
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()
@@ -303,7 +339,7 @@ async def lifespan(app: FastAPI):
         from gateway.core.globals import set_sink_registry
         from gateway.core.redis_sink import RedisStreamsSink
 
-        sink_registry = DataSinkRegistry()
+        sink_registry = DataSinkRegistry(max_in_flight_per_sink=settings.data_sink_max_inflight_per_sink)
         redis_sink = RedisStreamsSink(
             redis_url=settings.data_sink_redis_url,
             max_len=settings.data_sink_max_stream_len,
@@ -354,7 +390,11 @@ async def lifespan(app: FastAPI):
     try:
         signal.signal(signal.SIGHUP, handle_sighup)
         logger.info("sighup_handler_registered")
-    except (ValueError, OSError):
+    except ValueError:
+        # signal.signal() raises ValueError when called from a non-main thread
+        # (e.g. during pytest). This is expected and not a platform limitation.
+        logger.debug("sighup_handler_skipped", reason="Not in main thread (expected during tests)")
+    except OSError:
         logger.warning("sighup_handler_failed", reason="Not supported on this platform")
 
     # Start UW background poller (if data sink is enabled)
@@ -377,6 +417,27 @@ async def lifespan(app: FastAPI):
             interval_seconds=300,
             eod_enabled=settings.uw_eod_enabled,
         )
+
+    # Start Treasury yield background poller (if data sink is enabled and AlphaVantage is ready)
+    treasury_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url:
+        av_provider = registry.get("alphavantage")
+        if av_provider is not None and getattr(av_provider, "_api_key", ""):
+            from gateway.core.treasury_poller import start_treasury_poller
+
+            treasury_poller = await start_treasury_poller(
+                maturities=settings.treasury_poller_maturity_list,
+                poll_interval_seconds=86400,
+            )
+            logger.info(
+                "treasury_poller_initialized",
+                maturities=settings.treasury_poller_maturity_list,
+            )
+        else:
+            reason = (
+                "AlphaVantage provider not available" if av_provider is None else "AlphaVantage API key not configured"
+            )
+            logger.warning("treasury_poller_skipped", reason=reason)
 
     option_capture_service = None
     if settings.option_capture_enabled:
@@ -442,6 +503,11 @@ async def lifespan(app: FastAPI):
         await sink_registry.close_all()
 
     # Step 7: Shutdown remaining services
+    if treasury_poller:
+        from gateway.core.treasury_poller import stop_treasury_poller
+
+        await stop_treasury_poller()
+
     if uw_poller:
         from gateway.core.uw_poller import stop_uw_poller
 

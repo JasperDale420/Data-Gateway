@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from time import perf_counter
-from typing import Any, TypeVar
+from typing import Any
 
 import structlog
 from unusualwhales.types import UNSET, Unset
@@ -35,10 +35,7 @@ DEFAULT_UW_MAX_INFLIGHT_CALLS = 32
 TZ_UTC_SUFFIX = "+00:00"
 
 
-T = TypeVar("T")
-
-
-def _or_unset(value: T | None) -> T | Unset:
+def _or_unset[T](value: T | None) -> T | Unset:
     """Convert None to UNSET for SDK compatibility."""
     return UNSET if value is None else value
 

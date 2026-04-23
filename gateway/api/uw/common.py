@@ -4,10 +4,10 @@ import base64
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from gateway.api.deps import (
+    execute_provider_cached,
     get_cache,
     get_registry,
     require_api_key,
@@ -198,25 +198,23 @@ async def execute_uw_cached(
     fetcher: Callable[[Any], Awaitable[Any]],
     build_response: Callable[[Any], dict],
 ) -> dict:
-    """Execute a UW route fetch with shared cache and rate-limit flow."""
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
+    """Execute a UW route fetch with shared cache and rate-limit flow.
 
-    provider = get_uw_provider(registry)
-    await require_provider_rate_limit("unusual_whales")
-    try:
-        result = await fetcher(provider)
-    except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code
-        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
-        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
-    response = build_response(result)
-    await cache.set(cache_key, response, ttl=ttl)
-    return response
+    UW caches the fully-built response dict (not raw data), so we use
+    ``cache_transform`` to produce the response and ``build_response``
+    to return it as-is from the unified pipeline.
+    """
+    return await execute_provider_cached(
+        provider_name="unusual_whales",
+        registry=registry,
+        cache=cache,
+        cache_key=cache_key,
+        ttl=ttl,
+        fetcher=fetcher,
+        cache_transform=build_response,
+        build_response=lambda data, _cached: data,
+        not_available_msg=PROVIDER_NOT_AVAILABLE,
+    )
 
 
 # Re-export all common dependencies for sub-routers

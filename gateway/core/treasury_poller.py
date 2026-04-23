@@ -8,7 +8,11 @@ Treasury yields update once per business day, so the default poll interval
 is 24 hours.  The poller only emits the most recent data point per maturity
 to avoid re-publishing historical data on every poll.
 
-Pattern follows ``gateway.core.quotes_poller``:
+Rate-limit aware: inserts a 15-second delay between maturity fetches to
+stay within Alpha Vantage's free-tier limit of 5 calls/min.  On rate-limit
+errors, applies exponential backoff before retrying the affected maturity.
+
+Pattern follows ``gateway.core.base_poller.BasePoller``:
 - Runs as an asyncio background task during application lifespan
 - Wraps each data point in an ``EventEnvelope`` via ``wrap_event``
 - Publishes to the data sink for Heber integration
@@ -18,10 +22,10 @@ Pattern follows ``gateway.core.quotes_poller``:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
+from gateway.core.base_poller import BasePoller
 from gateway.core.envelope import wrap_event
 from gateway.core.logger import logger
 
@@ -31,8 +35,14 @@ HEBER_STREAM = "heber:events"
 # Valid Alpha Vantage Treasury yield maturities
 VALID_MATURITIES = frozenset({"3month", "2year", "5year", "7year", "10year", "30year"})
 
+# Rate-limit constants for Alpha Vantage free tier (5 calls/min, 500/day)
+_INTER_REQUEST_DELAY_SECONDS = 15  # delay between maturity fetches (~4 calls/min max)
+_RATE_LIMIT_BACKOFF_BASE = 60  # initial backoff on rate-limit error (seconds)
+_RATE_LIMIT_BACKOFF_MAX = 300  # maximum backoff (5 minutes)
+_RATE_LIMIT_MAX_RETRIES = 3  # max retries per maturity on rate-limit errors
 
-class TreasuryYieldPoller:
+
+class TreasuryYieldPoller(BasePoller):
     """Background poller that fetches Treasury yield data via Alpha Vantage.
 
     Publishes ``EventEnvelope`` dicts to the data-sink for Heber consumption.
@@ -48,12 +58,62 @@ class TreasuryYieldPoller:
         if not self._maturities:
             self._maturities = ["2year", "10year"]
 
-        self._poll_interval = max(3600, poll_interval_seconds)
-        self._running = False
-        self._task: asyncio.Task | None = None
+        super().__init__(
+            poll_interval_seconds=max(3600, poll_interval_seconds),
+            poller_name="treasury_poller",
+        )
         self._provider: Any = None
         self._last_poll_time: datetime | None = None
         self._last_poll_count: int = 0
+        self._premium_blocked_maturities: set[str] = set()
+
+    # ─────────────────────────────────────────────────────────────────────
+    # BasePoller hooks
+    # ─────────────────────────────────────────────────────────────────────
+
+    async def _on_start(self) -> bool:
+        from gateway.core.globals import get_registry
+
+        registry = get_registry()
+        self._provider = registry.get("alphavantage")
+        if self._provider is None:
+            logger.error("treasury_poller_no_alphavantage_provider")
+            return False
+
+        # Check that the API key is actually configured before starting the
+        # poll loop.  Without it every request will fail with API_KEY_NOT_SET.
+        if not getattr(self._provider, "api_key_configured", True):
+            logger.warning(
+                "treasury_poller_skipped_no_api_key",
+                reason="Alpha Vantage API key not configured — treasury poller will not start",
+            )
+            return False
+
+        logger.info(
+            "treasury_poller_started",
+            interval_seconds=self._poll_interval,
+            maturities=self._maturities,
+        )
+        return True
+
+    async def stop(self) -> None:
+        await super().stop()
+        logger.info("treasury_poller_stopped")
+
+    async def _poll_loop(self) -> None:
+        """Override to add an initial 30s startup delay."""
+        await asyncio.sleep(30)
+        await super()._poll_loop()
+
+    async def _poll_once(self) -> None:
+        from gateway.core.globals import get_sink_registry
+
+        sink_registry = get_sink_registry()
+        if not sink_registry:
+            logger.debug("treasury_poller_no_sink")
+            return
+
+        await self._poll_and_publish(sink_registry)
 
     # ─────────────────────────────────────────────────────────────────────
     # Core polling
@@ -62,6 +122,12 @@ class TreasuryYieldPoller:
     async def _fetch_yields(self) -> list[dict[str, Any]]:
         """Fetch the most recent Treasury yield for each configured maturity.
 
+        Inserts a delay between maturity fetches to respect Alpha Vantage's
+        free-tier rate limit (5 calls/min).  On rate-limit errors, applies
+        exponential backoff before retrying the same maturity.  Premium
+        endpoint errors are recorded permanently and the maturity is skipped
+        on all future poll cycles.
+
         Returns a list of payload dicts, one per maturity.
         """
         if self._provider is None:
@@ -69,7 +135,32 @@ class TreasuryYieldPoller:
 
         results: list[dict[str, Any]] = []
 
-        for maturity in self._maturities:
+        for idx, maturity in enumerate(self._maturities):
+            # Skip maturities that have been permanently flagged as premium-only
+            if maturity in self._premium_blocked_maturities:
+                logger.debug("treasury_poller_premium_skip", maturity=maturity)
+                continue
+
+            # Rate-limit pacing: wait between requests (skip delay before the first)
+            if idx > 0:
+                await asyncio.sleep(_INTER_REQUEST_DELAY_SECONDS)
+
+            result = await self._fetch_single_maturity(maturity)
+            if result is not None:
+                results.append(result)
+
+        return results
+
+    async def _fetch_single_maturity(self, maturity: str) -> dict[str, Any] | None:
+        """Fetch a single maturity with exponential backoff on rate-limit errors.
+
+        Returns the yield payload dict, or None if the fetch failed.
+        """
+        from gateway.providers.alphavantage import AlphaVantagePremiumError, AlphaVantageRateLimitError
+
+        backoff = _RATE_LIMIT_BACKOFF_BASE
+
+        for attempt in range(_RATE_LIMIT_MAX_RETRIES + 1):
             try:
                 data = await self._provider.get_economic_indicator(
                     indicator="TREASURY_YIELD",
@@ -79,7 +170,7 @@ class TreasuryYieldPoller:
                 data_points = data.get("data", [])
                 if not data_points:
                     logger.warning("treasury_poller_no_data", maturity=maturity)
-                    continue
+                    return None
 
                 # Alpha Vantage returns data sorted newest-first.
                 # Take only the most recent data point.
@@ -90,7 +181,7 @@ class TreasuryYieldPoller:
                 # Skip placeholder values (Alpha Vantage uses "." for missing)
                 if not value_str or value_str == ".":
                     logger.warning("treasury_poller_missing_value", maturity=maturity, date=date_str)
-                    continue
+                    return None
 
                 try:
                     yield_pct = float(value_str)
@@ -101,15 +192,42 @@ class TreasuryYieldPoller:
                         date=date_str,
                         value=value_str,
                     )
-                    continue
+                    return None
 
-                results.append(
-                    {
-                        "date": date_str,
-                        "maturity": maturity,
-                        "yield_pct": yield_pct,
-                    }
+                return {
+                    "date": date_str,
+                    "maturity": maturity,
+                    "yield_pct": yield_pct,
+                }
+
+            except AlphaVantagePremiumError:
+                # Permanently skip this maturity — the free tier cannot access it
+                logger.warning(
+                    "treasury_poller_premium_blocked",
+                    maturity=maturity,
+                    reason="Premium endpoint requires Alpha Vantage subscription — maturity disabled",
                 )
+                self._premium_blocked_maturities.add(maturity)
+                return None
+
+            except AlphaVantageRateLimitError:
+                if attempt < _RATE_LIMIT_MAX_RETRIES:
+                    logger.warning(
+                        "treasury_poller_rate_limited",
+                        maturity=maturity,
+                        attempt=attempt + 1,
+                        max_retries=_RATE_LIMIT_MAX_RETRIES,
+                        backoff_seconds=backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, _RATE_LIMIT_BACKOFF_MAX)
+                else:
+                    logger.error(
+                        "treasury_poller_rate_limit_exhausted",
+                        maturity=maturity,
+                        attempts=_RATE_LIMIT_MAX_RETRIES + 1,
+                    )
+                    return None
 
             except Exception as e:
                 logger.error(
@@ -118,8 +236,9 @@ class TreasuryYieldPoller:
                     error=str(e),
                     exc_info=True,
                 )
+                return None
 
-        return results
+        return None
 
     async def _poll_and_publish(self, sink_registry: Any) -> None:
         """Fetch Treasury yields and publish to data sink."""
@@ -174,68 +293,14 @@ class TreasuryYieldPoller:
         )
 
     # ─────────────────────────────────────────────────────────────────────
-    # Lifecycle
+    # Telemetry
     # ─────────────────────────────────────────────────────────────────────
-
-    async def start(self) -> None:
-        """Start the background polling task."""
-        if self._running:
-            logger.warning("treasury_poller_already_running")
-            return
-
-        from gateway.core.globals import get_registry
-
-        registry = get_registry()
-        self._provider = registry.get("alphavantage")
-        if self._provider is None:
-            logger.error("treasury_poller_no_alphavantage_provider")
-            return
-
-        self._running = True
-        self._task = asyncio.create_task(self._poll_loop())
-        logger.info(
-            "treasury_poller_started",
-            interval_seconds=self._poll_interval,
-            maturities=self._maturities,
-        )
-
-    async def stop(self) -> None:
-        """Stop the background polling task."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-        logger.info("treasury_poller_stopped")
-
-    async def _poll_loop(self) -> None:
-        """Main polling loop — runs at the configured interval."""
-        from gateway.core.globals import get_sink_registry
-
-        # Run an initial poll shortly after startup (30s delay for provider init)
-        await asyncio.sleep(30)
-
-        while self._running:
-            try:
-                sink_registry = get_sink_registry()
-                if not sink_registry:
-                    logger.debug("treasury_poller_no_sink")
-                    await asyncio.sleep(60)
-                    continue
-
-                await self._poll_and_publish(sink_registry)
-
-            except Exception as e:
-                logger.error("treasury_poller_loop_error", error=str(e), exc_info=True)
-
-            await asyncio.sleep(self._poll_interval)
 
     def get_runtime_snapshot(self) -> dict[str, Any]:
         """Return lightweight runtime telemetry for admin surfaces."""
-        return {
-            "running": self._running,
-            "poll_interval_seconds": self._poll_interval,
+        return super().get_runtime_snapshot() | {
             "maturities": self._maturities,
+            "premium_blocked_maturities": sorted(self._premium_blocked_maturities),
             "last_poll_time": self._last_poll_time.isoformat() if self._last_poll_time else None,
             "last_poll_count": self._last_poll_count,
         }

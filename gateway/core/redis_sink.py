@@ -34,6 +34,20 @@ MAX_BACKOFF_SECONDS = 5.0
 PUBLISH_RETRY_ATTEMPTS = 3
 PUBLISH_RETRY_BACKOFF_BASE = 0.1  # seconds — doubles each attempt (0.1, 0.2, 0.4)
 
+# Additional backoff when Redis reports it is still loading data into memory.
+# This is a transient state during Redis startup/restart and warrants a
+# longer pause before retrying.
+REDIS_LOADING_BACKOFF_SECONDS = 2.0
+
+# Substrings in error messages indicating Redis is still loading its dataset.
+_REDIS_LOADING_INDICATORS = frozenset(
+    {
+        "loading the dataset",
+        "redis is loading",
+        "loading",
+    }
+)
+
 # Failed event buffer: events that exhaust all retries are held here
 # and drained on the next successful reconnect.  The deque maxlen caps
 # memory usage — at ~1 KB/event, 10 000 events ≈ 10 MB.
@@ -76,6 +90,8 @@ class RedisStreamsSink(DataSink):
         self._reconnect_cooldown_until: float = 0.0
         self._backoff_seconds: float = INITIAL_BACKOFF_SECONDS
 
+        self._closed = False
+
         # Failed event buffer — holds (topic, payload_bytes) for events that
         # exhausted all retries.  Drained automatically on reconnect.
         self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=FAILED_EVENT_BUFFER_CAPACITY)
@@ -95,7 +111,10 @@ class RedisStreamsSink(DataSink):
 
         Respects a reconnect cooldown set by ``_reset_connection`` to avoid
         tight reconnect-fail loops that saturate Redis with connections.
+        Refuses to reconnect after ``close()`` has been called.
         """
+        if self._closed:
+            return
         if self._redis is not None:
             return
 
@@ -168,12 +187,19 @@ class RedisStreamsSink(DataSink):
         )
         return aioredis.Redis(connection_pool=pool)
 
+    @staticmethod
+    def _is_redis_loading(error: Exception) -> bool:
+        """Check if the error indicates Redis is still loading its dataset."""
+        msg = str(error).lower()
+        return any(indicator in msg for indicator in _REDIS_LOADING_INDICATORS)
+
     async def _reset_connection(
         self,
         operation: str,
         error: Exception,
         *,
         failed_client: Any = None,
+        log_level: str = "warning",
     ) -> None:
         """Force reconnect on the next call after a transport/protocol failure.
 
@@ -189,6 +215,11 @@ class RedisStreamsSink(DataSink):
         Acquires ``_connect_lock`` to serialize against ``_ensure_connected``
         and other concurrent ``_reset_connection`` calls, preventing multiple
         independent pool creations which would leak connections.
+
+        Args:
+            log_level: Log level for the reset message. Use "debug" for
+                intermediate retry resets to reduce noise; "warning" (default)
+                for final/standalone resets.
         """
         if failed_client is not None and self._redis is not failed_client:
             return
@@ -204,13 +235,21 @@ class RedisStreamsSink(DataSink):
             self._connected = False
             if old_client is not None:
                 await self._close_stale_client(old_client)
-            self._reconnect_cooldown_until = time.monotonic() + self._backoff_seconds
+
+            # Use a longer backoff when Redis is still loading its dataset
+            if self._is_redis_loading(error):
+                effective_backoff = max(self._backoff_seconds, REDIS_LOADING_BACKOFF_SECONDS)
+            else:
+                effective_backoff = self._backoff_seconds
+
+            self._reconnect_cooldown_until = time.monotonic() + effective_backoff
             error_desc = str(error) if str(error) else type(error).__name__
-            logger.warning(
+            log_fn = logger.debug if log_level == "debug" else logger.warning
+            log_fn(
                 "redis_sink_connection_reset",
                 operation=operation,
                 error=error_desc,
-                backoff_seconds=round(self._backoff_seconds, 2),
+                backoff_seconds=round(effective_backoff, 2),
             )
             self._backoff_seconds = min(self._backoff_seconds * 2, MAX_BACKOFF_SECONDS)
 
@@ -341,6 +380,8 @@ class RedisStreamsSink(DataSink):
         Returns:
             True if successful
         """
+        if self._closed:
+            return False
         if isinstance(data, str):
             payload = {b"data": data.encode()}
         elif isinstance(data, bytes):
@@ -390,11 +431,23 @@ class RedisStreamsSink(DataSink):
 
             except Exception as e:
                 last_error = e
-                error_desc = str(e) if str(e) else type(e).__name__
-                await self._reset_connection(operation="publish", error=e, failed_client=client)
+                is_last_attempt = attempt >= PUBLISH_RETRY_ATTEMPTS - 1
+                # Log intermediate retry resets at DEBUG to reduce noise;
+                # the final WARNING is emitted below after all retries exhaust.
+                await self._reset_connection(
+                    operation="publish",
+                    error=e,
+                    failed_client=client,
+                    log_level="warning" if is_last_attempt else "debug",
+                )
 
-                if attempt < PUBLISH_RETRY_ATTEMPTS - 1:
-                    backoff = PUBLISH_RETRY_BACKOFF_BASE * (2**attempt)
+                if not is_last_attempt:
+                    # Use a longer backoff when Redis is loading
+                    if self._is_redis_loading(e):
+                        backoff = REDIS_LOADING_BACKOFF_SECONDS
+                    else:
+                        backoff = PUBLISH_RETRY_BACKOFF_BASE * (2**attempt)
+                    error_desc = str(e) if str(e) else type(e).__name__
                     logger.debug(
                         "redis_sink_publish_retrying",
                         topic=topic,
@@ -569,11 +622,19 @@ class RedisStreamsSink(DataSink):
             return False
 
     async def close(self) -> None:
-        """Close Redis connection pool."""
-        if self._redis:
-            await self._redis.close()
-            self._redis = None
-            self._connected = False
+        """Close Redis connection pool.
+
+        Sets ``_closed`` so that no further operations attempt to reconnect,
+        which would fail with "Event loop is closed" during shutdown.
+        Explicitly disconnects the underlying connection pool to release
+        all TCP sockets immediately.
+        """
+        self._closed = True
+        client = self._redis
+        self._redis = None
+        self._connected = False
+        if client is not None:
+            await self._close_stale_client(client)
             logger.info("redis_sink_closed")
 
 

@@ -8,6 +8,8 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Any
 
+from gateway.core.timeutils import parse_timestamp
+
 _TIMEFRAME_TO_MINUTES: dict[str, int] = {
     "1Min": 1,
     "1m": 1,
@@ -477,18 +479,10 @@ class QualityAnalyzer:
             prev_ts = curr_ts
         return True
 
-    def _parse_timestamp(self, ts: Any) -> datetime | None:
-        """Parse timestamp to datetime."""
-        if ts is None:
-            return None
-        if isinstance(ts, datetime):
-            return ts
-        if isinstance(ts, str):
-            try:
-                return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            except ValueError:
-                return None
-        return None
+    @staticmethod
+    def _parse_timestamp(ts: Any) -> datetime | None:
+        """Parse timestamp to datetime (delegates to shared utility)."""
+        return parse_timestamp(ts)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

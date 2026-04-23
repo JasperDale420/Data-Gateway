@@ -149,15 +149,15 @@ class AlpacaStreamType(Enum):
         return "equity"
 
 
+_FEED_NAMES = ("bars", "quotes", "trades", "news")
+
+
 @dataclass
 class ClientSubscription:
     """Tracks a client's subscriptions for a stream type."""
 
     client_id: str
-    bars: set[str] = field(default_factory=set)
-    quotes: set[str] = field(default_factory=set)
-    trades: set[str] = field(default_factory=set)
-    news: set[str] = field(default_factory=set)
+    feeds: dict[str, set[str]] = field(default_factory=lambda: {name: set() for name in _FEED_NAMES})
 
 
 class SubscriptionManager:
@@ -169,12 +169,71 @@ class SubscriptionManager:
 
     def __init__(self) -> None:
         self._subscriptions: dict[str, ClientSubscription] = {}
-        self._index: dict[str, dict[str, set[str]]] = {
-            "bars": {},
-            "quotes": {},
-            "trades": {},
-            "news": {},
-        }
+        self._index: dict[str, dict[str, set[str]]] = {name: {} for name in _FEED_NAMES}
+
+    def _subscribe_feed(
+        self,
+        client_id: str,
+        sub: ClientSubscription,
+        feed: str,
+        symbols: list[str],
+    ) -> set[str]:
+        """Add symbols for a single feed. Returns newly added symbols (no other client had them)."""
+        new_symbols: set[str] = set()
+        client_set = sub.feeds[feed]
+        index = self._index[feed]
+        for symbol in symbols:
+            if symbol in client_set:
+                continue
+            client_set.add(symbol)
+            clients = index.get(symbol)
+            if clients is None:
+                index[symbol] = {client_id}
+                new_symbols.add(symbol)
+            else:
+                clients.add(client_id)
+        return new_symbols
+
+    def _unsubscribe_feed(
+        self,
+        client_id: str,
+        sub: ClientSubscription,
+        feed: str,
+        symbols: list[str],
+    ) -> set[str]:
+        """Remove symbols for a single feed. Returns symbols no longer needed upstream."""
+        removed: set[str] = set()
+        client_set = sub.feeds[feed]
+        index = self._index[feed]
+        for symbol in symbols:
+            if symbol not in client_set:
+                continue
+            client_set.discard(symbol)
+            clients = index.get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    index.pop(symbol, None)
+                    removed.add(symbol)
+        return removed
+
+    def _remove_client_feed(
+        self,
+        client_id: str,
+        sub: ClientSubscription,
+        feed: str,
+    ) -> set[str]:
+        """Remove all of a client's symbols for a feed. Returns symbols no longer needed upstream."""
+        removed: set[str] = set()
+        index = self._index[feed]
+        for symbol in sub.feeds[feed]:
+            clients = index.get(symbol)
+            if clients:
+                clients.discard(client_id)
+                if not clients:
+                    index.pop(symbol, None)
+                    removed.add(symbol)
+        return removed
 
     def subscribe(
         self,
@@ -187,59 +246,11 @@ class SubscriptionManager:
         """Add subscriptions for a client. Returns newly added symbols."""
         if client_id not in self._subscriptions:
             self._subscriptions[client_id] = ClientSubscription(client_id=client_id)
-
         sub = self._subscriptions[client_id]
-        new_bars: set[str] = set()
-        new_quotes: set[str] = set()
-        new_trades: set[str] = set()
-        new_news: set[str] = set()
-
-        if bars:
-            for symbol in bars:
-                if symbol in sub.bars:
-                    continue
-                sub.bars.add(symbol)
-                clients = self._index["bars"].get(symbol)
-                if clients is None:
-                    self._index["bars"][symbol] = {client_id}
-                    new_bars.add(symbol)
-                else:
-                    clients.add(client_id)
-        if quotes:
-            for symbol in quotes:
-                if symbol in sub.quotes:
-                    continue
-                sub.quotes.add(symbol)
-                clients = self._index["quotes"].get(symbol)
-                if clients is None:
-                    self._index["quotes"][symbol] = {client_id}
-                    new_quotes.add(symbol)
-                else:
-                    clients.add(client_id)
-        if trades:
-            for symbol in trades:
-                if symbol in sub.trades:
-                    continue
-                sub.trades.add(symbol)
-                clients = self._index["trades"].get(symbol)
-                if clients is None:
-                    self._index["trades"][symbol] = {client_id}
-                    new_trades.add(symbol)
-                else:
-                    clients.add(client_id)
-        if news:
-            for symbol in news:
-                if symbol in sub.news:
-                    continue
-                sub.news.add(symbol)
-                clients = self._index["news"].get(symbol)
-                if clients is None:
-                    self._index["news"][symbol] = {client_id}
-                    new_news.add(symbol)
-                else:
-                    clients.add(client_id)
-
-        return new_bars, new_quotes, new_trades, new_news
+        feeds = {"bars": bars, "quotes": quotes, "trades": trades, "news": news}
+        return tuple(  # type: ignore[return-value]
+            self._subscribe_feed(client_id, sub, name, syms) if syms else set() for name, syms in feeds.items()
+        )
 
     def unsubscribe(
         self,
@@ -252,104 +263,20 @@ class SubscriptionManager:
         """Remove subscriptions for a client. Returns symbols to unsubscribe upstream."""
         if client_id not in self._subscriptions:
             return set(), set(), set(), set()
-
         sub = self._subscriptions[client_id]
-        removed_bars: set[str] = set()
-        removed_quotes: set[str] = set()
-        removed_trades: set[str] = set()
-        removed_news: set[str] = set()
-
-        if bars:
-            for symbol in bars:
-                if symbol not in sub.bars:
-                    continue
-                sub.bars.discard(symbol)
-                clients = self._index["bars"].get(symbol)
-                if clients:
-                    clients.discard(client_id)
-                    if not clients:
-                        self._index["bars"].pop(symbol, None)
-                        removed_bars.add(symbol)
-        if quotes:
-            for symbol in quotes:
-                if symbol not in sub.quotes:
-                    continue
-                sub.quotes.discard(symbol)
-                clients = self._index["quotes"].get(symbol)
-                if clients:
-                    clients.discard(client_id)
-                    if not clients:
-                        self._index["quotes"].pop(symbol, None)
-                        removed_quotes.add(symbol)
-        if trades:
-            for symbol in trades:
-                if symbol not in sub.trades:
-                    continue
-                sub.trades.discard(symbol)
-                clients = self._index["trades"].get(symbol)
-                if clients:
-                    clients.discard(client_id)
-                    if not clients:
-                        self._index["trades"].pop(symbol, None)
-                        removed_trades.add(symbol)
-        if news:
-            for symbol in news:
-                if symbol not in sub.news:
-                    continue
-                sub.news.discard(symbol)
-                clients = self._index["news"].get(symbol)
-                if clients:
-                    clients.discard(client_id)
-                    if not clients:
-                        self._index["news"].pop(symbol, None)
-                        removed_news.add(symbol)
-
-        return removed_bars, removed_quotes, removed_trades, removed_news
+        feeds = {"bars": bars, "quotes": quotes, "trades": trades, "news": news}
+        return tuple(  # type: ignore[return-value]
+            self._unsubscribe_feed(client_id, sub, name, syms) if syms else set() for name, syms in feeds.items()
+        )
 
     def remove_client(self, client_id: str) -> tuple[set[str], set[str], set[str], set[str]]:
         """Remove all subscriptions for a client."""
         if client_id not in self._subscriptions:
             return set(), set(), set(), set()
-
         sub = self._subscriptions.pop(client_id)
-        removed_bars: set[str] = set()
-        removed_quotes: set[str] = set()
-        removed_trades: set[str] = set()
-        removed_news: set[str] = set()
-
-        for symbol in sub.bars:
-            clients = self._index["bars"].get(symbol)
-            if clients:
-                clients.discard(client_id)
-                if not clients:
-                    self._index["bars"].pop(symbol, None)
-                    removed_bars.add(symbol)
-
-        for symbol in sub.quotes:
-            clients = self._index["quotes"].get(symbol)
-            if clients:
-                clients.discard(client_id)
-                if not clients:
-                    self._index["quotes"].pop(symbol, None)
-                    removed_quotes.add(symbol)
-
-        for symbol in sub.trades:
-            clients = self._index["trades"].get(symbol)
-            if clients:
-                clients.discard(client_id)
-                if not clients:
-                    self._index["trades"].pop(symbol, None)
-                    removed_trades.add(symbol)
-
-        for symbol in sub.news:
-            clients = self._index["news"].get(symbol)
-            if clients:
-                clients.discard(client_id)
-                if not clients:
-                    self._index["news"].pop(symbol, None)
-                    removed_news.add(symbol)
-
-        return removed_bars, removed_quotes, removed_trades, removed_news
+        return tuple(  # type: ignore[return-value]
+            self._remove_client_feed(client_id, sub, name) for name in _FEED_NAMES
+        )
 
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
         """Get all clients subscribed to a symbol for a data type (returns copy)."""
@@ -443,7 +370,7 @@ class UpstreamConnection:
         self._ws = await websockets.connect(
             endpoint,
             ping_interval=30,
-            ping_timeout=10,
+            ping_timeout=30,
             close_timeout=5,
         )
         logger.info("connected_upstream", stream=self.stream_type.value)
@@ -659,7 +586,25 @@ class UpstreamConnection:
             )
 
     async def _connect_and_run(self) -> None:
-        """Main connection loop with reconnection."""
+        """Main connection loop with reconnection.
+
+        Each loop iteration performs **exactly one** connect attempt. A
+        successful connection is held until ``_receive_loop`` returns (clean
+        disconnect, transport error, or cancellation); at that point we
+        release Alpaca's connection slot, sleep for exponential backoff, and
+        try again.
+
+        Previously this loop was paired with a separate
+        ``_reconnect_with_backoff()`` helper that also did its own
+        connect/auth/subscribe. After a successful reconnect it returned,
+        and the outer loop would then call ``connect()`` a second time —
+        tearing down the just-established WS (via ``_close_ws()``) and
+        opening a fresh one. That doubled Alpaca-side connection churn on
+        every flap and left a 1–3s window after each recovery where bars
+        were lost, which was the proximate cause of the simultaneous
+        stale-data events we saw across downstream clients on Apr 15–17.
+        """
+        attempt = 0
         while self._running:
             try:
                 await self.connect()
@@ -671,7 +616,16 @@ class UpstreamConnection:
                 if bars or quotes or trades or news:
                     await self.subscribe(bars, quotes, trades, news)
 
-                # Start receive loop
+                if attempt > 0:
+                    logger.info(
+                        "reconnected",
+                        stream=self.stream_type.value,
+                        attempt=attempt,
+                    )
+                # A successful connection resets the retry budget. The outer
+                # loop continues to _receive_loop which runs until the WS dies.
+                attempt = 0
+
                 await self._receive_loop()
 
             except websockets.exceptions.ConnectionClosed as e:
@@ -681,23 +635,58 @@ class UpstreamConnection:
                     code=e.code,
                     reason=e.reason,
                 )
-            except Exception:
-                logger.exception("connection_error", stream=self.stream_type.value)
-
-            self._authenticated = False
-            # Close the WebSocket to release Alpaca's connection slot before reconnecting
-            await self._close_ws()
-
-            if self._running:
-                await self._reconnect_with_backoff()
-                if not self._running:
-                    # Reconnect gave up (max retries or non-recoverable error)
+            except Exception as exc:
+                error_msg = str(exc)
+                if any(msg in error_msg for msg in self._NON_RECOVERABLE_ERRORS):
+                    logger.error(
+                        "non_recoverable_error",
+                        stream=self.stream_type.value,
+                        error=error_msg,
+                        hint="Check for stale connections or competing applications using the same Alpaca credentials.",
+                    )
+                    self._running = False
+                    self._authenticated = False
+                    await self._close_ws()
                     logger.info(
                         "stream_dormant",
                         stream=self.stream_type.value,
                         hint="Will restart on next client subscription",
                     )
                     return
+                logger.exception("connection_error", stream=self.stream_type.value)
+
+            self._authenticated = False
+            # Release Alpaca's connection slot before backing off / retrying.
+            await self._close_ws()
+
+            if not self._running:
+                return
+
+            attempt += 1
+            if attempt > self.max_retries:
+                logger.error(
+                    "reconnect_exhausted",
+                    stream=self.stream_type.value,
+                    max_retries=self.max_retries,
+                )
+                self._running = False
+                logger.info(
+                    "stream_dormant",
+                    stream=self.stream_type.value,
+                    hint="Will restart on next client subscription",
+                )
+                return
+
+            delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)
+            jitter = delay * 0.2 * (random.random() * 2 - 1)  # ±20%
+            wait = max(0.0, delay + jitter)
+            logger.info(
+                "reconnecting",
+                stream=self.stream_type.value,
+                attempt=attempt,
+                delay=round(wait, 3),
+            )
+            await asyncio.sleep(wait)
 
     async def _receive_loop(self) -> None:
         """Receive and dispatch messages.
@@ -733,66 +722,6 @@ class UpstreamConnection:
 
     # Auth error messages that indicate account-level issues, not transient failures
     _NON_RECOVERABLE_ERRORS = ("connection limit exceeded",)
-
-    async def _reconnect_with_backoff(self) -> None:
-        """Reconnect with exponential backoff per PRD.
-
-        Sets self._running = False if retries are exhausted or a non-recoverable
-        error is detected, signaling the outer loop to stop.
-        """
-        for attempt in range(self.max_retries):
-            delay = min(self.base_delay * (2**attempt), self.max_delay)
-            jitter = delay * 0.2 * (random.random() * 2 - 1)  # ±20%
-
-            logger.info(
-                "reconnecting",
-                stream=self.stream_type.value,
-                attempt=attempt + 1,
-                delay=delay + jitter,
-            )
-
-            await asyncio.sleep(delay + jitter)
-
-            if not self._running:
-                return
-
-            try:
-                await self.connect()
-                await self.authenticate()
-
-                bars, quotes, trades, news = self._subscriptions.get_all_subscriptions()
-                if bars or quotes or trades or news:
-                    await self.subscribe(bars, quotes, trades, news)
-
-                logger.info("reconnected", stream=self.stream_type.value, attempt=attempt + 1)
-                return
-
-            except Exception as e:
-                error_msg = str(e)
-                # Detect non-recoverable auth errors — stop immediately
-                if any(msg in error_msg for msg in self._NON_RECOVERABLE_ERRORS):
-                    logger.error(
-                        "non_recoverable_error",
-                        stream=self.stream_type.value,
-                        error=error_msg,
-                        hint="Check for stale connections or competing applications using the same Alpaca credentials.",
-                    )
-                    self._running = False
-                    return
-
-                is_last_attempt = attempt + 1 >= self.max_retries
-                log_fn = logger.error if is_last_attempt else logger.warning
-                log_fn(
-                    "reconnect_failed",
-                    stream=self.stream_type.value,
-                    attempt=attempt + 1,
-                    max_retries=self.max_retries,
-                    error=error_msg,
-                    exhausted=is_last_attempt,
-                )
-
-        # All retries exhausted — enter dormant state
-        self._running = False
 
 
 class StreamMultiplexer:
@@ -956,7 +885,7 @@ class StreamMultiplexer:
         # wait for it to finish establishing rather than returning True blindly
         if conn._running:
             try:
-                await asyncio.wait_for(conn._connected_event.wait(), timeout=10.0)
+                await asyncio.wait_for(conn._connected_event.wait(), timeout=30.0)
                 return conn.is_connected
             except TimeoutError:
                 logger.warning(
@@ -964,9 +893,7 @@ class StreamMultiplexer:
                     stream=stream_type.value,
                     hint="Connection task is running but hasn't authenticated yet",
                 )
-                # Still running, let subscription proceed optimistically —
-                # messages will queue and deliver once connected
-                return True
+                return False
 
         # Stream is dormant (gave up after max retries) — restart it
         logger.info("restarting_dormant_stream", stream=stream_type.value)
@@ -979,7 +906,7 @@ class StreamMultiplexer:
 
         # Wait for connection to establish with generous timeout
         try:
-            await asyncio.wait_for(conn._connected_event.wait(), timeout=10.0)
+            await asyncio.wait_for(conn._connected_event.wait(), timeout=30.0)
             logger.info("lazy_connect_established", stream=stream_type.value)
             return True
         except TimeoutError:
@@ -1170,7 +1097,7 @@ class StreamMultiplexer:
                 )
 
             if not result.valid:
-                logger.warning(
+                logger.info(
                     "stream_validation_failed",
                     error_codes=result.error_codes,
                     data_type=data_type,

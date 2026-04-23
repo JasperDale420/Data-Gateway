@@ -1,11 +1,14 @@
 """Tests for subscription manager."""
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
 import gateway.core.stream as stream_module
+from gateway.core.auth import Client, ClientPermissions
+from gateway.core.connections import ConnectionManager
 from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
 from gateway.core.stream import SubscriptionManager as StreamSubscriptionManager
 
@@ -13,95 +16,87 @@ from gateway.core.stream import SubscriptionManager as StreamSubscriptionManager
 @pytest.fixture
 def subscription_manager():
     """Fresh subscription manager for testing."""
-    from gateway.core.multiplexer import SubscriptionManager
+    from gateway.core.stream import SubscriptionManager
 
-    return SubscriptionManager(grace_period_seconds=1)
+    return SubscriptionManager()
 
 
-@pytest.mark.asyncio
-async def test_subscribe_new_symbols(subscription_manager):
+def test_subscribe_new_symbols(subscription_manager):
     """New symbols are returned as newly subscribed."""
-    newly_subscribed = await subscription_manager.subscribe(
+    new_bars, _, _, _ = subscription_manager.subscribe(
         client_id="client1",
-        symbols=["AAPL", "MSFT"],
-        feed="bars",
+        bars=["AAPL", "MSFT"],
     )
-    assert set(newly_subscribed) == {"AAPL", "MSFT"}
+    assert new_bars == {"AAPL", "MSFT"}
 
 
-@pytest.mark.asyncio
-async def test_subscribe_existing_symbol(subscription_manager):
+def test_subscribe_existing_symbol(subscription_manager):
     """Existing symbols are not returned as newly subscribed."""
-    await subscription_manager.subscribe("client1", ["AAPL"], "bars")
-    newly_subscribed = await subscription_manager.subscribe("client2", ["AAPL"], "bars")
-    assert newly_subscribed == []
+    subscription_manager.subscribe("client1", bars=["AAPL"])
+    new_bars, _, _, _ = subscription_manager.subscribe("client2", bars=["AAPL"])
+    assert new_bars == set()
 
 
-@pytest.mark.asyncio
-async def test_unsubscribe_with_remaining_clients(subscription_manager):
+def test_unsubscribe_with_remaining_clients(subscription_manager):
     """Symbol stays subscribed if other clients remain."""
-    await subscription_manager.subscribe("client1", ["AAPL"], "bars")
-    await subscription_manager.subscribe("client2", ["AAPL"], "bars")
+    subscription_manager.subscribe("client1", bars=["AAPL"])
+    subscription_manager.subscribe("client2", bars=["AAPL"])
 
-    pending = await subscription_manager.unsubscribe("client1", ["AAPL"], "bars")
-    assert pending == []
+    removed_bars, _, _, _ = subscription_manager.unsubscribe("client1", bars=["AAPL"])
+    assert removed_bars == set()
 
-    subscribers = subscription_manager.get_subscribers("AAPL", "bars")
+    subscribers = subscription_manager.get_clients_for_symbol("AAPL", "bars")
     assert "client2" in subscribers
 
 
-@pytest.mark.asyncio
-async def test_unsubscribe_triggers_grace_period(subscription_manager):
-    """Last client unsubscribe starts grace period."""
-    await subscription_manager.subscribe("client1", ["AAPL"], "bars")
-    pending = await subscription_manager.unsubscribe("client1", ["AAPL"], "bars")
-    assert pending == ["AAPL"]
+def test_unsubscribe_last_client_removes_symbol(subscription_manager):
+    """Last client unsubscribe returns symbol as removed."""
+    subscription_manager.subscribe("client1", bars=["AAPL"])
+    removed_bars, _, _, _ = subscription_manager.unsubscribe("client1", bars=["AAPL"])
+    assert removed_bars == {"AAPL"}
 
 
-@pytest.mark.asyncio
-async def test_resubscribe_cancels_grace_period(subscription_manager):
-    """Resubscribe during grace period cancels removal."""
-    await subscription_manager.subscribe("client1", ["AAPL"], "bars")
-    await subscription_manager.unsubscribe("client1", ["AAPL"], "bars")
+def test_resubscribe_after_removal(subscription_manager):
+    """Resubscribe after last client unsubscribed re-adds symbol."""
+    subscription_manager.subscribe("client1", bars=["AAPL"])
+    subscription_manager.unsubscribe("client1", bars=["AAPL"])
 
-    # New client subscribes during grace period
-    newly_subscribed = await subscription_manager.subscribe("client2", ["AAPL"], "bars")
-    assert newly_subscribed == []
+    # New client subscribes — symbol is new again since it was fully removed
+    new_bars, _, _, _ = subscription_manager.subscribe("client2", bars=["AAPL"])
+    assert new_bars == {"AAPL"}
 
-    subscribers = subscription_manager.get_subscribers("AAPL", "bars")
+    subscribers = subscription_manager.get_clients_for_symbol("AAPL", "bars")
     assert "client2" in subscribers
 
 
-@pytest.mark.asyncio
-async def test_get_all_symbols(subscription_manager):
-    """Get all subscribed symbols for feed."""
-    await subscription_manager.subscribe("client1", ["AAPL", "MSFT"], "bars")
-    await subscription_manager.subscribe("client1", ["GOOG"], "quotes")
+def test_get_all_symbols(subscription_manager):
+    """Get all subscribed symbols for feed via aggregate."""
+    subscription_manager.subscribe("client1", bars=["AAPL", "MSFT"])
+    subscription_manager.subscribe("client1", quotes=["GOOG"])
 
-    bars_symbols = subscription_manager.get_all_symbols("bars")
-    assert set(bars_symbols) == {"AAPL", "MSFT"}
-
-    quotes_symbols = subscription_manager.get_all_symbols("quotes")
-    assert quotes_symbols == ["GOOG"]
+    bars_syms, quotes_syms, _, _ = subscription_manager.get_all_subscriptions()
+    assert bars_syms == {"AAPL", "MSFT"}
+    assert quotes_syms == {"GOOG"}
 
 
-@pytest.mark.asyncio
-async def test_remove_client(subscription_manager):
+def test_remove_client(subscription_manager):
     """Remove client from all subscriptions."""
-    await subscription_manager.subscribe("client1", ["AAPL", "MSFT"], "bars")
+    subscription_manager.subscribe("client1", bars=["AAPL", "MSFT"])
 
-    await subscription_manager.remove_client("client1")
+    removed_bars, _, _, _ = subscription_manager.remove_client("client1")
+    assert removed_bars == {"AAPL", "MSFT"}
 
-    stats = subscription_manager.get_stats()
-    assert stats["active_subscriptions"] == 0 or stats["pending_unsubscribes"] == 2
+    bars_syms, _, _, _ = subscription_manager.get_all_subscriptions()
+    assert bars_syms == set()
 
 
-def test_get_stats(subscription_manager):
-    """Get subscription statistics."""
-    stats = subscription_manager.get_stats()
-    assert "total_subscriptions" in stats
-    assert "active_subscriptions" in stats
-    assert "by_feed" in stats
+def test_empty_manager_has_no_subscriptions(subscription_manager):
+    """A fresh manager has no subscriptions."""
+    bars, quotes, trades, news = subscription_manager.get_all_subscriptions()
+    assert bars == set()
+    assert quotes == set()
+    assert trades == set()
+    assert news == set()
 
 
 @pytest.mark.asyncio
@@ -411,6 +406,114 @@ async def test_stream_multiplexer_single_client_fanout_skips_gather(
     assert delivered == [("client-1", "bars")]
 
 
+@pytest.mark.asyncio
+async def test_stream_multiplexer_broadcasts_to_authenticated_connection_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent_bytes: list[bytes] = []
+
+        async def accept(self) -> None:
+            return
+
+        async def send_text(self, _payload: str) -> None:
+            raise AssertionError("expected bytes payload")
+
+        async def send_bytes(self, payload: bytes) -> None:
+            self.sent_bytes.append(payload)
+
+    class _Validator:
+        def validate_bar(self, _message: dict[str, str]) -> SimpleNamespace:
+            return SimpleNamespace(valid=True, error_codes=[])
+
+    monkeypatch.setattr(stream_module, "get_validator", lambda: _Validator())
+
+    connections = ConnectionManager()
+    websocket = _FakeWebSocket()
+    connection_id = "conn-1"
+    client = Client(
+        id="test-client",
+        permissions=ClientPermissions(
+            providers=["alpaca"],
+            feeds=["bars"],
+            max_symbols=10,
+            rate_limit=60,
+        ),
+        enabled=True,
+    )
+
+    await connections.connect(connection_id, cast(Any, websocket))
+    await connections.authenticate(connection_id, client)
+
+    async def _subscribe(_bars=None, _quotes=None, _trades=None, _news=None) -> list[str]:
+        return []
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=lambda *_args, **_kwargs: asyncio.sleep(0),
+        lazy_connect=False,
+        on_broadcast=connections.broadcast_to_connection_ids,
+    )
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
+        Any,
+        SimpleNamespace(
+            subscriptions=StreamSubscriptionManager(),
+            subscribe=_subscribe,
+        ),
+    )
+
+    subscribe_response = await multiplexer.client_subscribe(
+        client_id=connection_id,
+        stream_type=AlpacaStreamType.STOCKS_SIP,
+        bars=["AAPL"],
+    )
+
+    assert subscribe_response["status"] == "ok"
+
+    await multiplexer._handle_message(
+        AlpacaStreamType.STOCKS_SIP,
+        {
+            "T": "b",
+            "S": "AAPL",
+            "t": "2026-04-02T13:31:00Z",
+            "o": 10.0,
+            "h": 10.5,
+            "l": 9.9,
+            "c": 10.2,
+            "v": 1000,
+        },
+    )
+
+    assert websocket.sent_bytes
+
+
+@pytest.mark.asyncio
+async def test_lazy_connect_returns_false_while_stream_is_still_not_ready() -> None:
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(
+        Any,
+        SimpleNamespace(
+            is_connected=False,
+            _running=True,
+            _connected_event=asyncio.Event(),
+        ),
+    )
+
+    connected = await multiplexer._ensure_connected(AlpacaStreamType.STOCKS_SIP)
+
+    assert connected is False
+
+
 def test_stream_subscription_manager_client_view_reuses_index_set() -> None:
     manager = StreamSubscriptionManager()
     manager.subscribe(client_id="client-1", bars=["AAPL"])
@@ -418,7 +521,7 @@ def test_stream_subscription_manager_client_view_reuses_index_set() -> None:
     clients_view = manager.get_clients_for_symbol_view("AAPL", "bars")
 
     assert clients_view == {"client-1"}
-    assert clients_view is manager._index["bars"]["AAPL"]  # noqa: SLF001
+    assert isinstance(clients_view, frozenset)  # noqa: SLF001
 
 
 def test_stream_subscription_manager_client_view_missing_symbol_is_empty() -> None:
@@ -427,3 +530,176 @@ def test_stream_subscription_manager_client_view_missing_symbol_is_empty() -> No
     clients_view = manager.get_clients_for_symbol_view("MSFT", "bars")
 
     assert tuple(clients_view) == ()
+
+
+# ---------------------------------------------------------------------------
+# Reconnect loop — regression test for the "double-connect" bug where a
+# successful reconnect would immediately be torn down and re-established by
+# the outer loop, doubling Alpaca connection churn and losing bars after
+# every flap. Apr 15–17, 2026.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_and_run_does_not_double_connect_after_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single disconnect triggers exactly ONE reconnect, not two.
+
+    Before the fix, `_reconnect_with_backoff` established a working WS and
+    returned, then `_connect_and_run`'s outer loop called `connect()` again,
+    tearing the fresh WS down to open another. This counted connect() calls
+    across one disconnect event: we should see 2 (initial + reconnect), not 3.
+    """
+    import websockets
+
+    from gateway.core.stream import AlpacaStreamType, UpstreamConnection
+
+    async def _noop_on_message(_msg: dict) -> None:
+        return
+
+    conn = UpstreamConnection(
+        stream_type=AlpacaStreamType.STOCKS_SIP,
+        api_key="k",  # pragma: allowlist secret
+        api_secret="s",  # pragma: allowlist secret
+        on_message=_noop_on_message,
+        base_delay=0.0,  # no real backoff — speed up the test
+        max_delay=0.0,
+        max_retries=3,
+    )
+
+    connect_calls = 0
+    auth_calls = 0
+
+    async def _mock_connect() -> None:
+        nonlocal connect_calls
+        connect_calls += 1
+        # Pretend the WS is live; the receive_loop below simulates its lifetime.
+        conn._ws = cast(Any, SimpleNamespace(close=lambda *a, **kw: asyncio.sleep(0)))
+
+    async def _mock_authenticate() -> None:
+        nonlocal auth_calls
+        auth_calls += 1
+        conn._authenticated = True
+
+    async def _mock_close_ws() -> None:
+        conn._ws = None
+        conn._authenticated = False
+        conn._connected_event.clear()
+
+    # First receive_loop raises ConnectionClosed (simulates a 1006 flap).
+    # Second call blocks until we flip _running = False to end the test.
+    receive_call = {"n": 0}
+    stop_event = asyncio.Event()
+
+    async def _mock_receive_loop() -> None:
+        receive_call["n"] += 1
+        if receive_call["n"] == 1:
+            raise websockets.exceptions.ConnectionClosed(rcvd=None, sent=None)
+        # On the SECOND connect, hold the "connection" open until we stop.
+        await stop_event.wait()
+
+    monkeypatch.setattr(conn, "connect", _mock_connect)
+    monkeypatch.setattr(conn, "authenticate", _mock_authenticate)
+    monkeypatch.setattr(conn, "_close_ws", _mock_close_ws)
+    monkeypatch.setattr(conn, "_receive_loop", _mock_receive_loop)
+
+    # Drive the loop. It will: connect (1), receive_loop raises, backoff,
+    # connect (2), receive_loop blocks on stop_event. We then stop it.
+    conn._running = True
+    task = asyncio.create_task(conn._connect_and_run())
+
+    # Give the loop enough time to hit the second receive_loop.
+    for _ in range(50):
+        if receive_call["n"] >= 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert receive_call["n"] == 2, "second receive_loop should have started"
+
+    # Stop the loop cleanly.
+    conn._running = False
+    stop_event.set()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    # One initial connect + one reconnect = 2 connect() calls. The old code
+    # would produce 3 (initial + reconnect_with_backoff + outer loop's
+    # redundant connect).
+    assert connect_calls == 2, f"expected exactly 2 connect() calls, got {connect_calls}"
+    assert auth_calls == 2, f"expected exactly 2 authenticate() calls, got {auth_calls}"
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_and_run_stops_on_non_recoverable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'connection limit exceeded' halts the loop instead of retrying forever."""
+    from gateway.core.stream import AlpacaStreamType, UpstreamConnection
+
+    async def _noop_on_message(_msg: dict) -> None:
+        return
+
+    conn = UpstreamConnection(
+        stream_type=AlpacaStreamType.STOCKS_SIP,
+        api_key="k",  # pragma: allowlist secret
+        api_secret="s",  # pragma: allowlist secret
+        on_message=_noop_on_message,
+        base_delay=0.0,
+        max_delay=0.0,
+        max_retries=5,
+    )
+
+    async def _raising_connect() -> None:
+        raise RuntimeError("connection limit exceeded")
+
+    async def _noop_close() -> None:
+        return
+
+    monkeypatch.setattr(conn, "connect", _raising_connect)
+    monkeypatch.setattr(conn, "_close_ws", _noop_close)
+
+    conn._running = True
+    await asyncio.wait_for(conn._connect_and_run(), timeout=2.0)
+
+    assert conn._running is False
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_and_run_exhausts_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After `max_retries` transient failures, the loop gives up and goes dormant."""
+    from gateway.core.stream import AlpacaStreamType, UpstreamConnection
+
+    async def _noop_on_message(_msg: dict) -> None:
+        return
+
+    conn = UpstreamConnection(
+        stream_type=AlpacaStreamType.STOCKS_SIP,
+        api_key="k",  # pragma: allowlist secret
+        api_secret="s",  # pragma: allowlist secret
+        on_message=_noop_on_message,
+        base_delay=0.0,
+        max_delay=0.0,
+        max_retries=3,
+    )
+
+    connect_calls = 0
+
+    async def _raising_connect() -> None:
+        nonlocal connect_calls
+        connect_calls += 1
+        raise RuntimeError("transient network error")
+
+    async def _noop_close() -> None:
+        return
+
+    monkeypatch.setattr(conn, "connect", _raising_connect)
+    monkeypatch.setattr(conn, "_close_ws", _noop_close)
+
+    conn._running = True
+    await asyncio.wait_for(conn._connect_and_run(), timeout=2.0)
+
+    # Initial connect + max_retries reconnect attempts = max_retries + 1
+    assert connect_calls == conn.max_retries + 1
+    assert conn._running is False

@@ -8,12 +8,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gateway.core.treasury_poller import (
+    _INTER_REQUEST_DELAY_SECONDS,
+    _RATE_LIMIT_BACKOFF_BASE,
+    _RATE_LIMIT_MAX_RETRIES,
     HEBER_STREAM,
     TreasuryYieldPoller,
     get_treasury_poller,
     start_treasury_poller,
     stop_treasury_poller,
 )
+from gateway.providers.alphavantage import AlphaVantagePremiumError, AlphaVantageRateLimitError
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
@@ -176,6 +180,106 @@ class TestFetchYields:
         assert len(results) == 1
         assert results[0]["maturity"] == "2year"
 
+    @pytest.mark.asyncio
+    async def test_premium_error_blocks_maturity(self, poller, mock_provider):
+        """Premium endpoint errors should permanently block the maturity."""
+
+        async def _side_effect(**kwargs):
+            if kwargs.get("maturity") == "10year":
+                raise AlphaVantagePremiumError("Premium endpoint requires Alpha Vantage subscription")
+            return _make_av_response()
+
+        mock_provider.get_economic_indicator = AsyncMock(side_effect=_side_effect)
+        poller._provider = mock_provider
+
+        with patch("gateway.core.treasury_poller.asyncio.sleep", new_callable=AsyncMock):
+            results = await poller._fetch_yields()
+
+        assert len(results) == 1
+        assert results[0]["maturity"] == "2year"
+        assert "10year" in poller._premium_blocked_maturities
+
+        # Second poll should skip the premium-blocked maturity entirely
+        mock_provider.get_economic_indicator.reset_mock()
+        with patch("gateway.core.treasury_poller.asyncio.sleep", new_callable=AsyncMock):
+            results = await poller._fetch_yields()
+
+        assert len(results) == 1
+        # Should only call for 2year, not 10year
+        assert mock_provider.get_economic_indicator.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_backoff_and_retry(self, poller, mock_provider):
+        """Rate-limit errors should trigger exponential backoff retries."""
+        call_count = 0
+
+        async def _side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if kwargs.get("maturity") == "10year" and call_count <= 2:
+                raise AlphaVantageRateLimitError("Rate limit exceeded")
+            return _make_av_response()
+
+        mock_provider.get_economic_indicator = AsyncMock(side_effect=_side_effect)
+        poller._provider = mock_provider
+
+        sleep_calls = []
+
+        async def _mock_sleep(seconds):
+            sleep_calls.append(seconds)
+
+        with patch("gateway.core.treasury_poller.asyncio.sleep", side_effect=_mock_sleep):
+            results = await poller._fetch_yields()
+
+        # Both maturities should succeed (10year on 3rd attempt)
+        assert len(results) == 2
+
+        # Verify backoff delays were applied for the rate-limited calls
+        backoff_sleeps = [s for s in sleep_calls if s >= _RATE_LIMIT_BACKOFF_BASE]
+        assert len(backoff_sleeps) == 2  # two rate-limit retries
+        assert backoff_sleeps[0] == _RATE_LIMIT_BACKOFF_BASE
+        assert backoff_sleeps[1] == _RATE_LIMIT_BACKOFF_BASE * 2
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_exhausted(self, poller, mock_provider):
+        """After max retries, rate-limited maturity should be skipped."""
+
+        async def _side_effect(**kwargs):
+            if kwargs.get("maturity") == "10year":
+                raise AlphaVantageRateLimitError("Rate limit exceeded")
+            return _make_av_response()
+
+        mock_provider.get_economic_indicator = AsyncMock(side_effect=_side_effect)
+        poller._provider = mock_provider
+
+        with patch("gateway.core.treasury_poller.asyncio.sleep", new_callable=AsyncMock):
+            results = await poller._fetch_yields()
+
+        assert len(results) == 1
+        assert results[0]["maturity"] == "2year"
+        # 10year should have been called MAX_RETRIES + 1 times then given up
+        ten_year_calls = [
+            c for c in mock_provider.get_economic_indicator.call_args_list if c.kwargs.get("maturity") == "10year"
+        ]
+        assert len(ten_year_calls) == _RATE_LIMIT_MAX_RETRIES + 1
+
+    @pytest.mark.asyncio
+    async def test_inter_request_delay(self, poller, mock_provider):
+        """Verify delay is inserted between maturity fetches."""
+        poller._provider = mock_provider
+
+        sleep_calls = []
+
+        async def _mock_sleep(seconds):
+            sleep_calls.append(seconds)
+
+        with patch("gateway.core.treasury_poller.asyncio.sleep", side_effect=_mock_sleep):
+            await poller._fetch_yields()
+
+        # Should have one inter-request delay between the two maturities
+        pacing_sleeps = [s for s in sleep_calls if s == _INTER_REQUEST_DELAY_SECONDS]
+        assert len(pacing_sleeps) == 1
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Publishing
@@ -271,6 +375,21 @@ class TestLifecycle:
         assert poller._task is None
 
     @pytest.mark.asyncio
+    async def test_start_no_api_key(self, poller):
+        """Start should abort gracefully if API key is not configured."""
+        provider = AsyncMock()
+        provider.api_key_configured = False
+
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = provider
+
+        with patch("gateway.core.globals.get_registry", return_value=mock_registry):
+            await poller.start()
+
+        assert not poller._running
+        assert poller._task is None
+
+    @pytest.mark.asyncio
     async def test_start_and_stop(self, poller, mock_provider):
         mock_registry = MagicMock()
         mock_registry.get.return_value = mock_provider
@@ -303,6 +422,7 @@ class TestLifecycle:
         assert snapshot["running"] is False
         assert snapshot["poll_interval_seconds"] == 86400
         assert snapshot["maturities"] == ["10year", "2year"]
+        assert snapshot["premium_blocked_maturities"] == []
         assert snapshot["last_poll_time"] is None
         assert snapshot["last_poll_count"] == 0
 

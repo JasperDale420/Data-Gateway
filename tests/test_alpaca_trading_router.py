@@ -1,15 +1,28 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
+from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca import trading
+from gateway.config import Settings
 from gateway.core.cache import InMemoryCache
 from gateway.core.registry import ProviderRegistry
+
+
+@pytest.fixture(autouse=True)
+def _reset_trading_inflight_sem():
+    """Each test gets a fresh event loop — reset the lazy semaphore so it
+    binds to the new loop (asyncio.Semaphore in 3.10+ is loop-bound on first
+    use) and so per-test settings overrides take effect."""
+    trading._reset_trading_inflight_sem_for_tests()
+    yield
+    trading._reset_trading_inflight_sem_for_tests()
 
 
 class _FakeRegistry:
@@ -155,6 +168,84 @@ async def test_get_orders_splits_symbols_and_sets_count(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "direction", "side", "bad_field"),
+    [
+        ("filled", "desc", None, "status"),
+        ("open", "descending", None, "direction"),
+        ("open", "desc", "long", "side"),
+    ],
+)
+async def test_get_orders_rejects_invalid_enum_params(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    direction: str,
+    side: str | None,
+    bad_field: str,
+) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_orders(
+            status=status,
+            limit=50,
+            direction=direction,
+            symbols=None,
+            nested=True,
+            side=side,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert bad_field in str(exc.value.detail).lower()
+    assert provider.orders_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_orders_times_out_stuck_trading_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _SlowProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
+            self.orders_calls.append(kwargs)
+            import time
+
+            time.sleep(0.6)
+            return [{"id": "o-1"}]
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        assert registry is cast(ProviderRegistry, route_registry)
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_orders(
+            status="open",
+            limit=50,
+            direction="desc",
+            symbols="AAPL",
+            nested=True,
+            side=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+
+
+@pytest.mark.asyncio
 async def test_cancel_order_returns_success_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -293,3 +384,161 @@ async def test_create_order_passes_bracket_params_to_provider(
     assert captured["take_profit_limit_price"] == 160.0
     assert captured["stop_loss_stop_price"] == 145.0
     assert captured["stop_loss_limit_price"] == 144.0
+
+
+# ---------------------------------------------------------------------------
+# Backpressure tests — ensure slow Alpaca calls don't pile up in the executor
+# queue and starve the event loop (which causes WebSocket keepalive-ping
+# timeouts for connected streaming clients).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_trading_provider_call_fast_fails_when_inflight_cap_reached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the in-flight cap is fully reserved, new calls get 503 immediately."""
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_max_inflight=2, alpaca_trading_call_timeout_seconds=5.0),
+    )
+
+    # Pre-saturate the semaphore to simulate 2 in-flight calls.
+    sem = trading._get_trading_inflight_sem()
+    await sem.acquire()
+    await sem.acquire()
+    assert sem.locked()
+
+    with pytest.raises(HTTPException) as exc:
+        await trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=lambda _p: "unused",
+            operation="get_account",
+        )
+    assert exc.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    assert exc.value.detail["code"] == "GW-E5005"
+
+
+@pytest.mark.asyncio
+async def test_run_trading_provider_call_releases_permit_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful call must release its in-flight permit so the next call can proceed."""
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_max_inflight=2, alpaca_trading_call_timeout_seconds=5.0),
+    )
+
+    result = await trading._run_trading_provider_call(
+        provider=SimpleNamespace(),
+        provider_fn=lambda _p: "ok",
+        operation="get_account",
+    )
+    assert result == "ok"
+
+    # Semaphore should be fully released — running a second call succeeds.
+    result2 = await trading._run_trading_provider_call(
+        provider=SimpleNamespace(),
+        provider_fn=lambda _p: "ok-again",
+        operation="get_account",
+    )
+    assert result2 == "ok-again"
+
+    sem = trading._get_trading_inflight_sem()
+    assert not sem.locked()
+
+
+@pytest.mark.asyncio
+async def test_run_trading_provider_call_releases_permit_on_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 504 timeout must still release the permit so backpressure clears itself."""
+    import time
+
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_max_inflight=2, alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    def _slow(_p: Any) -> Any:
+        time.sleep(1.0)
+        return "should-not-return"
+
+    with pytest.raises(HTTPException) as exc:
+        await trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=_slow,
+            operation="get_orders",
+        )
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+
+    # The context manager releases the permit synchronously when the 504 is
+    # raised, so the semaphore should be fully free immediately.
+    sem = trading._get_trading_inflight_sem()
+    assert not sem.locked(), "permit must be released after 504 timeout"
+
+
+@pytest.mark.asyncio
+async def test_run_trading_provider_call_releases_permit_on_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider-raised exceptions must still release the permit."""
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_max_inflight=2, alpaca_trading_call_timeout_seconds=5.0),
+    )
+
+    def _raiser(_p: Any) -> Any:
+        raise RuntimeError("simulated provider error")
+
+    with pytest.raises(RuntimeError, match="simulated provider error"):
+        await trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=_raiser,
+            operation="get_account",
+        )
+
+    sem = trading._get_trading_inflight_sem()
+    assert not sem.locked(), "permit must be released after provider exception"
+
+
+@pytest.mark.asyncio
+async def test_run_trading_provider_call_admits_concurrent_within_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With cap=3, three concurrent calls must all succeed (no spurious 503s)."""
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_max_inflight=3, alpaca_trading_call_timeout_seconds=5.0),
+    )
+
+    call_count = 0
+
+    def _counter(_p: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        return call_count
+
+    results = await asyncio.gather(
+        trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=_counter,
+            operation="get_account",
+        ),
+        trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=_counter,
+            operation="get_account",
+        ),
+        trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=_counter,
+            operation="get_account",
+        ),
+    )
+    assert sorted(results) == [1, 2, 3]

@@ -330,10 +330,25 @@ class CacheMiddleware:
         self._cache_initialized = False
 
     def _get_cache(self):
-        """Get cache instance (lazy initialization)."""
-        if not self._cache_initialized:
-            from gateway.api.deps import get_cache
+        """Get cache instance (lazy initialization).
 
+        Checks FastAPI dependency overrides first so tests can inject a
+        test cache instance without going through the DI machinery.
+        Falls back to the ``get_cache()`` LRU singleton for production.
+        """
+        from gateway.api.deps import get_cache
+
+        # Respect DI overrides (e.g. test fixtures) when available.
+        # We import ``app`` lazily to avoid circular imports and check
+        # overrides on every call so test teardown is picked up.
+        from gateway.main import app as _app
+
+        override = _app.dependency_overrides.get(get_cache)
+        if override is not None:
+            return override()
+
+        # Production path: cache the instance after first creation
+        if not self._cache_initialized:
             self._cache = get_cache()
             self._cache_initialized = True
         return self._cache

@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+from gateway.api import deps
 from gateway.api.alphavantage import common
 
 
@@ -75,7 +76,7 @@ async def test_execute_av_cached_cache_miss_fetches_and_stores(
         calls["fetch"] += 1
         return [1, 2]
 
-    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(deps, "require_provider_rate_limit", _fake_rate_limit)
 
     response = await common.execute_av_cached(
         cache=cache,  # type: ignore[arg-type]
@@ -127,7 +128,7 @@ async def test_execute_av_cached_cache_disabled_skips_get_set(
         calls["fetch"] += 1
         return {"k": "v"}
 
-    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(deps, "require_provider_rate_limit", _fake_rate_limit)
 
     response = await common.execute_av_cached(
         cache=cache,  # type: ignore[arg-type]
@@ -168,7 +169,7 @@ async def test_execute_av_cached_emits_cache_and_payload_metrics(
     def _record_payload(endpoint: str, cache_mode: str, payload_bytes: int) -> None:
         payload_events.append((endpoint, cache_mode, payload_bytes))
 
-    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(deps, "require_provider_rate_limit", _fake_rate_limit)
     monkeypatch.setattr(common, "record_alphavantage_route_cache", _record_cache)
     monkeypatch.setattr(common, "record_alphavantage_payload_bytes", _record_payload)
 
@@ -214,7 +215,7 @@ async def test_execute_av_cached_maps_provider_rate_limit_to_http_429(
     async def _fetcher(_provider: Any) -> dict[str, str]:
         raise RuntimeError("Rate limit exceeded")
 
-    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(deps, "require_provider_rate_limit", _fake_rate_limit)
 
     with pytest.raises(HTTPException) as exc_info:
         await common.execute_av_cached(
@@ -244,9 +245,9 @@ async def test_execute_av_cached_preserves_unmapped_runtime_errors(
     async def _fetcher(_provider: Any) -> dict[str, str]:
         raise RuntimeError("Unexpected provider payload")
 
-    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+    monkeypatch.setattr(deps, "require_provider_rate_limit", _fake_rate_limit)
 
-    with pytest.raises(RuntimeError, match="Unexpected provider payload"):
+    with pytest.raises(HTTPException) as exc_info:
         await common.execute_av_cached(
             cache=cache,  # type: ignore[arg-type]
             cache_key_value="av:unexpected",
@@ -255,3 +256,6 @@ async def test_execute_av_cached_preserves_unmapped_runtime_errors(
             fetcher=_fetcher,
             cache_transform=lambda value: value,
         )
+
+    assert exc_info.value.status_code == 502
+    assert "Upstream provider error" in str(exc_info.value.detail)

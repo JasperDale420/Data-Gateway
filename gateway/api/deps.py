@@ -1,7 +1,10 @@
-"""FastAPI dependency injection."""
+"""FastAPI dependency injection and shared route utilities."""
 
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
+from typing import Any
 
+import httpx
 from fastapi import Depends, Header, HTTPException, Request
 
 from gateway.config import get_settings
@@ -20,6 +23,7 @@ from gateway.core.globals import (
     set_registry,  # noqa: F401
     set_sink_registry,  # noqa: F401
 )
+from gateway.core.logger import logger
 from gateway.core.rate_limiter import EndpointRateLimiter
 
 
@@ -53,7 +57,8 @@ def get_cache() -> InMemoryCache | HybridCache:
 @lru_cache
 def get_connection_manager() -> ConnectionManager:
     """Get cached connection manager."""
-    return ConnectionManager()
+    settings = get_settings()
+    return ConnectionManager(max_clients=settings.ws_max_clients)
 
 
 def get_endpoint_rate_limiter() -> EndpointRateLimiter:
@@ -296,3 +301,157 @@ def provider_rate_limit_dependency(provider: str, block: bool = False):
         return await require_provider_rate_limit(provider, block)
 
     return _check
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared Cache Key Utilities
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def normalize_cache_arg(value: Any) -> str:
+    """Normalize a single cache key argument to a deterministic string."""
+    if value is None:
+        return "<none>"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value == "":
+        return "<empty>"
+    return str(value)
+
+
+def make_cache_key(prefix: str, *args: Any) -> str:
+    """Generate a colon-separated cache key from a prefix and arbitrary arguments."""
+    parts = [prefix] + [normalize_cache_arg(a) for a in args]
+    return ":".join(parts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Unified Provider Cached Execution
+# ─────────────────────────────────────────────────────────────────────────────
+
+CacheBackend = InMemoryCache | HybridCache
+
+
+async def execute_provider_cached(
+    *,
+    provider_name: str,
+    registry: Any,
+    cache: CacheBackend,
+    cache_key: str,
+    ttl: int,
+    fetcher: Callable[[Any], Awaitable[Any]],
+    cache_transform: Callable[[Any], Any] | None = None,
+    build_response: Callable[[Any, bool], dict[str, Any]] | None = None,
+    miss_meta: dict[str, Any] | None = None,
+    miss_meta_builder: Callable[..., dict[str, Any] | None] | None = None,
+    route_label: str | None = None,
+    cache_mode: str = "default",
+    cache_enabled: bool = True,
+    error_label: str = "provider_request_failed",
+    error_handlers: list[Callable[[Exception], None]] | None = None,
+    not_available_msg: str | None = None,
+) -> dict[str, Any]:
+    """Unified cache -> rate-limit -> fetch -> error-handle -> store -> respond pipeline.
+
+    Consolidates the duplicated execute_*_cached() pattern used by all providers.
+
+    Args:
+        provider_name: Registry key (e.g. "finnhub", "unusual_whales", "alphavantage").
+        registry: ProviderRegistry instance.
+        cache: Cache backend (InMemoryCache or HybridCache).
+        cache_key: Pre-built cache key string.
+        ttl: Cache TTL in seconds.
+        fetcher: ``async (provider) -> raw_result`` callable. Receives the resolved provider.
+        cache_transform: Optional ``(raw_result) -> cached_value`` to reshape before caching.
+            When *None*, the raw result is cached as-is.
+        build_response: Optional ``(data, cached: bool) -> dict`` to fully control the response.
+            When supplied, *miss_meta* / *miss_meta_builder* are ignored and the callable is
+            responsible for producing the complete ``{success, data, meta}`` envelope.
+        miss_meta: Static extra metadata dict merged into ``meta`` on cache misses.
+        miss_meta_builder: Optional ``(raw_result, cached_value) -> dict | None`` for dynamic
+            miss metadata. May also accept a single argument ``(cached_value) -> dict | None``.
+        route_label: If given, records ``record_route_cache(route_label, hit|miss, cache_mode)``.
+        cache_mode: Tag passed to ``record_route_cache`` (default ``"default"``).
+        cache_enabled: Set *False* to bypass cache entirely (always fetch).
+        error_label: Structlog event name for provider errors.
+        error_handlers: Extra ``(exception) -> None`` callables run before the default handler.
+            If one raises ``HTTPException`` the default handling is skipped.
+        not_available_msg: Custom 503 detail when provider is missing from registry.
+
+    Returns:
+        ``{"success": True, "data": ..., "meta": {"cached": bool, "provider": str, ...}}``
+    """
+    # 1. Cache check
+    if cache_enabled:
+        cached = await cache.get(cache_key)
+        if cached is not None:
+            if route_label:
+                from gateway.core.metrics import record_route_cache
+
+                record_route_cache(route_label, "hit", cache_mode)
+            if build_response:
+                return build_response(cached, True)
+            meta: dict[str, Any] = {"cached": True, "provider": provider_name}
+            return {"success": True, "data": cached, "meta": meta}
+
+    if route_label:
+        from gateway.core.metrics import record_route_cache
+
+        record_route_cache(route_label, "miss", cache_mode)
+
+    # 2. Provider lookup
+    provider = registry.get(provider_name)
+    if not provider:
+        detail = not_available_msg or f"{provider_name} provider not available"
+        raise HTTPException(status_code=503, detail=detail)
+
+    # 3. Rate limit
+    await require_provider_rate_limit(provider_name)
+
+    # 4. Fetch with error handling
+    try:
+        result = await fetcher(provider)
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        if status_code < 500:
+            logger.warning(error_label, error=str(e), status_code=status_code)
+        else:
+            logger.error(error_label, exc_info=True, status_code=status_code)
+        if error_handlers:
+            for handler in error_handlers:
+                handler(e)  # may raise HTTPException
+        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
+    except Exception as exc:
+        logger.error(error_label, exc_info=True)
+        if error_handlers:
+            for handler in error_handlers:
+                handler(exc)
+        raise HTTPException(status_code=502, detail="Upstream provider error")
+
+    # 5. Transform + cache store
+    cached_value = cache_transform(result) if cache_transform else result
+    if cache_enabled:
+        await cache.set(cache_key, cached_value, ttl=ttl)
+
+    # 6. Build response
+    if build_response:
+        return build_response(cached_value, False)
+
+    extra_meta = miss_meta or {}
+    if miss_meta_builder:
+        try:
+            built = miss_meta_builder(result, cached_value)
+        except TypeError:
+            built = miss_meta_builder(cached_value)
+        if built:
+            extra_meta = {**extra_meta, **built}
+
+    return {
+        "success": True,
+        "data": cached_value,
+        "meta": {"cached": False, "provider": provider_name, **extra_meta},
+    }

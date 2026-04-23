@@ -10,6 +10,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gateway.core.logger import logger
+from gateway.core.symbology import STOCK_SYMBOL_PATTERN
+from gateway.core.timeutils import parse_timestamp
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Validation Error Codes
@@ -80,8 +82,8 @@ class DataValidator:
     Invalid data is rejected and logged with appropriate error codes.
     """
 
-    # Symbol patterns
-    STOCK_PATTERN = re.compile(r"^[A-Z]{1,5}$")
+    # Symbol patterns (stock pattern imported from symbology — single source of truth)
+    STOCK_PATTERN = STOCK_SYMBOL_PATTERN
     OCC_OPTION_PATTERN = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
     CRYPTO_PATTERN = re.compile(r"^[A-Z]{2,10}/[A-Z]{2,10}$")
 
@@ -333,29 +335,21 @@ class DataValidator:
         # Allow up to 5 seconds of clock drift for future timestamps
         return ts is not None and ts > (now_utc + timedelta(seconds=5))
 
-    def _parse_timestamp(self, ts: Any) -> datetime | None:
-        """Parse timestamp to timezone-aware datetime.
-
-        Naive datetimes (no timezone info) are assumed to be UTC to avoid
-        TypeError when comparing with timezone-aware now_utc in callers.
-        """
-        if isinstance(ts, datetime):
-            return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
-        if isinstance(ts, str):
-            try:
-                # Handle Z suffix
-                if ts.endswith("Z"):
-                    ts = ts[:-1] + "+00:00"
-                parsed = datetime.fromisoformat(ts)
-                return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-            except ValueError:
-                return None
-        return None
+    @staticmethod
+    def _parse_timestamp(ts: Any) -> datetime | None:
+        """Parse timestamp to timezone-aware datetime (delegates to shared utility)."""
+        return parse_timestamp(ts)
 
     def _log_validation_failure(self, data: dict[str, Any], result: ValidationResult) -> None:
-        """Log validation failure with structured context."""
+        """Log validation failure with structured context.
+
+        Uses INFO level because rejected data is an expected operational event
+        (bad ticks, stale quotes, etc.) — not an unexpected failure.  This
+        keeps the error log (WARNING+) clean while still recording every
+        rejection in the main log for monitoring dashboards.
+        """
         for error in result.errors:
-            logger.warning(
+            logger.info(
                 "data_validation_failed",
                 error_code=error.code,
                 message=error.message,

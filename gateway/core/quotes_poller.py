@@ -5,7 +5,7 @@ subscribes.  This poller provides a REST-based fallback that runs on a
 schedule during market hours, ensuring quote data flows to Heber regardless
 of client subscription state.
 
-Pattern follows the UW poller (``gateway.core.uw_poller``):
+Pattern follows ``gateway.core.base_poller.BasePoller``:
 - Runs as an asyncio background task during application lifespan
 - Uses ``TradingCalendar`` for market-hours gating
 - Wraps each quote in an ``EventEnvelope`` via ``wrap_event``
@@ -13,14 +13,11 @@ Pattern follows the UW poller (``gateway.core.uw_poller``):
 - Deduplicates via in-memory OrderedDict + optional Redis cache
 """
 
-import asyncio
-import contextlib
-from collections import OrderedDict
-from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from gateway.config import get_settings
+from gateway.core.base_poller import BasePoller, DedupMixin
 from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
@@ -77,7 +74,7 @@ DEFAULT_QUOTES_SYMBOLS: list[str] = [
 MAX_SYMBOLS_PER_REQUEST = 100
 
 
-class AlpacaQuotesPoller:
+class AlpacaQuotesPoller(DedupMixin, BasePoller):
     """Background poller that fetches latest quotes via Alpaca REST API.
 
     Publishes ``EventEnvelope`` dicts to the data-sink for Heber consumption.
@@ -92,17 +89,18 @@ class AlpacaQuotesPoller:
     ):
         settings = get_settings()
         self._symbols = [s.upper() for s in (symbols or DEFAULT_QUOTES_SYMBOLS)]
-        self._poll_interval = max(5, poll_interval_seconds)
-        self._running = False
-        self._task: asyncio.Task | None = None
+
+        super().__init__(
+            poll_interval_seconds=max(5, poll_interval_seconds),
+            poller_name="quotes_poller",
+        )
         self._calendar = TradingCalendar()
 
-        # Provider instance (lazy-initialised in start())
+        # Provider instance (lazy-initialised in _on_start())
         self._provider: Any = None
 
-        # Dedup cache — OrderedDict for O(1) FIFO eviction (mirrors UW poller pattern)
-        self._seen_ids: OrderedDict[str, datetime] = OrderedDict()
-        self._cache_ttl_seconds = 300  # 5 minutes (quotes change fast)
+        # Dedup cache
+        self._init_dedup(cache_ttl_seconds=300)  # 5 minutes (quotes change fast)
 
         # Cached market-hours check (30s TTL to avoid repeated calendar lookups)
         self._market_hours_cache: tuple[bool, float] = (False, 0.0)
@@ -115,6 +113,44 @@ class AlpacaQuotesPoller:
                 redis_url=settings.cache_redis_url,
                 default_ttl=self._cache_ttl_seconds,
             )
+
+    # ─────────────────────────────────────────────────────────────────────
+    # BasePoller hooks
+    # ─────────────────────────────────────────────────────────────────────
+
+    async def _on_start(self) -> bool:
+        from gateway.core.globals import get_registry
+
+        registry = get_registry()
+        self._provider = registry.get("alpaca")
+        if self._provider is None:
+            logger.error("quotes_poller_no_alpaca_provider")
+            return False
+
+        logger.info(
+            "quotes_poller_started",
+            interval_seconds=self._poll_interval,
+            symbols=len(self._symbols),
+        )
+        return True
+
+    async def stop(self) -> None:
+        await super().stop()
+        logger.info("quotes_poller_stopped", cached_ids=len(self._seen_ids))
+
+    async def _poll_once(self) -> None:
+        from gateway.core.globals import get_sink_registry
+
+        sink_registry = get_sink_registry()
+        if not sink_registry:
+            logger.debug("quotes_poller_no_sink")
+            return
+
+        if self._is_market_hours():
+            await self._poll_quotes(sink_registry)
+
+        # Periodic cache cleanup
+        self._cleanup_cache()
 
     # ─────────────────────────────────────────────────────────────────────
     # Market hours helpers
@@ -133,30 +169,8 @@ class AlpacaQuotesPoller:
         return result
 
     # ─────────────────────────────────────────────────────────────────────
-    # Dedup helpers
+    # Redis dedup helpers
     # ─────────────────────────────────────────────────────────────────────
-
-    def _is_duplicate(self, event_id: str) -> bool:
-        return event_id in self._seen_ids
-
-    def _mark_seen(self, event_id: str) -> None:
-        self._seen_ids[event_id] = datetime.now(UTC)
-        self._seen_ids.move_to_end(event_id)
-
-    def _cleanup_cache(self) -> None:
-        """Remove expired entries via O(1) FIFO pops."""
-        now = datetime.now(UTC)
-        cutoff = self._cache_ttl_seconds
-        removed = 0
-        while self._seen_ids:
-            eid, ts = next(iter(self._seen_ids.items()))
-            if (now - ts).total_seconds() > cutoff:
-                del self._seen_ids[eid]
-                removed += 1
-            else:
-                break
-        if removed:
-            logger.debug("quotes_poller_cache_cleanup", removed=removed, remaining=len(self._seen_ids))
 
     async def _check_redis_duplicates(self, items: list[tuple[str, str]]) -> set[str]:
         """Batch-check Redis for duplicate event IDs via MGET."""
@@ -280,69 +294,12 @@ class AlpacaQuotesPoller:
             logger.error("quotes_poller_poll_error", error=str(e), exc_info=True)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Lifecycle
+    # Telemetry
     # ─────────────────────────────────────────────────────────────────────
-
-    async def start(self) -> None:
-        """Start the background polling task."""
-        if self._running:
-            logger.warning("quotes_poller_already_running")
-            return
-
-        # Initialize Alpaca provider
-        from gateway.core.globals import get_registry
-
-        registry = get_registry()
-        self._provider = registry.get("alpaca")
-        if self._provider is None:
-            logger.error("quotes_poller_no_alpaca_provider")
-            return
-
-        self._running = True
-        self._task = asyncio.create_task(self._poll_loop())
-        logger.info(
-            "quotes_poller_started",
-            interval_seconds=self._poll_interval,
-            symbols=len(self._symbols),
-        )
-
-    async def stop(self) -> None:
-        """Stop the background polling task."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-        logger.info("quotes_poller_stopped", cached_ids=len(self._seen_ids))
-
-    async def _poll_loop(self) -> None:
-        """Main polling loop — runs every interval during market hours."""
-        from gateway.core.globals import get_sink_registry
-
-        while self._running:
-            try:
-                sink_registry = get_sink_registry()
-                if not sink_registry:
-                    logger.debug("quotes_poller_no_sink")
-                    await asyncio.sleep(self._poll_interval)
-                    continue
-
-                if self._is_market_hours():
-                    await self._poll_quotes(sink_registry)
-
-                # Periodic cache cleanup
-                self._cleanup_cache()
-
-            except Exception as e:
-                logger.error("quotes_poller_loop_error", error=str(e), exc_info=True)
-
-            await asyncio.sleep(self._poll_interval)
 
     def get_runtime_snapshot(self) -> dict[str, Any]:
         """Return lightweight runtime telemetry for admin surfaces."""
-        return {
-            "running": self._running,
-            "poll_interval_seconds": self._poll_interval,
+        return super().get_runtime_snapshot() | {
             "symbols_count": len(self._symbols),
             "symbols": self._symbols[:10],
             "dedupe_cache_entries": len(self._seen_ids),

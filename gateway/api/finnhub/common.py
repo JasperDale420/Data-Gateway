@@ -4,12 +4,13 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
-import httpx
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 
 from gateway.api.deps import (
+    execute_provider_cached,
     get_cache,
     get_registry,
+    make_cache_key,
     require_api_key,
     require_provider_rate_limit,
 )
@@ -40,22 +41,8 @@ __all__ = [
 ]
 
 
-def _normalize_cache_arg(value) -> str:
-    if value is None:
-        return "<none>"
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if value == "":
-        return "<empty>"
-    return str(value)
-
-
-def cache_key(prefix: str, *args) -> str:
-    """Generate cache key."""
-    parts = [prefix] + [_normalize_cache_arg(a) for a in args]
-    return ":".join(parts)
+# Delegate to shared utility (backward-compatible alias)
+cache_key = make_cache_key
 
 
 async def execute_finnhub_cached(
@@ -71,45 +58,16 @@ async def execute_finnhub_cached(
     cache_enabled: bool = True,
 ) -> dict[str, Any]:
     """Execute shared Finnhub cache -> rate-limit -> provider flow."""
-    if cache_enabled:
-        cached = await cache.get(cache_key_value)
-        if cached:
-            # Note: We rely on the caller to record cache hits/misses if needed
-            return {
-                "success": True,
-                "data": cached,
-                "meta": {"cached": True, "provider": "finnhub"},
-            }
-
-    provider = registry.get("finnhub")
-    if not provider:
-        raise HTTPException(status_code=503, detail=PROVIDER_NOT_AVAILABLE)
-
-    await require_provider_rate_limit("finnhub")
-    try:
-        result = await fetcher(provider)
-    except HTTPException:
-        raise
-    except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code
-        logger.error("provider_request_failed", exc_info=True, status_code=status_code)
-        raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
-    except Exception:
-        logger.error("provider_request_failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Upstream provider error")
-
-    cached_value = cache_transform(result)
-    if cache_enabled:
-        await cache.set(cache_key_value, cached_value, ttl=ttl)
-
-    extra_meta = miss_meta or {}
-    if miss_meta_builder:
-        built_meta = miss_meta_builder(result, cached_value)
-        if built_meta:
-            extra_meta = {**extra_meta, **built_meta}
-
-    return {
-        "success": True,
-        "data": cached_value,
-        "meta": {"cached": False, "provider": "finnhub", **extra_meta},
-    }
+    return await execute_provider_cached(
+        provider_name="finnhub",
+        registry=registry,
+        cache=cache,
+        cache_key=cache_key_value,
+        ttl=ttl,
+        fetcher=fetcher,
+        cache_transform=cache_transform,
+        miss_meta=miss_meta,
+        miss_meta_builder=miss_meta_builder,
+        cache_enabled=cache_enabled,
+        not_available_msg=PROVIDER_NOT_AVAILABLE,
+    )

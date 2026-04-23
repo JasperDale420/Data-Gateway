@@ -104,12 +104,9 @@ class AlpacaOptionsMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: list[NormalizedBar] = []
-        symbols_param = ",".join(contracts)
-
         alpaca_timeframe = self._convert_timeframe(timeframe)
         params: dict[str, str | int] = {
-            "symbols": symbols_param,
+            "symbols": ",".join(contracts),
             "timeframe": alpaca_timeframe,
             "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
             "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
@@ -117,37 +114,17 @@ class AlpacaOptionsMixin:
         }
 
         try:
-            while True:
-                response = await self._client.get(
-                    "/v1beta1/options/bars",
-                    params=params,
-                )
-                response.raise_for_status()
-                data = response.json()
+            pages = await self._paginate("/v1beta1/options/bars", params, "bars", limit=limit)
+            results = [
+                self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe)
+                for symbol, bars in pages.items()
+                for bar in bars
+            ]
 
-                for symbol, bars in data.get("bars", {}).items():
-                    for bar in bars:
-                        results.append(self._normalize_bar(symbol, bar, timeframe=alpaca_timeframe))
-
-                next_token = data.get("next_page_token")
-                if not next_token or len(results) >= limit:
-                    break
-                params["page_token"] = next_token
-
-            results = results[:limit]
-
-            logger.info(
-                "alpaca_option_bars_fetched",
-                contracts=len(contracts),
-                bars=len(results),
-            )
+            logger.info("alpaca_option_bars_fetched", contracts=len(contracts), bars=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_option_bars_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            logger.error("alpaca_option_bars_error", status=e.response.status_code, error=str(e))
             raise
 
         return results
@@ -200,14 +177,10 @@ class AlpacaOptionsMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: list[NormalizedQuote] = []
-        symbols_param = ",".join(contracts)
-        request_limit = max(1, min(limit, 10000))
-
         params: dict[str, str | int] = {
-            "symbols": symbols_param,
+            "symbols": ",".join(contracts),
             "feed": self._options_feed,
-            "limit": request_limit,
+            "limit": max(1, min(limit, 10000)),
         }
         if start:
             params["start"] = start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat()
@@ -215,33 +188,13 @@ class AlpacaOptionsMixin:
             params["end"] = end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat()
 
         try:
-            while True:
-                response = await self._client.get(
-                    "/v1beta1/options/quotes",
-                    params=params,
-                )
-                response.raise_for_status()
-                data = response.json()
-
-                for symbol, quotes in data.get("quotes", {}).items():
-                    for quote in quotes:
-                        results.append(self._normalize_quote(symbol, quote))
-
-                next_token = data.get("next_page_token")
-                if not next_token or len(results) >= limit:
-                    break
-                params["page_token"] = next_token
-
-            results = results[:limit]
+            pages = await self._paginate("/v1beta1/options/quotes", params, "quotes", limit=limit)
+            results = [self._normalize_quote(symbol, quote) for symbol, quotes in pages.items() for quote in quotes]
 
             logger.info("alpaca_historical_option_quotes_fetched", count=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_historical_option_quotes_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            logger.error("alpaca_historical_option_quotes_error", status=e.response.status_code, error=str(e))
             raise
 
         return results
@@ -258,10 +211,8 @@ class AlpacaOptionsMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        results: list[NormalizedTrade] = []
-        symbols_param = ",".join(contracts)
         params: dict[str, Any] = {
-            "symbols": symbols_param,
+            "symbols": ",".join(contracts),
             "feed": self._options_feed,
             "limit": max(1, min(limit, 10000)),
         }
@@ -271,21 +222,8 @@ class AlpacaOptionsMixin:
             params["end"] = end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat()
 
         try:
-            while True:
-                response = await self._client.get("/v1beta1/options/trades", params=params)
-                response.raise_for_status()
-                data = response.json()
-
-                for symbol, trades in data.get("trades", {}).items():
-                    for trade in trades:
-                        results.append(self._normalize_trade(symbol, trade))
-
-                next_token = data.get("next_page_token")
-                if not next_token or len(results) >= limit:
-                    break
-                params["page_token"] = next_token
-
-            results = results[:limit]
+            pages = await self._paginate("/v1beta1/options/trades", params, "trades", limit=limit)
+            results = [self._normalize_trade(symbol, trade) for symbol, trades in pages.items() for trade in trades]
 
             logger.info("alpaca_option_trades_fetched", count=len(results))
 
@@ -329,10 +267,15 @@ class AlpacaOptionsMixin:
         if not self._client:
             raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
 
-        all_snapshots: dict[str, Any] = {}
         params: dict[str, Any] = {"feed": self._options_feed, "limit": 1000}
 
         try:
+            # _paginate returns dict[symbol, list[items]], but snapshots are dict[symbol, single_dict].
+            # Use raw pagination here since snapshots structure differs (values are dicts, not lists).
+            if not self._client:
+                raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
+
+            all_snapshots: dict[str, Any] = {}
             while True:
                 response = await self._client.get(
                     f"/v1beta1/options/snapshots/{underlying.upper()}",
@@ -348,11 +291,7 @@ class AlpacaOptionsMixin:
                     break
                 params["page_token"] = next_token
 
-            logger.info(
-                "alpaca_option_snapshots_fetched",
-                underlying=underlying,
-                count=len(all_snapshots),
-            )
+            logger.info("alpaca_option_snapshots_fetched", underlying=underlying, count=len(all_snapshots))
             return all_snapshots
 
         except httpx.HTTPStatusError as e:

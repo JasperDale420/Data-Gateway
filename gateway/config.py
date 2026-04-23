@@ -63,6 +63,21 @@ class Settings(BaseSettings):
     # Per-provider rate limits (override hardcoded defaults via env)
     alpaca_rate_limit_per_minute: int = Field(default=10000, ge=1)
     alpaca_rate_limit_per_second: int = Field(default=75, ge=1)
+    alpaca_max_concurrent_requests: int = Field(default=25, ge=1)  # see rate_limiter.DEFAULT_ALPACA_MAX_CONCURRENT
+    alpaca_trading_call_timeout_seconds: float = Field(default=15.0, ge=0.5)
+    alpaca_trading_thread_pool_size: int = Field(
+        default=16, ge=2, description="Dedicated thread pool for Alpaca trading SDK calls"
+    )
+    alpaca_trading_max_inflight: int = Field(
+        default=24,
+        ge=2,
+        description=(
+            "Upper bound on concurrent in-flight Alpaca trading calls. When exceeded, "
+            "new calls fast-fail with 503 instead of piling up in the executor queue. "
+            "Should be >= alpaca_trading_thread_pool_size; the difference is the allowed "
+            "short-term queue depth before backpressure kicks in."
+        ),
+    )
 
     # Alpaca (loaded from env, not prefixed)
     alpaca_api_key: str = Field(default="", alias="APCA_API_KEY_ID")
@@ -98,6 +113,7 @@ class Settings(BaseSettings):
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
     data_sink_operation_timeout_seconds: float = Field(default=5.0, ge=0.5)
     data_sink_redis_pool_size: int = Field(default=8, ge=1, le=32)
+    data_sink_max_inflight_per_sink: int = Field(default=512, ge=64, le=4096)
     data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
     data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
 
@@ -125,7 +141,8 @@ class Settings(BaseSettings):
     option_capture_symbols: str = "SPY,QQQ,IWM"
     option_capture_interval_seconds: int = Field(default=60, ge=1)
     option_capture_market_hours_only: bool = True
-    option_capture_snapshot_timeout_seconds: float = Field(default=10.0, ge=0.5)
+    option_capture_snapshot_timeout_seconds: float = Field(default=90.0, ge=5.0)
+    option_capture_symbol_timeout_overrides: str = ""  # comma-separated SYMBOL:SECONDS pairs, e.g. "SPY:45,QQQ:45"
     option_capture_ws_enabled: bool = True
     option_capture_ws_contract_limit_per_symbol: int = Field(default=40, ge=1)
 
@@ -137,6 +154,18 @@ class Settings(BaseSettings):
     bulk_rate_limit_per_hour: int = Field(default=10, ge=1)
     replay_max_concurrent_sessions: int = Field(default=5, ge=1)
 
+    # Treasury yield poller
+    treasury_poller_maturities: str = "2year,10year"  # comma-separated, e.g. "2year,10year"
+
+    @property
+    def treasury_poller_maturity_list(self) -> list[str]:
+        """Parse configured treasury maturities, filtering invalid values."""
+        from gateway.core.treasury_poller import VALID_MATURITIES
+
+        maturities = [m.strip().lower() for m in self.treasury_poller_maturities.split(",") if m.strip()]
+        valid = [m for m in maturities if m in VALID_MATURITIES]
+        return valid if valid else ["2year", "10year"]
+
     @property
     def option_capture_symbol_list(self) -> list[str]:
         """Parse configured option capture symbols into a stable uppercase list."""
@@ -147,6 +176,30 @@ class Settings(BaseSettings):
                 continue
             symbols.append(symbol)
         return symbols
+
+    @property
+    def option_capture_symbol_timeout_map(self) -> dict[str, float]:
+        """Parse per-symbol timeout overrides into {SYMBOL: seconds} dict.
+
+        Format: comma-separated SYMBOL:SECONDS pairs, e.g. "SPY:45,QQQ:45".
+        Invalid entries are silently skipped.
+        """
+        overrides: dict[str, float] = {}
+        if not self.option_capture_symbol_timeout_overrides.strip():
+            return overrides
+        for entry in self.option_capture_symbol_timeout_overrides.split(","):
+            entry = entry.strip()
+            if ":" not in entry:
+                continue
+            parts = entry.split(":", 1)
+            symbol = parts[0].strip().upper()
+            try:
+                timeout = float(parts[1].strip())
+            except (ValueError, IndexError):
+                continue
+            if symbol and timeout >= 5.0:
+                overrides[symbol] = timeout
+        return overrides
 
     @field_validator("stream_options_feed", mode="before")
     @classmethod

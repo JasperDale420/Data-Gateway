@@ -89,13 +89,21 @@ class AlpacaBaseMixin(DataProvider):
             )
 
         # Create HTTP client for Market Data API
+        # Pool limits prevent connection storms during option capture bursts.
+        # keepalive_expiry=30 bridges the 60s capture interval so connections
+        # are reused instead of re-established each cycle.
         self._client = create_async_http_client(
             base_url=self._base_url,
             headers={
                 "APCA-API-KEY-ID": self._api_key,
                 "APCA-API-SECRET-KEY": self._secret_key,
             },
-            timeout=30.0,
+            timeout=httpx.Timeout(30.0, connect=5.0),
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=30.0,
+            ),
             event_hooks=httpx_event_hooks("alpaca"),
         )
 
@@ -279,6 +287,66 @@ class AlpacaBaseMixin(DataProvider):
         if normalized not in {"opra", "indicative"}:
             raise ValueError("options_feed must be 'opra' or 'indicative'")
         return normalized
+
+    async def _paginate(
+        self,
+        url: str,
+        params: dict[str, Any],
+        data_key: str,
+        limit: int | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Shared pagination loop for Alpaca REST endpoints.
+
+        Handles the ``next_page_token`` loop common to bars, trades,
+        quotes, options, news, and corporate-actions endpoints.
+
+        Args:
+            url: Alpaca API path (e.g. ``/v2/stocks/bars``).
+            params: Initial query-parameter dict (mutated with ``page_token``).
+            data_key: Top-level key in the response that holds the keyed data
+                (e.g. ``"bars"``, ``"trades"``, ``"quotes"``).  The value is
+                expected to be a ``dict[str, list]`` (symbol -> items).
+            limit: Maximum total items to collect across all pages.
+                ``None`` means paginate until exhausted.
+
+        Returns:
+            Merged ``dict[str, list]`` mapping symbols to item lists,
+            truncated so total items <= *limit* when specified.
+        """
+        if not self._client:
+            raise RuntimeError(ERR_PROVIDER_NOT_INITIALIZED)
+
+        collected: dict[str, list[dict[str, Any]]] = {}
+        total = 0
+
+        while True:
+            response = await self._client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            for symbol, items in data.get(data_key, {}).items():
+                collected.setdefault(symbol, []).extend(items)
+                total += len(items)
+
+            next_token = data.get("next_page_token")
+            if not next_token or (limit is not None and total >= limit):
+                break
+            params["page_token"] = next_token
+
+        # Truncate to limit
+        if limit is not None and total > limit:
+            budget = limit
+            trimmed: dict[str, list[dict[str, Any]]] = {}
+            for sym, items in collected.items():
+                take = min(len(items), budget)
+                if take > 0:
+                    trimmed[sym] = items[:take]
+                    budget -= take
+                if budget <= 0:
+                    break
+            return trimmed
+
+        return collected
 
     def _convert_timeframe(self, timeframe: str) -> str:
         """Convert gateway timeframe to Alpaca format."""

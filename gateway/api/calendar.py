@@ -80,17 +80,6 @@ def _mark_calendar_provider_success(route_key: str) -> None:
     _CALENDAR_PROVIDER_LAST_LOG_AT.pop(route_key, None)
 
 
-def _parse_alpaca_time(value: str | None) -> time | None:
-    if not value:
-        return None
-    for fmt in ("%H:%M", "%H:%M:%S"):
-        try:
-            return datetime.strptime(value, fmt).time()
-        except ValueError:
-            continue
-    return None
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Response Models
 # ─────────────────────────────────────────────────────────────────────────────

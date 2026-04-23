@@ -11,6 +11,27 @@ from gateway.core.auth import Client
 from gateway.core.logger import logger
 
 
+def is_benign_ws_close_error(exc: BaseException) -> bool:
+    """Return True when a send-side WebSocket exception reflects a normal close.
+
+    These show up as a race between the peer initiating a close and our own
+    background tasks (heartbeat, broadcast, response writes) calling ``send``
+    a moment later. They are not actionable errors, just the tail end of a
+    disconnect, and should not pollute ERROR/WARNING logs.
+    """
+    err = str(exc)
+    if "1006" in err or "transfer_data_task" in err:
+        return True
+    err_lower = err.lower()
+    return (
+        "disconnect" in err_lower
+        # websockets protocol: "Cannot call 'send' once a close message has been sent."
+        or "once a close message" in err_lower
+        # starlette/fastapi: "WebSocket is not connected." / "not connected"
+        or "is not connected" in err_lower
+    )
+
+
 @dataclass
 class Connection:
     """Active WebSocket connection."""
@@ -30,19 +51,33 @@ class Connection:
 class ConnectionManager:
     """Manages active WebSocket connections."""
 
-    def __init__(self):
+    def __init__(self, max_clients: int = 1000):
         self._connections: dict[str, Connection] = {}
         self._client_map: dict[str, set[str]] = {}  # client_id -> set of connection_ids
         self._lock = asyncio.Lock()
         self._broadcast_semaphore = asyncio.Semaphore(100)
+        self._max_clients = max_clients
 
-    async def connect(self, connection_id: str, websocket: WebSocket) -> Connection:
-        """Register a new connection."""
-        await websocket.accept()
+    async def connect(self, connection_id: str, websocket: WebSocket) -> Connection | None:
+        """Register a new connection.
 
-        connection = Connection(websocket=websocket)
-
+        Returns None if the server is at capacity (ws_max_clients).
+        """
         async with self._lock:
+            if len(self._connections) >= self._max_clients:
+                logger.warning(
+                    "connection_limit_reached",
+                    connection_id=connection_id,
+                    active=len(self._connections),
+                    max_clients=self._max_clients,
+                )
+                await websocket.accept()
+                await websocket.close(code=4010, reason="Connection limit reached")
+                return None
+
+            await websocket.accept()
+
+            connection = Connection(websocket=websocket)
             self._connections[connection_id] = connection
             # Anonymous connections are not in client_map yet
 
@@ -184,14 +219,55 @@ class ConnectionManager:
                         await connection.websocket.send_bytes(payload)
                 return True
             except Exception as e:
-                logger.warning(
-                    "broadcast_send_failed",
-                    client_id=connection.client_id,
-                    error=str(e),
-                )
+                if is_benign_ws_close_error(e):
+                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=str(e))
+                else:
+                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=str(e))
                 return False
 
         # Gather all sends
+        results = await asyncio.gather(*(_send(conn) for conn in targets))
+        return sum(1 for sent in results if sent)
+
+    async def broadcast_to_connection_ids(
+        self,
+        message: dict | str | bytes,
+        connection_ids: list[str] | None = None,
+    ) -> int:
+        """Broadcast message to explicitly named WebSocket connections."""
+        if isinstance(message, str | bytes):
+            payload = message
+        else:
+            payload = orjson.dumps(message)
+
+        targets: list[Connection] = []
+        if connection_ids:
+            async with self._lock:
+                for connection_id in connection_ids:
+                    conn = self._connections.get(connection_id)
+                    if conn and conn.authenticated:
+                        targets.append(conn)
+        else:
+            targets = [c for c in self._connections.values() if c.authenticated]
+
+        if not targets:
+            return 0
+
+        async def _send(connection: Connection) -> bool:
+            try:
+                async with self._broadcast_semaphore:
+                    if isinstance(payload, str):
+                        await connection.websocket.send_text(payload)
+                    else:
+                        await connection.websocket.send_bytes(payload)
+                return True
+            except Exception as e:
+                if is_benign_ws_close_error(e):
+                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=str(e))
+                else:
+                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=str(e))
+                return False
+
         results = await asyncio.gather(*(_send(conn) for conn in targets))
         return sum(1 for sent in results if sent)
 

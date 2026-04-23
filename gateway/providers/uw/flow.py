@@ -198,7 +198,7 @@ class UWFlowMixin:
             return trades
 
         except Exception as e:
-            logger.warning("uw_darkpool_recent_sdk_failed", error=str(e))
+            logger.debug("uw_darkpool_recent_sdk_failed", error=str(e))
             fallback_trades = await self._get_darkpool_recent_raw(limit=limit, offset=offset)
             if fallback_trades:
                 logger.info("uw_darkpool_recent_fetched", count=len(fallback_trades), source="raw_http")
@@ -681,7 +681,7 @@ class UWFlowMixin:
             from unusualwhales.api import market
 
             if not hasattr(market, "get_sector_tide"):
-                logger.warning(
+                logger.debug(
                     "uw_sector_tide_sdk_missing",
                     detail="unusualwhales-python-client < 5.1 — falling back to raw HTTP",
                 )
@@ -815,7 +815,7 @@ class UWFlowMixin:
             from unusualwhales.api import market
 
             if not hasattr(market, "get_etf_tide"):
-                logger.warning(
+                logger.debug(
                     "uw_etf_tide_sdk_missing",
                     detail="unusualwhales-python-client lacks get_etf_tide — falling back to raw HTTP",
                 )

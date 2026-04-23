@@ -69,6 +69,17 @@ clients:
       rate_limit: 600
     enabled: true
 
+  # Heber Watch service (alert barrier checker — reads snapshots from Alpaca)
+  - id: heber-watch
+    key: gw_heber_watch_key_44931
+    role: trader
+    permissions:
+      providers: ["alpaca", "yfinance"]
+      feeds: ["bars", "quotes", "trades"]
+      max_symbols: 500
+      rate_limit: 300
+    enabled: true
+
   # Development/testing client
   - id: test
     key: gw_test_dev_key_67890

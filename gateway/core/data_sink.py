@@ -67,7 +67,7 @@ class DataSinkRegistry:
     def __init__(
         self,
         dedup_cache: Any | None = None,
-        max_in_flight_per_sink: int = 256,
+        max_in_flight_per_sink: int = 512,
     ) -> None:
         """Initialize registry.
 
@@ -316,13 +316,23 @@ class DataSinkRegistry:
                 retry_after=round(e.retry_after, 2),
             )
             record_sink_publish(sink=sink.name, topic=topic, success=False)
-        except Exception:
-            logger.exception(
-                "data_sink_publish_failed",
-                sink=sink.name,
-                topic=topic,
-            )
-            if not sink.record_publish_metrics:
+        except Exception as e:
+            # Sinks that record their own metrics (e.g. RedisStreamsSink) already
+            # log detailed errors internally.  Avoid duplicate ERROR+traceback spam
+            # by using a quieter log for those sinks.
+            if sink.record_publish_metrics:
+                logger.debug(
+                    "data_sink_publish_failed",
+                    sink=sink.name,
+                    topic=topic,
+                    error=str(e),
+                )
+            else:
+                logger.exception(
+                    "data_sink_publish_failed",
+                    sink=sink.name,
+                    topic=topic,
+                )
                 record_sink_publish(sink=sink.name, topic=topic, success=False)
 
     async def health_check_all(self) -> dict[str, bool]:
@@ -340,8 +350,17 @@ class DataSinkRegistry:
         return results
 
     async def close_all(self) -> None:
-        """Close all sinks."""
+        """Close all sinks and the dedup cache."""
         self.disable()
+
+        # Close the dedup cache first to prevent new operations against a
+        # closing Redis connection (avoids "Event loop is closed" errors).
+        if self._dedup_cache is not None:
+            try:
+                await self._dedup_cache.close()
+            except Exception as e:
+                logger.warning("dedup_cache_close_failed", error=str(e))
+
         for sink in self._sinks:
             try:
                 await sink.close()

@@ -117,7 +117,9 @@ async def test_execute_uw_cached_uses_cache_and_rate_limit_once(
     def _build_response(payload: list[int]) -> dict[str, Any]:
         return {"success": True, "data": payload}
 
-    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+    from gateway.api import deps
+
+    monkeypatch.setattr(deps, "require_provider_rate_limit", _fake_rate_limit)
 
     first = await common.execute_uw_cached(
         cache=cache,  # type: ignore[arg-type]

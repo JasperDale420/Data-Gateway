@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+
+# Runtime logs and generated artifacts
+logs/
+index.scip
 .Python
 build/
 develop-eggs/

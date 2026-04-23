@@ -543,7 +543,13 @@ class BackfillEngine:
             )
 
     async def _execute_job(self, job: BackfillJob) -> None:
-        """Fetch and publish data for all symbols concurrently (bounded by semaphore)."""
+        """Fetch and publish data for all symbols, iterating date-first.
+
+        Iterates date chunks in the outer loop and symbols concurrently in the
+        inner loop. This ensures all events for a given date range arrive
+        together in the Redis stream, giving the downstream Heber consumer
+        better partition locality and fewer tiny parquet files.
+        """
         provider_instance = self._provider_registry.get(job.request.provider)
         if provider_instance is None:
             raise RuntimeError(f"Provider '{job.request.provider}' not available")
@@ -555,27 +561,53 @@ class BackfillEngine:
 
         sem = asyncio.Semaphore(self._symbol_concurrency)
 
-        async def _bounded_process(sym: str) -> None:
-            async with sem:
-                if job.status == BackfillStatus.CANCELLED:
-                    return
-                await self._process_symbol(
-                    job,
-                    sym,
-                    chunks,
-                    dispatch_fn,
-                    provider_instance,
-                    rate_limiter,
-                    delay_ms,
-                )
+        # Mark all symbols as running
+        for sym in job.request.symbols:
+            job.symbols_progress[sym].status = "running"
 
-        tasks = [asyncio.create_task(_bounded_process(sym)) for sym in job.request.symbols]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for sym, result in zip(job.request.symbols, results, strict=True):
-            if isinstance(result, Exception):
-                error_msg = f"{sym}: unhandled error: {result}"
-                job.errors.append(error_msg)
-                logger.error("backfill_symbol_unhandled_error", job_id=job.job_id, symbol=sym, error=str(result))
+        for chunk_start, chunk_end in chunks:
+            if job.status == BackfillStatus.CANCELLED:
+                break
+
+            async def _bounded_chunk(
+                sym: str,
+                _chunk_start: datetime = chunk_start,
+                _chunk_end: datetime = chunk_end,
+            ) -> None:
+                async with sem:
+                    if job.status == BackfillStatus.CANCELLED:
+                        return
+                    sp = job.symbols_progress[sym]
+                    await self._process_chunk(
+                        job,
+                        sp,
+                        sym,
+                        _chunk_start,
+                        _chunk_end,
+                        dispatch_fn,
+                        provider_instance,
+                        rate_limiter,
+                    )
+
+            tasks = [asyncio.create_task(_bounded_chunk(sym)) for sym in job.request.symbols]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for sym, result in zip(job.request.symbols, results, strict=True):
+                if isinstance(result, Exception):
+                    error_msg = f"{sym}: unhandled error in chunk {chunk_start.date()}: {result}"
+                    job.errors.append(error_msg)
+                    logger.error(
+                        "backfill_symbol_unhandled_error",
+                        job_id=job.job_id,
+                        symbol=sym,
+                        error=str(result),
+                    )
+
+            await asyncio.sleep(delay_ms / 1000)
+
+        # Finalize symbol statuses
+        for sym, sp in job.symbols_progress.items():
+            if sp.status == "running":
+                sp.status = "failed" if sp.errors else "complete"
 
     async def _process_symbol(
         self,
@@ -587,7 +619,11 @@ class BackfillEngine:
         rate_limiter: ProviderRateLimitManager,
         delay_ms: int,
     ) -> None:
-        """Fetch and publish all chunks for a single symbol."""
+        """Fetch and publish all chunks for a single symbol.
+
+        Retained for callers outside the main ``_execute_job`` path.
+        The primary backfill path now iterates date-first in ``_execute_job``.
+        """
         sp = job.symbols_progress[sym]
         sp.status = "running"
 
@@ -671,6 +707,11 @@ class BackfillEngine:
         if not self._sink_registry:
             logger.warning("backfill_publish_skipped", reason="no sink registry", job_id=job_id)
             return 0
+
+        # Sort by timestamp for downstream partition locality — Heber's consumer
+        # partitions Silver by date, so grouping events by date in the stream
+        # means fewer, larger partition flushes instead of many tiny files.
+        items.sort(key=lambda x: x.get("timestamp") or x.get("t") or "")
 
         messages: list[tuple[str, dict[str, Any]]] = []
         for item in items:
