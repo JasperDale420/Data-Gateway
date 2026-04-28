@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`on_message_slow` warning when an upstream Alpaca handler holds the receive loop too long** (`gateway/core/stream.py`): The receive loop's docstring already promised this instrumentation but the code didn't actually do it. Now wraps each `on_message` call with `perf_counter` and logs a structured WARNING (`stream`, `duration_seconds`, `message_type`) when handling exceeds 100ms. Slow handlers stall TCP reads, fill Alpaca's outbound buffer, and trigger their slow-client (407) → 1006-without-close-frame disconnect path. This is diagnostic instrumentation to tell whether the 314 code-1006 closes/2d we see during peak hours are upstream saturation drops or our own processing falling behind.
+
 ### Fixed
 
 - **`heartbeat_send_failed` and `broadcast_send_failed` benign-close races no longer slip through to WARNING when the exception has an empty `str()`** (`gateway/core/connections.py`): The `is_benign_ws_close_error` helper introduced in commit 56cc1c1 only matched on substrings of `str(exc)`, but `WebSocketDisconnect()` and `ConnectionClosed(None, None)` both have `str(exc) == ""`, so every benign client-disconnect-during-heartbeat race produced a WARNING with `error=""`. Recent audits saw 93 `heartbeat_send_failed` and 24 `broadcast_send_failed` WARNs over 2 days that all matched this empty-string pattern. Helper now also matches by exception type (`isinstance(exc, ConnectionClosed | WebSocketDisconnect)`), so these benign races route to DEBUG via the existing `*_closed` log lines.

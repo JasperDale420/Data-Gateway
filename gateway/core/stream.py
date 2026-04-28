@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from time import perf_counter
 from typing import Any
 
 import msgpack
@@ -29,6 +30,10 @@ from gateway.core.validator import get_validator
 
 DEFAULT_FANOUT_MAX_INFLIGHT = 100
 DEFAULT_FANOUT_BATCH_SIZE = 32
+# Warn when a single on_message call holds the receive loop this long;
+# long handlers fill Alpaca's outbound buffer and can trigger their
+# slow-client (407) disconnect path, surfacing on our side as code 1006.
+_ON_MESSAGE_SLOW_THRESHOLD_SECONDS = 0.1
 MESSAGE_TYPE_TO_DATA_TYPE = {
     "b": "bars",
     "q": "quotes",
@@ -707,11 +712,18 @@ class UpstreamConnection:
                 data = self._decode_message(message)
 
                 # Alpaca sends arrays of messages
-                if isinstance(data, list):
-                    for msg in data:
-                        await self.on_message(msg)
-                else:
-                    await self.on_message(data)
+                messages = data if isinstance(data, list) else [data]
+                for msg in messages:
+                    start = perf_counter()
+                    await self.on_message(msg)
+                    elapsed = perf_counter() - start
+                    if elapsed >= _ON_MESSAGE_SLOW_THRESHOLD_SECONDS:
+                        logger.warning(
+                            "on_message_slow",
+                            stream=self.stream_type.value,
+                            duration_seconds=round(elapsed, 3),
+                            message_type=msg.get("T") if isinstance(msg, dict) else None,
+                        )
 
             except Exception as e:
                 logger.error(
