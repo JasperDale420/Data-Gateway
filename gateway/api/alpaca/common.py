@@ -63,14 +63,24 @@ from alpaca.common.exceptions import APIError
 from gateway.core.rate_limiter import get_rate_limiter
 
 
-def _handle_alpaca_error(exc: Exception) -> None:
+def _handle_alpaca_error(exc: Exception, endpoint: str | None = None) -> None:
     """Map Alpaca-specific exceptions (APIError) to HTTP errors."""
     if isinstance(exc, APIError):
         status_code = getattr(exc, "status_code", 400)
         if status_code < 500:
-            logger.warning("provider_request_failed", error=str(exc), status_code=status_code)
+            logger.warning(
+                "provider_request_failed",
+                endpoint=endpoint,
+                error=str(exc),
+                status_code=status_code,
+            )
         else:
-            logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+            logger.error(
+                "provider_request_failed",
+                endpoint=endpoint,
+                exc_info=True,
+                status_code=status_code,
+            )
         raise HTTPException(status_code=status_code, detail=f"Alpaca API Error: {str(exc)}")
 
 
@@ -90,6 +100,7 @@ async def execute_alpaca_provider_call[T](
     if not provider:
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
+    endpoint = getattr(provider_call, "__qualname__", None) or getattr(provider_call, "__name__", "<unknown>")
     try:
         await require_provider_rate_limit("alpaca", block=block)
         sem = get_rate_limiter().upstream_semaphore("alpaca") or nullcontext()
@@ -100,19 +111,39 @@ async def execute_alpaca_provider_call[T](
     except APIError as e:
         status_code = getattr(e, "status_code", 400)
         if status_code < 500:
-            logger.warning("provider_request_failed", error=str(e), status_code=status_code)
+            logger.warning(
+                "provider_request_failed",
+                endpoint=endpoint,
+                error=str(e),
+                status_code=status_code,
+            )
         else:
-            logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+            logger.error(
+                "provider_request_failed",
+                endpoint=endpoint,
+                exc_info=True,
+                status_code=status_code,
+            )
         raise HTTPException(status_code=status_code, detail=f"Alpaca API Error: {str(e)}")
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         if status_code < 500:
-            logger.warning("provider_request_failed", error=str(e), status_code=status_code)
+            logger.warning(
+                "provider_request_failed",
+                endpoint=endpoint,
+                error=str(e),
+                status_code=status_code,
+            )
         else:
-            logger.error("provider_request_failed", exc_info=True, status_code=status_code)
+            logger.error(
+                "provider_request_failed",
+                endpoint=endpoint,
+                exc_info=True,
+                status_code=status_code,
+            )
         raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
-        logger.error("provider_request_failed", exc_info=True)
+        logger.error("provider_request_failed", endpoint=endpoint, exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
 
 

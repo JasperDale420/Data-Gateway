@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from collections.abc import Generator
 from typing import Any, cast
 
@@ -116,6 +118,34 @@ async def test_execute_alpaca_provider_call_wraps_provider_errors(
 
     assert exc.value.status_code == 502
     assert exc.value.detail == "Upstream provider error"
+
+
+@pytest.mark.asyncio
+async def test_execute_alpaca_provider_call_logs_endpoint_on_unexpected_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = _FakeRegistry({"alpaca": object()})
+
+    async def _fake_rate_limit(_provider_name: str, block: bool = False) -> None:
+        return None
+
+    async def _failing_call(_provider: Any) -> str:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+
+    with caplog.at_level(logging.ERROR, logger="data-gateway"), pytest.raises(HTTPException):
+        await common.execute_alpaca_provider_call(
+            registry=cast(ProviderRegistry, registry),
+            provider_call=_failing_call,
+        )
+
+    matches = [json.loads(rec.getMessage()) for rec in caplog.records if rec.getMessage().startswith("{")]
+    failures = [m for m in matches if m.get("message") == "provider_request_failed"]
+    assert failures, "expected a provider_request_failed log record"
+    endpoint = failures[-1].get("endpoint")
+    assert isinstance(endpoint, str) and endpoint.endswith("_failing_call"), endpoint
 
 
 @pytest.mark.asyncio

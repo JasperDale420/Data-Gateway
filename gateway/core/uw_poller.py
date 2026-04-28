@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 from gateway.core.logger import logger
 from gateway.core.timeutils import parse_timestamp
+from gateway.providers.uw.transient import is_transient_upstream_error
 
 # Stream name for Heber integration
 HEBER_STREAM = "heber:events"
@@ -498,7 +499,10 @@ class UWPoller(DedupMixin, BasePoller):
                 out_of_order=out_of_order,
             )
         except Exception as e:
-            logger.error("uw_poller_flow_error", error=str(e))
+            if is_transient_upstream_error(e):
+                logger.warning("uw_poller_flow_error", error=str(e))
+            else:
+                logger.error("uw_poller_flow_error", error=str(e), exc_info=True)
 
     async def _poll_darkpool(self, sink_registry, limit: int) -> None:
         """Poll and publish darkpool trades with deduplication."""
@@ -545,7 +549,10 @@ class UWPoller(DedupMixin, BasePoller):
                 out_of_order=out_of_order,
             )
         except Exception as e:
-            logger.error("uw_poller_darkpool_error", error=str(e))
+            if is_transient_upstream_error(e):
+                logger.warning("uw_poller_darkpool_error", error=str(e))
+            else:
+                logger.error("uw_poller_darkpool_error", error=str(e), exc_info=True)
 
     async def _poll_market_tide(self, sink_registry) -> None:
         """Poll and publish market tide data.
@@ -603,7 +610,10 @@ class UWPoller(DedupMixin, BasePoller):
                     out_of_order=out_of_order,
                 )
         except Exception as e:
-            logger.error("uw_poller_market_tide_error", error=str(e))
+            if is_transient_upstream_error(e):
+                logger.warning("uw_poller_market_tide_error", error=str(e))
+            else:
+                logger.error("uw_poller_market_tide_error", error=str(e), exc_info=True)
 
     async def _poll_sector_tides(self, sink_registry) -> None:
         """Poll and publish sector tide data for all GICS sectors.

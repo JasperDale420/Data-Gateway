@@ -8,6 +8,7 @@ from gateway.core.logger import logger
 from gateway.schemas import NormalizedIVRank
 
 from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_int
+from .transient import is_transient_upstream_error
 
 
 class UWOptionsMixin:
@@ -60,7 +61,10 @@ class UWOptionsMixin:
             return results
 
         except Exception as e:
-            logger.error("uw_greek_exposure_failed", symbol=symbol, error=str(e))
+            if is_transient_upstream_error(e):
+                logger.warning("uw_greek_exposure_failed", symbol=symbol, error=str(e))
+            else:
+                logger.error("uw_greek_exposure_failed", symbol=symbol, error=str(e), exc_info=True)
             raise
 
     async def get_greek_exposure_by_strike(self, symbol: str, date_str: str | None = None) -> list:
@@ -105,7 +109,10 @@ class UWOptionsMixin:
             return results
 
         except Exception as e:
-            logger.error("uw_greek_exposure_strike_failed", symbol=symbol, error=str(e))
+            if is_transient_upstream_error(e):
+                logger.warning("uw_greek_exposure_strike_failed", symbol=symbol, error=str(e))
+            else:
+                logger.error("uw_greek_exposure_strike_failed", symbol=symbol, error=str(e), exc_info=True)
             raise
 
     async def get_greek_exposure_by_expiry(self, symbol: str, date_str: str | None = None) -> list:
@@ -706,7 +713,10 @@ class UWOptionsMixin:
             return results
 
         except Exception as e:
-            logger.error("uw_spot_exposures_strike_failed", symbol=symbol, error=str(e))
+            if is_transient_upstream_error(e):
+                logger.warning("uw_spot_exposures_strike_failed", symbol=symbol, error=str(e))
+            else:
+                logger.error("uw_spot_exposures_strike_failed", symbol=symbol, error=str(e), exc_info=True)
             raise
 
     async def get_option_volume_levels(self, symbol: str) -> list[dict[str, Any]]:

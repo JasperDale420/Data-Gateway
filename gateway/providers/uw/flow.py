@@ -11,6 +11,7 @@ from gateway.schemas import (
 )
 
 from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
+from .transient import is_transient_upstream_error
 
 _ET = ZoneInfo("America/New_York")
 
@@ -100,7 +101,10 @@ class UWFlowMixin:
             return alerts
 
         except Exception as e:
-            logger.error("uw_flow_alerts_failed", error=str(e), exc_info=True)
+            if is_transient_upstream_error(e):
+                logger.warning("uw_flow_alerts_failed", error=str(e))
+            else:
+                logger.error("uw_flow_alerts_failed", error=str(e), exc_info=True)
             raise
 
     async def get_ticker_flow(
@@ -159,7 +163,10 @@ class UWFlowMixin:
             return alerts
 
         except Exception as e:
-            logger.error("uw_ticker_flow_failed", symbol=symbol, error=str(e))
+            if is_transient_upstream_error(e):
+                logger.warning("uw_ticker_flow_failed", symbol=symbol, error=str(e))
+            else:
+                logger.error("uw_ticker_flow_failed", symbol=symbol, error=str(e), exc_info=True)
             raise
 
     async def get_darkpool_recent(
@@ -289,7 +296,10 @@ class UWFlowMixin:
             return tides
 
         except Exception as e:
-            logger.error("uw_market_tide_failed", error=str(e))
+            if is_transient_upstream_error(e):
+                logger.warning("uw_market_tide_failed", error=str(e))
+            else:
+                logger.error("uw_market_tide_failed", error=str(e), exc_info=True)
             raise
 
     async def get_group_greek_flow(self, flow_group: str, date_str: str | None = None) -> list[dict]:
