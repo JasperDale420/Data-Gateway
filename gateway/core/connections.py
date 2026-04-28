@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 
 import orjson
 from fastapi import WebSocket
+from starlette.websockets import WebSocketDisconnect
+from websockets.exceptions import ConnectionClosed
 
 from gateway.core.auth import Client
 from gateway.core.logger import logger
@@ -19,6 +21,10 @@ def is_benign_ws_close_error(exc: BaseException) -> bool:
     a moment later. They are not actionable errors, just the tail end of a
     disconnect, and should not pollute ERROR/WARNING logs.
     """
+    # str(WebSocketDisconnect(...)) and str(ConnectionClosed(None, None)) are "",
+    # so substring checks miss them — match by exception type first.
+    if isinstance(exc, ConnectionClosed | WebSocketDisconnect):
+        return True
     err = str(exc)
     if "1006" in err or "transfer_data_task" in err:
         return True

@@ -32,3 +32,18 @@ def test_is_benign_ws_close_error_matches_known_close_races(message: str) -> Non
 )
 def test_is_benign_ws_close_error_ignores_unrelated_errors(message: str) -> None:
     assert is_benign_ws_close_error(RuntimeError(message)) is False
+
+
+def test_is_benign_ws_close_error_recognizes_websocketdisconnect_with_empty_str() -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    exc = WebSocketDisconnect(code=1006, reason=None)
+    assert str(exc) == ""
+    assert is_benign_ws_close_error(exc) is True
+
+
+def test_is_benign_ws_close_error_recognizes_connectionclosed_with_empty_str() -> None:
+    from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+
+    assert is_benign_ws_close_error(ConnectionClosedOK(None, None)) is True
+    assert is_benign_ws_close_error(ConnectionClosedError(None, None)) is True
