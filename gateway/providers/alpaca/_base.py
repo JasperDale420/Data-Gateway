@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 from alpaca.trading.client import TradingClient
+from requests import Session
 
 from gateway.core.http_client import create_async_http_client, http_retry
 from gateway.core.logger import logger
@@ -23,6 +24,23 @@ TRADING_BASE_URL = "https://paper-api.alpaca.markets"  # Paper by default; set A
 ERR_PROVIDER_NOT_INITIALIZED = "Provider not initialized"
 ERR_TRADING_CLIENT_NOT_INITIALIZED = "Trading client not initialized"
 UTC_OFFSET = "+00:00"
+
+
+def _install_session_default_timeout(session: Session, timeout_seconds: float) -> None:
+    """Inject a default HTTP timeout into a requests Session.
+
+    Why: alpaca-py creates Session() with no timeout, so asyncio's wait_for
+    cannot cancel an in-flight thread. Wrapping ``session.request`` ensures
+    every call without an explicit timeout still gets one, freeing the
+    trading thread pool when upstream hangs.
+    """
+    original_request = session.request
+
+    def request_with_default_timeout(method: str, url: str, **kwargs: Any) -> Any:
+        kwargs.setdefault("timeout", timeout_seconds)
+        return original_request(method, url, **kwargs)
+
+    session.request = request_with_default_timeout  # type: ignore[method-assign]
 
 
 class AlpacaBaseMixin(DataProvider):
@@ -118,6 +136,10 @@ class AlpacaBaseMixin(DataProvider):
                 api_key=self._api_key,
                 secret_key=self._secret_key,
                 paper=self._paper,
+            )
+            _install_session_default_timeout(
+                self._trading_client._session,
+                timeout_seconds=get_settings().alpaca_trading_http_timeout_seconds,
             )
         else:
             self._trading_client = None

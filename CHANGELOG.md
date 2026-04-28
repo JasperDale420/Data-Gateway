@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Default HTTP-level timeout on the alpaca-py trading SDK session** (`gateway/providers/alpaca/_base.py`, `gateway/config.py`): The alpaca-py SDK creates a bare `requests.Session()` with no timeout, so when our async `wait_for` fired at 15s on `alpaca_trading_call_timeout` (4 events / 2 days, all `get_account` and `get_order`), the user got HTTP 504 immediately but the underlying thread kept blocking on `requests.get(...)` until the kernel/OS gave up — leaking a slot from the 16-thread pool. The `_install_session_default_timeout` helper now wraps `session.request` to inject a default `timeout=` (controlled by `alpaca_trading_http_timeout_seconds`, default 30s) whenever the caller doesn't pass one. The default is intentionally larger than `alpaca_trading_call_timeout_seconds` (15s) so user-facing behavior is unchanged — the HTTP timeout exists purely as a safety net to release leaked threads. Explicit `timeout=` overrides from callers are preserved.
+
 - **`on_message_slow` warning when an upstream Alpaca handler holds the receive loop too long** (`gateway/core/stream.py`): The receive loop's docstring already promised this instrumentation but the code didn't actually do it. Now wraps each `on_message` call with `perf_counter` and logs a structured WARNING (`stream`, `duration_seconds`, `message_type`) when handling exceeds 100ms. Slow handlers stall TCP reads, fill Alpaca's outbound buffer, and trigger their slow-client (407) → 1006-without-close-frame disconnect path. This is diagnostic instrumentation to tell whether the 314 code-1006 closes/2d we see during peak hours are upstream saturation drops or our own processing falling behind.
 
 ### Fixed

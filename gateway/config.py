@@ -65,6 +65,19 @@ class Settings(BaseSettings):
     alpaca_rate_limit_per_second: int = Field(default=75, ge=1)
     alpaca_max_concurrent_requests: int = Field(default=25, ge=1)  # see rate_limiter.DEFAULT_ALPACA_MAX_CONCURRENT
     alpaca_trading_call_timeout_seconds: float = Field(default=15.0, ge=0.5)
+    alpaca_trading_http_timeout_seconds: float = Field(
+        default=30.0,
+        ge=1.0,
+        description=(
+            "Default HTTP-level timeout (seconds) injected into the alpaca-py SDK's "
+            "requests session. The SDK creates a bare Session() with no timeout, so "
+            "asyncio's wait_for cannot cancel an in-flight thread; without this, "
+            "alpaca_trading_call_timeout_seconds returns 504 to the caller but leaks "
+            "the trading thread until the OS gives up. Should be > "
+            "alpaca_trading_call_timeout_seconds so the wall-clock keeps user-facing "
+            "behavior unchanged; the HTTP timeout is the safety net for thread release."
+        ),
+    )
     alpaca_trading_thread_pool_size: int = Field(
         default=16, ge=2, description="Dedicated thread pool for Alpaca trading SDK calls"
     )
