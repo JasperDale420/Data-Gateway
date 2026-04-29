@@ -26,6 +26,7 @@ dependencies = [
     "alpaca-py>=0.34",
     "msgpack>=1.0",
     "orjson>=3.9",
+    "tenacity>=8.0",
     # unusualwhales SDK is installed separately in Docker via copied local package
 ]
 

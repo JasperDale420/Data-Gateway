@@ -14,7 +14,7 @@ This file is generated from provider route declarations in `gateway/api/*`.
 
 | Provider | Route Count |
 |---|---:|
-| `unusual_whales` | 125 |
+| `unusual_whales` | 126 |
 | `finnhub` | 45 |
 | `alphavantage` | 30 |
 | `sec` | 10 |
@@ -135,6 +135,7 @@ This file is generated from provider route declarations in `gateway/api/*`.
 | `GET` | `/api/v1/uw/{symbol}/greek-flow-expiry` | `gateway/api/uw/misc.py:get_greek_flow_expiry` |
 | `GET` | `/api/v1/uw/{symbol}/interpolated-iv` | `gateway/api/uw/flow_analytics.py:get_interpolated_iv` |
 | `GET` | `/api/v1/uw/{symbol}/iv-rank` | `gateway/api/uw/options.py:get_iv_rank` |
+| `GET` | `/api/v1/uw/{symbol}/iv-rank` | `gateway/api/uw/volatility.py:get_iv_rank_alias` |
 | `GET` | `/api/v1/uw/{symbol}/iv-surface` | `gateway/api/uw/volatility.py:get_iv_surface` |
 | `GET` | `/api/v1/uw/{symbol}/iv-term-structure` | `gateway/api/uw/volatility.py:get_iv_term_structure` |
 | `GET` | `/api/v1/uw/{symbol}/max-pain` | `gateway/api/uw/options.py:get_max_pain` |
