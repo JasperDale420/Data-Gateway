@@ -177,6 +177,56 @@ class Settings(BaseSettings):
     # Treasury yield poller
     treasury_poller_maturities: str = "2year,10year"  # comma-separated, e.g. "2year,10year"
 
+    # Alpaca quotes REST-fallback poller. Enable to publish quotes to Heber without
+    # needing a WebSocket client to subscribe.
+    quotes_poller_enabled: bool = True
+    quotes_poller_interval_seconds: int = Field(default=30, ge=5)
+    quotes_poller_symbols: str = ""  # comma-separated; empty = use DEFAULT_QUOTES_SYMBOLS
+
+    @property
+    def quotes_poller_symbol_list(self) -> list[str] | None:
+        """Parse quotes_poller_symbols; return None to use poller defaults."""
+        symbols = [s.strip().upper() for s in self.quotes_poller_symbols.split(",") if s.strip()]
+        return symbols or None
+
+    # Alpaca trades REST-fallback poller. Same rationale as quotes_poller.
+    trades_poller_enabled: bool = True
+    trades_poller_interval_seconds: int = Field(default=30, ge=5)
+    trades_poller_symbols: str = ""  # comma-separated; empty = use DEFAULT_TRADES_SYMBOLS
+
+    @property
+    def trades_poller_symbol_list(self) -> list[str] | None:
+        """Parse trades_poller_symbols; return None to use poller defaults."""
+        symbols = [s.strip().upper() for s in self.trades_poller_symbols.split(",") if s.strip()]
+        return symbols or None
+
+    # Alpaca crypto poller. Crypto trades 24/7; no market-hours gate.
+    crypto_poller_enabled: bool = True
+    crypto_poller_interval_seconds: int = Field(default=60, ge=5)
+    crypto_poller_pairs: str = ""  # comma-separated BASE/QUOTE pairs; empty = DEFAULT_CRYPTO_PAIRS
+
+    @property
+    def crypto_poller_pair_list(self) -> list[str] | None:
+        """Parse crypto_poller_pairs; return None to use poller defaults."""
+        pairs = [p.strip().upper() for p in self.crypto_poller_pairs.split(",") if p.strip()]
+        return pairs or None
+
+    # Emit feed=option_trades envelopes for each contract in the captured chain
+    # snapshot. No additional API calls — reuses snapshot data already fetched.
+    option_capture_publish_per_contract_trades: bool = True
+
+    # Alpaca news REST poller. Replaces missing WS news subscription path.
+    news_poller_enabled: bool = True
+    news_poller_interval_seconds: int = Field(default=120, ge=5)
+    news_poller_fetch_limit: int = Field(default=50, ge=1, le=50)
+    news_poller_symbols: str = ""  # comma-separated; empty = all symbols (market-wide)
+
+    @property
+    def news_poller_symbol_list(self) -> list[str] | None:
+        """Parse news_poller_symbols; return None for market-wide."""
+        symbols = [s.strip().upper() for s in self.news_poller_symbols.split(",") if s.strip()]
+        return symbols or None
+
     @property
     def treasury_poller_maturity_list(self) -> list[str]:
         """Parse configured treasury maturities, filtering invalid values."""

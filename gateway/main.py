@@ -445,6 +445,80 @@ async def lifespan(app: FastAPI):
             )
             logger.warning("treasury_poller_skipped", reason=reason)
 
+    # Start Alpaca quotes REST-fallback poller (ensures equity quotes flow to Heber
+    # without requiring a WebSocket client to subscribe).
+    quotes_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.quotes_poller_enabled:
+        if registry.get("alpaca") is not None:
+            from gateway.core.quotes_poller import start_quotes_poller
+
+            quotes_poller = await start_quotes_poller(
+                symbols=settings.quotes_poller_symbol_list,
+                poll_interval_seconds=settings.quotes_poller_interval_seconds,
+            )
+            logger.info(
+                "quotes_poller_initialized",
+                symbols=len(settings.quotes_poller_symbol_list) if settings.quotes_poller_symbol_list else "default",
+                interval_seconds=settings.quotes_poller_interval_seconds,
+            )
+        else:
+            logger.warning("quotes_poller_skipped", reason="Alpaca provider not available")
+
+    # Start Alpaca trades REST-fallback poller (same rationale as quotes_poller).
+    trades_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.trades_poller_enabled:
+        if registry.get("alpaca") is not None:
+            from gateway.core.trades_poller import start_trades_poller
+
+            trades_poller = await start_trades_poller(
+                symbols=settings.trades_poller_symbol_list,
+                poll_interval_seconds=settings.trades_poller_interval_seconds,
+            )
+            logger.info(
+                "trades_poller_initialized",
+                symbols=len(settings.trades_poller_symbol_list) if settings.trades_poller_symbol_list else "default",
+                interval_seconds=settings.trades_poller_interval_seconds,
+            )
+        else:
+            logger.warning("trades_poller_skipped", reason="Alpaca provider not available")
+
+    # Start Alpaca crypto poller (24/7 — no market-hours gate).
+    crypto_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.crypto_poller_enabled:
+        if registry.get("alpaca") is not None:
+            from gateway.core.crypto_poller import start_crypto_poller
+
+            crypto_poller = await start_crypto_poller(
+                pairs=settings.crypto_poller_pair_list,
+                poll_interval_seconds=settings.crypto_poller_interval_seconds,
+            )
+            logger.info(
+                "crypto_poller_initialized",
+                pairs=len(settings.crypto_poller_pair_list) if settings.crypto_poller_pair_list else "default",
+                interval_seconds=settings.crypto_poller_interval_seconds,
+            )
+        else:
+            logger.warning("crypto_poller_skipped", reason="Alpaca provider not available")
+
+    # Start Alpaca news poller (REST-based; news WS only delivers when a client subscribes).
+    news_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.news_poller_enabled:
+        if registry.get("alpaca") is not None:
+            from gateway.core.news_poller import start_news_poller
+
+            news_poller = await start_news_poller(
+                symbols=settings.news_poller_symbol_list,
+                poll_interval_seconds=settings.news_poller_interval_seconds,
+                fetch_limit=settings.news_poller_fetch_limit,
+            )
+            logger.info(
+                "news_poller_initialized",
+                symbols=settings.news_poller_symbol_list or "all",
+                interval_seconds=settings.news_poller_interval_seconds,
+            )
+        else:
+            logger.warning("news_poller_skipped", reason="Alpaca provider not available")
+
     option_capture_service = None
     if settings.option_capture_enabled:
         from gateway.core.option_capture import start_option_capture_service
@@ -513,6 +587,26 @@ async def lifespan(app: FastAPI):
         from gateway.core.treasury_poller import stop_treasury_poller
 
         await stop_treasury_poller()
+
+    if quotes_poller:
+        from gateway.core.quotes_poller import stop_quotes_poller
+
+        await stop_quotes_poller()
+
+    if trades_poller:
+        from gateway.core.trades_poller import stop_trades_poller
+
+        await stop_trades_poller()
+
+    if crypto_poller:
+        from gateway.core.crypto_poller import stop_crypto_poller
+
+        await stop_crypto_poller()
+
+    if news_poller:
+        from gateway.core.news_poller import stop_news_poller
+
+        await stop_news_poller()
 
     if uw_poller:
         from gateway.core.uw_poller import stop_uw_poller
