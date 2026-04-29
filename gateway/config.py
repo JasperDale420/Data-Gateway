@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     stream_use_iex: bool = False  # Use IEX instead of SIP for stocks
     stream_options_feed: str = "opra"  # Options stream feed: opra or indicative
     stream_lazy_connect: bool = True  # Connect to streams on-demand for efficiency
+    # Comma-separated stream types (stocks_sip, stocks_iex, options, crypto, news)
+    # to connect eagerly at Gateway startup, even when stream_lazy_connect is True.
+    # Default eagerly connects the stocks feed so the first trading-bot subscribe
+    # at 9:30 ET doesn't pay the upstream Alpaca cold-start cost (~30s of TLS +
+    # auth + first-bar drain). Verified safe with the Algo Trader Plus plan
+    # (multi-connection); on a Basic plan, set this to "" to keep all streams lazy.
+    stream_eager_connect_types: str = "stocks"
     stream_reconnect_max_retries: int = Field(default=10, ge=1)
     stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     stream_reconnect_max_delay: float = Field(default=16.0, ge=1.0)

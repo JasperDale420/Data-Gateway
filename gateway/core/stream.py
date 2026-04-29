@@ -753,6 +753,7 @@ class StreamMultiplexer:
         fanout_max_inflight: int = DEFAULT_FANOUT_MAX_INFLIGHT,
         fanout_batch_size: int = DEFAULT_FANOUT_BATCH_SIZE,
         on_broadcast: Callable[[dict[str, Any] | str | bytes, list[str]], Awaitable[int]] | None = None,
+        eager_connect_types: list[str] | None = None,
     ) -> None:
         """Initialize multiplexer.
 
@@ -766,6 +767,10 @@ class StreamMultiplexer:
             fanout_max_inflight: Max concurrent callback deliveries per fanout batch.
             fanout_batch_size: Number of clients to dispatch per gather batch.
             on_broadcast: Optional callback for efficient broadcast (message, client_ids) -> count
+            eager_connect_types: Subset of stream-type names ("stocks", "options",
+                "crypto", "news") to connect eagerly at start(), regardless of
+                lazy_connect. Use this when you want a hot stocks pipe ready for
+                the 9:30 ET open without paying for an always-on options feed.
         """
         self.api_key = api_key
         self.api_secret = api_secret
@@ -774,6 +779,7 @@ class StreamMultiplexer:
         if self._options_feed not in {"opra", "indicative"}:
             raise ValueError("options_feed must be 'opra' or 'indicative'")
         self._lazy_connect = lazy_connect
+        self._eager_connect_types = {t.strip().lower() for t in (eager_connect_types or []) if t.strip()}
         self._fanout_max_inflight = max(1, fanout_max_inflight)
         self._fanout_client_batch_size = max(1, fanout_batch_size)
         self._on_broadcast = on_broadcast
@@ -827,12 +833,22 @@ class StreamMultiplexer:
     async def start(self) -> None:
         """Start the multiplexer.
 
-        If lazy_connect is True (default), connections are only established
-        when the first client subscribes to a stream. This works with Alpaca's
-        Basic plan which only allows 1 concurrent WebSocket connection.
+        Three connection modes (in order of precedence):
+        1. lazy_connect=False  → eagerly start ALL stream types (needs multi-conn plan).
+        2. eager_connect_types → eagerly start only the named stream types
+           (e.g. ["stocks"]) and leave others lazy. This is the recommended
+           production mode: stocks is hot for the 9:30 open, options/crypto/news
+           connect on demand. Avoids paying the upstream Alpaca cold-start cost
+           on the first client subscribe at market open (~30s observed on
+           2026-04-29).
+        3. lazy_connect=True with empty eager set → all streams lazy (Basic plan).
         """
         self._running = True
-        logger.info("multiplexer_starting", lazy_connect=self._lazy_connect)
+        logger.info(
+            "multiplexer_starting",
+            lazy_connect=self._lazy_connect,
+            eager_connect_types=sorted(self._eager_connect_types),
+        )
 
         if not self._lazy_connect:
             # Eager mode: start all connections immediately (requires multi-connection plan)
@@ -840,8 +856,42 @@ class StreamMultiplexer:
                 task = asyncio.create_task(conn.start())
                 self._tasks.append(task)
                 logger.info("stream_started", stream=stream_type.value)
+        elif self._eager_connect_types:
+            # Selective eager: start only the named stream types, leave rest lazy.
+            for stream_type, conn in self._connections.items():
+                if self._stream_type_in_eager_set(stream_type):
+                    task = asyncio.create_task(conn.start())
+                    self._tasks.append(task)
+                    logger.info("stream_started_eager", stream=stream_type.value)
+                else:
+                    logger.info("stream_lazy", stream=stream_type.value)
         else:
             logger.info("lazy_connect_enabled", message="Streams will connect on first subscription")
+
+    def _stream_type_in_eager_set(self, stream_type: AlpacaStreamType) -> bool:
+        """Match stream type against eager_connect_types config (case-insensitive).
+
+        "stocks" matches both STOCKS_SIP and STOCKS_IEX; the configured feed
+        (use_iex flag) determines which one is actually present in self._connections.
+        """
+        name = stream_type.value.lower()  # e.g. "stocks_sip", "stocks_iex", "options"
+        if name in self._eager_connect_types:
+            return True
+        if name.startswith("stocks_") and "stocks" in self._eager_connect_types:
+            return True
+        return False
+
+    def is_stream_ready(self, stream_type: AlpacaStreamType) -> bool:
+        """Return True if the named upstream is connected and authenticated.
+
+        UpstreamConnection.is_connected already gates on both socket OPEN and
+        the auth ACK. Used by the readiness probe to distinguish "Gateway process
+        up" from "Gateway can actually deliver streaming data right now."
+        """
+        conn = self._connections.get(stream_type)
+        if conn is None:
+            return False
+        return bool(conn.is_connected)
 
     async def stop(self) -> None:
         """Stop all upstream connections with aggressive cleanup.

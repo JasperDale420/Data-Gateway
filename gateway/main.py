@@ -310,6 +310,10 @@ async def lifespan(app: FastAPI):
     multiplexer = None
     if settings.alpaca_api_key and settings.alpaca_secret_key:
         connections = get_connection_manager()
+        # Parse comma-separated eager-connect list. "stocks" is the default —
+        # so the first 9:30 ET subscribe by a trading bot doesn't pay the
+        # upstream Alpaca cold-start (~30s of TLS + auth + first-bar drain).
+        eager_types = [t.strip().lower() for t in (settings.stream_eager_connect_types or "").split(",") if t.strip()]
         multiplexer = StreamMultiplexer(
             api_key=settings.alpaca_api_key,
             api_secret=settings.alpaca_secret_key,
@@ -320,12 +324,14 @@ async def lifespan(app: FastAPI):
             fanout_max_inflight=settings.stream_fanout_max_inflight,
             fanout_batch_size=settings.stream_fanout_batch_size,
             on_broadcast=connections.broadcast_to_connection_ids,
+            eager_connect_types=eager_types,
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()
         logger.info(
             "multiplexer_initialized",
             lazy_connect=settings.stream_lazy_connect,
+            eager_connect_types=eager_types,
             options_feed=settings.stream_options_feed,
         )
     else:
