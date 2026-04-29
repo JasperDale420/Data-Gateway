@@ -237,9 +237,25 @@ class UWPoller(DedupMixin, BasePoller):
         if not to_publish:
             return 0, duplicates
 
-        # Batch publish: build message list and send in a single pipeline call
-        messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, envelope) for envelope, _, _ in to_publish]
+        # Mark all event_ids as seen *before* publishing so the dedup state is
+        # unambiguous regardless of partial pipeline failure. The previous
+        # `to_publish[:published]` slice assumed the first N items succeeded,
+        # but Redis pipeline-with-`transaction=False` can fail at arbitrary
+        # indices, leading to wrong items being marked. Failed publishes are
+        # buffered and drained at the sink level (`RedisStreamsSink._buffer_failed_event`
+        # + `_drain_buffer`), so optimistic marking does not lose events.
+        redis_items: list[tuple[str, Any]] = []
+        for _envelope, event_id, cache_key in to_publish:
+            if event_id:
+                self._mark_seen(event_id)
+                if self._redis_dedupe is not None and cache_key:
+                    redis_items.append((cache_key, True))
 
+        if redis_items:
+            await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
+
+        # Publish (batch when supported, otherwise per-envelope)
+        messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, envelope) for envelope, _, _ in to_publish]
         try:
             if hasattr(sink_registry, "publish_all_batch"):
                 published = await sink_registry.publish_all_batch(messages)
@@ -255,18 +271,6 @@ class UWPoller(DedupMixin, BasePoller):
                 error=str(exc),
             )
             published = 0
-
-        # Mark all successfully-published items as seen and batch Redis dedup SETs
-        if published > 0:
-            redis_items: list[tuple[str, Any]] = []
-            for _envelope, event_id, cache_key in to_publish[:published]:
-                if event_id:
-                    self._mark_seen(event_id)
-                    if self._redis_dedupe is not None and cache_key:
-                        redis_items.append((cache_key, True))
-
-            if redis_items:
-                await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
 
         return published, duplicates
 
@@ -435,11 +439,6 @@ class UWPoller(DedupMixin, BasePoller):
                     if self._is_market_hours():
                         await self._poll_sector_tides(sink_registry)
                         self._last_sector_tide_poll = datetime.now(UTC)
-
-                # EOD snapshot polling (once per trading day after market close)
-                if self.eod_enabled and self._should_poll_eod():
-                    logger.info("uw_poller_starting_eod_snapshots")
-                    await self._poll_eod_snapshots(sink_registry)
 
                 # EOD snapshot polling (once per trading day after market close)
                 if self.eod_enabled and self._should_poll_eod():
@@ -724,6 +723,7 @@ class UWPoller(DedupMixin, BasePoller):
         per_ticker_polls = [
             ("greek_exposure", self._poll_eod_greek_exposure),
             ("iv_rank", self._poll_eod_iv_rank),
+            ("iv_term_structure", self._poll_eod_iv_term_structure),
             ("oi_change", self._poll_eod_oi_change),
             ("historic_option_volume", self._poll_eod_option_volume),
             ("short_interest", self._poll_eod_short_interest),
@@ -834,6 +834,48 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=[envelope],
             dedupe_prefix="uw:ivr",
             missing_event_log="uw_ivr_missing_event_id",
+        )
+        return published
+
+    async def _poll_eod_iv_term_structure(self, sink_registry, ticker: str) -> int:
+        """Poll IV term structure for a single ticker.
+
+        Emits one envelope per expiry returned by UW. Despite each row carrying
+        an ``expiry`` field, this is per-underlying analytics (IV across the
+        term structure of the *same* ticker) — not per-option-contract data —
+        so we override the envelope's ``instrument_type``/``instrument_key`` to
+        the equity form. ``_infer_instrument_type`` would otherwise see
+        ``expiry`` and tag every row as ``instrument_type=option`` /
+        ``instrument_key=option:{ticker}``, which is malformed (no OCC suffix)
+        and makes Heber's writer-side ``is_valid_instrument_key()`` reject 100%
+        of rows on Bronze→Silver normalization.
+        """
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
+        results = await self._provider.get_iv_term_structure(ticker)
+        if not results:
+            return 0
+
+        symbol = ticker.upper()
+        instrument_key = f"equity:{symbol}"
+        envelopes = [
+            wrap_event(
+                event=item.model_dump(),
+                provider="unusual_whales",
+                feed="iv_term_structure",
+                source="rest",
+                instrument_type_override="equity",
+                instrument_key_override=instrument_key,
+                symbol_override=symbol,
+            )
+            for item in results
+        ]
+
+        published, _ = await self._publish_envelopes(
+            sink_registry=sink_registry,
+            envelopes=envelopes,
+            dedupe_prefix="uw:ivts",
+            missing_event_log="uw_ivts_missing_event_id",
         )
         return published
 
