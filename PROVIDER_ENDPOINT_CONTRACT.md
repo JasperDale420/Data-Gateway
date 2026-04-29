@@ -95,8 +95,8 @@ This file is generated from provider route declarations in `gateway/api/*`.
 | `GET` | `/api/v1/uw/screener/contracts` | `gateway/api/uw/options_data.py:get_options_screener` |
 | `GET` | `/api/v1/uw/screener/option-contracts` | `gateway/api/uw/contracts.py:get_screener_option_contracts` |
 | `GET` | `/api/v1/uw/screener/options` | `gateway/api/uw/screener.py:get_screener_options` |
-| `GET` | `/api/v1/uw/screener/stocks` | `gateway/api/uw/screener.py:get_screener_stocks` |
 | `GET` | `/api/v1/uw/screener/stocks` | `gateway/api/uw/contracts.py:get_screener_stocks_extended` |
+| `GET` | `/api/v1/uw/screener/stocks` | `gateway/api/uw/screener.py:get_screener_stocks` |
 | `GET` | `/api/v1/uw/seasonality/market` | `gateway/api/uw/seasonality.py:get_market_seasonality` |
 | `GET` | `/api/v1/uw/seasonality/monthly-top-performers/{month}` | `gateway/api/uw/extended.py:get_monthly_top_performers` |
 | `GET` | `/api/v1/uw/seasonality/{symbol}` | `gateway/api/uw/seasonality.py:get_ticker_seasonality` |

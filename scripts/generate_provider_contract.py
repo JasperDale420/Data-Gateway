@@ -83,7 +83,11 @@ def _collect_routes() -> dict[str, list[tuple[str, str, str]]]:
                 routes[provider].append((method, full_path, handler_ref))
 
     for provider in routes:
-        routes[provider] = sorted(set(routes[provider]), key=lambda item: (item[1], item[0]))
+        # Sort by (path, method, handler) so duplicate-path routes are stable.
+        # Without item[2] as a tiebreaker, routes sharing the same path + method
+        # have indeterminate order across Python runs (set ordering is arbitrary),
+        # causing the --check comparison to flip non-deterministically.
+        routes[provider] = sorted(set(routes[provider]), key=lambda item: (item[1], item[0], item[2]))
 
     return routes
 
