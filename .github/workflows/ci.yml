@@ -35,7 +35,7 @@ jobs:
           # empire-core is a monorepo-local package (../empire-core) not available
           # in a standalone checkout.  Install the vendored CI stub first so that
           # gateway imports resolve before [dev] extras are processed.
-          pip install ci/empire_core/ ci/empire_schemas/
+          pip install ci/empire_core/ ci/empire_schemas/ ci/unusualwhales_sdk/
           pip install -e ".[dev]"
           pip install pre-commit bandit
 

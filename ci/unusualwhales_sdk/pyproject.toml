@@ -1,0 +1,22 @@
+# CI-installable stub for unusualwhales-python-client.
+#
+# The full SDK lives at ../unusualwhales_python_client-5.1 (monorepo) and is
+# resolved via [tool.uv.sources] for local dev.  CI only needs the types that
+# are imported at module level:
+#   from unusualwhales.types import UNSET, Unset   (gateway/providers/uw/_base.py)
+#
+# All other UW SDK calls happen inside function bodies (lazy) and are covered
+# by the MagicMock registry in conftest, so they never execute in tests.
+
+[project]
+name = "unusualwhales-python-client"
+version = "5.1.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["unusualwhales"]
