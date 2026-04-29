@@ -27,11 +27,22 @@ services:
       # SPY=13K contracts (~14 pages), QQQ=10K (~11 pages) need longer timeouts
       - GATEWAY_OPTION_CAPTURE_SNAPSHOT_TIMEOUT_SECONDS=90
       - GATEWAY_OPTION_CAPTURE_SYMBOL_TIMEOUT_OVERRIDES=SPY:120,QQQ:90
+      # Keep 30 days of daily-rotated logs (default in empire_core is 14;
+      # bumped here so post-mortem windows survive longer than two weeks).
+      - EMPIRE_LOG_BACKUP_COUNT=30
     env_file:
       - .env
     volumes:
       - ./gateway:/app/gateway
       - ./config:/app/config
+      # Persist /app/logs to host so daily-rotated empire_core log files
+      # (data-gateway_YYYY-MM-DD.log + data-gateway_errors_YYYY-MM-DD.log)
+      # survive `docker compose up -d` recreates and image rebuilds. Before
+      # this mount, recreating the container truncated the in-progress
+      # day's log to whatever timestamp the new instance started at —
+      # observed on 2026-04-28 when the on-disk log began at 20:03 UTC
+      # despite the container running all day.
+      - ./logs:/app/logs
     # command: uses Dockerfile CMD by default (gateway.main:app)
     depends_on:
       redis:
