@@ -74,13 +74,17 @@ async def _execute_trading_call(
     provider_fn: Callable[[Any], Any],
     operation: str,
 ) -> Any:
-    return await execute_alpaca_provider_call(
-        registry=registry,
-        provider_call=lambda provider: _run_trading_provider_call(
+    async def call(provider: Any) -> Any:
+        return await _run_trading_provider_call(
             provider=provider,
             provider_fn=provider_fn,
             operation=operation,
-        ),
+        )
+
+    call.__qualname__ = f"trading.{operation}"
+    return await execute_alpaca_provider_call(
+        registry=registry,
+        provider_call=call,
     )
 
 
@@ -94,17 +98,21 @@ async def _execute_trading_cached_call(
     provider_fn: Callable[[Any], Any],
     operation: str,
 ) -> Any:
+    async def call(provider: Any) -> Any:
+        return await _run_trading_provider_call(
+            provider=provider,
+            provider_fn=provider_fn,
+            operation=operation,
+        )
+
+    call.__qualname__ = f"trading.{operation}"
     return await execute_alpaca_cached_call(
         registry=registry,
         cache=cache,
         cache_key=cache_key,
         ttl=ttl,
         route_label=route_label,
-        provider_call=lambda provider: _run_trading_provider_call(
-            provider=provider,
-            provider_fn=provider_fn,
-            operation=operation,
-        ),
+        provider_call=call,
     )
 
 
