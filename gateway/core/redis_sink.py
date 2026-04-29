@@ -96,6 +96,9 @@ class RedisStreamsSink(DataSink):
         # exhausted all retries.  Drained automatically on reconnect.
         self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=FAILED_EVENT_BUFFER_CAPACITY)
         self._drain_lock = asyncio.Lock()
+        # Hold a strong reference to the drain task so it cannot be GC'd
+        # mid-flight while the buffer drain is in progress.
+        self._drain_tasks: set[asyncio.Task[None]] = set()
         self._buffer_stats = {"buffered": 0, "drained": 0, "evicted": 0}
 
     @property
@@ -146,9 +149,14 @@ class RedisStreamsSink(DataSink):
                     logger.error("redis_sink_import_error", msg="redis package not installed")
                     raise
 
-        # After reconnect, drain any buffered events (outside the lock)
+        # After reconnect, drain any buffered events (outside the lock).
+        # Hold a strong reference so the task cannot be GC'd mid-drain —
+        # asyncio keeps only weak refs to tasks, so a discarded task may
+        # vanish before completing, silently losing buffered events.
         if is_reconnect and self._failed_buffer:
-            asyncio.create_task(self._drain_buffer())
+            task = asyncio.create_task(self._drain_buffer())
+            self._drain_tasks.add(task)
+            task.add_done_callback(self._drain_tasks.discard)
 
     @staticmethod
     async def _close_stale_client(client: Any) -> None:
@@ -626,10 +634,36 @@ class RedisStreamsSink(DataSink):
 
         Sets ``_closed`` so that no further operations attempt to reconnect,
         which would fail with "Event loop is closed" during shutdown.
-        Explicitly disconnects the underlying connection pool to release
-        all TCP sockets immediately.
+        Awaits any in-flight drain tasks (with a short timeout) so they don't
+        keep running against a torn-down client/pool, then explicitly
+        disconnects the underlying connection pool to release all TCP sockets
+        immediately.
         """
         self._closed = True
+
+        # Drain background tasks first so they don't try to publish through
+        # the client we're about to close. _drain_buffer holds _drain_lock
+        # while running; cancel any that are still pending and give them a
+        # brief window to finish gracefully (most chunks are sub-second).
+        pending = list(self._drain_tasks)
+        if pending:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True),
+                    timeout=2.0,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "redis_sink_drain_close_timeout",
+                    pending=len(pending),
+                )
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                # Best-effort wait for cancellations to settle
+                await asyncio.gather(*pending, return_exceptions=True)
+            self._drain_tasks.clear()
+
         client = self._redis
         self._redis = None
         self._connected = False
