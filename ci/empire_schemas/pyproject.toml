@@ -1,0 +1,24 @@
+# CI-installable stub for empire-schemas.
+#
+# In the full monorepo, empire-schemas lives at ../empire-schemas and uv resolves
+# it via [tool.uv.sources].  CI checks out Data-Gateway standalone, so the
+# monorepo sibling isn't available.  This vendor copy bundles all empire_schemas
+# modules that gateway/schemas/* re-exports.
+#
+# CI workflows install it with:  pip install ci/empire_schemas/
+# Local development uses the real package via uv (../empire-schemas).
+
+[project]
+name = "empire-schemas"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["empire_schemas"]

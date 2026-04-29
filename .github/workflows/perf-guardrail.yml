@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ci/empire_core/
+          pip install ci/empire_core/ ci/empire_schemas/
           pip install -e ".[dev]"
 
       - name: Restore perf history cache
