@@ -65,10 +65,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.ruff]
-extend = "../ruff-base.toml"
+# ruff-base.toml is a monorepo-root file (../ruff-base.toml) only available in
+# local dev.  CI checks out this repo standalone, so all settings are inlined
+# here instead of using `extend`.
 target-version = "py312"
 line-length = 120
 exclude = ["trading-bot"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]

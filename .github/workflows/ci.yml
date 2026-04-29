@@ -32,6 +32,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          # empire-core is a monorepo-local package (../empire-core) not available
+          # in a standalone checkout.  Install the vendored CI stub first so that
+          # gateway imports resolve before [dev] extras are processed.
+          pip install ci/empire_core/
           pip install -e ".[dev]"
           pip install pre-commit bandit
 
