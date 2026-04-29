@@ -399,7 +399,9 @@ async def is_market_open(
     """Check if market is currently open."""
     calendar = get_trading_calendar()
     is_open = calendar.is_market_open()
-    today = date.today()
+    # Use the calendar's TZ (ET) — date.today() is host-local and produces an
+    # off-by-one when the host runs in UTC during evening ET hours.
+    today = calendar.today()
     hours = calendar.get_market_hours(today)
 
     return {
@@ -439,7 +441,9 @@ async def next_trading_day(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid date: {from_date}")
     else:
-        query_date = date.today()
+        # Use the calendar's TZ (ET) — date.today() is host-local and produces
+        # an off-by-one when the host runs in UTC during evening ET hours.
+        query_date = calendar.today()
 
     next_day = calendar.next_trading_day(query_date)
     hours = calendar.get_market_hours(next_day)

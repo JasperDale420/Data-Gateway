@@ -517,10 +517,25 @@ class TradingCalendar:
 
         return self.REGULAR_START <= current_time < self.REGULAR_END
 
+    def today(self) -> date:
+        """Return today's date in the calendar's timezone (ET).
+
+        Use this instead of ``datetime.date.today()`` whenever the date will
+        be passed to other calendar methods. ``date.today()`` returns a
+        host-local date, which produces an off-by-one when the host runs in
+        UTC and the wall clock is past 8pm ET (UTC date is already tomorrow
+        in ET terms).
+        """
+        return datetime.now(self._tz).date()
+
     def next_trading_day(self, from_date: date | None = None) -> date:
-        """Get the next trading day."""
+        """Get the next trading day.
+
+        ``from_date`` defaults to today in the calendar's own timezone (ET),
+        via :meth:`today`.
+        """
         if from_date is None:
-            from_date = date.today()
+            from_date = self.today()
 
         current = from_date
         for _ in range(10):  # Max 10 days lookahead
