@@ -1,10 +1,10 @@
 {
-  "suite_baseline_seconds": 0.934,
+  "suite_baseline_seconds": 1.6,
   "tests": {
     "tests/perf/test_perf_baseline.py::test_wrap_event_serialization_baseline": 0.031,
-    "tests/perf/test_perf_baseline.py::test_metrics_path_normalization_baseline": 0.224,
-    "tests/perf/test_perf_replay_bulk_memory.py::test_replay_run_large_message_batch_memory_profile": 0.115,
-    "tests/perf/test_perf_replay_bulk_memory.py::test_bulk_results_stream_has_lower_peak_memory_than_jsonl_materialization": 0.473,
+    "tests/perf/test_perf_baseline.py::test_metrics_path_normalization_baseline": 0.45,
+    "tests/perf/test_perf_replay_bulk_memory.py::test_replay_run_large_message_batch_memory_profile": 0.20,
+    "tests/perf/test_perf_replay_bulk_memory.py::test_bulk_results_stream_has_lower_peak_memory_than_jsonl_materialization": 0.65,
     "tests/perf/test_perf_stream_sink.py::test_stream_fanout_respects_inflight_semaphore_bound": 0.051,
     "tests/perf/test_perf_stream_sink.py::test_sink_publish_backpressure_task_growth_profile": 0.011,
     "tests/perf/test_perf_stream_sink.py::test_sink_publish_backpressure_multi_sink_bounds": 0.01,

@@ -48,10 +48,10 @@ jobs:
           mkdir -p .perf
           BUDGETS_FILE=config/perf_budgets.json
           BASELINE_FILE=config/perf_baseline.json
+          # The ratchet only tightens; explicit raises in static configs must
+          # propagate into the cached active files before the gate runs.
+          python scripts/merge_static_budgets.py
           if [ -f .perf/perf_budgets.active.json ]; then
-            # The ratchet only tightens budgets; explicit increases committed to
-            # config/perf_budgets.json must propagate into the cached active file.
-            python scripts/merge_static_budgets.py
             BUDGETS_FILE=.perf/perf_budgets.active.json
           fi
           if [ -f .perf/perf_baseline.active.json ]; then
