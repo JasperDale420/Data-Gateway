@@ -1,8 +1,6 @@
-"""unusualwhales CI stub — provides only the subset imported at module level."""
+"""unusualwhales.api.flow CI stub."""
 
 from unittest.mock import MagicMock
-
-UnusualWhalesClient = MagicMock
 
 
 def __getattr__(name: str) -> MagicMock:  # type: ignore[return]
