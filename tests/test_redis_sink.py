@@ -242,12 +242,20 @@ def test_default_pool_size() -> None:
 
 
 def test_custom_pool_size() -> None:
-    """Custom pool size is accepted and clamped within bounds."""
+    """Custom pool size is accepted, with a defense-in-depth lower bound only.
+
+    Settings.data_sink_redis_pool_size enforces the upper bound (le=128) at
+    config-validation time, so RedisStreamsSink no longer applies an upper
+    cap directly. The lower bound max(1, ...) remains as defense-in-depth
+    for direct callers (tests, scripts).
+    """
     sink = RedisStreamsSink(redis_url="redis://localhost:6379/0", pool_size=16)
     assert sink._pool_size == 16
 
+    # Larger value is now accepted (the old min(64, ...) clamp was dead code
+    # masking the Settings-layer upper bound — see commit 465118b).
     sink_max = RedisStreamsSink(redis_url="redis://localhost:6379/0", pool_size=100)
-    assert sink_max._pool_size == 64  # Clamped to max
+    assert sink_max._pool_size == 100
 
     sink_min = RedisStreamsSink(redis_url="redis://localhost:6379/0", pool_size=0)
     assert sink_min._pool_size == 1  # Clamped to min
