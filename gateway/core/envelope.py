@@ -19,6 +19,16 @@ from gateway.core.logger import logger
 from gateway.core.metrics import record_envelope_created
 from gateway.core.timeutils import parse_timestamp
 
+
+class EnvelopeWrapError(RuntimeError):
+    """Raised when envelope construction fails and strict_envelopes=True.
+
+    The default lenient behavior returns a degraded fallback envelope so the
+    pipeline keeps moving; strict mode promotes that into a hard failure
+    surface so silent data corruption is preferred over loud errors.
+    """
+
+
 # Schema version for envelope format
 SCHEMA_VERSION = "v1"
 
@@ -409,7 +419,23 @@ def wrap_event(
             error=str(e),
             exc_info=True,
         )
-        # Return minimal fallback envelope
+        # Strict mode: promote silent corruption into a loud failure. The
+        # caller's try/except (or FastAPI exception handler) is responsible
+        # for deciding whether to drop the event, retry, or 500 the request.
+        # Lenient mode (default): return a minimal fallback envelope so the
+        # pipeline keeps moving. The fallback is flagged with
+        # quality_flags=["error"] so downstream consumers can detect it.
+        try:
+            from gateway.config import get_settings
+
+            if get_settings().strict_envelopes:
+                raise EnvelopeWrapError(f"wrap_event failed for {provider}/{feed}/{symbol}: {e}") from e
+        except EnvelopeWrapError:
+            raise
+        except Exception:
+            # Settings unavailable (e.g. during very early init) — treat as lenient.
+            pass
+
         return {
             "event_id": event_id,
             "provider": provider,

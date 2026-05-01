@@ -150,6 +150,13 @@ class Settings(BaseSettings):
     # Data Sink (for Heber integration)
     # ─────────────────────────────────────────────────────────────────────────
 
+    # Strict mode: when True, exceptions during EventEnvelope construction or
+    # REST envelope wrapping propagate as 500 instead of returning a degraded
+    # fallback envelope / unwrapped body. Recommended for staging/prod where
+    # silent corruption is worse than a loud failure. Default False preserves
+    # legacy lenient behavior.
+    strict_envelopes: bool = False
+
     data_sink_enabled: bool = False
     data_sink_redis_url: str = Field(default="", alias="GATEWAY_DATA_SINK_REDIS_URL")
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)

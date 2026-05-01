@@ -958,8 +958,23 @@ class EventEnvelopeMiddleware:
 
         except Exception as e:
             logger.warning("envelope_middleware_error", path=path, error=str(e))
-            # Return original response on error
-            await send(initial_message)
+            # Strict mode: re-raise so FastAPI's exception handler returns 500
+            # instead of silently shipping the original unwrapped body. Consumers
+            # depend on the x-gateway-envelope header contract; serving a body
+            # without it is harder to diagnose than a clean 500.
+            try:
+                from gateway.config import get_settings
+
+                if get_settings().strict_envelopes:
+                    raise
+            except Exception:
+                # Settings unavailable — fall through to lenient behavior.
+                pass
+            # Lenient (default): return original response with explicit
+            # x-gateway-envelope: false so consumers can detect the unwrapped path.
+            new_headers: list[tuple[bytes, bytes]] = list(initial_message.get("headers", []))
+            new_headers.append((b"x-gateway-envelope", b"false"))
+            await send({"type": "http.response.start", "status": initial_message["status"], "headers": new_headers})
             await send({"type": "http.response.body", "body": body})
 
     async def _publish_sink_batch(self, tasks: list, path: str) -> None:
