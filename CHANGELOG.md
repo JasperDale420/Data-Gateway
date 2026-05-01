@@ -12,7 +12,11 @@ All notable changes to this project will be documented in this file.
 
 - **CORS configuration no longer combines wildcard origin with credentials** (`gateway/main.py`): The previous setup used `allow_origins=["*"]` (in debug mode) AND `allow_credentials=True` unconditionally. The CORS spec forbids this combination — browsers reject it, but non-browser clients (curl, custom HTTP) bypass silently. Since the gateway uses `X-Gateway-Key` header authentication (not cookies), `allow_credentials` is unnecessary when using a wildcard origin. The new logic sets credentials to False whenever origins includes `"*"` and adds a startup assertion that fails fast on any future configuration that re-introduces the forbidden combination.
 
+- **Loud warning at startup when any client uses a plaintext `key:` in clients.yaml** (`gateway/core/auth.py`): The authenticator already supported both plaintext (`key:`) and hashed (`key_hash:`) entries but silently accepted plaintext, which is one mistake from leaking via any clone, branch, or CI artifact. New `clients_plaintext_keys_in_use` WARNING fires once at load time listing every affected `client_id` and the migration command. Behavior unchanged — plaintext still works for backward compat — but operators are no longer surprised.
+
 ### Fixed
+
+- **DEBUG `auth_check_start` log no longer includes the first 4 chars of API keys** (`gateway/core/auth.py`): Companion to the failed-auth fix below. The DEBUG log emitted on every authentication attempt previously included `key_prefix=api_key[:4]` which exposed `gw_X` (the `gw_` prefix plus one secret char). Even DEBUG logs ship to remote aggregators in some setups, so the same SHA256 fingerprint approach is applied here too.
 
 - **Failed-authentication logs no longer leak the first 10 chars of API keys** (`gateway/core/auth.py`): On invalid key, `auth_failed_invalid_key` events previously included `key_prefix=<first 10 chars>` in both log files and the audit trail. Since keys are generated as `f"gw_{secrets.token_urlsafe(32)}"`, the first 10 chars exposed `gw_` plus 7 random secret chars — partial credential leakage on any log breach AND a regulatory disclosure issue in compliance audit trails. Replaced with `key_fingerprint=<sha256[:12]>` and `key_length=<n>` which preserves correlation ability with zero plaintext leakage.
 
