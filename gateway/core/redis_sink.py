@@ -83,7 +83,10 @@ class RedisStreamsSink(DataSink):
         self._max_len = max_len
         self._approximate = approximate_trim
         self._operation_timeout_seconds = max(0.5, float(operation_timeout_seconds))
-        self._pool_size = max(1, min(64, int(pool_size)))
+        # Settings.data_sink_redis_pool_size is already validated to [1, 128]
+        # via field constraints; this is a defense-in-depth lower bound for
+        # callers constructing the sink directly (tests, scripts).
+        self._pool_size = max(1, int(pool_size))
         self._redis: Any = None
         self._connected = False
         self._connect_lock = asyncio.Lock()

@@ -161,10 +161,20 @@ class Settings(BaseSettings):
     data_sink_redis_url: str = Field(default="", alias="GATEWAY_DATA_SINK_REDIS_URL")
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
     data_sink_operation_timeout_seconds: float = Field(default=5.0, ge=0.5)
-    data_sink_redis_pool_size: int = Field(default=8, ge=1, le=32)
+    # Pool size cap raised from 32 → 128. The previous cap left the redis_sink-
+    # layer min(64, ...) clamp dead and capped operators at half the available
+    # connection capacity. 128 connections is well within typical Redis defaults
+    # (maxclients=10000 on the redis:7-alpine image used in compose). Default
+    # stays at 8 — operators must explicitly tune for higher load.
+    data_sink_redis_pool_size: int = Field(default=8, ge=1, le=128)
     data_sink_max_inflight_per_sink: int = Field(default=512, ge=64, le=4096)
-    data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
-    data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
+    # Dispatch-side concurrency limits. Defaults raised to absorb opening-bell
+    # bursts before the backpressure-drop alert fires. With 64 inflight + 1024
+    # pending and ~5ms publish latency, sustained throughput ≈ 12.8K events/sec.
+    # Real production capacity is still bounded by Redis + network; tune
+    # data_sink_redis_pool_size in concert when scaling these.
+    data_sink_stream_publish_max_inflight: int = Field(default=64, ge=1)
+    data_sink_stream_publish_max_pending: int = Field(default=1024, ge=1)
 
     # Backfill concurrency (per-provider, split by feed weight)
     backfill_lightweight_concurrency: int = Field(default=5, ge=1)
