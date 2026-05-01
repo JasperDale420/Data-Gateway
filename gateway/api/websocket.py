@@ -295,7 +295,17 @@ async def _message_loop(
     max_message_size: int | None = None,
     last_received: list[float] | None = None,
 ) -> None:
-    """Handle messages after authentication."""
+    """Handle messages after authentication.
+
+    NOTE: The application-level size check below runs AFTER starlette has
+    already received the full frame into Python memory. To prevent OOM from
+    very large attack frames, the ASGI server (uvicorn) MUST be configured
+    with --ws-max-size at or below GATEWAY_WS_MAX_MESSAGE_SIZE * a small
+    multiplier. The check here exists to (a) emit clean error codes when
+    a message is within the ASGI cap but over policy, and (b) terminate
+    the connection on oversize so the client can't repeat the attack on
+    the same socket.
+    """
     resolved_max_size = max_message_size if max_message_size is not None else get_settings().ws_max_message_size
     max_bytes = max(1, int(resolved_max_size))
     while True:
@@ -304,26 +314,54 @@ async def _message_loop(
             if raw.get("text") is not None:
                 raw_text = raw["text"]
                 if len(raw_text.encode("utf-8")) > max_bytes:
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "error_code": "GW-E8005",
-                            "message": "WebSocket message exceeds size limit",
-                        }
+                    logger.warning(
+                        "ws_message_oversize",
+                        connection_id=connection_id,
+                        size=len(raw_text.encode("utf-8")),
+                        max_bytes=max_bytes,
                     )
-                    continue
+                    try:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "error_code": "GW-E8005",
+                                "message": "WebSocket message exceeds size limit",
+                            }
+                        )
+                    except Exception:
+                        pass
+                    # Close 1009 (Message Too Big) and terminate the loop so the
+                    # client cannot retry oversize frames on the same connection.
+                    try:
+                        await websocket.close(code=1009, reason="Message too large")
+                    except Exception:
+                        pass
+                    return
                 message = json.loads(raw_text)
             elif raw.get("bytes") is not None:
                 raw_bytes = raw["bytes"]
                 if len(raw_bytes) > max_bytes:
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "error_code": "GW-E8005",
-                            "message": "WebSocket message exceeds size limit",
-                        }
+                    logger.warning(
+                        "ws_message_oversize",
+                        connection_id=connection_id,
+                        size=len(raw_bytes),
+                        max_bytes=max_bytes,
                     )
-                    continue
+                    try:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "error_code": "GW-E8005",
+                                "message": "WebSocket message exceeds size limit",
+                            }
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        await websocket.close(code=1009, reason="Message too large")
+                    except Exception:
+                        pass
+                    return
                 message = json.loads(raw_bytes.decode("utf-8"))
             else:
                 continue
