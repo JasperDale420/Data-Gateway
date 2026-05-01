@@ -309,9 +309,13 @@ async def lifespan(app: FastAPI):
 
     uptime_task = asyncio.create_task(_uptime_loop())
 
-    # Initialize provider registry
+    # Initialize provider registry. In production (debug=False) we enforce
+    # `required: true` providers — gateway refuses to boot if a critical
+    # provider fails to initialize, instead of silently degrading. Local dev
+    # (debug=True) keeps the lenient behavior so developers can run without
+    # all 7 provider keys.
     registry = ProviderRegistry()
-    await registry.load_from_config(settings.providers_config_path)
+    await registry.load_from_config(settings.providers_config_path, strict_required=not settings.debug)
     set_registry(registry)
 
     # Initialize stream multiplexer (only if credentials are set)

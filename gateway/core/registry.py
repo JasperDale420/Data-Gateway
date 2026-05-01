@@ -11,6 +11,15 @@ from gateway.core.logger import logger
 from gateway.core.provider import DataProvider, HealthStatus
 
 
+class RequiredProviderInitError(RuntimeError):
+    """Raised when a provider marked `required: true` fails to initialize.
+
+    In production mode (`strict_required=True`) this aborts gateway startup
+    rather than booting in a degraded state where /health is 200 but routes
+    return "Provider access denied" for missing providers.
+    """
+
+
 class ProviderRegistry:
     """Manages provider lifecycle and routing."""
 
@@ -18,9 +27,19 @@ class ProviderRegistry:
         self._providers: dict[str, DataProvider] = {}
         self._config: dict[str, Any] = {}
         self._routes: dict[str, list[str]] = {}
+        self._failed_required: list[tuple[str, str]] = []  # (name, error)
 
-    async def load_from_config(self, config_path: Path) -> None:
-        """Load and initialize all enabled providers from config."""
+    async def load_from_config(self, config_path: Path, strict_required: bool = False) -> None:
+        """Load and initialize all enabled providers from config.
+
+        Args:
+            config_path: Path to providers.yaml
+            strict_required: When True, raise RequiredProviderInitError if any
+                provider marked `required: true` in YAML fails to import or
+                initialize. When False (default for local dev), failures are
+                logged but startup continues. Production deployments should
+                pass True so degraded boots fail loudly.
+        """
         if not config_path.exists():
             logger.warning("providers_config_not_found", path=str(config_path))
             return
@@ -29,21 +48,31 @@ class ProviderRegistry:
             self._config = yaml.safe_load(f)
 
         providers_config = self._config.get("providers", {})
+        self._failed_required = []
 
         for name, provider_config in providers_config.items():
             if not provider_config.get("enabled", True):
                 logger.info("provider_disabled", provider=name)
                 continue
 
+            is_required = bool(provider_config.get("required", False))
             try:
                 await self._load_provider(name, provider_config)
             except Exception as e:
+                if is_required:
+                    self._failed_required.append((name, str(e)))
                 logger.error(
                     "provider_load_failed",
                     provider=name,
+                    required=is_required,
                     error=str(e),
                     exc_info=True,
                 )
+
+            # _load_provider returns early on import/missing-module without raising —
+            # check whether the provider was actually registered for required providers.
+            if is_required and name not in self._providers and not any(n == name for n, _ in self._failed_required):
+                self._failed_required.append((name, "provider failed to register (import or config error)"))
 
         # Load routes
         self._routes = self._config.get("routes", {})
@@ -52,7 +81,15 @@ class ProviderRegistry:
             "providers_loaded",
             count=len(self._providers),
             names=list(self._providers.keys()),
+            failed_required=[n for n, _ in self._failed_required],
         )
+
+        if strict_required and self._failed_required:
+            failures = "; ".join(f"{n}: {err}" for n, err in self._failed_required)
+            raise RequiredProviderInitError(
+                f"{len(self._failed_required)} required provider(s) failed to initialize: {failures}. "
+                "Set GATEWAY_DEBUG=true for local development tolerance, or fix the configuration."
+            )
 
     async def _load_provider(self, name: str, config: dict[str, Any]) -> None:
         """Load a single provider."""
