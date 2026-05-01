@@ -657,10 +657,18 @@ def create_app() -> FastAPI:
     app.add_middleware(RateLimitMiddleware, default_limit=settings.rate_limit_default)
     # Global rate limit (PRD 7.5.1-2) before per-client limits
     app.add_middleware(GlobalRateLimitMiddleware, trust_proxy_headers=settings.behind_trusted_proxy)
+    # CORS: API uses X-Gateway-Key header auth, not cookies, so credentials are
+    # not required. The CORS spec FORBIDS allow_origins=["*"] with credentials=True
+    # (browsers reject; non-browser clients bypass silently). Keep credentials off
+    # whenever using a wildcard origin.
+    cors_origins = ["*"] if settings.debug else []
+    cors_credentials = "*" not in cors_origins
+    if "*" in cors_origins and cors_credentials:
+        raise RuntimeError("CORS misconfig: allow_origins=['*'] with allow_credentials=True is forbidden")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.debug else [],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=cors_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

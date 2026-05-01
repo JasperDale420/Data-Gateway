@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Prometheus alerts for stream-to-sink backpressure drops** (`config/prometheus_alerts.yml`): Two new alert rules — `StreamSinkBackpressureDrops` (critical, fires after any drops sustained 2 minutes) and `StreamSinkBackpressureSustained` (critical, fires when drops average > 1/sec for 10 minutes). The `gateway_stream_sink_dispatch_events_total{status="dropped_backpressure"}` metric was already being recorded but had no alert wiring, meaning silent data loss in the Heber pipeline could occur indefinitely without any operator signal. Identified by a multi-persona predict analysis on 2026-04-30 as the highest-priority finding.
+
+### Changed
+
+- **CORS configuration no longer combines wildcard origin with credentials** (`gateway/main.py`): The previous setup used `allow_origins=["*"]` (in debug mode) AND `allow_credentials=True` unconditionally. The CORS spec forbids this combination — browsers reject it, but non-browser clients (curl, custom HTTP) bypass silently. Since the gateway uses `X-Gateway-Key` header authentication (not cookies), `allow_credentials` is unnecessary when using a wildcard origin. The new logic sets credentials to False whenever origins includes `"*"` and adds a startup assertion that fails fast on any future configuration that re-introduces the forbidden combination.
+
+### Fixed
+
+- **Failed-authentication logs no longer leak the first 10 chars of API keys** (`gateway/core/auth.py`): On invalid key, `auth_failed_invalid_key` events previously included `key_prefix=<first 10 chars>` in both log files and the audit trail. Since keys are generated as `f"gw_{secrets.token_urlsafe(32)}"`, the first 10 chars exposed `gw_` plus 7 random secret chars — partial credential leakage on any log breach AND a regulatory disclosure issue in compliance audit trails. Replaced with `key_fingerprint=<sha256[:12]>` and `key_length=<n>` which preserves correlation ability with zero plaintext leakage.
+
+### Added
+
 - **Background REST-fallback pollers for Alpaca quotes, trades, crypto, news + per-contract option-trade emission** (`gateway/main.py` + 4 new `gateway/core/*_poller.py` modules + `gateway/core/option_capture.py`): The Heber data audit on 2026-04-29 confirmed 5 stalled feeds — `alpaca/quotes` (equity) stopped 2026-03-31, `alpaca/trades` stopped intraday today, `alpaca/crypto_bars`/`crypto_trades` stopped ~2026-02-14, `alpaca/option_trades` only ever wrote 1 partition (2026-02-13), and `alpaca/news` stopped 2026-03-11. Root cause: the `StreamMultiplexer` is demand-driven (only subscribes upstream when a downstream client subscribes via `/ws`), and Heber is a Redis consumer rather than a stream client. The pre-existing `AlpacaQuotesPoller` (`gateway/core/quotes_poller.py:321`) was the documented "REST-based fallback that runs on a schedule…ensuring quote data flows to Heber regardless of client subscription state" — but `start_quotes_poller()` was never invoked from the lifespan, so it never ran. The April 1st `b56e9a8` schemas/providers/pollers refactor (-9,317 lines) appears to have dropped the wiring. Fixes:
   - **`start_quotes_poller()`** now wired into `lifespan`. Toggle `GATEWAY_QUOTES_POLLER_ENABLED` (default `true`); 30s default interval; market-hours gated.
   - **New `AlpacaTradesPoller`** (`gateway/core/trades_poller.py`) mirrors quotes_poller against `provider.get_latest_trades`; same gating/dedup pattern. `GATEWAY_TRADES_POLLER_ENABLED`.

@@ -115,12 +115,14 @@ class ClientAuthenticator:
             client_id = self._hashed_keys.get(key_hash)
 
         if not client_id:
-            key_preview = api_key[:10] + "..." if len(api_key) > 10 else api_key
-            logger.warning("auth_failed_invalid_key", key_prefix=key_preview)
+            # Never log raw key material. SHA256-prefix gives correlation ability
+            # without leaking plaintext into log files or compliance audit trails.
+            key_fingerprint = hashlib.sha256(api_key.encode()).hexdigest()[:12] if api_key else "empty"
+            logger.warning("auth_failed_invalid_key", key_fingerprint=key_fingerprint, key_length=len(api_key))
             audit.auth_failure(
                 ip=ip or "unknown",
                 user_agent=user_agent,
-                metadata={"reason": "invalid_key", "key_prefix": key_preview},
+                metadata={"reason": "invalid_key", "key_fingerprint": key_fingerprint, "key_length": len(api_key)},
             )
             return None
 
