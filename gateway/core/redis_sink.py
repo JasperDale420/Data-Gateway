@@ -638,7 +638,34 @@ class RedisStreamsSink(DataSink):
         keep running against a torn-down client/pool, then explicitly
         disconnects the underlying connection pool to release all TCP sockets
         immediately.
+
+        Before closing, makes one final attempt to drain ``_failed_buffer``
+        through the live connection so buffered events aren't lost on graceful
+        shutdown. Events still in the buffer after this attempt are logged so
+        operators have a count for post-mortem.
         """
+        # Final attempt to drain the failed-event buffer through the live
+        # connection. We do this BEFORE setting _closed so the drain path
+        # can publish, but AFTER any in-flight tasks would have finished.
+        # If Redis is unreachable at this point, the buffer simply remains
+        # in memory and we log the count.
+        if self._failed_buffer and self._redis is not None:
+            try:
+                await asyncio.wait_for(self._do_drain(), timeout=5.0)
+            except (TimeoutError, Exception) as exc:  # noqa: BLE001 — best-effort
+                logger.warning(
+                    "redis_sink_close_drain_failed",
+                    remaining=len(self._failed_buffer),
+                    error=str(exc),
+                )
+
+        if self._failed_buffer:
+            logger.warning(
+                "redis_sink_close_buffer_nonempty",
+                lost_events=len(self._failed_buffer),
+                msg="Events were buffered when shutdown completed; they are NOT persisted to disk and are lost.",
+            )
+
         self._closed = True
 
         # Drain background tasks first so they don't try to publish through

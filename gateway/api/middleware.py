@@ -807,7 +807,12 @@ class EventEnvelopeMiddleware:
                     # Check content-type and content-length for wrappability
                     raw_headers = dict(message.get("headers", []))
                     ct = raw_headers.get(b"content-type", b"").decode().lower()
-                    if "application/json" in ct:
+                    # Streaming response types must NOT be buffered for envelope
+                    # wrapping — buffering them defeats the streaming contract and
+                    # causes per-request memory growth proportional to total payload.
+                    # Mirrors CacheMiddleware exclusion for the same reason.
+                    is_streaming = "text/event-stream" in ct or "application/x-ndjson" in ct
+                    if "application/json" in ct and not is_streaming:
                         cl = raw_headers.get(b"content-length")
                         if cl:
                             try:

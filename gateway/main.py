@@ -247,7 +247,15 @@ def _schedule_stream_sink_publish(sink_registry, envelope: dict | str) -> None:
     task.add_done_callback(_on_stream_sink_publish_done)
 
 
-async def _drain_stream_sink_publish_tasks(timeout_seconds: float = 2.0) -> None:
+async def _drain_stream_sink_publish_tasks(timeout_seconds: float = 6.0) -> None:
+    """Drain pending stream-sink publishes during shutdown.
+
+    Default 6s gives in-flight publishes time to finish — must be >=
+    redis_sink operation_timeout (default 5s) so cancellation only
+    happens for genuinely-stuck operations. Earlier default (2s) routinely
+    cancelled mid-publish, losing events that hadn't yet entered the
+    sink-side _failed_buffer (cancelled tasks skip the buffer-on-fail path).
+    """
     if not _stream_sink_publish_tasks:
         return
 
