@@ -8,7 +8,6 @@ Provides:
 """
 
 import hashlib
-import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -466,8 +465,18 @@ def fast_wrap_streaming_event(
     Skips:
     - Pydantic model validation (assumes dict)
     - Instrument type inference (passed in)
-    - Content hashing (uses fast random ID)
-    - Extensive unique field extraction
+    - Extensive unique field extraction (uses feed-specific tight fields)
+
+    The event_id is a CONTENT-derived BLAKE2b hash (32 hex chars), NOT a
+    random ID. Heber's three-layer dedup (bloom filter at consumer, dict at
+    writer, dedupe at compactor) all key on event_id; random IDs defeat all
+    three layers and produce duplicate records on every Alpaca reconnect/
+    replay. The hash is built from a small tuple per feed-type (e.g. quotes:
+    bp/ap/bs/as; trades: trade_id; bars: timeframe/timestamp) so two distinct
+    quotes at the same millisecond don't collide.
+
+    BLAKE2b on a ~80-byte input is sub-microsecond on modern CPUs — earlier
+    benchmarks ("~5-10us") were stale.
 
     Args:
         event: Raw event dict
@@ -519,11 +528,16 @@ def fast_wrap_streaming_event(
         # Equity is just equity:SYMBOL
         inst_key = f"equity:{symbol}" if instrument_type == "equity" else make_instrument_key(symbol, instrument_type)
 
-    # event_id - fast random 32-char hex (skip BLAKE2b/SHA256)
-    # Using urandom or simple string construction is faster than hashing content.
-    # UUID4 is ~1-2us. Hashing 100 bytes is ~5-10us.
-    # Let's use os.urandom(16).hex()
-    event_id = os.urandom(16).hex()
+    # event_id - content-derived BLAKE2b hash for cross-reconnect dedup compatibility.
+    # Build a tight key from feed-specific unique fields so two genuinely-distinct
+    # events at the same timestamp don't collide (e.g. multiple OPRA quotes for the
+    # same symbol within the same millisecond have different bid/ask values).
+    unique_fields = _extract_unique_fields(feed, event)
+    parts = [provider, feed, inst_key, ts_event_str]
+    if sequence is not None:
+        parts.append(str(sequence))
+    parts.extend(str(f) for f in unique_fields if f is not None)
+    event_id = hashlib.blake2b("|".join(parts).encode("utf-8"), digest_size=16, usedforsecurity=False).hexdigest()
 
     lineage = {}
     if sequence is not None:
