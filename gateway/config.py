@@ -66,6 +66,28 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_default: int = Field(default=600, ge=1)  # requests per minute
     behind_trusted_proxy: bool = False  # Only trust X-Forwarded-For when behind a known proxy
+    # Comma-separated CIDRs for trusted intermediate proxies (e.g. "10.0.0.0/8,172.16.0.0/12").
+    # When `behind_trusted_proxy=True` AND this is set, X-Forwarded-For is parsed
+    # rightmost-to-leftmost and the first IP NOT in this list is treated as the real
+    # client. Without this, the leftmost (attacker-controlled) IP is used — which
+    # makes per-IP rate limits and IP block lists trivially bypassable.
+    trusted_proxy_cidrs: str = ""
+
+    @field_validator("trusted_proxy_cidrs")
+    @classmethod
+    def _validate_trusted_proxy_cidrs(cls, v: str) -> str:
+        if not v:
+            return v
+        import ipaddress
+
+        for cidr in v.split(","):
+            cidr = cidr.strip()
+            if cidr:
+                try:
+                    ipaddress.ip_network(cidr, strict=False)
+                except ValueError as exc:
+                    raise ValueError(f"trusted_proxy_cidrs: invalid CIDR {cidr!r}: {exc}") from exc
+        return v
 
     # Per-provider rate limits (override hardcoded defaults via env)
     alpaca_rate_limit_per_minute: int = Field(default=10000, ge=1)

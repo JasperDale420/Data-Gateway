@@ -656,7 +656,11 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RateLimitMiddleware, default_limit=settings.rate_limit_default)
     # Global rate limit (PRD 7.5.1-2) before per-client limits
-    app.add_middleware(GlobalRateLimitMiddleware, trust_proxy_headers=settings.behind_trusted_proxy)
+    app.add_middleware(
+        GlobalRateLimitMiddleware,
+        trust_proxy_headers=settings.behind_trusted_proxy,
+        trusted_proxy_cidrs=settings.trusted_proxy_cidrs,
+    )
     # CORS: API uses X-Gateway-Key header auth, not cookies, so credentials are
     # not required. The CORS spec FORBIDS allow_origins=["*"] with credentials=True
     # (browsers reject; non-browser clients bypass silently). Keep credentials off

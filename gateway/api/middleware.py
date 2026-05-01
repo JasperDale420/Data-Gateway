@@ -1246,6 +1246,7 @@ class GlobalRateLimitMiddleware:
         max_connections_per_ip: int = 10,
         window_seconds: int = 60,
         trust_proxy_headers: bool = False,
+        trusted_proxy_cidrs: str = "",
     ) -> None:
         self.app = app
         self.global_limit = global_limit
@@ -1253,6 +1254,27 @@ class GlobalRateLimitMiddleware:
         self.max_connections_per_ip = max_connections_per_ip
         self.window_seconds = window_seconds
         self._trust_proxy_headers = trust_proxy_headers
+
+        # Pre-parse trusted_proxy_cidrs once at startup. Validation already happened
+        # in Settings._validate_trusted_proxy_cidrs so any error here is a programming bug.
+        import ipaddress
+
+        self._trusted_proxies: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        if trusted_proxy_cidrs:
+            for cidr in trusted_proxy_cidrs.split(","):
+                cidr = cidr.strip()
+                if cidr:
+                    self._trusted_proxies.append(ipaddress.ip_network(cidr, strict=False))
+
+        if trust_proxy_headers and not self._trusted_proxies:
+            logger.warning(
+                "trusted_proxy_misconfig",
+                msg=(
+                    "behind_trusted_proxy=True without trusted_proxy_cidrs — "
+                    "leftmost X-Forwarded-For will be trusted, which is spoofable. "
+                    "Set GATEWAY_TRUSTED_PROXY_CIDRS to your proxy/load balancer CIDRs."
+                ),
+            )
 
         # Tracking state
         self._global_requests = 0
@@ -1263,14 +1285,49 @@ class GlobalRateLimitMiddleware:
         self._prune_interval = 60.0
 
     def _get_client_ip(self, scope: Scope) -> str:
-        """Extract client IP from ASGI scope."""
-        if self._trust_proxy_headers:
-            headers = dict(scope.get("headers", []))
-            forwarded = headers.get(b"x-forwarded-for")
-            if forwarded:
-                return forwarded.decode().split(",")[0].strip()
-        client = scope.get("client")
-        return client[0] if client else "unknown"
+        """Extract client IP from ASGI scope.
+
+        Resolution order:
+        1. trust_proxy_headers=False (default) → socket peer IP. Safest.
+        2. trust_proxy_headers=True with trusted_proxy_cidrs → walk XFF
+           rightmost-to-leftmost, return first IP NOT in the trusted set.
+           This is the real client behind a known proxy chain.
+        3. trust_proxy_headers=True without trusted_proxy_cidrs → fall back to
+           legacy leftmost-XFF (insecure; warning emitted at startup).
+        """
+        if not self._trust_proxy_headers:
+            client = scope.get("client")
+            return client[0] if client else "unknown"
+
+        headers = dict(scope.get("headers", []))
+        forwarded = headers.get(b"x-forwarded-for")
+        if not forwarded:
+            client = scope.get("client")
+            return client[0] if client else "unknown"
+
+        ips = [ip.strip() for ip in forwarded.decode().split(",") if ip.strip()]
+        if not ips:
+            client = scope.get("client")
+            return client[0] if client else "unknown"
+
+        # Without a trusted-proxy list we can't tell which hops are ours, so
+        # fall back to the legacy leftmost behavior (with the startup warning).
+        if not self._trusted_proxies:
+            return ips[0]
+
+        # Walk rightmost (closest hop) backward, skipping IPs in trusted CIDRs.
+        # The first non-trusted IP is the real client. If every IP is trusted
+        # (e.g. an internal-only request), fall back to the leftmost entry.
+        import ipaddress
+
+        for ip in reversed(ips):
+            try:
+                ip_obj = ipaddress.ip_address(ip)
+            except ValueError:
+                continue
+            if not any(ip_obj in net for net in self._trusted_proxies):
+                return ip
+        return ips[0]
 
     def _reset_window_if_needed(self) -> None:
         """Reset global window if expired."""
