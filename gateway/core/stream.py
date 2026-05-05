@@ -26,7 +26,20 @@ from gateway.core.metrics import (
     record_stream_fanout_dispatch_event,
     set_stream_fanout_limits_metrics,
 )
+from gateway.core.security import SYMBOL_PATTERNS
 from gateway.core.validator import get_validator
+
+# OCC option contract format (e.g. "AAPL260116C00200000"). Used by
+# _sanitize_subscription_request to keep equity tickers off the OPRA
+# upstream and option contracts off SIP/IEX — Alpaca silently drops the
+# entire upstream subscribe when the symbol shape doesn't match the
+# stream, leaving downstream clients connected with 0 ticks.
+_OCC_OPTION_PATTERN = SYMBOL_PATTERNS["option_occ"]
+
+
+def _is_occ_option_symbol(symbol: str) -> bool:
+    return bool(_OCC_OPTION_PATTERN.match(symbol))
+
 
 DEFAULT_FANOUT_MAX_INFLIGHT = 100
 DEFAULT_FANOUT_BATCH_SIZE = 32
@@ -512,7 +525,15 @@ class UpstreamConnection:
         trades: set[str] | None,
         news: set[str] | None,
     ) -> tuple[set[str] | None, set[str] | None, set[str] | None, set[str] | None, list[str]]:
-        """Sanitize subscription request, returning (bars, quotes, trades, news, warnings)."""
+        """Sanitize subscription request, returning (bars, quotes, trades, news, warnings).
+
+        Filters out symbols that don't match the upstream stream's expected
+        shape: equity tickers off the OPTIONS (OPRA) stream, option contracts
+        off the STOCKS_SIP/STOCKS_IEX streams. Alpaca silently drops the
+        entire upstream subscribe payload when any symbol mismatches the
+        stream — without this filter a downstream client subscribe still
+        gets ``subscription_ack: ok`` but no ticks ever flow (2026-05-01 RCA).
+        """
         warnings: list[str] = []
         if self.stream_type == AlpacaStreamType.OPTIONS and bars:
             warnings.append(
@@ -525,7 +546,60 @@ class UpstreamConnection:
                 hint="Alpaca options websocket supports quotes and trades, not bars",
             )
             bars = None
+
+        bars, quotes, trades, warnings = self._filter_symbols_by_stream_shape(
+            bars=bars, quotes=quotes, trades=trades, warnings=warnings
+        )
         return bars, quotes, trades, news, warnings
+
+    def _filter_symbols_by_stream_shape(
+        self,
+        *,
+        bars: set[str] | None,
+        quotes: set[str] | None,
+        trades: set[str] | None,
+        warnings: list[str],
+    ) -> tuple[set[str] | None, set[str] | None, set[str] | None, list[str]]:
+        """Drop symbols whose shape doesn't match the upstream stream type.
+
+        - OPTIONS stream accepts only OCC-shaped symbols (e.g. ``AAPL260116C00200000``).
+        - STOCKS_SIP / STOCKS_IEX accept everything except OCC-shaped symbols.
+        - Other stream types (CRYPTO, NEWS) are passed through unchanged — their
+          symbol shapes (``BTC/USD``, free text) are out of scope here.
+        """
+        if self.stream_type == AlpacaStreamType.OPTIONS:
+            keep = _is_occ_option_symbol
+            label = "options"
+        elif self.stream_type in (AlpacaStreamType.STOCKS_SIP, AlpacaStreamType.STOCKS_IEX):
+            keep = lambda sym: not _is_occ_option_symbol(sym)  # noqa: E731
+            label = "stocks"
+        else:
+            return bars, quotes, trades, warnings
+
+        for feed_name, symbol_set in (("bars", bars), ("quotes", quotes), ("trades", trades)):
+            if not symbol_set:
+                continue
+            kept = {s for s in symbol_set if keep(s)}
+            dropped = symbol_set - kept
+            if dropped:
+                warnings.append(
+                    f"{label} stream ignoring {len(dropped)} symbol(s) "
+                    f"with mismatched shape on {feed_name}: {sorted(dropped)[:5]}" + ("..." if len(dropped) > 5 else "")
+                )
+                logger.warning(
+                    "stream_symbol_shape_mismatch",
+                    stream=self.stream_type.value,
+                    feed=feed_name,
+                    dropped_count=len(dropped),
+                    sample=sorted(dropped)[:5],
+                )
+            if feed_name == "bars":
+                bars = kept or None
+            elif feed_name == "quotes":
+                quotes = kept or None
+            else:
+                trades = kept or None
+        return bars, quotes, trades, warnings
 
     async def start(self) -> None:
         """Start the connection and receive loop."""
