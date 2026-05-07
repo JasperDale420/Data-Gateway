@@ -164,6 +164,24 @@ SINK_PUBLISH = Counter(
     ["sink", "topic", "status"],  # status: success, error
 )
 
+# Failed-event buffer instrumentation. Without these, the only signal that the
+# RedisStreamsSink is dropping events on overflow is the per-eviction WARNING
+# log line — which we proved on 2026-05-05 fires hundreds of times per second
+# silently for hours when no operator is watching `docker logs`. The Counter
+# drives an alert; the Gauge provides a quick "how full is the buffer right
+# now" probe for dashboards / readiness checks.
+SINK_BUFFER_EVICTIONS = Counter(
+    "gateway_sink_buffer_evictions_total",
+    "Failed-event buffer evictions (oldest event dropped because buffer was full)",
+    ["sink"],
+)
+
+SINK_BUFFER_SIZE = Gauge(
+    "gateway_sink_buffer_size",
+    "Current number of events in the failed-event buffer",
+    ["sink"],
+)
+
 STREAM_SINK_DISPATCH_EVENTS = Counter(
     "gateway_stream_sink_dispatch_events_total",
     "Stream-to-sink scheduler events",
@@ -690,6 +708,16 @@ def record_sink_publish(sink: str, topic: str, success: bool) -> None:
     """Record data sink publish result."""
     status = "success" if success else "error"
     SINK_PUBLISH.labels(sink=sink, topic=topic, status=status).inc()
+
+
+def record_sink_buffer_eviction(sink: str) -> None:
+    """Increment the buffer-eviction counter — drives the silent-data-loss alert."""
+    SINK_BUFFER_EVICTIONS.labels(sink=sink).inc()
+
+
+def set_sink_buffer_size(sink: str, size: int) -> None:
+    """Update the current failed-event buffer size for ``sink``."""
+    SINK_BUFFER_SIZE.labels(sink=sink).set(max(0, size))
 
 
 def record_stream_sink_dispatch_event(status: str) -> None:

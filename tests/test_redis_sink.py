@@ -728,6 +728,37 @@ def test_buffer_evicts_oldest_when_full() -> None:
     assert topics == ["topic.1", "topic.2", "topic.3"]
 
 
+def test_buffer_eviction_increments_prometheus_counter() -> None:
+    """Regression for the 2026-05-05 silent-data-loss outage.
+
+    The DG sink dropped events from the bounded retry buffer for 32 hours
+    while the only signal was a per-eviction WARNING log line. Prometheus
+    must see the eviction so the ``SinkBufferEvictionsActive`` alert fires
+    within minutes instead of going unnoticed for a full trading day.
+    """
+    from gateway.core.metrics import SINK_BUFFER_EVICTIONS, SINK_BUFFER_SIZE
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._failed_buffer = deque(maxlen=2)
+
+    label = "redis_streams"
+    eviction_counter = SINK_BUFFER_EVICTIONS.labels(sink=label)
+    size_gauge = SINK_BUFFER_SIZE.labels(sink=label)
+    start_evictions = eviction_counter._value.get()
+
+    # Fill (no eviction yet) — gauge should track size each append.
+    sink._buffer_failed_event("t", b"p0")
+    assert size_gauge._value.get() == 1
+    sink._buffer_failed_event("t", b"p1")
+    assert size_gauge._value.get() == 2
+    assert eviction_counter._value.get() == start_evictions
+
+    # Overflow — eviction counter must increment, gauge stays at maxlen.
+    sink._buffer_failed_event("t", b"p2")
+    assert size_gauge._value.get() == 2
+    assert eviction_counter._value.get() == start_evictions + 1
+
+
 def test_get_buffer_stats_accurate() -> None:
     """get_buffer_stats should return accurate current statistics."""
     sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")

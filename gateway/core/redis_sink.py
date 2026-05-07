@@ -16,7 +16,11 @@ import orjson
 
 from gateway.core.data_sink import DataSink
 from gateway.core.logger import logger
-from gateway.core.metrics import record_sink_publish
+from gateway.core.metrics import (
+    record_sink_buffer_eviction,
+    record_sink_publish,
+    set_sink_buffer_size,
+)
 
 DEFAULT_OPERATION_TIMEOUT_SECONDS = 5.0
 DEFAULT_POOL_SIZE = 64
@@ -268,12 +272,19 @@ class RedisStreamsSink(DataSink):
         """Buffer a failed event for retry on reconnect.
 
         Uses a bounded deque so oldest events are evicted if the buffer fills.
+        Updates the Prometheus ``gateway_sink_buffer_size`` gauge on every
+        append and increments ``gateway_sink_buffer_evictions_total`` when
+        the deque was already at capacity — those metrics drive the
+        ``SinkBufferEvictionsActive`` alert that turns silent data loss
+        into a paging signal (RCA: 2026-05-05 32-hour outage).
         """
         was_full = len(self._failed_buffer) == (self._failed_buffer.maxlen or FAILED_EVENT_BUFFER_CAPACITY)
         self._failed_buffer.append((topic, payload))
         self._buffer_stats["buffered"] += 1
+        set_sink_buffer_size(self.name, len(self._failed_buffer))
         if was_full:
             self._buffer_stats["evicted"] += 1
+            record_sink_buffer_eviction(self.name)
             logger.warning(
                 "redis_sink_buffer_eviction",
                 buffer_size=len(self._failed_buffer),
@@ -362,6 +373,7 @@ class RedisStreamsSink(DataSink):
             self._failed_buffer.append(item)
 
         self._buffer_stats["drained"] += drained
+        set_sink_buffer_size(self.name, len(self._failed_buffer))
         logger.info(
             "redis_sink_buffer_drain_complete",
             drained=drained,

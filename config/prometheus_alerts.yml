@@ -103,6 +103,34 @@ groups:
           summary: "Sustained stream-sink backpressure: data loss in progress"
           description: "Backpressure drops have averaged > 1/sec for 10 minutes. Heber is missing data. Capacity is undersized for current event rate."
 
+      # Failed-event buffer overflow: silent data loss in progress.
+      # Distinct from StreamSinkBackpressureDrops — that fires when the in-process
+      # dispatch queue is saturated (capacity tuning needed). This fires when the
+      # bounded retry buffer behind a tripped sink-circuit-breaker is overflowing,
+      # which means the sink itself is unhealthy and we are dropping the OLDEST
+      # buffered events to make room for new ones (eviction, not just queueing).
+      # The 2026-05-05 outage went silent for 32 hours because no metric here
+      # tracked this — operators had no signal until Kairos's Scout fetched 0
+      # flow alerts the next trading day.
+      - alert: SinkBufferEvictionsActive
+        expr: sum(rate(gateway_sink_buffer_evictions_total[2m])) by (sink) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sink {{ $labels.sink }} is evicting buffered events — silent data loss"
+          description: "Sink {{ $labels.sink }} is dropping events from its retry buffer at {{ $value | printf \"%.2f\" }}/sec because the buffer is full. The underlying sink (e.g. Redis) is unhealthy. Investigate the sink's circuit breaker and connection state — events being evicted now are unrecoverable."
+
+      # Buffer near capacity (90%) — early warning before eviction starts
+      - alert: SinkBufferNearCapacity
+        expr: max(gateway_sink_buffer_size) by (sink) > 9000
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sink {{ $labels.sink }} retry buffer is > 90% full"
+          description: "Sink {{ $labels.sink }} buffer at {{ $value }} entries (cap 10000). Eviction will start at 100%; address the underlying sink failure now."
+
   - name: gateway_slo
     rules:
       # SLO: 99.9% availability
