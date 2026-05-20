@@ -86,15 +86,16 @@ groups:
       # producer drop means the queue is full AND workers can't drain it
       # within data_sink_producer_block_timeout_seconds (default 100ms).
       # That is a true sink stall or hard overload, not steady-state
-      # backpressure, so we page on the first drop sustained for 1m.
+      # backpressure. Use a 1m lookback with no debounce so any non-zero
+      # rate pages immediately — every drop is a permanently lost event.
       - alert: SinkProducerTimeoutDrops
-        expr: sum(rate(gateway_sink_producer_timeout_drops_total[5m])) by (sink) > 0
-        for: 1m
+        expr: sum(increase(gateway_sink_producer_timeout_drops_total[1m])) by (sink) > 0
+        for: 0m
         labels:
           severity: critical
         annotations:
-          summary: "Sink {{ $labels.sink }} is dropping events at the producer (queue stalled)"
-          description: "The producer-side queue.put timeout fired on sink {{ $labels.sink }} — workers cannot drain the bounded dispatch queue fast enough. Events being dropped now are permanently lost to Heber. Inspect data_sink_redis_pool_size, data_sink_worker_count, and downstream Redis latency."
+          summary: "Sink {{ $labels.sink }} dropped events at the producer in the last minute"
+          description: "gateway_sink_producer_timeout_drops_total is non-zero on sink {{ $labels.sink }} — the bounded dispatch queue is full AND workers cannot drain it within data_sink_producer_block_timeout_seconds. Any non-zero rate means events are being lost permanently to Heber; investigate sink health immediately. Runbook: check downstream Redis latency, raise data_sink_worker_count / data_sink_queue_size, verify circuit-breaker state on the sink."
 
   - name: gateway_slo
     rules:
