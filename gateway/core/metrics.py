@@ -164,6 +164,38 @@ SINK_PUBLISH = Counter(
     ["sink", "topic", "status"],  # status: success, error
 )
 
+# Bounded-queue + worker-pool gauges/counters. The previous semaphore
+# implementation dropped on saturation silently and only emitted a
+# `data_sink_backpressure_drop` WARNING per drop. The new path uses a
+# bounded asyncio.Queue: producers block with a short timeout and only
+# drop if the timeout itself fires — i.e. the queue is full AND workers
+# can't drain it within `data_sink_producer_block_timeout_seconds`. That
+# is a true emergency (sink stalled or hard-overloaded) and warrants its
+# own counter + alert, distinct from steady-state semaphore behaviour.
+SINK_QUEUE_SIZE = Gauge(
+    "gateway_sink_queue_size",
+    "Current depth of the per-sink dispatch queue",
+    ["sink"],
+)
+
+SINK_QUEUE_CAPACITY = Gauge(
+    "gateway_sink_queue_capacity",
+    "Configured capacity of the per-sink dispatch queue",
+    ["sink"],
+)
+
+SINK_WORKER_COUNT = Gauge(
+    "gateway_sink_worker_count",
+    "Configured number of workers draining the per-sink dispatch queue",
+    ["sink"],
+)
+
+SINK_PRODUCER_TIMEOUT_DROPS = Counter(
+    "gateway_sink_producer_timeout_drops_total",
+    "Events dropped because the producer-side queue-put timed out — emergency-only",
+    ["sink"],
+)
+
 STREAM_SINK_DISPATCH_EVENTS = Counter(
     "gateway_stream_sink_dispatch_events_total",
     "Stream-to-sink scheduler events",
@@ -690,6 +722,26 @@ def record_sink_publish(sink: str, topic: str, success: bool) -> None:
     """Record data sink publish result."""
     status = "success" if success else "error"
     SINK_PUBLISH.labels(sink=sink, topic=topic, status=status).inc()
+
+
+def set_sink_queue_size(sink: str, size: int) -> None:
+    """Update the current dispatch-queue depth for ``sink``."""
+    SINK_QUEUE_SIZE.labels(sink=sink).set(max(0, size))
+
+
+def set_sink_queue_capacity(sink: str, capacity: int) -> None:
+    """Set the configured dispatch-queue capacity for ``sink``."""
+    SINK_QUEUE_CAPACITY.labels(sink=sink).set(max(0, capacity))
+
+
+def set_sink_worker_count(sink: str, count: int) -> None:
+    """Set the configured worker count draining ``sink``'s dispatch queue."""
+    SINK_WORKER_COUNT.labels(sink=sink).set(max(0, count))
+
+
+def record_sink_producer_timeout_drop(sink: str) -> None:
+    """Increment the producer-side queue-put timeout counter (emergency drop)."""
+    SINK_PRODUCER_TIMEOUT_DROPS.labels(sink=sink).inc()
 
 
 def record_stream_sink_dispatch_event(status: str) -> None:

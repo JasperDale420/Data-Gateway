@@ -126,9 +126,37 @@ class Settings(BaseSettings):
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
     data_sink_operation_timeout_seconds: float = Field(default=5.0, ge=0.5)
     data_sink_redis_pool_size: int = Field(default=8, ge=1, le=32)
+    # Legacy drop-on-saturation semaphore cap. Used only when
+    # data_sink_use_bounded_queue=False (emergency rollback). The bounded-queue
+    # path below replaces it: producers block briefly on a full queue and only
+    # drop if the queue stays full longer than data_sink_producer_block_timeout_seconds.
     data_sink_max_inflight_per_sink: int = Field(default=512, ge=64, le=4096)
     data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
     data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
+
+    # Bounded-queue + worker-pool replacement for the legacy semaphore.
+    # Producers `put` into a per-sink bounded asyncio.Queue with a short
+    # producer-block timeout; a small worker pool drains the queue and calls
+    # sink.publish via the existing circuit-breaker-protected path.
+    #
+    # - queue_size: max queued events per sink before producers block.
+    #   Opening-bell bursts have hit ~20K events/min historically; 4096 covers
+    #   ~12s of sustained 350 events/sec without producer block.
+    # - worker_count: concurrency for publishes against a single sink. Should
+    #   fit within data_sink_redis_pool_size for the Redis sink.
+    # - producer_block_timeout_seconds: how long a producer waits on a full
+    #   queue before dropping the event. 0.1s is intentionally short — the
+    #   stream-to-sink dispatcher itself runs on the asyncio event loop, and
+    #   longer blocks would stall the upstream Alpaca receive loop. A drop
+    #   here is a true emergency (queue is full AND workers can't drain in
+    #   100ms) and surfaces as gateway_sink_producer_timeout_drops_total.
+    # - use_bounded_queue: feature flag for the new dispatch path. True
+    #   (default) routes through queue+workers; False keeps the legacy
+    #   semaphore drop-on-saturation behaviour for emergency rollback.
+    data_sink_queue_size: int = Field(default=4096, ge=64, le=65536)
+    data_sink_worker_count: int = Field(default=8, ge=1, le=64)
+    data_sink_producer_block_timeout_seconds: float = Field(default=0.1, ge=0.001, le=5.0)
+    data_sink_use_bounded_queue: bool = True
 
     # Backfill concurrency (per-provider, split by feed weight)
     backfill_lightweight_concurrency: int = Field(default=5, ge=1)
