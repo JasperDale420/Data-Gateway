@@ -198,18 +198,18 @@ SINK_PRODUCER_TIMEOUT_DROPS = Counter(
 
 STREAM_SINK_DISPATCH_EVENTS = Counter(
     "gateway_stream_sink_dispatch_events_total",
-    "Stream-to-sink scheduler events",
-    ["status"],  # scheduled, dropped_backpressure, completed, failed, cancelled
+    "Stream-to-sink dispatch lifecycle events",
+    ["status"],  # scheduled, completed, failed, cancelled
 )
 
 STREAM_SINK_PENDING_TASKS = Gauge(
     "gateway_stream_sink_pending_tasks",
-    "Current number of queued stream-to-sink publish tasks",
+    "Current number of queued stream-to-sink dispatch tasks (registry queue depth)",
 )
 
 STREAM_SINK_DISPATCH_LIMIT = Gauge(
     "gateway_stream_sink_dispatch_limit",
-    "Configured stream-to-sink dispatch limits",
+    "Configured stream-to-sink dispatch limits (mirrors registry queue/worker config)",
     ["limit_type"],  # max_inflight_publish, max_pending_tasks
 )
 
@@ -790,7 +790,17 @@ def _threshold_level(value: float, *, warning_at: float, critical_at: float) -> 
 
 
 def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
-    """Get stream-to-sink scheduler telemetry snapshot for admin status surfaces."""
+    """Get stream-to-sink dispatch telemetry snapshot for admin status surfaces.
+
+    "limits" mirror the registry's bounded-queue/worker-pool configuration:
+    - max_inflight_publish maps to ``data_sink_worker_count``
+    - max_pending_tasks  maps to ``data_sink_queue_size``
+
+    Drop accounting now lives on the registry as
+    ``gateway_sink_producer_timeout_drops_total`` (per-sink emergency
+    counter); this snapshot only tracks dispatch-call lifecycle
+    (scheduled / completed / failed / cancelled).
+    """
     snapshot = deepcopy(_STREAM_SINK_DISPATCH_SNAPSHOT)
     limits = snapshot.get("limits", {})
     events = snapshot.get("events", {})
@@ -799,30 +809,29 @@ def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
     pending_tasks = float(int(snapshot.get("pending_tasks", 0)))
     scheduled = float(int(events.get("scheduled", 0)))
     completed = float(int(events.get("completed", 0)))
-    dropped_backpressure = float(int(events.get("dropped_backpressure", 0)))
 
     pending_utilization = _safe_ratio(pending_tasks, max_pending_tasks)
     completion_rate = _safe_ratio(completed, scheduled)
-    drop_rate = _safe_ratio(dropped_backpressure, scheduled)
     backpressure_level = max(
         _threshold_level(pending_utilization, warning_at=0.7, critical_at=0.9),
-        _threshold_level(drop_rate, warning_at=0.01, critical_at=0.05),
+        _threshold_level(max(0.0, 1.0 - completion_rate), warning_at=0.05, critical_at=0.2),
         key=lambda level: {"healthy": 0, "warning": 1, "critical": 2}[level],
     )
     recommendations: list[str] = []
     if pending_utilization >= 0.7:
         recommendations.append(
-            "Increase data_sink_stream_publish_max_pending (max_pending_tasks) or reduce sink publish load."
+            "Increase data_sink_queue_size or data_sink_worker_count, or inspect sink publish latency."
         )
-    if drop_rate >= 0.01:
-        recommendations.append("Increase data_sink_stream_publish_max_inflight and inspect sink latency.")
     if completion_rate < 0.95:
         recommendations.append("Investigate sink publish failures/timeouts and callback backpressure.")
 
     snapshot["derived"] = {
         "pending_utilization": pending_utilization,
         "completion_rate": completion_rate,
-        "drop_rate": drop_rate,
+        # Producer-timeout drops live on the registry now; preserve the
+        # field for back-compat consumers but always emit 0.0 — operators
+        # should watch gateway_sink_producer_timeout_drops_total instead.
+        "drop_rate": 0.0,
         "completion_gap": max(0.0, 1.0 - completion_rate),
         "backpressure_level": backpressure_level,
         "recommendations": recommendations,

@@ -248,8 +248,8 @@ async def test_get_status_includes_stream_tuning_summary_and_uw_poller_runtime(
     assert summary["suggested_limits"]["sink"]["max_inflight_publish"] == 40
     assert summary["suggested_limits"]["fanout"]["max_inflight"] == 125
     assert summary["suggested_limits"]["fanout"]["batch_size"] == 40
-    assert summary["suggested_env"]["GATEWAY_DATA_SINK_STREAM_PUBLISH_MAX_PENDING"] == 640
-    assert summary["suggested_env"]["GATEWAY_DATA_SINK_STREAM_PUBLISH_MAX_INFLIGHT"] == 40
+    assert summary["suggested_env"]["GATEWAY_DATA_SINK_QUEUE_SIZE"] == 640
+    assert summary["suggested_env"]["GATEWAY_DATA_SINK_WORKER_COUNT"] == 40
     assert summary["suggested_env"]["GATEWAY_STREAM_FANOUT_MAX_INFLIGHT"] == 125
     assert summary["suggested_env"]["GATEWAY_STREAM_FANOUT_BATCH_SIZE"] == 40
     assert response["data"]["uw_poller_runtime"]["running"] is True

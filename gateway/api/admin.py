@@ -129,11 +129,14 @@ def _build_stream_tuning_summary(
     suggested_fanout_max_inflight = (
         _suggest_up(fanout_limits.get("max_inflight")) if fanout_error_rate >= 0.005 else None
     )
+    # max_pending_tasks now mirrors the registry queue depth
+    # (GATEWAY_DATA_SINK_QUEUE_SIZE) and max_inflight_publish mirrors the
+    # worker pool size (GATEWAY_DATA_SINK_WORKER_COUNT).
     suggested_env: dict[str, int] = {}
     if suggested_sink_max_pending is not None:
-        suggested_env["GATEWAY_DATA_SINK_STREAM_PUBLISH_MAX_PENDING"] = suggested_sink_max_pending
+        suggested_env["GATEWAY_DATA_SINK_QUEUE_SIZE"] = suggested_sink_max_pending
     if suggested_sink_max_inflight is not None:
-        suggested_env["GATEWAY_DATA_SINK_STREAM_PUBLISH_MAX_INFLIGHT"] = suggested_sink_max_inflight
+        suggested_env["GATEWAY_DATA_SINK_WORKER_COUNT"] = suggested_sink_max_inflight
     if suggested_fanout_max_inflight is not None:
         suggested_env["GATEWAY_STREAM_FANOUT_MAX_INFLIGHT"] = suggested_fanout_max_inflight
     if suggested_fanout_batch_size is not None:

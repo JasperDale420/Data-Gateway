@@ -102,7 +102,6 @@ from gateway.core.metrics import (
     init_uptime,
     record_stream_sink_dispatch_event,
     set_stream_sink_dispatch_limits_metrics,
-    set_stream_sink_pending_tasks,
     update_uptime,
 )
 from gateway.core.registry import ProviderRegistry
@@ -120,6 +119,13 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
     - payload: The raw normalized event data
 
     For backward compatibility, we include both 'envelope' and 'data' fields.
+
+    Sink dispatch is awaited inline. The registry owns a bounded queue +
+    worker pool — ``publish_all`` only blocks if the queue is full and
+    workers cannot drain it within ``data_sink_producer_block_timeout_seconds``
+    (default 100ms). Drops are surfaced via the
+    ``gateway_sink_producer_timeout_drops_total`` counter on the registry
+    side; there is no separate outer drop path here.
     """
     connections = get_connection_manager()
     connection = connections.get(client_id)
@@ -143,17 +149,30 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
                 error=str(e),
             )
 
-    # Publish to data sink for Heber storage (non-blocking)
+    # Publish to data sink for Heber storage. The registry's bounded queue
+    # is the single in-process gate — producers block briefly only if the
+    # queue is saturated, and drops show up as producer-timeout drops.
     sink_registry = _stream_sink_registry
     if sink_registry:
-        # Optimization: Pre-serialize to JSON string to avoid re-serialization in Redis sink
-        # envelope is already a dict, so we serialize it once here.
+        record_stream_sink_dispatch_event("scheduled")
         try:
-            envelope_json = orjson.dumps(envelope, default=str).decode()
-            _schedule_stream_sink_publish(sink_registry, envelope_json)
-        except Exception:
-            # Fallback to dict if serialization fails (unlikely)
-            _schedule_stream_sink_publish(sink_registry, envelope)
+            # Pre-serialize once so the Redis sink doesn't have to re-encode.
+            try:
+                payload: dict | str = orjson.dumps(envelope, default=str).decode()
+            except Exception:
+                payload = envelope
+            await sink_registry.publish_all(STREAM_SINK_TOPIC, payload)
+            record_stream_sink_dispatch_event("completed")
+        except asyncio.CancelledError:
+            record_stream_sink_dispatch_event("cancelled")
+            raise
+        except Exception as exc:
+            record_stream_sink_dispatch_event("failed")
+            logger.warning(
+                "stream_sink_publish_failed",
+                event_id=envelope.get("event_id", "unknown"),
+                error=str(exc),
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -162,110 +181,11 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
 
 _stream_sink_registry = None
 STREAM_SINK_TOPIC = "heber:events"
-DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH = 32
-DEFAULT_STREAM_SINK_MAX_PENDING_TASKS = 512
-
-_stream_sink_max_inflight_publish = DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH
-_stream_sink_max_pending_tasks = DEFAULT_STREAM_SINK_MAX_PENDING_TASKS
-_stream_sink_publish_semaphore: asyncio.Semaphore | None = None
-_stream_sink_publish_tasks: set[asyncio.Task[None]] = set()
-
-
-def _configure_stream_sink_dispatch_limits(
-    *,
-    max_inflight_publish: int,
-    max_pending_tasks: int,
-) -> None:
-    """Configure stream-to-sink dispatch limits for this process."""
-    global _stream_sink_max_inflight_publish
-    global _stream_sink_max_pending_tasks
-    global _stream_sink_publish_semaphore
-
-    _stream_sink_max_inflight_publish = max(1, int(max_inflight_publish))
-    _stream_sink_max_pending_tasks = max(1, int(max_pending_tasks))
-    _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
-    set_stream_sink_dispatch_limits_metrics(
-        max_inflight_publish=_stream_sink_max_inflight_publish,
-        max_pending_tasks=_stream_sink_max_pending_tasks,
-    )
-    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
 
 
 def _set_stream_sink_registry(sink_registry) -> None:
     global _stream_sink_registry
     _stream_sink_registry = sink_registry
-
-
-def _get_stream_sink_publish_semaphore() -> asyncio.Semaphore:
-    global _stream_sink_publish_semaphore
-    if _stream_sink_publish_semaphore is None:
-        _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
-    return _stream_sink_publish_semaphore
-
-
-def _on_stream_sink_publish_done(task: asyncio.Task[None]) -> None:
-    _stream_sink_publish_tasks.discard(task)
-    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
-    if task.cancelled():
-        record_stream_sink_dispatch_event("cancelled")
-        return
-    exc = task.exception()
-    if exc:
-        record_stream_sink_dispatch_event("failed")
-        logger.warning("stream_sink_publish_task_failed", error=str(exc))
-        return
-    record_stream_sink_dispatch_event("completed")
-
-
-async def _publish_stream_event(sink_registry, envelope: dict | str) -> None:
-    semaphore = _get_stream_sink_publish_semaphore()
-    async with semaphore:
-        await sink_registry.publish_all(STREAM_SINK_TOPIC, envelope)
-
-
-def _schedule_stream_sink_publish(sink_registry, envelope: dict | str) -> None:
-    if len(_stream_sink_publish_tasks) >= _stream_sink_max_pending_tasks:
-        record_stream_sink_dispatch_event("dropped_backpressure")
-        # Extract event_id safely whether envelope is dict or string
-        event_id = "unknown"
-        if isinstance(envelope, dict):
-            event_id = envelope.get("event_id", "unknown")
-        # Creating a task just to log dropped event ID from string is overkill, skip parsing
-
-        logger.warning(
-            "stream_sink_publish_backpressure_drop",
-            pending_tasks=len(_stream_sink_publish_tasks),
-            max_pending_tasks=_stream_sink_max_pending_tasks,
-            event_id=event_id,
-        )
-        return
-
-    task = asyncio.create_task(_publish_stream_event(sink_registry, envelope))
-    _stream_sink_publish_tasks.add(task)
-    record_stream_sink_dispatch_event("scheduled")
-    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
-    task.add_done_callback(_on_stream_sink_publish_done)
-
-
-async def _drain_stream_sink_publish_tasks(timeout_seconds: float = 2.0) -> None:
-    if not _stream_sink_publish_tasks:
-        return
-
-    pending = list(_stream_sink_publish_tasks)
-    try:
-        await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout_seconds)
-    except TimeoutError:
-        logger.warning(
-            "stream_sink_publish_drain_timeout",
-            timeout_seconds=timeout_seconds,
-            pending_tasks=len(_stream_sink_publish_tasks),
-        )
-    finally:
-        for task in pending:
-            if not task.done():
-                task.cancel()
-        _stream_sink_publish_tasks.clear()
-        set_stream_sink_pending_tasks(0)
 
 
 @asynccontextmanager
@@ -274,9 +194,14 @@ async def lifespan(app: FastAPI):
     import signal
 
     settings = get_settings()
-    _configure_stream_sink_dispatch_limits(
-        max_inflight_publish=settings.data_sink_stream_publish_max_inflight,
-        max_pending_tasks=settings.data_sink_stream_publish_max_pending,
+    # Expose the registry's bounded-queue limits on the stream-sink
+    # dispatch snapshot so admin/health surfaces still report queue
+    # capacity + worker count. The "max_inflight_publish" label maps to
+    # the registry worker count (concurrency for sink publishes) and
+    # "max_pending_tasks" maps to the registry queue depth.
+    set_stream_sink_dispatch_limits_metrics(
+        max_inflight_publish=settings.data_sink_worker_count,
+        max_pending_tasks=settings.data_sink_queue_size,
     )
     _set_stream_sink_registry(None)
 
@@ -501,8 +426,8 @@ async def lifespan(app: FastAPI):
     # Step 5: Close client connections with 1001 Going Away
     await connections.close_all(code=1001, reason="Going Away")
 
-    # Step 6: Flush stream-to-sink publish tasks and close sink connections
-    await _drain_stream_sink_publish_tasks()
+    # Step 6: Close sink connections — sink_registry.close_all() drains
+    # the bounded queue and tears down workers before disconnecting.
     if sink_registry:
         await sink_registry.close_all()
 
