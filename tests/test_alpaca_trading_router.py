@@ -744,6 +744,98 @@ async def test_create_order_value_error_path_does_not_surface_504_detail(
     assert exc.value.detail == "bad input"
 
 
+# ---------------------------------------------------------------------------
+# close_position idempotency — Alpaca's ClosePositionRequest does not accept
+# client_order_id, so the retry contract surfaced in the 504 body must point
+# the caller at GET /positions/<symbol> instead of a Alpaca-side dedup key.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_close_position_504_timeout_includes_get_position_retry_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Critical retry contract: when close_position times out, the caller
+    needs the symbol and a pointer to GET /positions/<symbol> so they can
+    resolve "did the close actually happen?" before retrying. Without this
+    the caller is flying blind — they might leave a position open thinking
+    the close failed, or double-close if the position was still partial."""
+
+    class _SlowProvider:
+        def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> dict[str, Any]:
+            import time
+
+            time.sleep(0.6)
+            return {"id": "should-not-return"}
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol="aapl",  # intentionally lowercase to test normalization
+            qty=None,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "GW-E5004"
+    # Symbol is upper-cased so the caller's follow-up GET hits the same key.
+    assert detail["symbol"] == "AAPL"
+    assert detail["retry_with"] == "get_position"
+    assert "GET /api/alpaca/trading/positions/AAPL" in detail["retry_hint"]
+    assert "404 means" in detail["retry_hint"]
+
+
+@pytest.mark.asyncio
+async def test_close_position_success_meta_includes_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On success, the upper-cased symbol is surfaced in meta so the
+    caller's reconciliation logic has the canonical key without needing
+    to re-derive it."""
+    captured: dict[str, Any] = {}
+
+    class _OkProvider:
+        def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> dict[str, Any]:
+            captured["symbol"] = symbol
+            return {"id": "close-1", "status": "accepted"}
+
+    provider = _OkProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.close_position(
+        symbol="msft",
+        qty=None,
+        percentage=None,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["id"] == "close-1"
+    assert response["meta"]["symbol"] == "MSFT"
+    # Provider sees the un-uppercased value — its own normalization layer
+    # handles that (see AlpacaTradingMixin.close_position which calls
+    # ``symbol.upper()`` before hitting the SDK).
+    assert captured["symbol"] == "msft"
+
+
 @pytest.mark.asyncio
 async def test_run_trading_provider_call_admits_concurrent_within_cap(
     monkeypatch: pytest.MonkeyPatch,

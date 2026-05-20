@@ -524,13 +524,56 @@ async def close_position(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Close a position (fully or partially)."""
-    data = await _execute_trading_call(
+    """Close a position (fully or partially).
+
+    Idempotency contract (DO NOT REGRESS):
+      Alpaca's ClosePositionRequest does NOT accept a client_order_id —
+      the SDK generates its own order id server-side. So unlike
+      create_order, the gateway can't use Alpaca-side dedup. Instead, the
+      504 timeout body includes ``retry_with: "get_position"`` and the
+      symbol, so the caller can resolve "did the close actually
+      happen?" by calling GET /api/alpaca/trading/positions/<symbol>:
+        - 404 POSITION_NOT_FOUND → close succeeded (or position never
+          existed); do NOT retry the close.
+        - 200 with position data → close did NOT take effect; safe to
+          retry the close.
+      This avoids the broker-side double-place problem because a "close"
+      that lands twice is bounded by the current position size — Alpaca
+      rejects close requests for non-existent positions with 40410000,
+      which the provider already translates into a clean 404.
+    """
+    idempotency_context: dict[str, Any] = {
+        "symbol": symbol.upper(),
+        "retry_with": "get_position",
+        "retry_hint": (
+            "Close may have succeeded at Alpaca despite the 5xx — "
+            "ClosePositionRequest does not accept client_order_id. Check "
+            f"GET /api/alpaca/trading/positions/{symbol.upper()}: 404 means "
+            "the close succeeded (or position is gone), 200 means safe to "
+            "retry the close."
+        ),
+    }
+
+    async def _call(provider: Any) -> Any:
+        return await _run_trading_provider_call(
+            provider=provider,
+            provider_fn=lambda provider: provider.close_position(symbol, qty, percentage),
+            operation="close_position",
+            idempotency_context=idempotency_context,
+        )
+
+    data = await execute_alpaca_provider_call(
         registry=registry,
-        provider_fn=lambda provider: provider.close_position(symbol, qty, percentage),
-        operation="close_position",
+        provider_call=_call,
     )
-    return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
+    return {
+        "success": True,
+        "data": data,
+        "meta": {
+            "provider": "alpaca",
+            "symbol": symbol.upper(),
+        },
+    }
 
 
 @router.delete("/positions", response_model=SuccessResponse)
