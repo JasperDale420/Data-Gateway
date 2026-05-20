@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca.common import (
+    ALPACA_ROUTER_PREFIX,
     DESC_COMMA_SYMBOLS,
     Client,
     execute_alpaca_cached_call,
@@ -278,7 +279,7 @@ async def create_order(
         dedupes ``submit_order`` by client_order_id — a caller that sees
         a 504 can safely retry POST with the same key (returning the
         existing order rather than placing a second) or GET
-        ``/orders:by_client_order_id`` to check status.
+        ``{ALPACA_ROUTER_PREFIX}/orders:by_client_order_id`` to check status.
     """
     effective_client_order_id = client_order_id or _generate_client_order_id()
     gateway_generated = client_order_id is None
@@ -288,10 +289,11 @@ async def create_order(
         "retry_with": "client_order_id",
         "retry_hint": (
             "Order may have placed at Alpaca despite the 5xx — Alpaca natively "
-            "dedupes by client_order_id. Either GET /api/alpaca/trading/orders:"
-            f"by_client_order_id?client_order_id={effective_client_order_id} to check status, or retry "
-            "POST /api/alpaca/trading/orders with the same client_order_id to "
-            "idempotently re-attempt."
+            "dedupes by client_order_id. Either "
+            f"GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id"
+            f"?client_order_id={effective_client_order_id} to check status, "
+            f"or retry POST {ALPACA_ROUTER_PREFIX}/orders with the same "
+            "client_order_id to idempotently re-attempt."
         ),
     }
 
@@ -532,7 +534,7 @@ async def close_position(
       create_order, the gateway can't use Alpaca-side dedup. Instead, the
       504 timeout body includes ``retry_with: "get_position"`` and the
       symbol, so the caller can resolve "did the close actually
-      happen?" by calling GET /api/alpaca/trading/positions/<symbol>:
+      happen?" by calling GET ``{ALPACA_ROUTER_PREFIX}/positions/<symbol>``:
         - 404 POSITION_NOT_FOUND → close succeeded (or position never
           existed); do NOT retry the close.
         - 200 with position data → close did NOT take effect; safe to
@@ -542,15 +544,16 @@ async def close_position(
       rejects close requests for non-existent positions with 40410000,
       which the provider already translates into a clean 404.
     """
+    canonical_symbol = symbol.upper()
     idempotency_context: dict[str, Any] = {
-        "symbol": symbol.upper(),
+        "symbol": canonical_symbol,
         "retry_with": "get_position",
         "retry_hint": (
             "Close may have succeeded at Alpaca despite the 5xx — "
             "ClosePositionRequest does not accept client_order_id. Check "
-            f"GET /api/alpaca/trading/positions/{symbol.upper()}: 404 means "
-            "the close succeeded (or position is gone), 200 means safe to "
-            "retry the close."
+            f"GET {ALPACA_ROUTER_PREFIX}/positions/{canonical_symbol}: "
+            "404 means the close succeeded (or position is gone), 200 "
+            "means safe to retry the close."
         ),
     }
 
@@ -571,7 +574,7 @@ async def close_position(
         "data": data,
         "meta": {
             "provider": "alpaca",
-            "symbol": symbol.upper(),
+            "symbol": canonical_symbol,
         },
     }
 

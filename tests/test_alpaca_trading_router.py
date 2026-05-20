@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca import trading
+from gateway.api.alpaca.common import ALPACA_ROUTER_PREFIX
 from gateway.config import Settings
 from gateway.core.cache import InMemoryCache
 from gateway.core.registry import ProviderRegistry
@@ -797,7 +798,10 @@ async def test_close_position_504_timeout_includes_get_position_retry_hint(
     # Symbol is upper-cased so the caller's follow-up GET hits the same key.
     assert detail["symbol"] == "AAPL"
     assert detail["retry_with"] == "get_position"
-    assert "GET /api/alpaca/trading/positions/AAPL" in detail["retry_hint"]
+    # The retry hint must point at the ACTUAL mounted prefix
+    # (``/api/v1/alpaca``) — see test_retry_hint_uses_actual_router_prefix
+    # for the static-vs-dynamic guard against drift.
+    assert f"GET {ALPACA_ROUTER_PREFIX}/positions/AAPL" in detail["retry_hint"]
     assert "404 means" in detail["retry_hint"]
 
 
@@ -872,3 +876,118 @@ async def test_run_trading_provider_call_admits_concurrent_within_cap(
         ),
     )
     assert sorted(results) == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# Retry-hint URL drift guard — the 5xx retry_hint strings must reference the
+# router's ACTUAL mounted prefix. Hard-coding a stale prefix in the docstring
+# / hint silently breaks caller reconciliation logic. These tests pin the
+# invariant: if anyone reorganizes the router mount-point, the hint stays in
+# sync.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_order_504_retry_hint_uses_actual_router_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry hint MUST reference the actual mounted prefix (currently
+    ``/api/v1/alpaca``). A prior bug emitted ``/api/alpaca/trading/...`` —
+    wrong on TWO counts (missing the ``v1`` and the extra ``trading``
+    segment) — which sent caller retries to a 404 and left them flying
+    blind during a 504. This test pins the hint to whatever prefix the
+    parent router is mounted at, so it can't drift again."""
+
+    class _SlowProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            import time
+
+            time.sleep(0.6)
+            return {"id": "should-not-return"}
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=10,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    hint = exc.value.detail["retry_hint"]
+    # The actual mounted prefix appears in the hint.
+    assert ALPACA_ROUTER_PREFIX in hint
+    # And the GET path uses the by_client_order_id endpoint under that prefix.
+    assert f"GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id" in hint
+    assert f"POST {ALPACA_ROUTER_PREFIX}/orders" in hint
+    # Belt-and-suspenders: the old, wrong shape must NOT appear.
+    assert "/api/alpaca/trading/" not in hint
+
+
+@pytest.mark.asyncio
+async def test_close_position_504_retry_hint_uses_actual_router_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mirror of the create_order variant — the close_position hint must
+    point at GET ``{ALPACA_ROUTER_PREFIX}/positions/<symbol>``."""
+
+    class _SlowProvider:
+        def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> dict[str, Any]:
+            import time
+
+            time.sleep(0.6)
+            return {"id": "should-not-return"}
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol="aapl",
+            qty=None,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    hint = exc.value.detail["retry_hint"]
+    assert ALPACA_ROUTER_PREFIX in hint
+    assert f"GET {ALPACA_ROUTER_PREFIX}/positions/AAPL" in hint
+    # Old, wrong shape MUST NOT appear.
+    assert "/api/alpaca/trading/" not in hint
+
+
+def test_retry_hint_prefix_matches_parent_router_mount_point() -> None:
+    """Sanity: the constant the trading module uses to build retry hints
+    matches the prefix the parent router is actually mounted at. Without
+    this guard, somebody changing ``ALPACA_ROUTER_PREFIX`` in
+    ``alpaca/__init__.py`` but forgetting to update the constant in
+    ``common.py`` (or vice versa — they share the constant today, but the
+    test pins the invariant for the future) would silently re-introduce
+    the URL-drift bug."""
+    from gateway.api.alpaca import router as parent_router
+
+    assert parent_router.prefix == ALPACA_ROUTER_PREFIX

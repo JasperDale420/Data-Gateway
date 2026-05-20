@@ -20,6 +20,17 @@ from gateway.core.logger import logger
 from gateway.core.metrics import record_route_cache
 from gateway.core.registry import ProviderRegistry
 
+# Single source of truth for the Alpaca sub-router's URL prefix. The parent
+# router (``gateway/api/alpaca/__init__.py``) mounts the trading endpoints at
+# this prefix; the trading route docstrings + 5xx ``retry_hint`` strings
+# reference it so callers know exactly where to GET/POST for retries.
+#
+# Keeping this constant here (instead of in ``alpaca/__init__.py``) avoids a
+# circular import: ``__init__`` imports ``trading``, so ``trading`` cannot
+# import from ``__init__``. Both modules import from ``common`` already, so
+# this is the canonical location.
+ALPACA_ROUTER_PREFIX = "/api/v1/alpaca"
+
 DESC_BAR_TIMEFRAME = "Bar timeframe"
 DESC_START_TIME = "Start time (ISO 8601)"
 DESC_END_TIME = "End time (ISO 8601)"
@@ -199,6 +210,7 @@ async def execute_alpaca_cached_call[T](
 
 
 __all__ = [
+    "ALPACA_ROUTER_PREFIX",
     "DESC_BAR_TIMEFRAME",
     "DESC_START_TIME",
     "DESC_END_TIME",
