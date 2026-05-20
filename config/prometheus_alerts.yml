@@ -81,6 +81,21 @@ groups:
           summary: "Rate limit exceeded spike"
           description: "More than 10 rate limit events per second in the last 5 minutes."
 
+      # Sink producer-side queue-put timeout drops — emergency.
+      # The bounded queue + worker pool absorbs steady-state bursts; a
+      # producer drop means the queue is full AND workers can't drain it
+      # within data_sink_producer_block_timeout_seconds (default 100ms).
+      # That is a true sink stall or hard overload, not steady-state
+      # backpressure, so we page on the first drop sustained for 1m.
+      - alert: SinkProducerTimeoutDrops
+        expr: sum(rate(gateway_sink_producer_timeout_drops_total[5m])) by (sink) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sink {{ $labels.sink }} is dropping events at the producer (queue stalled)"
+          description: "The producer-side queue.put timeout fired on sink {{ $labels.sink }} — workers cannot drain the bounded dispatch queue fast enough. Events being dropped now are permanently lost to Heber. Inspect data_sink_redis_pool_size, data_sink_worker_count, and downstream Redis latency."
+
   - name: gateway_slo
     rules:
       # SLO: 99.9% availability
