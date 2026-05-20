@@ -349,9 +349,23 @@ class AlpacaTradingMixin:
         if not self._trading_client:
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
+        # Default to closing the entire position when neither qty nor
+        # percentage is supplied. Alpaca's ClosePositionRequest requires
+        # exactly one to be set; the previous code passed both as None and
+        # raised a ValidationError that surfaced upstream as a 502, leaving
+        # callers' positions open after a "DELETE /positions/<symbol>".
+        if qty is None and percentage is None:
+            percentage = 100.0
+        # Use ``is not None`` rather than truthiness so that qty=0 / pct=0
+        # round-trip to the SDK and surface as Alpaca's own validation error
+        # rather than being silently rewritten to None and triggering the
+        # same ValidationError → 502 the naked-call default above guards
+        # against. (qty=0 / pct=0 are nonsense for a close; the SDK will
+        # reject them — that's the right place for the rejection.)
         try:
             request = ClosePositionRequest(
-                qty=str(qty) if qty else None, percentage=str(percentage) if percentage else None
+                qty=str(qty) if qty is not None else None,
+                percentage=str(percentage) if percentage is not None else None,
             )
             order = self._trading_client.close_position(symbol.upper(), close_options=request)
             data = self._model_to_dict(order)
