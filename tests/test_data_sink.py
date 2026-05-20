@@ -439,3 +439,128 @@ class TestBoundedQueueDispatch:
 
         release_event.set()
         await registry.drain_queues(timeout_seconds=2.0)
+
+
+# ── Cancellation Routing Tests ───────────────────────────────────────
+
+
+class _BufferingBlockingSink(DataSink):
+    """Blocking sink that also implements ``buffer_event`` for buffer-on-cancel routing."""
+
+    def __init__(self, sink_name: str = "buffering-blocking") -> None:
+        self._name = sink_name
+        self.published: list[tuple[str, Any]] = []
+        self.buffered: list[tuple[str, Any]] = []
+        self._gate = asyncio.Event()
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def publish(self, topic: str, data: Any) -> bool:
+        # Block forever until the test cancels us.
+        await self._gate.wait()
+        self.published.append((topic, data))
+        return True
+
+    async def health_check(self) -> bool:
+        return True
+
+    def buffer_event(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
+        self.buffered.append((topic, data))
+
+
+class TestWorkerCancellationRouting:
+    """Workers cancelled mid-publish must route the in-flight event to buffer_event."""
+
+    @pytest.mark.asyncio
+    async def test_worker_cancellation_routes_inflight_event_to_buffer(self) -> None:
+        """A worker cancelled while awaiting sink.publish hands its event to buffer_event."""
+        registry = DataSinkRegistry(
+            queue_size=4,
+            worker_count=1,
+            producer_block_timeout_seconds=0.2,
+        )
+        sink = _BufferingBlockingSink(sink_name="cancel-buffer")
+        registry.register(sink)
+
+        event = {"event_id": "in-flight-1", "symbol": "AAPL"}
+        await registry.publish_all("heber:events", event)
+
+        # Wait until the worker has dequeued the event and is blocked in publish.
+        async def _wait_for_worker_to_dequeue() -> None:
+            for _ in range(50):  # 50 * 10ms = 500ms ceiling
+                if sink._gate._waiters:  # type: ignore[attr-defined]
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError("worker never reached sink.publish")
+
+        await _wait_for_worker_to_dequeue()
+
+        workers = registry._sink_workers[sink.name]
+        assert len(workers) == 1
+        workers[0].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await workers[0]
+
+        # In-flight event must have been handed to buffer_event before re-raise.
+        assert sink.buffered == [("heber:events", event)]
+        assert sink.published == []
+
+    @pytest.mark.asyncio
+    async def test_drain_queues_timeout_buffers_in_flight_events(self) -> None:
+        """drain_queues cancelling a stuck worker still salvages the in-flight event."""
+        registry = DataSinkRegistry(
+            queue_size=4,
+            worker_count=1,
+            producer_block_timeout_seconds=0.2,
+        )
+        sink = _BufferingBlockingSink(sink_name="drain-cancel-buffer")
+        registry.register(sink)
+
+        event = {"event_id": "drain-victim", "symbol": "MSFT"}
+        await registry.publish_all("heber:events", event)
+
+        # Wait until the worker has the event in flight before triggering drain.
+        for _ in range(50):
+            if sink._gate._waiters:  # type: ignore[attr-defined]
+                break
+            await asyncio.sleep(0.01)
+
+        # Tiny timeout forces drain to cancel the stuck worker mid-publish.
+        await registry.drain_queues(timeout_seconds=0.1)
+
+        # The cancelled worker must have routed the in-flight event to the buffer.
+        assert sink.buffered == [("heber:events", event)]
+        assert sink.published == []
+
+    @pytest.mark.asyncio
+    async def test_worker_inflight_event_loss_logged_when_no_buffer_support(self, caplog) -> None:
+        """Sinks without buffer_event still log the loss instead of silently dropping."""
+        release_event = asyncio.Event()
+        registry = DataSinkRegistry(
+            queue_size=4,
+            worker_count=1,
+            producer_block_timeout_seconds=0.2,
+        )
+        sink = _BlockingSink(release_event, sink_name="no-buffer-cancel")
+        registry.register(sink)
+
+        await registry.publish_all("heber:events", {"event_id": "stuck"})
+
+        # Wait for worker to start publishing.
+        for _ in range(50):
+            if release_event._waiters:  # type: ignore[attr-defined]
+                break
+            await asyncio.sleep(0.01)
+
+        workers = registry._sink_workers[sink.name]
+        with caplog.at_level("WARNING"):
+            workers[0].cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await workers[0]
+
+        # No buffer_event → loss is logged.
+        log_text = "\n".join(record.getMessage() for record in caplog.records)
+        assert "data_sink_worker_inflight_event_lost" in log_text or "inflight_event_lost" in log_text
+        release_event.set()

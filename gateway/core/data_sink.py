@@ -296,28 +296,90 @@ class DataSinkRegistry:
         Exits when the shutdown sentinel is received. Exceptions from
         ``_safe_publish`` are swallowed inside that helper, so the worker
         never dies on a single bad event.
+
+        Cancellation safety: if the worker is cancelled mid-publish (e.g.
+        ``drain_queues`` timeout fires), the in-flight event is routed
+        through ``sink.buffer_event`` *before* ``task_done`` acks the
+        queue. Otherwise the event would be lost — ``task_done`` runs in
+        ``finally`` regardless of how the publish exits, but
+        ``CancelledError`` bypasses ``except Exception`` and never
+        reached the retry/buffer branch.
         """
         while True:
             item = await queue.get()
+            acked = False
             try:
                 if item is _SHUTDOWN_SENTINEL:
+                    queue.task_done()
+                    acked = True
                     return
                 topic, data = item
                 self._publish_stats["scheduled"] += 1
                 try:
                     await self._safe_publish(sink, topic, data)
+                except asyncio.CancelledError:
+                    # Drain timeout / shutdown forced a cancel mid-publish.
+                    # Salvage the event by handing it to the sink's failed
+                    # buffer so the next reconnect/drain can retry it.
+                    self._safe_buffer_event(sink, topic, data, reason="cancelled")
+                    queue.task_done()
+                    acked = True
+                    set_sink_queue_size(sink.name, queue.qsize())
+                    raise
                 except Exception:
                     # _safe_publish handles its own logging; this is a
                     # defence-in-depth guard so a bug in the helper can't
-                    # take the worker out.
+                    # take the worker out. The retry/buffer logic inside
+                    # the sink owns the routing decision.
                     logger.exception(
                         "data_sink_worker_unhandled_exception",
                         sink=sink.name,
                         topic=topic,
                     )
             finally:
-                queue.task_done()
-                set_sink_queue_size(sink.name, queue.qsize())
+                if not acked:
+                    queue.task_done()
+                    set_sink_queue_size(sink.name, queue.qsize())
+
+    def _safe_buffer_event(
+        self,
+        sink: DataSink,
+        topic: str,
+        data: dict[str, Any] | str | bytes,
+        *,
+        reason: str,
+    ) -> None:
+        """Route an in-flight event to the sink's failed buffer if supported.
+
+        Used when a worker is cancelled mid-publish, so events that have
+        been pulled from the queue aren't silently dropped. Sinks without
+        a ``buffer_event`` hook (rare in production — only test stubs)
+        cannot rescue the event, but we still log so the loss is visible.
+        """
+        buffer = getattr(sink, "buffer_event", None)
+        if callable(buffer):
+            try:
+                buffer(topic, data)
+                logger.warning(
+                    "data_sink_worker_buffered_inflight_event",
+                    sink=sink.name,
+                    topic=topic,
+                    reason=reason,
+                )
+                return
+            except Exception:
+                logger.exception(
+                    "data_sink_worker_buffer_failed",
+                    sink=sink.name,
+                    topic=topic,
+                    reason=reason,
+                )
+        logger.warning(
+            "data_sink_worker_inflight_event_lost",
+            sink=sink.name,
+            topic=topic,
+            reason=reason,
+        )
 
     async def publish_all_batch(
         self,
