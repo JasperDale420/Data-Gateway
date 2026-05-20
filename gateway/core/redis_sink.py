@@ -429,24 +429,12 @@ class RedisStreamsSink(DataSink):
                 record_sink_publish(sink=self.name, topic=topic, success=True)
                 return True
 
-            except asyncio.CancelledError:
-                # Worker cancelled mid-xadd (shutdown / drain timeout).
-                # Buffer the encoded payload before re-raising so the
-                # next reconnect-drain attempts retry. The registry's
-                # worker-loop boundary also has a CancelledError handler
-                # that calls sink.buffer_event, but routing here keeps
-                # the encoded-bytes path identical to the
-                # retry-exhausted path below.
-                self._buffer_failed_event(topic, payload[b"data"])
-                logger.warning(
-                    "redis_sink_publish_cancelled",
-                    topic=topic,
-                    attempt=attempt + 1,
-                    buffered=True,
-                    buffer_size=len(self._failed_buffer),
-                )
-                record_sink_publish(sink=self.name, topic=topic, success=False)
-                raise
+            # NB: do NOT catch asyncio.CancelledError here. The registry
+            # worker loop (gateway/core/data_sink.py) catches CancelledError
+            # at the publish-call boundary and routes the in-flight event
+            # through sink.buffer_event. Catching+buffering here too would
+            # double-buffer the same event into _failed_buffer and replay
+            # it twice on next drain.
             except Exception as e:
                 last_error = e
                 is_last_attempt = attempt >= PUBLISH_RETRY_ATTEMPTS - 1
@@ -474,22 +462,10 @@ class RedisStreamsSink(DataSink):
                         backoff_seconds=round(backoff, 3),
                         error=error_desc,
                     )
-                    try:
-                        await asyncio.sleep(backoff)
-                    except asyncio.CancelledError:
-                        # Cancelled mid-backoff: buffer the in-flight
-                        # event before re-raising so shutdown can still
-                        # drain it on the next reconnect.
-                        self._buffer_failed_event(topic, payload[b"data"])
-                        logger.warning(
-                            "redis_sink_publish_cancelled",
-                            topic=topic,
-                            attempt=attempt + 1,
-                            buffered=True,
-                            buffer_size=len(self._failed_buffer),
-                        )
-                        record_sink_publish(sink=self.name, topic=topic, success=False)
-                        raise
+                    # Backoff sleep — CancelledError propagates up to the
+                    # registry worker which handles the buffer routing (see
+                    # comment above the outer try block).
+                    await asyncio.sleep(backoff)
 
         # All retries exhausted — buffer the event for drain on reconnect
         error_desc = (
