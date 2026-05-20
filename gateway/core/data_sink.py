@@ -440,26 +440,52 @@ class DataSinkRegistry:
     async def drain_queues(self, timeout_seconds: float = 5.0) -> None:
         """Drain pending queue items and stop worker pools.
 
-        Sends a shutdown sentinel into each queue (one per worker) and then
-        awaits worker completion. Workers process queued events before
-        seeing the sentinel, so this both flushes the backlog and unwinds
-        the pool. Bounded by ``timeout_seconds`` so a stuck sink can't
-        block shutdown forever.
+        Awaits ``queue.join()`` to flush every queued event, then sends one
+        shutdown sentinel per worker so each worker exits cleanly. Bounded
+        by ``timeout_seconds`` so a stuck sink can't block shutdown forever.
         """
         if not self._sink_queues:
             return
 
+        # Phase 1: flush all queued events. queue.join() returns once every
+        # item that's been put() has had task_done() called on it — i.e.
+        # all events have been published.
+        async def _flush_one(name: str, queue: asyncio.Queue) -> None:
+            await queue.join()
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(_flush_one(name, q) for name, q in self._sink_queues.items()),
+                    return_exceptions=True,
+                ),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            logger.warning(
+                "data_sink_flush_timeout",
+                timeout_seconds=timeout_seconds,
+                queue_depths={name: q.qsize() for name, q in self._sink_queues.items()},
+            )
+
+        # Phase 2: send sentinels to wind down workers. Use put() with the
+        # remaining budget so a hammered queue (full of post-flush late
+        # arrivals) doesn't lose its sentinel.
         for sink_name, workers in self._sink_workers.items():
             queue = self._sink_queues.get(sink_name)
             if queue is None:
                 continue
             for _ in workers:
                 try:
-                    queue.put_nowait(_SHUTDOWN_SENTINEL)
-                except asyncio.QueueFull:
-                    # Force-close path: cancel workers if even sentinels won't fit.
+                    await asyncio.wait_for(
+                        queue.put(_SHUTDOWN_SENTINEL),
+                        timeout=max(0.1, timeout_seconds / 2),
+                    )
+                except TimeoutError:
+                    # Hard force: cancel remaining workers if sentinel won't fit.
                     for worker in workers:
-                        worker.cancel()
+                        if not worker.done():
+                            worker.cancel()
                     break
 
         pending: list[asyncio.Task[None]] = []
