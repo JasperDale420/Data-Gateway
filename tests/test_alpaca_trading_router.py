@@ -995,7 +995,7 @@ def test_retry_hint_prefix_matches_parent_router_mount_point() -> None:
 
 # ---------------------------------------------------------------------------
 # client_order_id input validation — empty/whitespace must be rejected with
-# 400 GW-E5006 rather than silently falling through to gateway-minted UUID
+# 400 GW-E4006 rather than silently falling through to gateway-minted UUID
 # (which would defeat Alpaca-side dedup on retry).
 # ---------------------------------------------------------------------------
 
@@ -1006,7 +1006,7 @@ async def test_create_order_rejects_empty_or_whitespace_client_order_id(
     monkeypatch: pytest.MonkeyPatch,
     bad_key: str,
 ) -> None:
-    """Empty / whitespace-only client_order_id must surface as 400 GW-E5006.
+    """Empty / whitespace-only client_order_id must surface as 400 GW-E4006.
 
     The previous code silently auto-generated a UUID and labelled it
     ``client_order_id_source="caller"`` — so each retry minted a fresh
@@ -1028,7 +1028,7 @@ async def test_create_order_rejects_empty_or_whitespace_client_order_id(
     assert exc.value.status_code == 400
     detail = exc.value.detail
     assert isinstance(detail, dict)
-    assert detail["code"] == "GW-E5006"
+    assert detail["code"] == "GW-E4006"
     # Provider must NOT have been called.
     assert not hasattr(provider, "_calls") or provider.assets_calls == []
 
@@ -1037,13 +1037,13 @@ async def test_create_order_rejects_empty_or_whitespace_client_order_id(
 async def test_create_order_rejects_oversize_client_order_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Alpaca caps client_order_id at 48 chars; a clean 400 from the gateway
+    """Alpaca caps client_order_id at 128 chars; a clean 400 from the gateway
     beats Alpaca's 422 surfacing later."""
     provider = _FakeProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
     _helper_monkeypatch(monkeypatch, route_registry=route_registry)
 
-    oversize = "x" * 49
+    oversize = "x" * 129
 
     with pytest.raises(HTTPException) as exc:
         await trading.create_order(
@@ -1056,15 +1056,15 @@ async def test_create_order_rejects_oversize_client_order_id(
         )
 
     assert exc.value.status_code == 400
-    assert exc.value.detail["code"] == "GW-E5006"
-    assert "48" in exc.value.detail["message"]
+    assert exc.value.detail["code"] == "GW-E4006"
+    assert "128" in exc.value.detail["message"]
 
 
 @pytest.mark.asyncio
 async def test_create_order_accepts_max_length_client_order_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """48-char key (the inclusive maximum) must pass through untouched —
+    """128-char key (the inclusive maximum) must pass through untouched —
     only longer keys are rejected."""
     captured: dict[str, Any] = {}
 
@@ -1077,7 +1077,7 @@ async def test_create_order_accepts_max_length_client_order_id(
     route_registry = _FakeRegistry({"alpaca": provider})
     _helper_monkeypatch(monkeypatch, route_registry=route_registry)
 
-    max_len_key = "x" * 48
+    max_len_key = "x" * 128
 
     response = await trading.create_order(
         symbol="AAPL",

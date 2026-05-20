@@ -33,24 +33,27 @@ TRADING_CALENDAR_CACHE_TTL_SECONDS = 3600
 # ─────────────────────────────────────────────────────────────────────────────
 # Idempotency-key prefix for gateway-generated client_order_id values. Used to
 # distinguish auto-generated keys from caller-supplied ones in logs/dashboards.
-# Alpaca's client_order_id max length is 48 chars; "dg-" + 32-char UUID hex
-# leaves room for the prefix without truncation.
+# Alpaca's client_order_id max length is 128 chars (per their REST API docs);
+# "dg-" + 32-char UUID hex leaves ample headroom under the ceiling.
 # ─────────────────────────────────────────────────────────────────────────────
 _GATEWAY_CLIENT_ORDER_ID_PREFIX = "dg-"
 
-# Alpaca enforces a 48-character ceiling on ``client_order_id``. Rejecting at
-# the gateway with a structured 400 surfaces caller bugs early and gives a
-# better error than the 422 Alpaca returns when the SDK forwards an oversize
-# key. See: https://docs.alpaca.markets/reference/postorder
-_CLIENT_ORDER_ID_MAX_LENGTH = 48
+# Alpaca enforces a 128-character ceiling on ``client_order_id`` (REST API
+# docs: https://docs.alpaca.markets/reference/postorder — "length <= 128").
+# Rejecting at the gateway with a structured 400 surfaces caller bugs early
+# and gives a better error than the 422 Alpaca returns when the SDK forwards
+# an oversize key. The installed alpaca-py SDK does not enforce this on its
+# own (its ``OrderRequest`` schema has no max_length validator), so the
+# gateway is the only place this check happens before the wire.
+_CLIENT_ORDER_ID_MAX_LENGTH = 128
 
 
 def _validate_client_order_id(raw: str | None) -> str | None:
     """Validate a caller-supplied client_order_id.
 
     Returns the value unchanged when ``None`` (caller omitted the field —
-    gateway will auto-generate downstream). Raises 400 GW-E5006 for empty
-    strings, whitespace-only strings, and strings exceeding Alpaca's 48-char
+    gateway will auto-generate downstream). Raises 400 GW-E4006 for empty
+    strings, whitespace-only strings, and strings exceeding Alpaca's 128-char
     ceiling.
 
     Rejecting empty/whitespace is critical for idempotency: previously, a
@@ -67,7 +70,7 @@ def _validate_client_order_id(raw: str | None) -> str | None:
         raise HTTPException(
             status_code=400,
             detail={
-                "code": "GW-E5006",
+                "code": "GW-E4006",
                 "message": (
                     "client_order_id, when supplied, must be a non-empty, "
                     "non-whitespace string. Omit the parameter entirely to "
@@ -79,7 +82,7 @@ def _validate_client_order_id(raw: str | None) -> str | None:
         raise HTTPException(
             status_code=400,
             detail={
-                "code": "GW-E5006",
+                "code": "GW-E4006",
                 "message": (
                     f"client_order_id length {len(raw)} exceeds Alpaca's {_CLIENT_ORDER_ID_MAX_LENGTH}-char limit."
                 ),
@@ -359,7 +362,7 @@ async def create_order(
     Idempotency contract (DO NOT REGRESS):
       - If the caller supplies ``client_order_id``, we use it verbatim.
         Empty / whitespace-only / oversize keys are rejected with 400
-        GW-E5006 — there is no silent fallback, because a silent fallback
+        GW-E4006 — there is no silent fallback, because a silent fallback
         breaks Alpaca-side dedup on retry.
       - If the caller does NOT supply one, the gateway auto-generates a
         ``dg-<uuid4hex>`` key and uses that.
