@@ -167,7 +167,16 @@ class Settings(BaseSettings):
     # (maxclients=10000 on the redis:7-alpine image used in compose). Default
     # stays at 8 — operators must explicitly tune for higher load.
     data_sink_redis_pool_size: int = Field(default=8, ge=1, le=128)
-    data_sink_max_inflight_per_sink: int = Field(default=512, ge=64, le=4096)
+    # In-flight cap raised from 512 → 2048 to absorb opening-bell upstream
+    # bursts before the DataSinkRegistry semaphore saturates. The semaphore
+    # is drop-on-saturation (no retry, no buffer — see data_sink.py:188), so
+    # any event that arrives while 512 publishes are already pending is lost
+    # to Heber permanently. On 2026-05-15 this dropped 19 790 events in one
+    # minute at 08:59 ET (pre-open) and another 11 400 at 09:36 ET (post-
+    # open); 2026-05-18 saw 5 872 drops at the same hour. 2048 gives 4×
+    # burst headroom; tune further via GATEWAY_DATA_SINK_MAX_INFLIGHT_PER_SINK
+    # (validation cap is 4096). Pair with redis_pool_size when scaling.
+    data_sink_max_inflight_per_sink: int = Field(default=2048, ge=64, le=4096)
     # Dispatch-side concurrency limits. Defaults raised to absorb opening-bell
     # bursts before the backpressure-drop alert fires. With 64 inflight + 1024
     # pending and ~5ms publish latency, sustained throughput ≈ 12.8K events/sec.
