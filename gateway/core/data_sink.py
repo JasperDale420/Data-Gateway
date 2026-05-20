@@ -20,14 +20,6 @@ the timeout fires the event is dropped and the *emergency-only*
 drop-on-saturation semaphore that silently lost any event scheduled while
 the in-flight cap was already reached — operators observed thousands of
 silent drops per minute around opening bell with no recovery path.
-
-Legacy semaphore path
----------------------
-
-The legacy ``asyncio.Semaphore`` drop-on-saturation code path is preserved
-behind ``data_sink_use_bounded_queue=False`` for emergency rollback only.
-Both paths share the circuit-breaker, dedup-cache, and failed-event-buffer
-behaviour — the only difference is how producer-side overflow is handled.
 """
 
 import asyncio
@@ -104,49 +96,34 @@ class DataSinkRegistry:
     def __init__(
         self,
         dedup_cache: Any | None = None,
-        max_in_flight_per_sink: int = 512,
         *,
         queue_size: int = 4096,
         worker_count: int = 8,
         producer_block_timeout_seconds: float = 0.1,
-        use_bounded_queue: bool = True,
     ) -> None:
         """Initialize registry.
 
         Args:
             dedup_cache: Optional Redis cache for deduplication.
                          If provided, duplicate events (same event_id) will be skipped.
-            max_in_flight_per_sink: (Legacy) Max concurrent in-flight publish tasks per
-                                    sink under the semaphore code path. Ignored when
-                                    ``use_bounded_queue=True`` (the default).
             queue_size: Bounded per-sink dispatch queue size.
             worker_count: Number of worker tasks draining each sink's queue.
             producer_block_timeout_seconds: Max time a producer blocks on a full
                                             queue before dropping an event.
-            use_bounded_queue: When True (default), route publishes through the new
-                               bounded queue + worker pool. When False, fall back to
-                               the legacy drop-on-saturation semaphore for emergency
-                               rollback.
         """
         self._sinks: list[DataSink] = []
         self._enabled = True
         self._background_tasks: set[asyncio.Task] = set()  # Prevent GC
         self._dedup_cache = dedup_cache
-        self._max_in_flight_per_sink = max(1, max_in_flight_per_sink)
         self._queue_size = max(1, int(queue_size))
         self._worker_count = max(1, int(worker_count))
         self._producer_block_timeout_seconds = max(0.001, float(producer_block_timeout_seconds))
-        self._use_bounded_queue = bool(use_bounded_queue)
         self._dedup_stats = {"checked": 0, "deduplicated": 0}
         self._publish_stats = {
             "scheduled": 0,
-            "dropped_backpressure": 0,
             "queued": 0,
             "dropped_producer_timeout": 0,
         }
-        # Legacy semaphore path state (unused under the bounded-queue path).
-        self._sink_semaphores: dict[str, asyncio.Semaphore] = {}
-        # Bounded-queue path state.
         self._sink_queues: dict[str, asyncio.Queue[tuple[str, Any]]] = {}
         self._sink_workers: dict[str, list[asyncio.Task[None]]] = {}
 
@@ -158,15 +135,8 @@ class DataSinkRegistry:
     def register(self, sink: DataSink) -> None:
         """Register a data sink."""
         self._sinks.append(sink)
-        if self._use_bounded_queue:
-            self._ensure_workers(sink)
-        else:
-            self._sink_semaphores.setdefault(sink.name, asyncio.Semaphore(self._max_in_flight_per_sink))
-        logger.info(
-            "data_sink_registered",
-            sink=sink.name,
-            dispatch="queue" if self._use_bounded_queue else "semaphore",
-        )
+        self._ensure_workers(sink)
+        logger.info("data_sink_registered", sink=sink.name)
 
     def _ensure_workers(self, sink: DataSink) -> None:
         """Lazily create the per-sink queue and worker pool."""
@@ -277,10 +247,7 @@ class DataSinkRegistry:
             except Exception:
                 pass  # If breaker lookup fails, proceed with publish
 
-            if self._use_bounded_queue:
-                await self._enqueue_for_sink(sink, topic, data)
-            else:
-                await self._dispatch_semaphore(sink, topic, data)
+            await self._enqueue_for_sink(sink, topic, data)
 
     async def _enqueue_for_sink(
         self,
@@ -318,35 +285,6 @@ class DataSinkRegistry:
 
         self._publish_stats["queued"] += 1
         set_sink_queue_size(sink.name, queue.qsize())
-
-    async def _dispatch_semaphore(
-        self,
-        sink: DataSink,
-        topic: str,
-        data: dict[str, Any] | str | bytes,
-    ) -> None:
-        """Legacy drop-on-saturation semaphore dispatch path.
-
-        Retained behind ``data_sink_use_bounded_queue=False`` for emergency
-        rollback. Will be removed once the bounded-queue path has soaked.
-        """
-        acquired = await self._try_acquire_sink_slot(sink.name)
-        if not acquired:
-            self._publish_stats["dropped_backpressure"] += 1
-            logger.warning(
-                "data_sink_backpressure_drop",
-                sink=sink.name,
-                topic=topic,
-                max_in_flight=self._max_in_flight_per_sink,
-            )
-            if not sink.record_publish_metrics:
-                record_sink_publish(sink=sink.name, topic=topic, success=False)
-            return
-
-        self._publish_stats["scheduled"] += 1
-        task = asyncio.create_task(self._safe_publish_with_release(sink, topic, data))
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
 
     async def _sink_worker_loop(
         self,
@@ -443,38 +381,6 @@ class DataSinkRegistry:
                     total_published += 1  # Optimistic; errors logged in _safe_publish
 
         return total_published
-
-    async def _try_acquire_sink_slot(self, sink_name: str) -> bool:
-        """Try to reserve an in-flight publish slot with a short timeout.
-
-        Waits up to 2 seconds for a slot to become available during burst
-        publishing (e.g., batch backfill or EOD polls). This prevents
-        silently dropping events during short-lived spikes while still
-        protecting against unbounded backlog.
-        """
-        sem = self._sink_semaphores.get(sink_name)
-        if sem is None:
-            sem = asyncio.Semaphore(self._max_in_flight_per_sink)
-            self._sink_semaphores[sink_name] = sem
-        try:
-            await asyncio.wait_for(sem.acquire(), timeout=2.0)
-            return True
-        except TimeoutError:
-            return False
-
-    async def _safe_publish_with_release(
-        self,
-        sink: DataSink,
-        topic: str,
-        data: dict[str, Any] | str | bytes,
-    ) -> None:
-        """Publish and always release the per-sink in-flight slot."""
-        try:
-            await self._safe_publish(sink, topic, data)
-        finally:
-            sem = self._sink_semaphores.get(sink.name)
-            if sem is not None:
-                sem.release()
 
     async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish with error handling."""

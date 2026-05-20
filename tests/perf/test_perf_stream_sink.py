@@ -16,23 +16,6 @@ from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
 pytestmark = pytest.mark.perf
 
 
-def _patch_zero_slot_wait(registry: DataSinkRegistry) -> None:
-    """Override slot acquisition to drop immediately (no wait) for perf tests."""
-
-    async def _nowait(sink_name: str) -> bool:
-        sem = registry._sink_semaphores.get(sink_name)
-        if sem is None:
-            sem = asyncio.Semaphore(registry._max_in_flight_per_sink)
-            registry._sink_semaphores[sink_name] = sem
-        try:
-            await asyncio.wait_for(sem.acquire(), timeout=0.0)
-            return True
-        except TimeoutError:
-            return False
-
-    registry._try_acquire_sink_slot = _nowait  # type: ignore[assignment]
-
-
 class _BlockingSink(DataSink):
     """Sink that blocks publish until released by the test."""
 
@@ -128,102 +111,92 @@ async def test_stream_fanout_respects_inflight_semaphore_bound() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sink_publish_backpressure_task_growth_profile() -> None:
-    """Validate sink fire-and-forget backlog stays bounded under blocked sink I/O."""
+async def test_sink_publish_queue_drops_after_block_timeout() -> None:
+    """Validate the producer blocks then drops via queue-put timeout."""
     release_event = asyncio.Event()
-    max_in_flight = 32
-    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
-    _patch_zero_slot_wait(registry)
+    queue_size = 32
+    registry = DataSinkRegistry(
+        queue_size=queue_size,
+        worker_count=4,
+        # Tiny timeout so the test runs fast; production default is 100ms.
+        producer_block_timeout_seconds=0.002,
+    )
     registry.register(_BlockingSink(release_event, sink_name="blocking-single"))
 
     total_events = 300
-    peak_background_tasks = 0
-
     start = time.perf_counter()
     for i in range(total_events):
         await registry.publish_all("heber:events", {"event_id": f"e{i}", "seq": i})
-        peak_background_tasks = max(peak_background_tasks, len(registry._background_tasks))
     enqueue_duration = time.perf_counter() - start
 
     stats = registry.get_publish_stats()
-    assert peak_background_tasks <= max_in_flight
-    assert stats["scheduled"] <= max_in_flight
-    assert stats["dropped_backpressure"] >= total_events - max_in_flight
-    assert enqueue_duration < 0.5
+    # Queue accepts queue_size events plus worker_count that are blocked
+    # inside publish (one per worker) before producers start hitting the
+    # block timeout. The rest are emergency-dropped.
+    assert stats["queued"] >= queue_size
+    assert stats["dropped_producer_timeout"] >= total_events - queue_size - 4
+    assert stats["dropped_producer_timeout"] > 0
+    # Producer-block budget: ≤ producer_block_timeout * total drops, plus
+    # event-loop scheduling slack. 300 * 2ms = 600ms; allow 1.5s.
+    assert enqueue_duration < 1.5
 
     release_event.set()
-    if registry._background_tasks:
-        await asyncio.gather(*list(registry._background_tasks))
-
-    assert len(registry._background_tasks) == 0
+    await registry.drain_queues(timeout_seconds=2.0)
 
 
 @pytest.mark.asyncio
-async def test_sink_publish_backpressure_multi_sink_bounds() -> None:
-    """Validate aggregate in-flight bounds with multiple blocked sinks."""
+async def test_sink_publish_queue_multi_sink_independent_bounds() -> None:
+    """Two blocked sinks share producer time but have independent queue bounds."""
     release_event = asyncio.Event()
-    max_in_flight = 16
-    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
-    _patch_zero_slot_wait(registry)
+    queue_size = 16
+    registry = DataSinkRegistry(
+        queue_size=queue_size,
+        worker_count=2,
+        producer_block_timeout_seconds=0.002,
+    )
     registry.register(_BlockingSink(release_event, sink_name="blocking-a"))
     registry.register(_BlockingSink(release_event, sink_name="blocking-b"))
 
     total_events = 120
-    peak_background_tasks = 0
-
-    start = time.perf_counter()
     for i in range(total_events):
         await registry.publish_all("heber:events", {"event_id": f"m{i}", "seq": i})
-        peak_background_tasks = max(peak_background_tasks, len(registry._background_tasks))
-    enqueue_duration = time.perf_counter() - start
 
     stats = registry.get_publish_stats()
-    total_attempts = total_events * 2  # two sinks per event
-    max_scheduled = max_in_flight * 2  # cap per sink
-
-    assert peak_background_tasks <= max_scheduled
-    assert stats["scheduled"] <= max_scheduled
-    assert stats["dropped_backpressure"] >= total_attempts - max_scheduled
-    assert enqueue_duration < 0.8
+    # Each sink absorbs queue_size + worker_count events before producer
+    # drops kick in; ten events go to two sinks each.
+    assert stats["queued"] >= queue_size * 2
+    assert stats["dropped_producer_timeout"] > 0
 
     release_event.set()
-    if registry._background_tasks:
-        await asyncio.gather(*list(registry._background_tasks))
-
-    assert len(registry._background_tasks) == 0
+    await registry.drain_queues(timeout_seconds=2.0)
 
 
 @pytest.mark.asyncio
-async def test_sink_publish_backpressure_with_slow_backend_profile() -> None:
-    """Validate bounded scheduling under slower sink publish latency."""
-    max_in_flight = 8
-    registry = DataSinkRegistry(max_in_flight_per_sink=max_in_flight)
-    _patch_zero_slot_wait(registry)
-    registry.register(_DelayedSink("slow-a", delay_seconds=0.02))
-    registry.register(_DelayedSink("slow-b", delay_seconds=0.02))
+async def test_sink_publish_queue_drains_under_slow_backend() -> None:
+    """Producer never silently drops when worker pool can keep up with backend."""
+    queue_size = 64
+    registry = DataSinkRegistry(
+        queue_size=queue_size,
+        worker_count=8,
+        producer_block_timeout_seconds=0.5,
+    )
+    registry.register(_DelayedSink("slow-a", delay_seconds=0.005))
+    registry.register(_DelayedSink("slow-b", delay_seconds=0.005))
 
     total_events = 200
-    peak_background_tasks = 0
-
     enqueue_start = time.perf_counter()
     for i in range(total_events):
         await registry.publish_all("heber:events", {"event_id": f"s{i}", "seq": i})
-        peak_background_tasks = max(peak_background_tasks, len(registry._background_tasks))
     enqueue_duration = time.perf_counter() - enqueue_start
 
+    # With 8 workers per sink and a 5ms publish delay, sustained throughput
+    # is ~1600 events/sec/sink — well above the producer rate, so the queue
+    # never fills and no events should be dropped.
     stats = registry.get_publish_stats()
-    total_attempts = total_events * 2
-    max_scheduled = max_in_flight * 2
-
-    assert peak_background_tasks <= max_scheduled
-    assert stats["scheduled"] <= max_scheduled
-    assert stats["dropped_backpressure"] >= total_attempts - max_scheduled
-    assert enqueue_duration < 1.0
+    assert stats["dropped_producer_timeout"] == 0
+    assert enqueue_duration < 1.5
 
     drain_start = time.perf_counter()
-    if registry._background_tasks:
-        await asyncio.gather(*list(registry._background_tasks))
+    await registry.drain_queues(timeout_seconds=2.0)
     drain_duration = time.perf_counter() - drain_start
-
-    assert len(registry._background_tasks) == 0
-    assert drain_duration < 0.5
+    assert drain_duration < 2.0

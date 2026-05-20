@@ -340,11 +340,9 @@ async def lifespan(app: FastAPI):
         from gateway.core.redis_sink import RedisStreamsSink
 
         sink_registry = DataSinkRegistry(
-            max_in_flight_per_sink=settings.data_sink_max_inflight_per_sink,
             queue_size=settings.data_sink_queue_size,
             worker_count=settings.data_sink_worker_count,
             producer_block_timeout_seconds=settings.data_sink_producer_block_timeout_seconds,
-            use_bounded_queue=settings.data_sink_use_bounded_queue,
         )
         redis_sink = RedisStreamsSink(
             redis_url=settings.data_sink_redis_url,
