@@ -190,6 +190,43 @@ async def _execute_trading_cached_call(
     )
 
 
+def _merge_idempotency_context_into_5xx(
+    exc: HTTPException,
+    idempotency_context: dict[str, Any],
+) -> HTTPException:
+    """Attach idempotency context to a 5xx HTTPException's detail.
+
+    ``execute_alpaca_provider_call`` (in ``common.py``) rewrites Alpaca SDK
+    errors (``APIError``, ``httpx.HTTPStatusError``, bare ``Exception``) into
+    ``HTTPException`` with a plain-string ``detail`` — losing the
+    ``client_order_id`` / ``symbol`` retry key the caller needs to safely
+    resolve order state. This helper merges the context back in on ANY 5xx
+    so non-timeout failures (e.g. 503 from Alpaca during a deployment) still
+    surface the retry contract.
+
+    For sub-500 statuses the exception is returned unchanged — those are
+    deterministic client errors where retry semantics don't apply.
+    """
+    if exc.status_code < 500:
+        return exc
+
+    existing_detail = exc.detail
+    if isinstance(existing_detail, dict):
+        # _run_trading_provider_call's own 503/504 paths already merged the
+        # context; don't clobber.
+        merged: dict[str, Any] = {**idempotency_context, **existing_detail}
+    else:
+        # Common case: execute_alpaca_provider_call set detail to a string
+        # like "Alpaca API Error: ...". Promote to a dict so the caller has
+        # both the human message AND the retry key.
+        merged = {
+            "code": "GW-E5007",
+            "message": str(existing_detail) if existing_detail is not None else "Upstream provider error",
+            **idempotency_context,
+        }
+    return HTTPException(status_code=exc.status_code, detail=merged)
+
+
 async def _run_trading_provider_call(
     *,
     provider: Any,
@@ -381,10 +418,17 @@ async def create_order(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    data = await execute_alpaca_provider_call(
-        registry=registry,
-        provider_call=_call,
-    )
+    try:
+        data = await execute_alpaca_provider_call(
+            registry=registry,
+            provider_call=_call,
+        )
+    except HTTPException as exc:
+        # execute_alpaca_provider_call rewrites APIError/HTTPStatusError into
+        # HTTPException with a plain-string detail — losing the
+        # idempotency_context that _run_trading_provider_call attaches to
+        # its own 503/504. Re-merge so EVERY 5xx surfaces the retry key.
+        raise _merge_idempotency_context_into_5xx(exc, idempotency_context) from exc
     return {
         "success": True,
         "data": data,
@@ -623,10 +667,16 @@ async def close_position(
             idempotency_context=idempotency_context,
         )
 
-    data = await execute_alpaca_provider_call(
-        registry=registry,
-        provider_call=_call,
-    )
+    try:
+        data = await execute_alpaca_provider_call(
+            registry=registry,
+            provider_call=_call,
+        )
+    except HTTPException as exc:
+        # Same reason as create_order: execute_alpaca_provider_call's 5xx
+        # rewrites lose the retry contract. Re-merge so a non-timeout 5xx
+        # (e.g. APIError -> 503) still tells the caller to GET the position.
+        raise _merge_idempotency_context_into_5xx(exc, idempotency_context) from exc
     return {
         "success": True,
         "data": data,

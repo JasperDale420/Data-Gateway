@@ -1090,3 +1090,207 @@ async def test_create_order_accepts_max_length_client_order_id(
 
     assert captured["client_order_id"] == max_len_key
     assert response["meta"]["client_order_id_source"] == "caller"
+
+
+# ---------------------------------------------------------------------------
+# Non-timeout 5xx must still surface idempotency context. The previous
+# implementation only attached client_order_id / symbol on the 503/504 paths
+# inside _run_trading_provider_call — but execute_alpaca_provider_call's
+# error remapping (APIError → HTTPException, httpx.HTTPStatusError →
+# HTTPException, bare Exception → 502) replaced the detail with a plain
+# string, losing the retry contract. These tests pin that EVERY 5xx path
+# carries the context.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_order_non_timeout_5xx_preserves_client_order_id_in_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Simulate a 503 ``httpx.HTTPStatusError`` from the Alpaca SDK — the
+    route must merge the idempotency_context into the rewritten
+    HTTPException's detail so the caller still gets the client_order_id
+    back. (Choosing HTTPStatusError instead of APIError because APIError's
+    status_code is a read-only property; HTTPStatusError covers the same
+    common.py code branch.)"""
+    import httpx
+
+    class _Http503Provider:
+        def create_order(self, **kwargs: Any) -> Any:
+            request = httpx.Request("POST", "https://api.alpaca.markets/v2/orders")
+            response = httpx.Response(status_code=503, request=request, text="simulated upstream 503")
+            raise httpx.HTTPStatusError(
+                "simulated Alpaca 503",
+                request=request,
+                response=response,
+            )
+
+    provider = _Http503Provider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    # Use the REAL execute_alpaca_provider_call so we exercise its error
+    # rewrite path. Stub require_provider_rate_limit + upstream_semaphore so
+    # nothing else interferes.
+    from gateway.api.alpaca import common as _common
+
+    async def _no_rate_limit(provider_name: str, block: bool = True) -> None:  # noqa: ARG001
+        return None
+
+    class _NoSem:
+        def upstream_semaphore(self, name: str) -> None:  # noqa: ARG002
+            return None
+
+    monkeypatch.setattr(_common, "require_provider_rate_limit", _no_rate_limit)
+    monkeypatch.setattr(_common, "get_rate_limiter", lambda: _NoSem())
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=10,
+            client_order_id="caller-non-timeout-key-1",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 503
+    detail = exc.value.detail
+    assert isinstance(detail, dict), (
+        f"5xx detail must be a dict carrying the idempotency context, got {type(detail)}: {detail!r}"
+    )
+    # Critical retry-contract assertion: caller's key is preserved on a
+    # non-timeout 5xx so they can safely retry / verify.
+    assert detail["client_order_id"] == "caller-non-timeout-key-1"
+    assert detail["client_order_id_source"] == "caller"
+    assert detail["retry_with"] == "client_order_id"
+    assert ALPACA_ROUTER_PREFIX in detail["retry_hint"]
+
+
+@pytest.mark.asyncio
+async def test_close_position_non_timeout_5xx_preserves_symbol_in_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same contract for close_position: a non-timeout 5xx (here a bare
+    Exception → 502) must still carry symbol + retry_with so the caller
+    knows to GET /positions/<symbol>."""
+
+    class _BoomProvider:
+        def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> Any:
+            raise RuntimeError("simulated upstream blowup")
+
+    provider = _BoomProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    from gateway.api.alpaca import common as _common
+
+    async def _no_rate_limit(provider_name: str, block: bool = True) -> None:  # noqa: ARG001
+        return None
+
+    class _NoSem:
+        def upstream_semaphore(self, name: str) -> None:  # noqa: ARG002
+            return None
+
+    monkeypatch.setattr(_common, "require_provider_rate_limit", _no_rate_limit)
+    monkeypatch.setattr(_common, "get_rate_limiter", lambda: _NoSem())
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol="msft",
+            qty=None,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    # Bare Exception → 502 in execute_alpaca_provider_call.
+    assert exc.value.status_code == 502
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["symbol"] == "MSFT"
+    assert detail["retry_with"] == "get_position"
+    assert f"GET {ALPACA_ROUTER_PREFIX}/positions/MSFT" in detail["retry_hint"]
+
+
+# ---------------------------------------------------------------------------
+# HTTP-layer test via FastAPI TestClient — exercises the full request stack
+# (auth → middleware → router → handler) instead of invoking the coroutine
+# directly. The static-string URL bug slipped through unit tests because
+# nothing exercised the real path-prefix. This test gives one anchor point.
+# ---------------------------------------------------------------------------
+
+
+def test_create_order_504_via_http_layer_contains_correct_retry_hint_url(
+    client,
+    monkeypatch,
+    auth_headers,
+    test_registry,
+) -> None:
+    """Through-the-wire test: a 504 from create_order must contain a
+    retry_hint that references the ACTUAL mounted URL (the one the caller
+    just hit). Exercises the full middleware/router stack so URL drift in
+    the docstring/hint can't escape review.
+
+    Note: status_code is 504 from the gateway timeout, NOT 500. The
+    middleware passes the dict ``detail`` through to the JSON body."""
+    # Trading endpoints require role=trader/admin/super_admin. The default
+    # test client has no role, so override require_api_key to return a
+    # trader-role client for this test only.
+    from gateway.api.deps import require_api_key
+    from gateway.core.auth import Client, ClientPermissions
+    from gateway.main import app
+
+    app.dependency_overrides[require_api_key] = lambda: Client(
+        id="test-trader",
+        permissions=ClientPermissions(
+            providers=["alpaca"],
+            feeds=["bars", "quotes"],
+            max_symbols=100,
+            rate_limit=60,
+        ),
+        role="trader",
+    )
+
+    # Configure the mock provider to simulate a slow create_order so the
+    # gateway's asyncio.wait_for fires.
+    def _slow_create(**kwargs: Any) -> dict[str, Any]:
+        import time
+
+        time.sleep(1.0)
+        return {"id": "should-not-return"}
+
+    test_registry.get.return_value.create_order = _slow_create
+
+    # Settings enforces a 0.5s minimum on the timeout (sanity guard against
+    # accidental sub-second timeouts in prod). Pin to the floor so the test
+    # finishes quickly while still exercising the timeout path.
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5, alpaca_trading_max_inflight=10),
+    )
+
+    try:
+        response = client.post(
+            f"{ALPACA_ROUTER_PREFIX}/orders?symbol=AAPL&side=buy&qty=10&client_order_id=http-layer-test-1",
+            headers=auth_headers,
+        )
+    finally:
+        app.dependency_overrides.pop(require_api_key, None)
+
+    # The endpoint must EXIST at this URL — a 404 here would mean the
+    # router prefix drifted away from the constant.
+    assert response.status_code != 404, (
+        f"Endpoint {ALPACA_ROUTER_PREFIX}/orders returned 404 — router prefix has drifted from ALPACA_ROUTER_PREFIX."
+    )
+    assert response.status_code == 504, response.text
+
+    body = response.json()
+    # The 504 detail must be a dict (not a plain string) so the retry
+    # contract survives the JSON round-trip. The error handler may wrap it
+    # in {"success": false, "error": {...}, "detail": {...}} — accept either.
+    detail = body.get("detail") or body.get("error") or body
+    assert isinstance(detail, dict), f"detail must be a dict, got {body!r}"
+    assert detail["client_order_id"] == "http-layer-test-1"
+    assert detail["retry_with"] == "client_order_id"
+    assert f"GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id" in detail["retry_hint"]
+    assert "/api/alpaca/trading/" not in detail["retry_hint"]
