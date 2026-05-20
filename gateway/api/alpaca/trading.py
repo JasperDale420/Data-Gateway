@@ -2,6 +2,7 @@
 
 import asyncio
 import concurrent.futures
+import uuid
 from collections.abc import Callable
 from datetime import date
 from typing import Any
@@ -27,6 +28,29 @@ from gateway.schemas import SuccessResponse
 router = APIRouter()
 TRADING_ASSETS_CACHE_TTL_SECONDS = 600
 TRADING_CALENDAR_CACHE_TTL_SECONDS = 3600
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Idempotency-key prefix for gateway-generated client_order_id values. Used to
+# distinguish auto-generated keys from caller-supplied ones in logs/dashboards.
+# Alpaca's client_order_id max length is 48 chars; "dg-" + 32-char UUID hex
+# leaves room for the prefix without truncation.
+# ─────────────────────────────────────────────────────────────────────────────
+_GATEWAY_CLIENT_ORDER_ID_PREFIX = "dg-"
+
+
+def _generate_client_order_id() -> str:
+    """Generate a gateway-side client_order_id for order idempotency.
+
+    Alpaca natively dedupes `submit_order` by client_order_id — if a call
+    times out mid-flight (e.g. our 15s asyncio wait_for fires while the
+    underlying executor thread is still talking to Alpaca), the caller can
+    safely retry with the same client_order_id: Alpaca returns the existing
+    order rather than placing a second one. The gateway returns the
+    auto-generated key in the 504 response detail and in successful
+    response meta so callers always know which key to retry with.
+    """
+    return f"{_GATEWAY_CLIENT_ORDER_ID_PREFIX}{uuid.uuid4().hex}"
+
 
 # Module-level dedicated executor for trading calls (created lazily)
 _trading_executor: concurrent.futures.ThreadPoolExecutor | None = None
@@ -121,7 +145,27 @@ async def _run_trading_provider_call(
     provider: Any,
     provider_fn: Callable[[Any], Any],
     operation: str,
+    idempotency_context: dict[str, Any] | None = None,
 ) -> Any:
+    """Run a single trading-SDK call with timeout + backpressure protection.
+
+    Args:
+        provider: Alpaca provider instance.
+        provider_fn: Synchronous callable invoked in the trading executor.
+        operation: Stable name used in metrics/logs.
+        idempotency_context: Optional dict of fields to surface in 503/504
+            error responses so callers can safely retry. For ``create_order``
+            this carries ``{"client_order_id": "...", "retry_with":
+            "client_order_id"}`` — the caller reads this from the 504 body
+            and either (a) GETs the order by client_order_id to see whether
+            the order actually placed, or (b) retries POST with the same
+            client_order_id (Alpaca natively dedupes by that key). For
+            ``close_position`` it carries
+            ``{"symbol": "...", "retry_with": "get_position"}`` — Alpaca's
+            ClosePositionRequest does not accept client_order_id, so the
+            caller checks GET /positions/<symbol> to decide whether to
+            retry the close.
+    """
     settings = get_settings()
     timeout_seconds = settings.alpaca_trading_call_timeout_seconds
     sem = _get_trading_inflight_sem()
@@ -135,17 +179,27 @@ async def _run_trading_provider_call(
             "alpaca_trading_backpressure_reject",
             operation=operation,
             max_inflight=settings.alpaca_trading_max_inflight,
+            **(idempotency_context or {}),
         )
+        detail_503: dict[str, Any] = {
+            "code": "GW-E5005",
+            "message": (
+                f"Alpaca trading API backpressure during {operation}: "
+                f"{settings.alpaca_trading_max_inflight} calls already in-flight. "
+                "Retry shortly."
+            ),
+        }
+        if idempotency_context:
+            # Backpressure rejects BEFORE the call hits Alpaca, so the
+            # order definitely did NOT place. But surfacing the
+            # idempotency key here lets the caller retry with the same
+            # key if they happen to retry the *same logical order*, which
+            # protects against double-place if the original 503 attempt
+            # is racing in the caller's reconciliation logic.
+            detail_503.update(idempotency_context)
         raise HTTPException(
             status_code=HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "GW-E5005",
-                "message": (
-                    f"Alpaca trading API backpressure during {operation}: "
-                    f"{settings.alpaca_trading_max_inflight} calls already in-flight. "
-                    "Retry shortly."
-                ),
-            },
+            detail=detail_503,
         )
 
     async with sem:
@@ -160,13 +214,23 @@ async def _run_trading_provider_call(
                 "alpaca_trading_call_timeout",
                 operation=operation,
                 timeout_seconds=timeout_seconds,
+                **(idempotency_context or {}),
             )
+            detail_504: dict[str, Any] = {
+                "code": "GW-E5004",
+                "message": f"Timed out waiting for Alpaca trading API during {operation}",
+            }
+            if idempotency_context:
+                # CRITICAL: the asyncio task is cancelled, but the
+                # executor thread keeps running until the Alpaca SDK call
+                # completes — so the order MAY have placed at Alpaca by
+                # the time the caller sees the 504. The retry contract
+                # surfaced here lets callers either verify the order's
+                # actual status or retry idempotently. DO NOT REMOVE.
+                detail_504.update(idempotency_context)
             raise HTTPException(
                 status_code=HTTP_504_GATEWAY_TIMEOUT,
-                detail={
-                    "code": "GW-E5004",
-                    "message": f"Timed out waiting for Alpaca trading API during {operation}",
-                },
+                detail=detail_504,
             ) from exc
 
 
@@ -203,7 +267,33 @@ async def create_order(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Create a new order."""
+    """Create a new order.
+
+    Idempotency contract (DO NOT REGRESS):
+      - If the caller supplies ``client_order_id``, we use it verbatim.
+      - If the caller does NOT supply one, the gateway auto-generates a
+        ``dg-<uuid4hex>`` key and uses that.
+      - The effective client_order_id is returned in ``meta.client_order_id``
+        on success AND in the 504 timeout error detail. Alpaca natively
+        dedupes ``submit_order`` by client_order_id — a caller that sees
+        a 504 can safely retry POST with the same key (returning the
+        existing order rather than placing a second) or GET
+        ``/orders:by_client_order_id`` to check status.
+    """
+    effective_client_order_id = client_order_id or _generate_client_order_id()
+    gateway_generated = client_order_id is None
+    idempotency_context: dict[str, Any] = {
+        "client_order_id": effective_client_order_id,
+        "client_order_id_source": "gateway" if gateway_generated else "caller",
+        "retry_with": "client_order_id",
+        "retry_hint": (
+            "Order may have placed at Alpaca despite the 5xx — Alpaca natively "
+            "dedupes by client_order_id. Either GET /api/alpaca/trading/orders:"
+            f"by_client_order_id?client_order_id={effective_client_order_id} to check status, or retry "
+            "POST /api/alpaca/trading/orders with the same client_order_id to "
+            "idempotently re-attempt."
+        ),
+    }
 
     async def _call(provider: Any) -> Any:
         try:
@@ -218,7 +308,7 @@ async def create_order(
                     time_in_force=time_in_force,
                     limit_price=limit_price,
                     stop_price=stop_price,
-                    client_order_id=client_order_id,
+                    client_order_id=effective_client_order_id,
                     extended_hours=extended_hours,
                     order_class=order_class,
                     take_profit_limit_price=take_profit_limit_price,
@@ -226,6 +316,7 @@ async def create_order(
                     stop_loss_limit_price=stop_loss_limit_price,
                 ),
                 operation="create_order",
+                idempotency_context=idempotency_context,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -234,7 +325,15 @@ async def create_order(
         registry=registry,
         provider_call=_call,
     )
-    return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
+    return {
+        "success": True,
+        "data": data,
+        "meta": {
+            "provider": "alpaca",
+            "client_order_id": effective_client_order_id,
+            "client_order_id_source": "gateway" if gateway_generated else "caller",
+        },
+    }
 
 
 _VALID_ORDER_QUERY_STATUSES = frozenset({"open", "closed", "all"})

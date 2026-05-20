@@ -506,6 +506,244 @@ async def test_run_trading_provider_call_releases_permit_on_exception(
     assert not sem.locked(), "permit must be released after provider exception"
 
 
+# ---------------------------------------------------------------------------
+# create_order idempotency — gateway-generated client_order_id must flow
+# through to the provider and surface in both success.meta and the 504
+# timeout detail so callers can safely retry/verify after a 5xx.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_order_auto_generates_client_order_id_when_caller_omits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the caller doesn't supply a client_order_id, the gateway must
+    generate one (prefixed ``dg-``), pass it to the provider, AND return
+    it in meta — otherwise the caller has no key to retry idempotently
+    after a 504 timeout."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"id": "order-1", "status": "accepted"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.create_order(
+        symbol="AAPL",
+        side="buy",
+        qty=10,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    # Provider saw a generated key.
+    assert captured["client_order_id"] is not None
+    assert captured["client_order_id"].startswith("dg-")
+    assert len(captured["client_order_id"]) == 3 + 32  # "dg-" + uuid4 hex
+    # Caller sees the same key in meta so they know what to retry with.
+    assert response["meta"]["client_order_id"] == captured["client_order_id"]
+    assert response["meta"]["client_order_id_source"] == "gateway"
+
+
+@pytest.mark.asyncio
+async def test_create_order_preserves_caller_supplied_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the caller supplies a client_order_id, the gateway must NOT
+    overwrite it (otherwise the caller's own idempotency contract breaks)."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"id": "order-1"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.create_order(
+        symbol="AAPL",
+        side="buy",
+        qty=10,
+        client_order_id="caller-key-abc-123",
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured["client_order_id"] == "caller-key-abc-123"
+    assert response["meta"]["client_order_id"] == "caller-key-abc-123"
+    assert response["meta"]["client_order_id_source"] == "caller"
+
+
+@pytest.mark.asyncio
+async def test_create_order_504_timeout_includes_client_order_id_in_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CRITICAL retry contract: when create_order times out, the caller
+    needs the client_order_id in the error body so they can retry safely.
+    Without it, the caller has no idempotency key and a naive retry could
+    double-place the order at Alpaca."""
+
+    class _SlowProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            import time
+
+            time.sleep(0.6)
+            return {"id": "should-not-return"}
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=10,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "GW-E5004"
+    # The idempotency key MUST be in the 504 body. This is the load-bearing
+    # piece that prevents double-place on retry — DO NOT REGRESS.
+    assert "client_order_id" in detail
+    assert detail["client_order_id"].startswith("dg-")
+    assert detail["client_order_id_source"] == "gateway"
+    assert detail["retry_with"] == "client_order_id"
+    assert "Alpaca natively dedupes" in detail["retry_hint"]
+
+
+@pytest.mark.asyncio
+async def test_create_order_504_timeout_preserves_caller_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the caller supplied a key and the call times out, the 504
+    surfaces THE CALLER'S key (not a fresh gateway key) so the caller's
+    own retry path is wired correctly."""
+
+    class _SlowProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            import time
+
+            time.sleep(0.6)
+            return {"id": "should-not-return"}
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=10,
+            client_order_id="caller-retry-key-xyz",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["client_order_id"] == "caller-retry-key-xyz"
+    assert detail["client_order_id_source"] == "caller"
+
+
+@pytest.mark.asyncio
+async def test_create_order_503_backpressure_includes_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 503 backpressure path runs BEFORE the call reaches Alpaca, so
+    the order definitely didn't place. But the caller may be reconciling
+    a logical order and needs the idempotency key surfaced for retry
+    safety. (If they get a 503 and then a 504 on the retry, the 504's
+    key MUST match — verified by another test.)"""
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_max_inflight=2, alpaca_trading_call_timeout_seconds=5.0),
+    )
+
+    # Pre-saturate the semaphore.
+    sem = trading._get_trading_inflight_sem()
+    await sem.acquire()
+    await sem.acquire()
+    assert sem.locked()
+
+    with pytest.raises(HTTPException) as exc:
+        await trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=lambda _p: "unused",
+            operation="create_order",
+            idempotency_context={
+                "client_order_id": "test-key-1",
+                "client_order_id_source": "gateway",
+                "retry_with": "client_order_id",
+                "retry_hint": "stub",
+            },
+        )
+
+    assert exc.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["client_order_id"] == "test-key-1"
+
+
+@pytest.mark.asyncio
+async def test_create_order_value_error_path_does_not_surface_504_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ValueError from the provider (invalid order params) must still
+    raise 400 cleanly — the idempotency context plumbing must not break
+    the 400 path."""
+
+    class _ValueErrorProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            raise ValueError("bad input")
+
+    provider = _ValueErrorProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "bad input"
+
+
 @pytest.mark.asyncio
 async def test_run_trading_provider_call_admits_concurrent_within_cap(
     monkeypatch: pytest.MonkeyPatch,
