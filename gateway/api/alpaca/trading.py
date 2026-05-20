@@ -38,6 +38,55 @@ TRADING_CALENDAR_CACHE_TTL_SECONDS = 3600
 # ─────────────────────────────────────────────────────────────────────────────
 _GATEWAY_CLIENT_ORDER_ID_PREFIX = "dg-"
 
+# Alpaca enforces a 48-character ceiling on ``client_order_id``. Rejecting at
+# the gateway with a structured 400 surfaces caller bugs early and gives a
+# better error than the 422 Alpaca returns when the SDK forwards an oversize
+# key. See: https://docs.alpaca.markets/reference/postorder
+_CLIENT_ORDER_ID_MAX_LENGTH = 48
+
+
+def _validate_client_order_id(raw: str | None) -> str | None:
+    """Validate a caller-supplied client_order_id.
+
+    Returns the value unchanged when ``None`` (caller omitted the field —
+    gateway will auto-generate downstream). Raises 400 GW-E5006 for empty
+    strings, whitespace-only strings, and strings exceeding Alpaca's 48-char
+    ceiling.
+
+    Rejecting empty/whitespace is critical for idempotency: previously, a
+    caller passing ``client_order_id=""`` would receive a fresh
+    gateway-minted UUID labelled ``client_order_id_source="caller"``, and
+    each retry would mint a new UUID — defeating Alpaca-side dedup and
+    risking double-place on 504 retries. Forcing callers to either supply a
+    real key or omit the field entirely makes the idempotency contract
+    unambiguous.
+    """
+    if raw is None:
+        return None
+    if not raw.strip():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "GW-E5006",
+                "message": (
+                    "client_order_id, when supplied, must be a non-empty, "
+                    "non-whitespace string. Omit the parameter entirely to "
+                    "let the gateway auto-generate an idempotency key."
+                ),
+            },
+        )
+    if len(raw) > _CLIENT_ORDER_ID_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "GW-E5006",
+                "message": (
+                    f"client_order_id length {len(raw)} exceeds Alpaca's {_CLIENT_ORDER_ID_MAX_LENGTH}-char limit."
+                ),
+            },
+        )
+    return raw
+
 
 def _generate_client_order_id() -> str:
     """Generate a gateway-side client_order_id for order idempotency.
@@ -272,6 +321,9 @@ async def create_order(
 
     Idempotency contract (DO NOT REGRESS):
       - If the caller supplies ``client_order_id``, we use it verbatim.
+        Empty / whitespace-only / oversize keys are rejected with 400
+        GW-E5006 — there is no silent fallback, because a silent fallback
+        breaks Alpaca-side dedup on retry.
       - If the caller does NOT supply one, the gateway auto-generates a
         ``dg-<uuid4hex>`` key and uses that.
       - The effective client_order_id is returned in ``meta.client_order_id``
@@ -281,8 +333,14 @@ async def create_order(
         existing order rather than placing a second) or GET
         ``{ALPACA_ROUTER_PREFIX}/orders:by_client_order_id`` to check status.
     """
-    effective_client_order_id = client_order_id or _generate_client_order_id()
-    gateway_generated = client_order_id is None
+    # Validate the caller-supplied key BEFORE auto-generating. ``""`` and
+    # whitespace previously slipped through ``client_order_id or
+    # _generate_...`` and ended up with a fresh UUID labelled "caller" —
+    # which destroyed idempotency on retry. See _validate_client_order_id
+    # for the full reasoning.
+    validated_caller_key = _validate_client_order_id(client_order_id)
+    effective_client_order_id = validated_caller_key or _generate_client_order_id()
+    gateway_generated = validated_caller_key is None
     idempotency_context: dict[str, Any] = {
         "client_order_id": effective_client_order_id,
         "client_order_id_source": "gateway" if gateway_generated else "caller",
