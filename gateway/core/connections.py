@@ -12,6 +12,20 @@ from websockets.exceptions import ConnectionClosed
 from gateway.core.auth import Client
 from gateway.core.logger import logger
 
+# Hard ceiling on a single per-client WebSocket send. The fanout helpers
+# `broadcast` / `broadcast_to_connection_ids` are awaited inline by the
+# stream multiplexer, so a single client that stops draining its send
+# buffer (slow consumer, frozen process, dropped TCP) would otherwise
+# park the entire `asyncio.gather` — backpressuring every other client
+# AND the upstream Alpaca read loop, which risks Alpaca's keepalive
+# timeout (1006 disconnect for the whole gateway).
+#
+# 2.0s is a balance: a single TLS write to a healthy client returns in
+# microseconds, even a brief GC pause clears in <100ms; anything past 2s
+# means the client is genuinely stuck and dropping it is cheaper than
+# stalling fanout.
+_BROADCAST_SEND_TIMEOUT_SECONDS = 2.0
+
 
 def is_benign_ws_close_error(exc: BaseException) -> bool:
     """Return True when a send-side WebSocket exception reflects a normal close.
@@ -169,6 +183,53 @@ class ConnectionManager:
             "subscriptions_unique": unique_subscriptions,
         }
 
+    async def _send_with_timeout(self, connection: Connection, payload: str | bytes) -> bool:
+        """Send ``payload`` to one WebSocket client, bounded by a hard timeout.
+
+        Regression — codex caught: unbounded ``await connection.websocket.send_*``
+        inside the ``asyncio.gather`` fanout meant one slow client could park
+        every other client's send AND the upstream Alpaca read loop (which
+        awaits broadcast inline). On timeout we log a structured warning and
+        force-close the offending client so subsequent broadcasts no longer
+        wait on it. Returns True iff the send completed within the deadline.
+        """
+        try:
+            async with self._broadcast_semaphore:
+                send_coro = (
+                    connection.websocket.send_text(payload)
+                    if isinstance(payload, str)
+                    else connection.websocket.send_bytes(payload)
+                )
+                await asyncio.wait_for(send_coro, timeout=_BROADCAST_SEND_TIMEOUT_SECONDS)
+            return True
+        except TimeoutError:
+            logger.warning(
+                "broadcast_send_timeout",
+                client_id=connection.client_id,
+                timeout_seconds=_BROADCAST_SEND_TIMEOUT_SECONDS,
+                hint="slow client; force-closing to keep fanout flowing",
+            )
+            # Force-close the slow client so subsequent broadcasts skip it.
+            # `close()` itself can hang, so bound it too.
+            try:
+                await asyncio.wait_for(
+                    connection.websocket.close(code=1011, reason="slow consumer"),
+                    timeout=1.0,
+                )
+            except Exception as close_err:
+                logger.debug(
+                    "broadcast_slow_client_close_failed",
+                    client_id=connection.client_id,
+                    error=str(close_err),
+                )
+            return False
+        except Exception as e:
+            if is_benign_ws_close_error(e):
+                logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=str(e))
+            else:
+                logger.warning("broadcast_send_failed", client_id=connection.client_id, error=str(e))
+            return False
+
     async def broadcast(
         self,
         message: dict | str | bytes,
@@ -215,21 +276,7 @@ class ConnectionManager:
             return 0
 
         async def _send(connection: Connection) -> bool:
-            try:
-                # Use semaphore to bound concurrency
-                async with self._broadcast_semaphore:
-                    # WebSocket.send_text handles str, send_bytes handles bytes
-                    if isinstance(payload, str):
-                        await connection.websocket.send_text(payload)
-                    else:
-                        await connection.websocket.send_bytes(payload)
-                return True
-            except Exception as e:
-                if is_benign_ws_close_error(e):
-                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=str(e))
-                else:
-                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=str(e))
-                return False
+            return await self._send_with_timeout(connection, payload)
 
         # Gather all sends
         results = await asyncio.gather(*(_send(conn) for conn in targets))
@@ -260,19 +307,7 @@ class ConnectionManager:
             return 0
 
         async def _send(connection: Connection) -> bool:
-            try:
-                async with self._broadcast_semaphore:
-                    if isinstance(payload, str):
-                        await connection.websocket.send_text(payload)
-                    else:
-                        await connection.websocket.send_bytes(payload)
-                return True
-            except Exception as e:
-                if is_benign_ws_close_error(e):
-                    logger.debug("broadcast_send_failed_closed", client_id=connection.client_id, error=str(e))
-                else:
-                    logger.warning("broadcast_send_failed", client_id=connection.client_id, error=str(e))
-                return False
+            return await self._send_with_timeout(connection, payload)
 
         results = await asyncio.gather(*(_send(conn) for conn in targets))
         return sum(1 for sent in results if sent)
