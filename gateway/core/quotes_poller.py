@@ -226,20 +226,33 @@ class AlpacaQuotesPoller(DedupMixin, BasePoller):
 
         messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, env) for env, _, _ in to_publish]
 
+        # Use per-message results so partial-batch failures don't mis-mark
+        # events. ``publish_all_batch`` (int return) cannot tell us which
+        # entries succeeded -- slicing ``to_publish[:published]`` assumes the
+        # first N items landed, but a Redis pipeline with ``transaction=False``
+        # can fail at arbitrary indices, leading to unpublished events being
+        # marked seen and permanently suppressed.
         try:
-            if hasattr(sink_registry, "publish_all_batch"):
-                published = await sink_registry.publish_all_batch(messages)
+            if hasattr(sink_registry, "publish_all_batch_results"):
+                results = await sink_registry.publish_all_batch_results(messages)
+            elif hasattr(sink_registry, "publish_all_batch"):
+                count = await sink_registry.publish_all_batch(messages)
+                results = [count == len(messages)] * len(messages)
             else:
                 for topic, env in messages:
                     await sink_registry.publish_all(topic, env)
-                published = len(messages)
+                results = [True] * len(messages)
         except Exception as exc:
             logger.warning("quotes_poller_batch_publish_failed", count=len(messages), error=str(exc))
-            published = 0
+            results = [False] * len(messages)
+
+        published = sum(1 for ok in results if ok)
 
         if published > 0:
             redis_items: list[tuple[str, Any]] = []
-            for _env, event_id, cache_key in to_publish[:published]:
+            for (_env, event_id, cache_key), ok in zip(to_publish, results, strict=True):
+                if not ok:
+                    continue
                 if event_id:
                     self._mark_seen(event_id)
                     if self._redis_dedupe is not None and cache_key:

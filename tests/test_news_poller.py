@@ -42,6 +42,7 @@ def mock_sink_registry():
     sink = AsyncMock()
     sink.publish_all = AsyncMock()
     sink.publish_all_batch = AsyncMock(side_effect=lambda msgs: len(msgs))
+    sink.publish_all_batch_results = AsyncMock(side_effect=lambda msgs: [True] * len(msgs))
     return sink
 
 
@@ -69,8 +70,8 @@ async def test_poll_publishes_envelopes_with_news_feed(mock_provider, mock_sink_
     await poller._poll_news(mock_sink_registry)
 
     # Each article -> one envelope
-    assert mock_sink_registry.publish_all_batch.called
-    msgs = mock_sink_registry.publish_all_batch.call_args[0][0]
+    assert mock_sink_registry.publish_all_batch_results.called
+    msgs = mock_sink_registry.publish_all_batch_results.call_args[0][0]
     assert len(msgs) == 2
     for _topic, env in msgs:
         assert env["feed"] == "news"
@@ -85,7 +86,7 @@ async def test_poll_skips_when_no_news_returned(mock_sink_registry, poller):
     poller._provider = provider
 
     await poller._poll_news(mock_sink_registry)
-    assert not mock_sink_registry.publish_all_batch.called
+    assert not mock_sink_registry.publish_all_batch_results.called
 
 
 @pytest.mark.asyncio
@@ -96,7 +97,7 @@ async def test_poll_logs_and_swallows_provider_errors(mock_sink_registry, poller
 
     # Must NOT raise.
     await poller._poll_news(mock_sink_registry)
-    assert not mock_sink_registry.publish_all_batch.called
+    assert not mock_sink_registry.publish_all_batch_results.called
 
 
 @pytest.mark.asyncio
@@ -104,11 +105,11 @@ async def test_poll_dedupes_by_article_id_across_polls(mock_provider, mock_sink_
     poller._provider = mock_provider
 
     await poller._poll_news(mock_sink_registry)
-    first_count = mock_sink_registry.publish_all_batch.call_count
+    first_count = mock_sink_registry.publish_all_batch_results.call_count
 
     await poller._poll_news(mock_sink_registry)
     # Same articles → deduped → no second publish call.
-    assert mock_sink_registry.publish_all_batch.call_count == first_count
+    assert mock_sink_registry.publish_all_batch_results.call_count == first_count
 
 
 @pytest.mark.asyncio
