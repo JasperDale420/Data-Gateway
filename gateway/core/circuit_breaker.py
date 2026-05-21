@@ -155,7 +155,8 @@ class CircuitBreaker:
         """Check circuit state and potentially transition.
 
         Raises:
-            CircuitOpenError: If circuit is open
+            CircuitOpenError: If circuit is open, or if HALF_OPEN already has
+                a probe in flight (only one probe at a time).
         """
         if self.state == CircuitState.OPEN:
             elapsed = time.time() - (self.last_failure_time or 0)
@@ -178,15 +179,35 @@ class CircuitBreaker:
                 # Still in recovery timeout
                 retry_after = self.config.recovery_timeout - elapsed
                 raise CircuitOpenError(self.name, retry_after)
+        elif self.state == CircuitState.HALF_OPEN:
+            # HALF_OPEN admits exactly ONE probe at a time. Concurrent
+            # callers must back off so we don't N-times-amplify load against
+            # an upstream that's only tentatively recovered. Without this
+            # branch, every caller that arrives while the probe is running
+            # falls through `_check_state` and races to call `func(...)`
+            # in parallel, defeating the purpose of half-open.
+            #
+            # The flag works as a single-slot semaphore: the success/failure
+            # handlers release it when each probe finishes, and the next
+            # sequential probe re-acquires it here.
+            if self._half_open_in_progress:
+                retry_after = self.config.recovery_timeout
+                raise CircuitOpenError(self.name, retry_after)
+            # No probe in flight — reserve the slot for this caller.
+            self._half_open_in_progress = True
 
     async def _on_success(self) -> None:
         """Handle successful request."""
         async with self._lock:
             if self.state == CircuitState.HALF_OPEN:
                 self.success_count += 1
+                # Release the half-open probe permit so the next sequential
+                # caller can probe. The `_check_state` HALF_OPEN guard keeps
+                # CONCURRENT probes from racing; releasing here allows the
+                # next SEQUENTIAL probe to proceed once this one finishes.
+                self._half_open_in_progress = False
                 if self.success_count >= self.config.success_threshold:
                     self.state = CircuitState.CLOSED
-                    self._half_open_in_progress = False
                     logger.info(
                         "circuit_closed",
                         circuit=self.name,
