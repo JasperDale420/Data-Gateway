@@ -59,6 +59,47 @@ async def test_request_deduplicator_different_keys_fetch_independently() -> None
     assert sorted(calls) == ["AAPL", "MSFT"]
 
 
+@pytest.mark.asyncio
+async def test_request_deduplicator_leader_cancel_propagates_to_followers() -> None:
+    """When the leader is cancelled mid-fetch, followers must see CancelledError
+    instead of hanging forever on the shared future.
+
+    Regression — codex caught: the original `except Exception` clause did not
+    catch CancelledError (a BaseException), so the leader's cancellation left
+    the shared future unresolved and every follower awaiting it deadlocked.
+    """
+    dedup = RequestDeduplicator(lock_stripes=4)
+    leader_started = asyncio.Event()
+    fetcher_blocker = asyncio.Event()
+
+    async def slow_fetcher() -> str:
+        leader_started.set()
+        # Block until the test cancels the leader
+        await fetcher_blocker.wait()
+        return "should-never-return"
+
+    leader = asyncio.create_task(dedup.dedupe("bars:AAPL", slow_fetcher))
+    # Wait for the leader to actually start the fetch (so the pending entry
+    # exists and we know the follower will coalesce, not become the leader).
+    await asyncio.wait_for(leader_started.wait(), timeout=1.0)
+
+    follower = asyncio.create_task(dedup.dedupe("bars:AAPL", slow_fetcher))
+    # Yield once so the follower reaches `await future`.
+    await asyncio.sleep(0)
+
+    # Cancel the leader; the follower must NOT hang forever.
+    leader.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(leader, timeout=1.0)
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(follower, timeout=1.0)
+
+    # Pending entry was cleaned up so subsequent calls aren't stuck.
+    assert dedup.get_pending_count() == 0
+
+
 def test_request_deduplicator_lock_striping_is_stable_for_same_key() -> None:
     dedup = RequestDeduplicator(lock_stripes=8)
     lock_a = dedup._lock_for_key("bars:AAPL")
