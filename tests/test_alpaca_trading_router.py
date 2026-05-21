@@ -1362,6 +1362,38 @@ async def test_replace_order_auto_generates_client_order_id_when_caller_omits(
 
 
 @pytest.mark.asyncio
+async def test_replace_order_maps_value_error_to_400(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider-side ValueError (e.g. ``TimeInForce(unknown_value)``) must
+    surface as 400 — not as a synthetic 502 from execute_alpaca_provider_call.
+    Without the local ``except ValueError`` branch the caller-input fault
+    would get labeled as a retryable 5xx and the new idempotency-merge logic
+    would attach retry hints, sending the caller down a phantom-Alpaca-outage
+    chase. Mirrors ``test_create_order_maps_value_error_to_400``.
+    """
+
+    class _ValueErrorProvider(_FakeProvider):
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            raise ValueError("invalid time_in_force")
+
+    provider = _ValueErrorProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="orig-order-1",
+            time_in_force="bogus",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "invalid time_in_force"
+
+
+@pytest.mark.asyncio
 async def test_replace_order_preserves_caller_supplied_client_order_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

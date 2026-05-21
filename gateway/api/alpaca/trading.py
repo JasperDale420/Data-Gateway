@@ -588,11 +588,11 @@ async def replace_order(
     Idempotency contract (DO NOT REGRESS — mirrors create_order):
       Alpaca's ``replace_order_by_id`` accepts a ``client_order_id`` on the
       *replacement* order — same dedup semantics as ``submit_order``. If the
-      gateway-side ``asyncio.wait_for`` fires (default 15s, configurable via
-      ``alpaca_trading_call_timeout_seconds``) while the underlying executor
-      thread is still talking to Alpaca, the replacement MAY have already
-      applied at the broker. Without an idempotency key the caller has no
-      safe retry path:
+      gateway-side ``asyncio.wait_for`` fires (writes use the 25s
+      ``alpaca_trading_write_call_timeout_seconds`` knob, NOT the 15s read
+      knob) while the underlying executor thread is still talking to Alpaca,
+      the replacement MAY have already applied at the broker. Without an
+      idempotency key the caller has no safe retry path:
         - Retrying PATCH naively against a replaced order will either no-op
           (the old order_id is now in a non-replaceable state) OR replace
           *again* with a new key, double-modifying the position.
@@ -644,19 +644,29 @@ async def replace_order(
     }
 
     async def _call(provider: Any) -> Any:
-        return await _run_trading_provider_call(
-            provider=provider,
-            provider_fn=lambda provider: provider.replace_order(
-                order_id,
-                qty=qty,
-                limit_price=limit_price,
-                stop_price=stop_price,
-                time_in_force=time_in_force,
-                client_order_id=effective_client_order_id,
-            ),
-            operation="replace_order",
-            idempotency_context=idempotency_context,
-        )
+        try:
+            return await _run_trading_provider_call(
+                provider=provider,
+                provider_fn=lambda provider: provider.replace_order(
+                    order_id,
+                    qty=qty,
+                    limit_price=limit_price,
+                    stop_price=stop_price,
+                    time_in_force=time_in_force,
+                    client_order_id=effective_client_order_id,
+                ),
+                operation="replace_order",
+                idempotency_context=idempotency_context,
+            )
+        except ValueError as e:
+            # Mirrors create_order — provider-side input validation (e.g.
+            # TimeInForce(time_in_force) on an unknown enum value) raises
+            # ValueError. Without this branch the exception propagates into
+            # execute_alpaca_provider_call which rewrites unknowns into a
+            # synthetic 502 — surfacing caller-fault input as a retryable
+            # 5xx that the new idempotency-context-merge logic then labels
+            # with retry hints. Caller would chase a phantom Alpaca outage.
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     try:
         data = await execute_alpaca_provider_call(
