@@ -884,3 +884,151 @@ async def test_on_envelope_failure_does_not_block_fanout(
     )
 
     assert len(broadcast_calls) == 1, "fanout must still happen even when on_envelope raises"
+
+
+@pytest.mark.asyncio
+async def test_on_envelope_fires_with_zero_subscribed_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression — codex caught: when no client is subscribed to a symbol
+    (race window: Alpaca delivering an in-flight message as the last
+    subscriber unsubscribes), the message still represents real upstream
+    data and must reach Heber. The empty-clients fast-out only skips the
+    FANOUT cost, not the on_envelope sink dispatch."""
+
+    class _Validator:
+        def validate_bar(self, _message: dict[str, str]) -> SimpleNamespace:
+            return SimpleNamespace(valid=True, error_codes=[])
+
+    monkeypatch.setattr(stream_module, "get_validator", lambda: _Validator())
+
+    envelope_calls: list[dict] = []
+    broadcast_calls: list = []
+
+    async def _on_envelope(envelope: dict) -> None:
+        envelope_calls.append(envelope)
+
+    async def _on_broadcast(payload, client_ids) -> int:
+        broadcast_calls.append((payload, list(client_ids)))
+        return len(client_ids)
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=lambda *_a, **_kw: asyncio.sleep(0),
+        lazy_connect=False,
+        on_broadcast=_on_broadcast,
+        on_envelope=_on_envelope,
+    )
+
+    class _NoSubscribers:
+        def get_clients_for_symbol(self, _symbol: str, _data_type: str) -> list[str]:
+            return []
+
+        def get_clients_for_symbol_view(self, _symbol: str, _data_type: str) -> list[str]:
+            return []
+
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(Any, SimpleNamespace(subscriptions=_NoSubscribers()))
+
+    await multiplexer._handle_message(
+        AlpacaStreamType.STOCKS_SIP,
+        {"T": "b", "S": "AAPL", "t": "2026-05-21T13:30:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1},
+    )
+
+    assert len(envelope_calls) == 1, (
+        "on_envelope MUST fire even with zero subscribed clients — the message "
+        "still represents real upstream data that Heber needs. Dropping it on "
+        "empty-clients would re-introduce a streaming-sink bypass."
+    )
+    assert broadcast_calls == [], "fanout should be skipped when no clients are subscribed"
+
+
+@pytest.mark.asyncio
+async def test_handle_message_with_no_on_envelope_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When on_envelope is None (e.g. unit tests or legacy callers), the
+    multiplexer must no-op gracefully on the per-envelope hook — neither
+    raising nor failing fanout."""
+
+    class _Validator:
+        def validate_bar(self, _message: dict[str, str]) -> SimpleNamespace:
+            return SimpleNamespace(valid=True, error_codes=[])
+
+    monkeypatch.setattr(stream_module, "get_validator", lambda: _Validator())
+
+    broadcast_calls: list = []
+
+    async def _on_broadcast(payload, client_ids) -> int:
+        broadcast_calls.append((payload, list(client_ids)))
+        return len(client_ids)
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=lambda *_a, **_kw: asyncio.sleep(0),
+        lazy_connect=False,
+        on_broadcast=_on_broadcast,
+        on_envelope=None,  # explicit None — should no-op
+    )
+
+    class _Subscriptions:
+        def get_clients_for_symbol(self, symbol: str, _data_type: str) -> list[str]:
+            return ["c-1"] if symbol == "AAPL" else []
+
+        def get_clients_for_symbol_view(self, symbol: str, _data_type: str) -> list[str]:
+            return self.get_clients_for_symbol(symbol, _data_type)
+
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(Any, SimpleNamespace(subscriptions=_Subscriptions()))
+
+    # Should not raise — None callback must short-circuit.
+    await multiplexer._handle_message(
+        AlpacaStreamType.STOCKS_SIP,
+        {"T": "b", "S": "AAPL", "t": "2026-05-21T13:30:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1},
+    )
+
+    assert len(broadcast_calls) == 1, "fanout should proceed normally when on_envelope is None"
+
+
+@pytest.mark.asyncio
+async def test_on_envelope_cancellation_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CancelledError raised inside on_envelope must propagate up so shutdown
+    semantics work — not be swallowed by the catch-all exception handler."""
+
+    class _Validator:
+        def validate_bar(self, _message: dict[str, str]) -> SimpleNamespace:
+            return SimpleNamespace(valid=True, error_codes=[])
+
+    monkeypatch.setattr(stream_module, "get_validator", lambda: _Validator())
+
+    async def _cancelling_on_envelope(_envelope: dict) -> None:
+        raise asyncio.CancelledError()
+
+    async def _no_op_broadcast(_payload, _client_ids) -> int:
+        return 0
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=lambda *_a, **_kw: asyncio.sleep(0),
+        lazy_connect=False,
+        on_broadcast=_no_op_broadcast,
+        on_envelope=_cancelling_on_envelope,
+    )
+
+    class _Subscriptions:
+        def get_clients_for_symbol(self, symbol: str, _data_type: str) -> list[str]:
+            return ["c-1"] if symbol == "AAPL" else []
+
+        def get_clients_for_symbol_view(self, symbol: str, _data_type: str) -> list[str]:
+            return self.get_clients_for_symbol(symbol, _data_type)
+
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(Any, SimpleNamespace(subscriptions=_Subscriptions()))
+
+    with pytest.raises(asyncio.CancelledError):
+        await multiplexer._handle_message(
+            AlpacaStreamType.STOCKS_SIP,
+            {"T": "b", "S": "AAPL", "t": "2026-05-21T13:30:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1},
+        )

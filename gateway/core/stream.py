@@ -1211,8 +1211,14 @@ class StreamMultiplexer:
             clients.update(conn.subscriptions.get_clients_for_symbol_view("*", data_type))
         for sym in dict.fromkeys(symbols):
             clients.update(conn.subscriptions.get_clients_for_symbol_view(sym, data_type))
-        if not clients:
-            return
+        # NB: do NOT early-return on empty `clients` here. The on_envelope
+        # callback (sink publish to Heber) must still fire for real upstream
+        # messages even when no client is currently subscribed — the race
+        # window between Alpaca delivering an in-flight message and a client
+        # unsubscribing is exactly when this edge case triggers, and dropping
+        # those messages from Heber would create silent gaps that re-run
+        # the bypass we just fixed. Defer the empty-clients check to AFTER
+        # envelope+on_envelope dispatch (right before the fanout branch).
 
         if data_type in _VALIDATABLE_FEEDS:
             validator = self._get_stream_validator()
@@ -1310,6 +1316,12 @@ class StreamMultiplexer:
                     stream_type=stream_type.value if stream_type else "unknown",
                     error=str(e),
                 )
+
+        # Empty-clients fast-out: skip the fanout cost but DO NOT skip the
+        # on_envelope sink dispatch above (see the comment near the clients
+        # set construction for why).
+        if not clients:
+            return
 
         if self._on_broadcast:
             # Efficient O(1) loop-level broadcast via ConnectionManager
