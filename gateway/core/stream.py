@@ -827,6 +827,7 @@ class StreamMultiplexer:
         fanout_max_inflight: int = DEFAULT_FANOUT_MAX_INFLIGHT,
         fanout_batch_size: int = DEFAULT_FANOUT_BATCH_SIZE,
         on_broadcast: Callable[[dict[str, Any] | str | bytes, list[str]], Awaitable[int]] | None = None,
+        on_envelope: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         eager_connect_types: list[str] | None = None,
     ) -> None:
         """Initialize multiplexer.
@@ -834,13 +835,28 @@ class StreamMultiplexer:
         Args:
             api_key: Alpaca API key
             api_secret: Alpaca API secret
-            on_data: Callback for data messages (client_id, data_type, message)
+            on_data: Callback for per-client delivery in the FALLBACK fanout
+                path (client_id, data_type, message). NOT called when
+                ``on_broadcast`` is set — the broadcast fast-path delivers
+                directly without invoking on_data per client. Per-envelope
+                side-effects (e.g. sink publish) must use ``on_envelope``
+                instead, not on_data, otherwise they only fire in the
+                fallback path.
             use_iex: Use IEX feed instead of SIP for stocks
             options_feed: Alpaca options stream feed (`opra` or `indicative`)
             lazy_connect: If True, only connect to streams when first client subscribes
             fanout_max_inflight: Max concurrent callback deliveries per fanout batch.
             fanout_batch_size: Number of clients to dispatch per gather batch.
             on_broadcast: Optional callback for efficient broadcast (message, client_ids) -> count
+            on_envelope: Optional callback fired ONCE per envelope, regardless
+                of which fanout path is taken (broadcast fast-path OR fallback
+                per-client). Use this for per-envelope side-effects like sink
+                publishing that must happen for every upstream message,
+                independent of client fanout. Until 2026-05-21, sink dispatch
+                was inside ``on_data`` which the broadcast fast-path never
+                invokes — all streaming events bypassed the Heber sink in
+                production. This callback is the fix; it is the single source
+                of truth for "fired once per envelope" side-effects.
             eager_connect_types: Subset of stream-type names ("stocks", "options",
                 "crypto", "news") to connect eagerly at start(), regardless of
                 lazy_connect. Use this when you want a hot stocks pipe ready for
@@ -857,6 +873,7 @@ class StreamMultiplexer:
         self._fanout_max_inflight = max(1, fanout_max_inflight)
         self._fanout_client_batch_size = max(1, fanout_batch_size)
         self._on_broadcast = on_broadcast
+        self._on_envelope = on_envelope
         set_stream_fanout_limits_metrics(
             max_inflight=self._fanout_max_inflight,
             batch_size=self._fanout_client_batch_size,
@@ -1194,8 +1211,14 @@ class StreamMultiplexer:
             clients.update(conn.subscriptions.get_clients_for_symbol_view("*", data_type))
         for sym in dict.fromkeys(symbols):
             clients.update(conn.subscriptions.get_clients_for_symbol_view(sym, data_type))
-        if not clients:
-            return
+        # NB: do NOT early-return on empty `clients` here. The on_envelope
+        # callback (sink publish to Heber) must still fire for real upstream
+        # messages even when no client is currently subscribed — the race
+        # window between Alpaca delivering an in-flight message and a client
+        # unsubscribing is exactly when this edge case triggers, and dropping
+        # those messages from Heber would create silent gaps that re-run
+        # the bypass we just fixed. Defer the empty-clients check to AFTER
+        # envelope+on_envelope dispatch (right before the fanout branch).
 
         if data_type in _VALIDATABLE_FEEDS:
             validator = self._get_stream_validator()
@@ -1269,6 +1292,36 @@ class StreamMultiplexer:
         # envelope is a dict here, we can serialize it to string once for efficiency
         # This matches what we did for RedisSink optimization
         envelope_json = orjson.dumps(envelope, default=_orjson_default)
+
+        # Per-envelope side-effects (e.g. sink publish to Heber). Fires ONCE
+        # per upstream envelope, regardless of which fanout path is taken
+        # below — broadcast fast-path OR fallback per-client. Until 2026-05-21
+        # this work lived inside on_data which the broadcast fast-path never
+        # invokes — sink publish silently bypassed for all streaming events.
+        # Run on_envelope BEFORE fanout so a sink stall (bounded by the
+        # registry's 100ms producer-block timeout) doesn't delay client
+        # delivery indefinitely, and so a sink failure cannot leave clients
+        # holding events that aren't in Heber.
+        if self._on_envelope:
+            try:
+                await self._on_envelope(envelope)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    "stream_on_envelope_failed",
+                    symbol=symbol_for_log,
+                    data_type=data_type,
+                    event_id=envelope.get("event_id", "unknown"),
+                    stream_type=stream_type.value if stream_type else "unknown",
+                    error=str(e),
+                )
+
+        # Empty-clients fast-out: skip the fanout cost but DO NOT skip the
+        # on_envelope sink dispatch above (see the comment near the clients
+        # set construction for why).
+        if not clients:
+            return
 
         if self._on_broadcast:
             # Efficient O(1) loop-level broadcast via ConnectionManager
