@@ -394,7 +394,9 @@ class DataSinkRegistry:
             messages: List of (topic, data) tuples.
 
         Returns:
-            Total number of successfully published messages across all sinks.
+            Total number of successful sink publishes summed across all
+            sinks (legacy semantics): with N sinks and M messages where
+            every sink accepts every message, returns N*M.
 
         Notes:
             The integer return value cannot identify *which* messages
@@ -408,8 +410,48 @@ class DataSinkRegistry:
         if not self._enabled or not self._sinks or not messages:
             return 0
 
-        results = await self.publish_all_batch_results(messages)
-        return sum(1 for ok in results if ok)
+        # Re-implement the legacy sum-across-sinks count directly. Going via
+        # ``publish_all_batch_results`` would aggregate "any sink accepted"
+        # into a single bool per message and lose the cross-sink sum that
+        # existing callers (option_capture, backfill) rely on.
+        total = 0
+        for sink in self._sinks:
+            try:
+                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+                if breaker.state == CircuitState.OPEN:
+                    if hasattr(sink, "buffer_event"):
+                        for msg_topic, msg_data in messages:
+                            sink.buffer_event(msg_topic, msg_data)
+                    continue
+            except Exception:
+                pass
+            if hasattr(sink, "publish_batch_results"):
+                try:
+                    sink_results = await sink.publish_batch_results(messages)
+                except Exception:
+                    logger.exception(
+                        "data_sink_batch_publish_failed",
+                        sink=sink.name,
+                        count=len(messages),
+                    )
+                    sink_results = []
+                total += sum(1 for ok in sink_results if ok)
+            elif hasattr(sink, "publish_batch"):
+                try:
+                    total += await sink.publish_batch(messages)
+                except Exception:
+                    logger.exception(
+                        "data_sink_batch_publish_failed",
+                        sink=sink.name,
+                        count=len(messages),
+                    )
+            else:
+                for topic, data in messages:
+                    task = asyncio.create_task(self._safe_publish(sink, topic, data))
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                    total += 1  # Optimistic
+        return total
 
     async def publish_all_batch_results(
         self,

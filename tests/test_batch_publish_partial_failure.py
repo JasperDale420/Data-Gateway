@@ -266,6 +266,54 @@ async def test_news_poller_only_marks_successful_entries() -> None:
 
 
 @pytest.mark.asyncio
+async def test_uw_poller_only_marks_successful_entries() -> None:
+    """UW poller must not mark failed indices as seen either.
+
+    The previous "mark all seen before publish" pattern in UWPoller relied
+    on a sink-side buffer that ``_publish_chunk`` does NOT populate, so
+    failed events were permanently suppressed -- same bug class as the
+    Alpaca pollers.
+    """
+    from gateway.core.uw_poller import HEBER_STREAM, UWPoller
+
+    sink = AsyncMock()
+    sink.publish_all = AsyncMock()
+
+    def _results(msgs):
+        return [i != 2 for i in range(len(msgs))]
+
+    sink.publish_all_batch_results = AsyncMock(side_effect=_results)
+    sink.publish_all_batch = AsyncMock(side_effect=lambda msgs: sum(_results(msgs)))
+
+    poller = UWPoller()
+    poller._redis_dedupe = None
+    envelopes = [{"event_id": f"uw-e{i}", "feed": "flow_alerts"} for i in range(5)]
+
+    published, _ = await poller._publish_envelopes(
+        sink_registry=sink,
+        envelopes=envelopes,
+        dedupe_prefix="uw:flow",
+        missing_event_log="uw_flow_missing_event_id",
+    )
+    assert published == 4
+
+    # Only the 4 successful event_ids should be marked seen.
+    seen = set(poller._seen_ids.keys())
+    assert seen == {"uw-e0", "uw-e1", "uw-e3", "uw-e4"}, (
+        f"BLOCKER 2 (UW poller) regression: marked seen = {seen}, "
+        "expected {{'uw-e0', 'uw-e1', 'uw-e3', 'uw-e4'}}. "
+        "Failed event 'uw-e2' must NOT be marked seen or it will be "
+        "permanently suppressed on subsequent polls."
+    )
+    assert "uw-e2" not in seen
+
+    # Sanity: messages were passed through the new per-message API.
+    args, _kw = sink.publish_all_batch_results.call_args
+    msgs = args[0]
+    assert all(topic == HEBER_STREAM for topic, _ in msgs)
+
+
+@pytest.mark.asyncio
 async def test_crypto_poller_only_marks_successful_entries() -> None:
     sink = AsyncMock()
     sink.publish_all = AsyncMock()

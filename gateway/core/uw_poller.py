@@ -243,40 +243,51 @@ class UWPoller(DedupMixin, BasePoller):
         if not to_publish:
             return 0, duplicates
 
-        # Mark all event_ids as seen *before* publishing so the dedup state is
-        # unambiguous regardless of partial pipeline failure. The previous
-        # `to_publish[:published]` slice assumed the first N items succeeded,
-        # but Redis pipeline-with-`transaction=False` can fail at arbitrary
-        # indices, leading to wrong items being marked. Failed publishes are
-        # buffered and drained at the sink level (`RedisStreamsSink._buffer_failed_event`
-        # + `_drain_buffer`), so optimistic marking does not lose events.
-        redis_items: list[tuple[str, Any]] = []
-        for _envelope, event_id, cache_key in to_publish:
-            if event_id:
-                self._mark_seen(event_id)
-                if self._redis_dedupe is not None and cache_key:
-                    redis_items.append((cache_key, True))
-
-        if redis_items:
-            await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
-
-        # Publish (batch when supported, otherwise per-envelope)
+        # Publish (batch when supported, otherwise per-envelope) and mark
+        # only the successful entries as seen. The previous "mark all seen
+        # before publish" pattern relied on `RedisStreamsSink._buffer_failed_event`
+        # + `_drain_buffer` to replay failed events, but that buffer is only
+        # populated by the *single*-publish path -- ``_publish_chunk`` (the
+        # batch path) does NOT route partial-failure items through it, so
+        # marking events as seen optimistically permanently suppressed them
+        # on subsequent polls. The new ``publish_all_batch_results`` API
+        # returns ``list[bool]`` aligned 1:1 with messages, so we can mark
+        # exactly the successes.
         messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, envelope) for envelope, _, _ in to_publish]
         try:
-            if hasattr(sink_registry, "publish_all_batch"):
-                published = await sink_registry.publish_all_batch(messages)
+            if hasattr(sink_registry, "publish_all_batch_results"):
+                results = await sink_registry.publish_all_batch_results(messages)
+            elif hasattr(sink_registry, "publish_all_batch"):
+                # Legacy registry without per-message results -- treat as
+                # all-or-nothing so partial failure forces retry on next poll.
+                count = await sink_registry.publish_all_batch(messages)
+                results = [count == len(messages)] * len(messages)
             else:
                 # Fallback for mocks / non-registry objects
                 for topic, envelope in messages:
                     await sink_registry.publish_all(topic, envelope)
-                published = len(messages)
+                results = [True] * len(messages)
         except Exception as exc:
             logger.warning(
                 "uw_poller_batch_publish_failed",
                 count=len(messages),
                 error=str(exc),
             )
-            published = 0
+            results = [False] * len(messages)
+
+        published = sum(1 for ok in results if ok)
+
+        if published > 0:
+            redis_items: list[tuple[str, Any]] = []
+            for (_envelope, event_id, cache_key), ok in zip(to_publish, results, strict=True):
+                if not ok:
+                    continue
+                if event_id:
+                    self._mark_seen(event_id)
+                    if self._redis_dedupe is not None and cache_key:
+                        redis_items.append((cache_key, True))
+            if redis_items and self._redis_dedupe is not None:
+                await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
 
         return published, duplicates
 
