@@ -787,6 +787,17 @@ async def close_position(
       which the provider already translates into a clean 404.
     """
     canonical_symbol = symbol.upper()
+    if qty is not None and qty < 0:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "GW-E4006",
+                "message": f"close_position qty must be non-negative; got {qty}",
+                "symbol": canonical_symbol,
+                "qty": qty,
+            },
+        )
+
     idempotency_context: dict[str, Any] = {
         "symbol": canonical_symbol,
         "retry_with": "get_position",

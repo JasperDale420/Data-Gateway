@@ -165,6 +165,10 @@ class _FakeHTTPClient:
         idx = min(len(self.calls) - 1, len(self._responses) - 1)
         return self._responses[idx]
 
+    def request(self, method: str, url: str, params: dict[str, str] | None = None):
+        assert method.lower() == "get"
+        return self.get(url, params)
+
 
 class _FakeUWClient:
     def __init__(self, http_client: _FakeHTTPClient) -> None:
@@ -255,6 +259,58 @@ async def test_get_iv_rank_retries_without_date_after_422(monkeypatch):
         ("/api/stock/SPY/iv-rank", {"date": "2026-02-13"}),
         ("/api/stock/SPY/iv-rank", None),
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_congress_trades_parses_raw_payload_with_unknown_txn_type(monkeypatch):
+    provider = UnusualWhalesProvider()
+    raw_txn_type = (
+        "Star Catcher Industries, Inc. [OI] S \n"
+        "FILING STATUS: New SUBHOLDING OF: Investment Fund  "
+        "DESCRIPTION: Energy infrastructure in space, Jacksonville, FL"
+    )
+    http_response = _FakeHTTPResponse(
+        {
+            "data": [
+                {
+                    "ticker": "OI",
+                    "name": "Reporter",
+                    "txn_type": raw_txn_type,
+                    "amounts": "$1,001 - $15,000",
+                    "transaction_date": "2026-05-20",
+                    "filed_at_date": "2026-05-21",
+                    "member_type": "house",
+                }
+            ]
+        }
+    )
+    http_client = _FakeHTTPClient(http_response)
+    provider._client = _FakeUWClient(http_client)
+
+    async def _fake_call_sync(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    trades = await provider.get_congress_trades(limit=200)
+
+    assert trades == [
+        {
+            "ticker": "OI",
+            "name": "Reporter",
+            "txn_type": raw_txn_type,
+            "amounts": "$1,001 - $15,000",
+            "transaction_date": "2026-05-20",
+            "filed_at_date": "2026-05-21",
+            "member_type": "house",
+            "politician_id": None,
+            "reporter": None,
+            "notes": None,
+            "issuer": None,
+            "is_active": None,
+        }
+    ]
+    assert http_client.calls == [("/api/congress/recent-trades", {"limit": 200})]
 
 
 @pytest.mark.asyncio

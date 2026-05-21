@@ -853,6 +853,36 @@ async def test_close_position_success_meta_includes_symbol(
 
 
 @pytest.mark.asyncio
+async def test_close_position_rejects_negative_qty_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Provider:
+        called = False
+
+        def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> dict[str, Any]:
+            self.called = True
+            return {"id": "should-not-call"}
+
+    provider = _Provider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol="CRNC",
+            qty=-8000.0,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert "qty" in str(exc.value.detail).lower()
+    assert "-8000.0" in str(exc.value.detail)
+    assert provider.called is False
+
+
+@pytest.mark.asyncio
 async def test_run_trading_provider_call_admits_concurrent_within_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
