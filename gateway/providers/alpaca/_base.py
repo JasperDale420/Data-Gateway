@@ -157,8 +157,17 @@ class AlpacaBaseMixin(DataProvider):
             await self._client.aclose()
             self._client = None
 
-        # SDK TradingClient doesn't need explicit cleanup
-        self._trading_client = None
+        # alpaca-py's TradingClient holds a `requests.Session` whose
+        # connection pool is not released by GC promptly. Close it explicitly
+        # so pooled HTTPS sockets to the trading endpoint are reaped on shutdown.
+        if self._trading_client is not None:
+            session = getattr(self._trading_client, "_session", None)
+            if session is not None:
+                try:
+                    session.close()
+                except Exception as e:
+                    logger.debug("alpaca_trading_session_close_failed", error=str(e))
+            self._trading_client = None
 
         if self._ws:
             await self._ws.close()

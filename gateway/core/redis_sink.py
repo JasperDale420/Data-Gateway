@@ -16,7 +16,11 @@ import orjson
 
 from gateway.core.data_sink import DataSink
 from gateway.core.logger import logger
-from gateway.core.metrics import record_sink_publish
+from gateway.core.metrics import (
+    record_sink_buffer_eviction,
+    record_sink_publish,
+    set_sink_buffer_size,
+)
 
 DEFAULT_OPERATION_TIMEOUT_SECONDS = 5.0
 DEFAULT_POOL_SIZE = 64
@@ -83,7 +87,10 @@ class RedisStreamsSink(DataSink):
         self._max_len = max_len
         self._approximate = approximate_trim
         self._operation_timeout_seconds = max(0.5, float(operation_timeout_seconds))
-        self._pool_size = max(1, min(64, int(pool_size)))
+        # Settings.data_sink_redis_pool_size is already validated to [1, 128]
+        # via field constraints; this is a defense-in-depth lower bound for
+        # callers constructing the sink directly (tests, scripts).
+        self._pool_size = max(1, int(pool_size))
         self._redis: Any = None
         self._connected = False
         self._connect_lock = asyncio.Lock()
@@ -96,6 +103,9 @@ class RedisStreamsSink(DataSink):
         # exhausted all retries.  Drained automatically on reconnect.
         self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=FAILED_EVENT_BUFFER_CAPACITY)
         self._drain_lock = asyncio.Lock()
+        # Hold a strong reference to the drain task so it cannot be GC'd
+        # mid-flight while the buffer drain is in progress.
+        self._drain_tasks: set[asyncio.Task[None]] = set()
         self._buffer_stats = {"buffered": 0, "drained": 0, "evicted": 0}
 
     @property
@@ -146,9 +156,14 @@ class RedisStreamsSink(DataSink):
                     logger.error("redis_sink_import_error", msg="redis package not installed")
                     raise
 
-        # After reconnect, drain any buffered events (outside the lock)
+        # After reconnect, drain any buffered events (outside the lock).
+        # Hold a strong reference so the task cannot be GC'd mid-drain —
+        # asyncio keeps only weak refs to tasks, so a discarded task may
+        # vanish before completing, silently losing buffered events.
         if is_reconnect and self._failed_buffer:
-            asyncio.create_task(self._drain_buffer())
+            task = asyncio.create_task(self._drain_buffer())
+            self._drain_tasks.add(task)
+            task.add_done_callback(self._drain_tasks.discard)
 
     @staticmethod
     async def _close_stale_client(client: Any) -> None:
@@ -257,12 +272,19 @@ class RedisStreamsSink(DataSink):
         """Buffer a failed event for retry on reconnect.
 
         Uses a bounded deque so oldest events are evicted if the buffer fills.
+        Updates the Prometheus ``gateway_sink_buffer_size`` gauge on every
+        append and increments ``gateway_sink_buffer_evictions_total`` when
+        the deque was already at capacity — those metrics drive the
+        ``SinkBufferEvictionsActive`` alert that turns silent data loss
+        into a paging signal (RCA: 2026-05-05 32-hour outage).
         """
         was_full = len(self._failed_buffer) == (self._failed_buffer.maxlen or FAILED_EVENT_BUFFER_CAPACITY)
         self._failed_buffer.append((topic, payload))
         self._buffer_stats["buffered"] += 1
+        set_sink_buffer_size(self.name, len(self._failed_buffer))
         if was_full:
             self._buffer_stats["evicted"] += 1
+            record_sink_buffer_eviction(self.name)
             logger.warning(
                 "redis_sink_buffer_eviction",
                 buffer_size=len(self._failed_buffer),
@@ -351,6 +373,7 @@ class RedisStreamsSink(DataSink):
             self._failed_buffer.append(item)
 
         self._buffer_stats["drained"] += drained
+        set_sink_buffer_size(self.name, len(self._failed_buffer))
         logger.info(
             "redis_sink_buffer_drain_complete",
             drained=drained,
@@ -429,6 +452,12 @@ class RedisStreamsSink(DataSink):
                 record_sink_publish(sink=self.name, topic=topic, success=True)
                 return True
 
+            # NB: do NOT catch asyncio.CancelledError here. The registry
+            # worker loop (gateway/core/data_sink.py) catches CancelledError
+            # at the publish-call boundary and routes the in-flight event
+            # through sink.buffer_event. Catching+buffering here too would
+            # double-buffer the same event into _failed_buffer and replay
+            # it twice on next drain.
             except Exception as e:
                 last_error = e
                 is_last_attempt = attempt >= PUBLISH_RETRY_ATTEMPTS - 1
@@ -456,6 +485,9 @@ class RedisStreamsSink(DataSink):
                         backoff_seconds=round(backoff, 3),
                         error=error_desc,
                     )
+                    # Backoff sleep — CancelledError propagates up to the
+                    # registry worker which handles the buffer routing (see
+                    # comment above the outer try block).
                     await asyncio.sleep(backoff)
 
         # All retries exhausted — buffer the event for drain on reconnect
@@ -626,10 +658,63 @@ class RedisStreamsSink(DataSink):
 
         Sets ``_closed`` so that no further operations attempt to reconnect,
         which would fail with "Event loop is closed" during shutdown.
-        Explicitly disconnects the underlying connection pool to release
-        all TCP sockets immediately.
+        Awaits any in-flight drain tasks (with a short timeout) so they don't
+        keep running against a torn-down client/pool, then explicitly
+        disconnects the underlying connection pool to release all TCP sockets
+        immediately.
+
+        Before closing, makes one final attempt to drain ``_failed_buffer``
+        through the live connection so buffered events aren't lost on graceful
+        shutdown. Events still in the buffer after this attempt are logged so
+        operators have a count for post-mortem.
         """
+        # Final attempt to drain the failed-event buffer through the live
+        # connection. We do this BEFORE setting _closed so the drain path
+        # can publish, but AFTER any in-flight tasks would have finished.
+        # If Redis is unreachable at this point, the buffer simply remains
+        # in memory and we log the count.
+        if self._failed_buffer and self._redis is not None:
+            try:
+                await asyncio.wait_for(self._do_drain(), timeout=5.0)
+            except (TimeoutError, Exception) as exc:  # noqa: BLE001 — best-effort
+                logger.warning(
+                    "redis_sink_close_drain_failed",
+                    remaining=len(self._failed_buffer),
+                    error=str(exc),
+                )
+
+        if self._failed_buffer:
+            logger.warning(
+                "redis_sink_close_buffer_nonempty",
+                lost_events=len(self._failed_buffer),
+                msg="Events were buffered when shutdown completed; they are NOT persisted to disk and are lost.",
+            )
+
         self._closed = True
+
+        # Drain background tasks first so they don't try to publish through
+        # the client we're about to close. _drain_buffer holds _drain_lock
+        # while running; cancel any that are still pending and give them a
+        # brief window to finish gracefully (most chunks are sub-second).
+        pending = list(self._drain_tasks)
+        if pending:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True),
+                    timeout=2.0,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "redis_sink_drain_close_timeout",
+                    pending=len(pending),
+                )
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                # Best-effort wait for cancellations to settle
+                await asyncio.gather(*pending, return_exceptions=True)
+            self._drain_tasks.clear()
+
         client = self._redis
         self._redis = None
         self._connected = False

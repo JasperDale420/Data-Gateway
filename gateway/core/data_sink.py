@@ -2,6 +2,24 @@
 
 This module provides a pluggable architecture for publishing Gateway data
 to external systems like Redis Streams, Kafka, or files for Heber ingestion.
+
+Dispatch model
+--------------
+
+Each registered sink owns a bounded ``asyncio.Queue`` and a small worker
+pool that drains the queue.  Producers call ``publish_all`` which routes
+the event through the per-sink queue:
+
+    producer ──put(timeout)──▶ Queue[topic, data] ──▶ worker ──▶ sink.publish
+
+Backpressure is propagated by ``Queue.put`` blocking the producer until a
+slot opens or ``data_sink_producer_block_timeout_seconds`` elapses.  When
+the timeout fires the event is dropped and the *emergency-only*
+``gateway_sink_producer_timeout_drops_total`` counter is incremented (see
+``config/prometheus_alerts.yml``).  This replaces an earlier
+drop-on-saturation semaphore that silently lost any event scheduled while
+the in-flight cap was already reached — operators observed thousands of
+silent drops per minute around opening bell with no recovery path.
 """
 
 import asyncio
@@ -10,7 +28,13 @@ from typing import Any
 
 from gateway.core.circuit_breaker import CircuitOpenError, CircuitState, get_circuit_breaker
 from gateway.core.logger import logger
-from gateway.core.metrics import record_sink_publish
+from gateway.core.metrics import (
+    record_sink_producer_timeout_drop,
+    record_sink_publish,
+    set_sink_queue_capacity,
+    set_sink_queue_size,
+    set_sink_worker_count,
+)
 
 
 class DataSink(ABC):
@@ -54,11 +78,16 @@ class DataSink(ABC):
         pass
 
 
+# Sentinel value pushed into a sink's queue to signal worker shutdown.
+_SHUTDOWN_SENTINEL: Any = object()
+
+
 class DataSinkRegistry:
     """Registry for managing multiple data sinks.
 
-    Publishes to all registered sinks in parallel (fire-and-forget).
-    Includes optional Redis-based deduplication to prevent duplicate events.
+    Publishes route through per-sink bounded queues drained by a small
+    worker pool.  Includes optional Redis-based deduplication to prevent
+    duplicate events.
     """
 
     # Dedup cache TTL: 24 hours (events older than this are assumed unique)
@@ -67,24 +96,36 @@ class DataSinkRegistry:
     def __init__(
         self,
         dedup_cache: Any | None = None,
-        max_in_flight_per_sink: int = 512,
+        *,
+        queue_size: int = 4096,
+        worker_count: int = 8,
+        producer_block_timeout_seconds: float = 0.1,
     ) -> None:
         """Initialize registry.
 
         Args:
             dedup_cache: Optional Redis cache for deduplication.
                          If provided, duplicate events (same event_id) will be skipped.
-            max_in_flight_per_sink: Max concurrent in-flight publish tasks per sink.
-                                    Additional events are dropped with backpressure stats.
+            queue_size: Bounded per-sink dispatch queue size.
+            worker_count: Number of worker tasks draining each sink's queue.
+            producer_block_timeout_seconds: Max time a producer blocks on a full
+                                            queue before dropping an event.
         """
         self._sinks: list[DataSink] = []
         self._enabled = True
         self._background_tasks: set[asyncio.Task] = set()  # Prevent GC
         self._dedup_cache = dedup_cache
-        self._max_in_flight_per_sink = max(1, max_in_flight_per_sink)
+        self._queue_size = max(1, int(queue_size))
+        self._worker_count = max(1, int(worker_count))
+        self._producer_block_timeout_seconds = max(0.001, float(producer_block_timeout_seconds))
         self._dedup_stats = {"checked": 0, "deduplicated": 0}
-        self._publish_stats = {"scheduled": 0, "dropped_backpressure": 0}
-        self._sink_semaphores: dict[str, asyncio.Semaphore] = {}
+        self._publish_stats = {
+            "scheduled": 0,
+            "queued": 0,
+            "dropped_producer_timeout": 0,
+        }
+        self._sink_queues: dict[str, asyncio.Queue[tuple[str, Any]]] = {}
+        self._sink_workers: dict[str, list[asyncio.Task[None]]] = {}
 
     def set_dedup_cache(self, cache: Any) -> None:
         """Set dedup cache after initialization (for lazy setup)."""
@@ -94,8 +135,26 @@ class DataSinkRegistry:
     def register(self, sink: DataSink) -> None:
         """Register a data sink."""
         self._sinks.append(sink)
-        self._sink_semaphores.setdefault(sink.name, asyncio.Semaphore(self._max_in_flight_per_sink))
+        self._ensure_workers(sink)
         logger.info("data_sink_registered", sink=sink.name)
+
+    def _ensure_workers(self, sink: DataSink) -> None:
+        """Lazily create the per-sink queue and worker pool."""
+        if sink.name in self._sink_queues:
+            return
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=self._queue_size)
+        self._sink_queues[sink.name] = queue
+        set_sink_queue_capacity(sink.name, self._queue_size)
+        set_sink_queue_size(sink.name, 0)
+        set_sink_worker_count(sink.name, self._worker_count)
+        workers: list[asyncio.Task[None]] = []
+        for idx in range(self._worker_count):
+            task = asyncio.create_task(
+                self._sink_worker_loop(sink, queue),
+                name=f"data_sink_worker:{sink.name}:{idx}",
+            )
+            workers.append(task)
+        self._sink_workers[sink.name] = workers
 
     def disable(self) -> None:
         """Disable all publishing (for graceful shutdown)."""
@@ -118,10 +177,18 @@ class DataSinkRegistry:
         """Return publish scheduling/backpressure statistics."""
         return self._publish_stats.copy()
 
-    async def publish_all(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
-        """Publish to all registered sinks (non-blocking).
+    def get_queue_depth(self, sink_name: str) -> int:
+        """Return current queue depth for ``sink_name`` (bounded-queue path only)."""
+        queue = self._sink_queues.get(sink_name)
+        return queue.qsize() if queue is not None else 0
 
-        Uses fire-and-forget pattern to avoid blocking the caller.
+    async def publish_all(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
+        """Publish to all registered sinks.
+
+        Under the bounded-queue path (default), this awaits a slot in each
+        sink's queue with a short timeout. Under the legacy semaphore path,
+        events are dispatched fire-and-forget and dropped on saturation.
+
         If dedup cache is configured, checks event_id before publishing.
         """
         if not self._enabled or not self._sinks:
@@ -154,11 +221,10 @@ class DataSinkRegistry:
                     )
 
         for sink in self._sinks:
-            # Check circuit state BEFORE creating fire-and-forget task.
-            # Previously, the check happened inside _safe_publish, meaning
-            # events queued during a burst would still spawn tasks that
-            # immediately hit CircuitOpenError.  Checking here prevents
-            # wasted task creation and noisy error logs.
+            # Check circuit state BEFORE enqueueing. Otherwise events queued
+            # during a burst would still be picked up by workers that
+            # immediately hit CircuitOpenError, wasting queue capacity and
+            # producing noisy error logs.
             try:
                 breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
                 if breaker.state == CircuitState.OPEN:
@@ -181,23 +247,139 @@ class DataSinkRegistry:
             except Exception:
                 pass  # If breaker lookup fails, proceed with publish
 
-            acquired = await self._try_acquire_sink_slot(sink.name)
-            if not acquired:
-                self._publish_stats["dropped_backpressure"] += 1
+            await self._enqueue_for_sink(sink, topic, data)
+
+    async def _enqueue_for_sink(
+        self,
+        sink: DataSink,
+        topic: str,
+        data: dict[str, Any] | str | bytes,
+    ) -> None:
+        """Enqueue a (topic, data) tuple for ``sink``'s worker pool.
+
+        Blocks with ``producer_block_timeout_seconds`` on a full queue
+        before dropping. Drops here mean the queue is full AND workers
+        cannot drain it within the timeout — an emergency condition
+        distinct from steady-state in-flight saturation.
+        """
+        self._ensure_workers(sink)
+        queue = self._sink_queues[sink.name]
+        try:
+            await asyncio.wait_for(
+                queue.put((topic, data)),
+                timeout=self._producer_block_timeout_seconds,
+            )
+        except TimeoutError:
+            self._publish_stats["dropped_producer_timeout"] += 1
+            record_sink_producer_timeout_drop(sink.name)
+            logger.critical(
+                "data_sink_producer_timeout_drop",
+                sink=sink.name,
+                topic=topic,
+                queue_size=self._queue_size,
+                producer_block_timeout_seconds=self._producer_block_timeout_seconds,
+            )
+            if not sink.record_publish_metrics:
+                record_sink_publish(sink=sink.name, topic=topic, success=False)
+            return
+
+        self._publish_stats["queued"] += 1
+        set_sink_queue_size(sink.name, queue.qsize())
+
+    async def _sink_worker_loop(
+        self,
+        sink: DataSink,
+        queue: asyncio.Queue[tuple[str, Any]],
+    ) -> None:
+        """Drain ``queue`` and publish entries via ``sink``.
+
+        Exits when the shutdown sentinel is received. Exceptions from
+        ``_safe_publish`` are swallowed inside that helper, so the worker
+        never dies on a single bad event.
+
+        Cancellation safety: if the worker is cancelled mid-publish (e.g.
+        ``drain_queues`` timeout fires), the in-flight event is routed
+        through ``sink.buffer_event`` *before* ``task_done`` acks the
+        queue. Otherwise the event would be lost — ``task_done`` runs in
+        ``finally`` regardless of how the publish exits, but
+        ``CancelledError`` bypasses ``except Exception`` and never
+        reached the retry/buffer branch.
+        """
+        while True:
+            item = await queue.get()
+            acked = False
+            try:
+                if item is _SHUTDOWN_SENTINEL:
+                    queue.task_done()
+                    acked = True
+                    return
+                topic, data = item
+                self._publish_stats["scheduled"] += 1
+                try:
+                    await self._safe_publish(sink, topic, data)
+                except asyncio.CancelledError:
+                    # Drain timeout / shutdown forced a cancel mid-publish.
+                    # Salvage the event by handing it to the sink's failed
+                    # buffer so the next reconnect/drain can retry it.
+                    self._safe_buffer_event(sink, topic, data, reason="cancelled")
+                    queue.task_done()
+                    acked = True
+                    set_sink_queue_size(sink.name, queue.qsize())
+                    raise
+                except Exception:
+                    # _safe_publish handles its own logging; this is a
+                    # defence-in-depth guard so a bug in the helper can't
+                    # take the worker out. The retry/buffer logic inside
+                    # the sink owns the routing decision.
+                    logger.exception(
+                        "data_sink_worker_unhandled_exception",
+                        sink=sink.name,
+                        topic=topic,
+                    )
+            finally:
+                if not acked:
+                    queue.task_done()
+                    set_sink_queue_size(sink.name, queue.qsize())
+
+    def _safe_buffer_event(
+        self,
+        sink: DataSink,
+        topic: str,
+        data: dict[str, Any] | str | bytes,
+        *,
+        reason: str,
+    ) -> None:
+        """Route an in-flight event to the sink's failed buffer if supported.
+
+        Used when a worker is cancelled mid-publish, so events that have
+        been pulled from the queue aren't silently dropped. Sinks without
+        a ``buffer_event`` hook (rare in production — only test stubs)
+        cannot rescue the event, but we still log so the loss is visible.
+        """
+        buffer = getattr(sink, "buffer_event", None)
+        if callable(buffer):
+            try:
+                buffer(topic, data)
                 logger.warning(
-                    "data_sink_backpressure_drop",
+                    "data_sink_worker_buffered_inflight_event",
                     sink=sink.name,
                     topic=topic,
-                    max_in_flight=self._max_in_flight_per_sink,
+                    reason=reason,
                 )
-                if not sink.record_publish_metrics:
-                    record_sink_publish(sink=sink.name, topic=topic, success=False)
-                continue
-
-            self._publish_stats["scheduled"] += 1
-            task = asyncio.create_task(self._safe_publish_with_release(sink, topic, data))
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
+                return
+            except Exception:
+                logger.exception(
+                    "data_sink_worker_buffer_failed",
+                    sink=sink.name,
+                    topic=topic,
+                    reason=reason,
+                )
+        logger.warning(
+            "data_sink_worker_inflight_event_lost",
+            sink=sink.name,
+            topic=topic,
+            reason=reason,
+        )
 
     async def publish_all_batch(
         self,
@@ -262,38 +444,6 @@ class DataSinkRegistry:
 
         return total_published
 
-    async def _try_acquire_sink_slot(self, sink_name: str) -> bool:
-        """Try to reserve an in-flight publish slot with a short timeout.
-
-        Waits up to 2 seconds for a slot to become available during burst
-        publishing (e.g., batch backfill or EOD polls). This prevents
-        silently dropping events during short-lived spikes while still
-        protecting against unbounded backlog.
-        """
-        sem = self._sink_semaphores.get(sink_name)
-        if sem is None:
-            sem = asyncio.Semaphore(self._max_in_flight_per_sink)
-            self._sink_semaphores[sink_name] = sem
-        try:
-            await asyncio.wait_for(sem.acquire(), timeout=2.0)
-            return True
-        except TimeoutError:
-            return False
-
-    async def _safe_publish_with_release(
-        self,
-        sink: DataSink,
-        topic: str,
-        data: dict[str, Any] | str | bytes,
-    ) -> None:
-        """Publish and always release the per-sink in-flight slot."""
-        try:
-            await self._safe_publish(sink, topic, data)
-        finally:
-            sem = self._sink_semaphores.get(sink.name)
-            if sem is not None:
-                sem.release()
-
     async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish with error handling."""
         try:
@@ -349,9 +499,89 @@ class DataSinkRegistry:
                 results[sink.name] = False
         return results
 
+    async def drain_queues(self, timeout_seconds: float = 5.0) -> None:
+        """Drain pending queue items and stop worker pools.
+
+        Awaits ``queue.join()`` to flush every queued event, then sends one
+        shutdown sentinel per worker so each worker exits cleanly. Bounded
+        by ``timeout_seconds`` so a stuck sink can't block shutdown forever.
+        """
+        if not self._sink_queues:
+            return
+
+        # Phase 1: flush all queued events. queue.join() returns once every
+        # item that's been put() has had task_done() called on it — i.e.
+        # all events have been published.
+        async def _flush_one(name: str, queue: asyncio.Queue) -> None:
+            await queue.join()
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(_flush_one(name, q) for name, q in self._sink_queues.items()),
+                    return_exceptions=True,
+                ),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            logger.warning(
+                "data_sink_flush_timeout",
+                timeout_seconds=timeout_seconds,
+                queue_depths={name: q.qsize() for name, q in self._sink_queues.items()},
+            )
+
+        # Phase 2: send sentinels to wind down workers. Use put() with the
+        # remaining budget so a hammered queue (full of post-flush late
+        # arrivals) doesn't lose its sentinel.
+        for sink_name, workers in self._sink_workers.items():
+            queue = self._sink_queues.get(sink_name)
+            if queue is None:
+                continue
+            for _ in workers:
+                try:
+                    await asyncio.wait_for(
+                        queue.put(_SHUTDOWN_SENTINEL),
+                        timeout=max(0.1, timeout_seconds / 2),
+                    )
+                except TimeoutError:
+                    # Hard force: cancel remaining workers if sentinel won't fit.
+                    for worker in workers:
+                        if not worker.done():
+                            worker.cancel()
+                    break
+
+        pending: list[asyncio.Task[None]] = []
+        for workers in self._sink_workers.values():
+            pending.extend(workers)
+
+        if not pending:
+            return
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            logger.warning(
+                "data_sink_drain_timeout",
+                timeout_seconds=timeout_seconds,
+                pending_workers=sum(1 for w in pending if not w.done()),
+            )
+            for worker in pending:
+                if not worker.done():
+                    worker.cancel()
+        finally:
+            for sink_name in list(self._sink_queues.keys()):
+                set_sink_queue_size(sink_name, 0)
+
     async def close_all(self) -> None:
         """Close all sinks and the dedup cache."""
         self.disable()
+
+        # Drain bounded-queue workers before tearing down sinks so any
+        # in-flight events get a final publish attempt.
+        await self.drain_queues()
 
         # Close the dedup cache first to prevent new operations against a
         # closing Redis connection (avoids "Event loop is closed" errors).

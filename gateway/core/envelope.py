@@ -8,7 +8,6 @@ Provides:
 """
 
 import hashlib
-import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -18,6 +17,16 @@ from pydantic import BaseModel, Field
 from gateway.core.logger import logger
 from gateway.core.metrics import record_envelope_created
 from gateway.core.timeutils import parse_timestamp
+
+
+class EnvelopeWrapError(RuntimeError):
+    """Raised when envelope construction fails and strict_envelopes=True.
+
+    The default lenient behavior returns a degraded fallback envelope so the
+    pipeline keeps moving; strict mode promotes that into a hard failure
+    surface so silent data corruption is preferred over loud errors.
+    """
+
 
 # Schema version for envelope format
 SCHEMA_VERSION = "v1"
@@ -409,7 +418,23 @@ def wrap_event(
             error=str(e),
             exc_info=True,
         )
-        # Return minimal fallback envelope
+        # Strict mode: promote silent corruption into a loud failure. The
+        # caller's try/except (or FastAPI exception handler) is responsible
+        # for deciding whether to drop the event, retry, or 500 the request.
+        # Lenient mode (default): return a minimal fallback envelope so the
+        # pipeline keeps moving. The fallback is flagged with
+        # quality_flags=["error"] so downstream consumers can detect it.
+        try:
+            from gateway.config import get_settings
+
+            if get_settings().strict_envelopes:
+                raise EnvelopeWrapError(f"wrap_event failed for {provider}/{feed}/{symbol}: {e}") from e
+        except EnvelopeWrapError:
+            raise
+        except Exception:
+            # Settings unavailable (e.g. during very early init) — treat as lenient.
+            pass
+
         return {
             "event_id": event_id,
             "provider": provider,
@@ -440,8 +465,18 @@ def fast_wrap_streaming_event(
     Skips:
     - Pydantic model validation (assumes dict)
     - Instrument type inference (passed in)
-    - Content hashing (uses fast random ID)
-    - Extensive unique field extraction
+    - Extensive unique field extraction (uses feed-specific tight fields)
+
+    The event_id is a CONTENT-derived BLAKE2b hash (32 hex chars), NOT a
+    random ID. Heber's three-layer dedup (bloom filter at consumer, dict at
+    writer, dedupe at compactor) all key on event_id; random IDs defeat all
+    three layers and produce duplicate records on every Alpaca reconnect/
+    replay. The hash is built from a small tuple per feed-type (e.g. quotes:
+    bp/ap/bs/as; trades: trade_id; bars: timeframe/timestamp) so two distinct
+    quotes at the same millisecond don't collide.
+
+    BLAKE2b on a ~80-byte input is sub-microsecond on modern CPUs — earlier
+    benchmarks ("~5-10us") were stale.
 
     Args:
         event: Raw event dict
@@ -493,11 +528,16 @@ def fast_wrap_streaming_event(
         # Equity is just equity:SYMBOL
         inst_key = f"equity:{symbol}" if instrument_type == "equity" else make_instrument_key(symbol, instrument_type)
 
-    # event_id - fast random 32-char hex (skip BLAKE2b/SHA256)
-    # Using urandom or simple string construction is faster than hashing content.
-    # UUID4 is ~1-2us. Hashing 100 bytes is ~5-10us.
-    # Let's use os.urandom(16).hex()
-    event_id = os.urandom(16).hex()
+    # event_id - content-derived BLAKE2b hash for cross-reconnect dedup compatibility.
+    # Build a tight key from feed-specific unique fields so two genuinely-distinct
+    # events at the same timestamp don't collide (e.g. multiple OPRA quotes for the
+    # same symbol within the same millisecond have different bid/ask values).
+    unique_fields = _extract_unique_fields(feed, event)
+    parts = [provider, feed, inst_key, ts_event_str]
+    if sequence is not None:
+        parts.append(str(sequence))
+    parts.extend(str(f) for f in unique_fields if f is not None)
+    event_id = hashlib.blake2b("|".join(parts).encode("utf-8"), digest_size=16, usedforsecurity=False).hexdigest()
 
     lineage = {}
     if sequence is not None:

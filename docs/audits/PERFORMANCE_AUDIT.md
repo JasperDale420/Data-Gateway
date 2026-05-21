@@ -47,20 +47,11 @@ The fastest, lowest-risk wins are:
 - Remaining low-risk follow-up:
   - Optional: evaluate faster JSON codec (`orjson`/equivalent) behind compatibility guardrails for additional parse/dump CPU reduction.
 
-1. Stream path backpressure coupling: sink publish blocked client message path (remediated 2026-02-07).
+1. Stream path backpressure coupling: sink publish blocked client message path (remediated 2026-02-07, superseded 2026-05-20).
 
-- Evidence:
-  - Sink publish now schedules off callback path via `_schedule_stream_sink_publish(...)`: `gateway/main.py`.
-  - Bounded scheduling guardrails, runtime limit configuration, and shutdown draining are in place: `gateway/main.py` (`_configure_stream_sink_dispatch_limits`, `_drain_stream_sink_publish_tasks`).
-  - Stream-to-sink scheduler telemetry is now emitted for calibration: `gateway/core/metrics.py` (`gateway_stream_sink_dispatch_events_total`, `gateway_stream_sink_pending_tasks`, `gateway_stream_sink_dispatch_limit`) and hooked into scheduler lifecycle in `gateway/main.py`.
-  - Admin status now exposes stream scheduler telemetry snapshot via `/api/v1/status` (`stream_sink_dispatch`) for operator visibility during tuning.
-  - Stream sink telemetry snapshots now include derived calibration signals (`pending_utilization`, `completion_rate`, `drop_rate`) via `gateway/core/metrics.py`.
-- Impact: Stream callback no longer waits on sink publish/dedup I/O, reducing callback latency coupling under sink backpressure.
-- Remaining low-risk follow-up:
-  - Calibrate `data_sink_stream_publish_max_inflight` and `data_sink_stream_publish_max_pending` using the new dispatch telemetry under production-like fanout load.
-  - Additional combined optimization batch (2026-02-09):
-    - `gateway/core/metrics.py` now adds stream sink calibration guidance in `get_stream_sink_dispatch_snapshot()` with `completion_gap`, `backpressure_level`, and actionable `recommendations` derived from pending utilization, completion rate, and drop rate.
-    - Regression coverage added in `/Users/jacobmcmillan/Empire/Data-Gateway/tests/test_metrics.py` (`test_stream_sink_dispatch_snapshot_includes_calibration_guidance`).
+- Original remediation (2026-02-07): sink publish was moved off the WS callback via a fire-and-forget `_schedule_stream_sink_publish(...)` in `gateway/main.py`, with a 512-task pending cap, `_configure_stream_sink_dispatch_limits`, `_drain_stream_sink_publish_tasks`, and calibration telemetry (`gateway_stream_sink_dispatch_events_total`, `gateway_stream_sink_pending_tasks`, `gateway_stream_sink_dispatch_limit`).
+- Why it was superseded (2026-05-20): the 512-pending-task cap dropped events at market open (32 757 drops on 2026-05-15 alone, 5 872 on 2026-05-18), losing them to Heber permanently. The outer fire-and-forget gate was a second drop-on-saturation layer in front of the `DataSinkRegistry`'s own per-sink semaphore (later replaced with a bounded queue in the same change), so the two layers compounded rather than cooperated.
+- Current design: `_on_stream_data` now `await`s `registry.publish_all(...)` directly. The registry's bounded queue (size `data_sink_queue_size`, default 4096) + worker pool (size `data_sink_worker_count`, default 8) is the single in-process gate. Producers block briefly (`data_sink_producer_block_timeout_seconds`, default 0.1) and only drop on producer-block-timeout exhaustion, which is paged immediately via the `SinkProducerTimeoutDrops` alert. The `_schedule_stream_sink_publish` scaffolding, `gateway_stream_sink_dispatch_*` metrics, and the obsolete `GATEWAY_DATA_SINK_STREAM_PUBLISH_MAX_*` env vars have all been removed.
 
 1. Stream fanout per-message task burst (remediated 2026-02-07).
 

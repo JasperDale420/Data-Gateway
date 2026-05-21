@@ -14,8 +14,16 @@ services:
       - GATEWAY_CACHE_REDIS_URL=redis://redis:6379/0
       - GATEWAY_DATA_SINK_REDIS_URL=redis://redis:6379/0
       - REDIS_URL=redis://redis:6379/0
-      # Increase stream buffer for large backfills (default 100K too small for 300K+ record jobs)
-      - GATEWAY_DATA_SINK_MAX_STREAM_LEN=500000
+      # Stream buffer for large backfills. Tuned alongside Redis maxmemory:
+      # ~3KB/entry × 300K = ~900MB worst-case stream size, fits under the 2GB
+      # Redis cap with room for the dedup cache + heber:watch/snapshots.
+      # The previous 500K cap (with Redis maxmemory=1GB) was the root cause of
+      # the 2026-05-05 sink outage: streams grew past Redis capacity, XADD
+      # latency spiked, the data_sink:redis_streams circuit breaker opened,
+      # and ~32 hours of UW data was lost from the bounded failed-event
+      # buffer. Default in code is 100K; backfill jobs >300K records should
+      # be split or temporarily raise this knob via env override.
+      - GATEWAY_DATA_SINK_MAX_STREAM_LEN=300000
       # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.)
       - GATEWAY_UW_EOD_ENABLED=true
       # Enable minute-level Alpaca option chain capture for Heber replay.
@@ -66,7 +74,12 @@ services:
     container_name: data-gateway-redis
     ports:
       - "6379:6379"
-    command: redis-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy allkeys-lru
+    # maxmemory raised from 1gb to 2gb on 2026-05-06: gives 4× headroom
+    # for the heber:events stream (~900MB worst case at 300K entries), the
+    # dedup cache, heber:watch/snapshots, and burst margin. Without this
+    # headroom the 500K stream cap could grow past 1GB and cause the
+    # sink-side circuit breaker to open silently (RCA: 2026-05-05 outage).
+    command: redis-server --save "" --appendonly no --maxmemory 2gb --maxmemory-policy allkeys-lru
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]

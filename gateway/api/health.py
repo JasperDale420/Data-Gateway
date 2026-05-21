@@ -10,10 +10,13 @@ from fastapi.responses import JSONResponse
 
 from gateway import __version__
 from gateway.api.deps import get_cache, get_connection_manager, get_sink_registry
+from gateway.config import get_settings
 from gateway.core.cache import InMemoryCache
 from gateway.core.connections import ConnectionManager
+from gateway.core.globals import get_multiplexer
 from gateway.core.logger import logger
 from gateway.core.shutdown import ShutdownCoordinator
+from gateway.core.stream import AlpacaStreamType
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -97,8 +100,42 @@ async def readiness(
                 _LAST_SINK_ERROR_LOG = time.time()
                 logger.exception("readiness_sink_check_failed")
 
-    # Cache + connection readiness gate request serving; sink failures are reported as degraded.
-    all_ok = checks["cache"] == "ok" and checks["connections"] == "ok"
+    # Verify each eagerly-configured upstream stream is connected + authenticated.
+    # Trading bots poll /health/ready before opening their own WS at market open;
+    # we must NOT report "ready" until the upstream Alpaca connection is hot, or
+    # the first 9:30 ET subscribe will pay the cold-start cost we're trying to
+    # eliminate. Lazy-only streams are not part of the readiness contract.
+    settings = get_settings()
+    eager_types = [t.strip().lower() for t in (settings.stream_eager_connect_types or "").split(",") if t.strip()]
+    streams_status: dict[str, str] = {}
+    if eager_types:
+        try:
+            mux = get_multiplexer()
+        except RuntimeError:
+            mux = None  # multiplexer_skipped (no Alpaca creds) — not blocking
+        if mux is not None:
+            stocks_type = AlpacaStreamType.STOCKS_IEX if settings.stream_use_iex else AlpacaStreamType.STOCKS_SIP
+            type_map = {
+                "stocks": stocks_type,
+                "stocks_sip": AlpacaStreamType.STOCKS_SIP,
+                "stocks_iex": AlpacaStreamType.STOCKS_IEX,
+                "options": AlpacaStreamType.OPTIONS,
+                "crypto": AlpacaStreamType.CRYPTO,
+                "news": AlpacaStreamType.NEWS,
+            }
+            for name in eager_types:
+                stream_type = type_map.get(name)
+                if stream_type is None:
+                    streams_status[name] = "unknown"
+                    continue
+                streams_status[name] = "ok" if mux.is_stream_ready(stream_type) else "not_ready"
+        if streams_status:
+            checks["streams"] = streams_status
+
+    streams_ok = all(s == "ok" for s in streams_status.values()) if streams_status else True
+
+    # Cache + connection + eager-stream readiness gate request serving; sink failures are degraded.
+    all_ok = checks["cache"] == "ok" and checks["connections"] == "ok" and streams_ok
 
     return {
         "status": "ready" if all_ok else "not_ready",

@@ -15,8 +15,9 @@ from gateway.api.alpaca import (
     trading,
     watchlists,
 )
+from gateway.api.alpaca.common import ALPACA_ROUTER_PREFIX
 
-router = APIRouter(prefix="/api/v1/alpaca", tags=["alpaca"])
+router = APIRouter(prefix=ALPACA_ROUTER_PREFIX, tags=["alpaca"])
 
 # Stock data endpoints
 router.include_router(stock.router)

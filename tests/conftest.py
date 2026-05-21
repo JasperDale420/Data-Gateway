@@ -1,5 +1,19 @@
 """pytest configuration and fixtures."""
 
+import os
+import tempfile
+
+# Redirect log files to a per-session temp dir BEFORE any gateway import.
+# `gateway.main` calls `empire_core.logger.setup_logging("data-gateway")` at
+# import time, which reads EMPIRE_LOG_DIR and installs daily-rotating file
+# handlers writing to `./logs/data-gateway_*.log`. Without this redirect every
+# pytest run pollutes the production-shaped log files with test fixtures
+# (`raise RuntimeError("boom")`, mocked Redis errors, etc.), making
+# operational triage on a real deployment impossible.
+# `setdefault` lets CI or callers override (e.g. EMPIRE_LOG_DIR=/tmp/ci-logs).
+os.environ.setdefault("EMPIRE_LOG_DIR", tempfile.mkdtemp(prefix="gateway-test-logs-"))
+os.environ.setdefault("EMPIRE_LOG_LEVEL", "WARNING")
+
 from pathlib import Path
 
 import pytest

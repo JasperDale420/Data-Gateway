@@ -35,14 +35,31 @@ _nyse_cal: Any | None = None
 
 
 def _get_nyse_calendar() -> Any | None:
-    """Return the cached NYSE exchange calendar, or None if unavailable."""
+    """Return the cached NYSE exchange calendar, or None if unavailable.
+
+    Loaded with an explicit forward window of [today - 5 years, today + 10 years]
+    so queries about future dates (earnings calendars, expiry dates,
+    multi-year backtests) don't fall through to the hardcoded fallback. The
+    underlying exchange_calendars package's holiday rules can compute arbitrary
+    dates — the start/end here just bound the cached session index. Default
+    range without these args is only 1 year forward, which produced
+    out-of-range results for ~all 2027+ queries on a gateway running today.
+    """
     global _nyse_cal
     if not _XCALS_AVAILABLE:
         return None
     if _nyse_cal is None:
         try:
-            _nyse_cal = xcals.get_calendar("XNYS")
-            logger.info("exchange_calendar_loaded", exchange="XNYS")
+            today = date.today()
+            start = pd.Timestamp(date(today.year - 5, 1, 1))
+            end = pd.Timestamp(date(today.year + 10, 12, 31))
+            _nyse_cal = xcals.get_calendar("XNYS", start=start, end=end)
+            logger.info(
+                "exchange_calendar_loaded",
+                exchange="XNYS",
+                first_session=str(_nyse_cal.first_session.date()),
+                last_session=str(_nyse_cal.last_session.date()),
+            )
         except Exception:
             logger.exception("exchange_calendar_load_failed", exchange="XNYS")
             return None
@@ -517,10 +534,25 @@ class TradingCalendar:
 
         return self.REGULAR_START <= current_time < self.REGULAR_END
 
+    def today(self) -> date:
+        """Return today's date in the calendar's timezone (ET).
+
+        Use this instead of ``datetime.date.today()`` whenever the date will
+        be passed to other calendar methods. ``date.today()`` returns a
+        host-local date, which produces an off-by-one when the host runs in
+        UTC and the wall clock is past 8pm ET (UTC date is already tomorrow
+        in ET terms).
+        """
+        return datetime.now(self._tz).date()
+
     def next_trading_day(self, from_date: date | None = None) -> date:
-        """Get the next trading day."""
+        """Get the next trading day.
+
+        ``from_date`` defaults to today in the calendar's own timezone (ET),
+        via :meth:`today`.
+        """
         if from_date is None:
-            from_date = date.today()
+            from_date = self.today()
 
         current = from_date
         for _ in range(10):  # Max 10 days lookahead

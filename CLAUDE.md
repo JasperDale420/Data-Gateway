@@ -143,6 +143,21 @@ Every outbound event is wrapped in an `EventEnvelope` (`gateway/core/envelope.py
 - **Two paths**: `wrap_event()` (REST/batch, full validation) and `fast_wrap_streaming_event()` (WebSocket, skips Pydantic, uses random event_id for speed)
 - **Feed-specific dedup**: `FEED_UNIQUE_FIELDS` maps each feed type to fields used in event_id hashing
 
+#### Gotcha: `_infer_instrument_type` and per-underlying analytics
+
+`_infer_instrument_type` flags any payload with `strike` or `expiry` fields as
+`instrument_type=option`. For options-flow / option-contract data this is
+correct, but for **per-underlying analytics that include an expiry**
+(`iv_term_structure`, `iv_surface`-style feeds) it produces malformed
+`option:{symbol}` keys (no OCC suffix). Heber's writer-side validator rejects
+these and 100% of records drop on Bronze→Silver normalization.
+
+When adding a poller for a per-underlying feed that carries expiry fields,
+pass `instrument_type_override="equity"` and
+`instrument_key_override=f"equity:{ticker.upper()}"` to `wrap_event()`.
+`_poll_eod_iv_term_structure` in `gateway/core/uw_poller.py` is the
+reference example.
+
 ### Redis / Caching / Data Sink
 
 - **In-memory cache**: `InMemoryCache` (cachetools TTLCache) for REST responses. Configurable via `GATEWAY_CACHE_*` env vars.
@@ -181,7 +196,10 @@ API key auth via `config/clients.yaml`. Each client has: id, key, role (trader/a
 
 ### Background Services
 
-- **UW Poller**: Polls UnusualWhales every 5min for flow, darkpool, market_tide. Optional EOD mode for per-ticker snapshots (configurable hour/minute).
+- **UW Poller**: Polls UnusualWhales every 5min for flow, darkpool, market_tide. EOD
+  per-ticker snapshots (configurable hour/minute) cover: greek_exposure, iv_rank,
+  iv_term_structure, oi_change, historic_option_volume, short_interest,
+  short_volume, ftds.
 - **Treasury Poller**: Polls Alpha Vantage for treasury yields (2year, 10year default).
 - **Option Capture**: Periodic Alpaca option chain snapshots + optional WebSocket streaming for configured symbols.
 - **Backfill Engine**: Long-running historical data jobs. Chunks by date, rate-limits per provider, publishes through DataSinkRegistry.

@@ -254,6 +254,105 @@ async def test_get_option_trades_uses_opra_feed_by_default() -> None:
     assert fake_client.last_params == {"symbols": "SPY260618C00700000", "feed": "opra", "limit": 1000}
 
 
+# ---------------------------------------------------------------------------
+# close_position naked-call regression — must default to 100% when neither
+# qty nor percentage is supplied. The prior code passed both as None and
+# Alpaca's ClosePositionRequest raised ValidationError, which surfaced as a
+# 502 to callers and left their positions open at the broker.
+# ---------------------------------------------------------------------------
+
+
+class _FakeOrder:
+    def __init__(self, **fields: Any) -> None:
+        for k, v in fields.items():
+            setattr(self, k, v)
+
+
+class _FakeTradingClient:
+    """Records the arguments passed to close_position so the test can assert
+    on the ClosePositionRequest fields that were sent to the SDK."""
+
+    def __init__(self) -> None:
+        self.close_position_calls: list[dict[str, Any]] = []
+
+    def close_position(self, symbol: str, close_options: Any) -> _FakeOrder:
+        self.close_position_calls.append(
+            {
+                "symbol": symbol,
+                "qty": close_options.qty,
+                "percentage": close_options.percentage,
+            }
+        )
+        return _FakeOrder(id="closing-order-1", symbol=symbol, status="accepted")
+
+
+def test_close_position_defaults_to_full_close_when_qty_and_percentage_omitted() -> None:
+    """Bug fix: a naked DELETE /positions/<symbol> must close 100% rather
+    than triggering ValidationError → 502 with the position still open."""
+    provider = AlpacaProvider()
+    fake_client = _FakeTradingClient()
+    provider._trading_client = cast(Any, fake_client)
+
+    data = provider.close_position("aapl")
+
+    assert data["id"] == "closing-order-1"
+    assert len(fake_client.close_position_calls) == 1
+    call = fake_client.close_position_calls[0]
+    assert call["symbol"] == "AAPL"
+    # Naked call → percentage defaults to 100, qty stays None.
+    assert call["qty"] is None
+    assert call["percentage"] == "100.0"
+
+
+def test_close_position_explicit_qty_is_forwarded() -> None:
+    provider = AlpacaProvider()
+    fake_client = _FakeTradingClient()
+    provider._trading_client = cast(Any, fake_client)
+
+    provider.close_position("AAPL", qty=5.0)
+
+    call = fake_client.close_position_calls[0]
+    assert call["qty"] == "5.0"
+    assert call["percentage"] is None
+
+
+def test_close_position_explicit_percentage_is_forwarded() -> None:
+    provider = AlpacaProvider()
+    fake_client = _FakeTradingClient()
+    provider._trading_client = cast(Any, fake_client)
+
+    provider.close_position("AAPL", percentage=50.0)
+
+    call = fake_client.close_position_calls[0]
+    assert call["qty"] is None
+    assert call["percentage"] == "50.0"
+
+
+def test_close_position_qty_zero_is_forwarded_not_silently_defaulted() -> None:
+    """Edge case: qty=0 is falsy in Python — both the naked-default guard
+    and the ClosePositionRequest builder must use ``is None`` rather than
+    truthiness, otherwise qty=0 either silently becomes "close 100% of the
+    position" (the original bug under a different trigger) or gets
+    rewritten back to None and triggers the same ValidationError → 502
+    the naked-default guard was added to prevent.
+
+    Contract: qty=0 is forwarded verbatim ("0") to Alpaca, which is then
+    free to reject it remotely. The gateway must not rewrite the caller's
+    explicit intent."""
+    provider = AlpacaProvider()
+    fake_client = _FakeTradingClient()
+    provider._trading_client = cast(Any, fake_client)
+
+    provider.close_position("AAPL", qty=0)
+
+    call = fake_client.close_position_calls[0]
+    # qty=0 is forwarded as a literal "0" — NOT rewritten to None (which
+    # would re-trigger the original ValidationError) and NOT
+    # silently-defaulted to "percentage=100" by the naked-call guard.
+    assert call["qty"] == "0"
+    assert call["percentage"] is None
+
+
 @pytest.mark.asyncio
 async def test_initialize_allows_explicit_option_feed_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APCA_API_KEY_ID", "dummy-id")  # pragma: allowlist secret

@@ -102,7 +102,6 @@ from gateway.core.metrics import (
     init_uptime,
     record_stream_sink_dispatch_event,
     set_stream_sink_dispatch_limits_metrics,
-    set_stream_sink_pending_tasks,
     update_uptime,
 )
 from gateway.core.registry import ProviderRegistry
@@ -120,6 +119,13 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
     - payload: The raw normalized event data
 
     For backward compatibility, we include both 'envelope' and 'data' fields.
+
+    Sink dispatch is awaited inline. The registry owns a bounded queue +
+    worker pool — ``publish_all`` only blocks if the queue is full and
+    workers cannot drain it within ``data_sink_producer_block_timeout_seconds``
+    (default 100ms). Drops are surfaced via the
+    ``gateway_sink_producer_timeout_drops_total`` counter on the registry
+    side; there is no separate outer drop path here.
     """
     connections = get_connection_manager()
     connection = connections.get(client_id)
@@ -143,17 +149,30 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
                 error=str(e),
             )
 
-    # Publish to data sink for Heber storage (non-blocking)
+    # Publish to data sink for Heber storage. The registry's bounded queue
+    # is the single in-process gate — producers block briefly only if the
+    # queue is saturated, and drops show up as producer-timeout drops.
     sink_registry = _stream_sink_registry
     if sink_registry:
-        # Optimization: Pre-serialize to JSON string to avoid re-serialization in Redis sink
-        # envelope is already a dict, so we serialize it once here.
+        record_stream_sink_dispatch_event("scheduled")
         try:
-            envelope_json = orjson.dumps(envelope, default=str).decode()
-            _schedule_stream_sink_publish(sink_registry, envelope_json)
-        except Exception:
-            # Fallback to dict if serialization fails (unlikely)
-            _schedule_stream_sink_publish(sink_registry, envelope)
+            # Pre-serialize once so the Redis sink doesn't have to re-encode.
+            try:
+                payload: dict | str = orjson.dumps(envelope, default=str).decode()
+            except Exception:
+                payload = envelope
+            await sink_registry.publish_all(STREAM_SINK_TOPIC, payload)
+            record_stream_sink_dispatch_event("completed")
+        except asyncio.CancelledError:
+            record_stream_sink_dispatch_event("cancelled")
+            raise
+        except Exception as exc:
+            record_stream_sink_dispatch_event("failed")
+            logger.warning(
+                "stream_sink_publish_failed",
+                event_id=envelope.get("event_id", "unknown"),
+                error=str(exc),
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -162,110 +181,11 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
 
 _stream_sink_registry = None
 STREAM_SINK_TOPIC = "heber:events"
-DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH = 32
-DEFAULT_STREAM_SINK_MAX_PENDING_TASKS = 512
-
-_stream_sink_max_inflight_publish = DEFAULT_STREAM_SINK_MAX_INFLIGHT_PUBLISH
-_stream_sink_max_pending_tasks = DEFAULT_STREAM_SINK_MAX_PENDING_TASKS
-_stream_sink_publish_semaphore: asyncio.Semaphore | None = None
-_stream_sink_publish_tasks: set[asyncio.Task[None]] = set()
-
-
-def _configure_stream_sink_dispatch_limits(
-    *,
-    max_inflight_publish: int,
-    max_pending_tasks: int,
-) -> None:
-    """Configure stream-to-sink dispatch limits for this process."""
-    global _stream_sink_max_inflight_publish
-    global _stream_sink_max_pending_tasks
-    global _stream_sink_publish_semaphore
-
-    _stream_sink_max_inflight_publish = max(1, int(max_inflight_publish))
-    _stream_sink_max_pending_tasks = max(1, int(max_pending_tasks))
-    _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
-    set_stream_sink_dispatch_limits_metrics(
-        max_inflight_publish=_stream_sink_max_inflight_publish,
-        max_pending_tasks=_stream_sink_max_pending_tasks,
-    )
-    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
 
 
 def _set_stream_sink_registry(sink_registry) -> None:
     global _stream_sink_registry
     _stream_sink_registry = sink_registry
-
-
-def _get_stream_sink_publish_semaphore() -> asyncio.Semaphore:
-    global _stream_sink_publish_semaphore
-    if _stream_sink_publish_semaphore is None:
-        _stream_sink_publish_semaphore = asyncio.Semaphore(_stream_sink_max_inflight_publish)
-    return _stream_sink_publish_semaphore
-
-
-def _on_stream_sink_publish_done(task: asyncio.Task[None]) -> None:
-    _stream_sink_publish_tasks.discard(task)
-    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
-    if task.cancelled():
-        record_stream_sink_dispatch_event("cancelled")
-        return
-    exc = task.exception()
-    if exc:
-        record_stream_sink_dispatch_event("failed")
-        logger.warning("stream_sink_publish_task_failed", error=str(exc))
-        return
-    record_stream_sink_dispatch_event("completed")
-
-
-async def _publish_stream_event(sink_registry, envelope: dict | str) -> None:
-    semaphore = _get_stream_sink_publish_semaphore()
-    async with semaphore:
-        await sink_registry.publish_all(STREAM_SINK_TOPIC, envelope)
-
-
-def _schedule_stream_sink_publish(sink_registry, envelope: dict | str) -> None:
-    if len(_stream_sink_publish_tasks) >= _stream_sink_max_pending_tasks:
-        record_stream_sink_dispatch_event("dropped_backpressure")
-        # Extract event_id safely whether envelope is dict or string
-        event_id = "unknown"
-        if isinstance(envelope, dict):
-            event_id = envelope.get("event_id", "unknown")
-        # Creating a task just to log dropped event ID from string is overkill, skip parsing
-
-        logger.warning(
-            "stream_sink_publish_backpressure_drop",
-            pending_tasks=len(_stream_sink_publish_tasks),
-            max_pending_tasks=_stream_sink_max_pending_tasks,
-            event_id=event_id,
-        )
-        return
-
-    task = asyncio.create_task(_publish_stream_event(sink_registry, envelope))
-    _stream_sink_publish_tasks.add(task)
-    record_stream_sink_dispatch_event("scheduled")
-    set_stream_sink_pending_tasks(len(_stream_sink_publish_tasks))
-    task.add_done_callback(_on_stream_sink_publish_done)
-
-
-async def _drain_stream_sink_publish_tasks(timeout_seconds: float = 2.0) -> None:
-    if not _stream_sink_publish_tasks:
-        return
-
-    pending = list(_stream_sink_publish_tasks)
-    try:
-        await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout_seconds)
-    except TimeoutError:
-        logger.warning(
-            "stream_sink_publish_drain_timeout",
-            timeout_seconds=timeout_seconds,
-            pending_tasks=len(_stream_sink_publish_tasks),
-        )
-    finally:
-        for task in pending:
-            if not task.done():
-                task.cancel()
-        _stream_sink_publish_tasks.clear()
-        set_stream_sink_pending_tasks(0)
 
 
 @asynccontextmanager
@@ -274,9 +194,14 @@ async def lifespan(app: FastAPI):
     import signal
 
     settings = get_settings()
-    _configure_stream_sink_dispatch_limits(
-        max_inflight_publish=settings.data_sink_stream_publish_max_inflight,
-        max_pending_tasks=settings.data_sink_stream_publish_max_pending,
+    # Expose the registry's bounded-queue limits on the stream-sink
+    # dispatch snapshot so admin/health surfaces still report queue
+    # capacity + worker count. The "max_inflight_publish" label maps to
+    # the registry worker count (concurrency for sink publishes) and
+    # "max_pending_tasks" maps to the registry queue depth.
+    set_stream_sink_dispatch_limits_metrics(
+        max_inflight_publish=settings.data_sink_worker_count,
+        max_pending_tasks=settings.data_sink_queue_size,
     )
     _set_stream_sink_registry(None)
 
@@ -301,15 +226,23 @@ async def lifespan(app: FastAPI):
 
     uptime_task = asyncio.create_task(_uptime_loop())
 
-    # Initialize provider registry
+    # Initialize provider registry. In production (debug=False) we enforce
+    # `required: true` providers — gateway refuses to boot if a critical
+    # provider fails to initialize, instead of silently degrading. Local dev
+    # (debug=True) keeps the lenient behavior so developers can run without
+    # all 7 provider keys.
     registry = ProviderRegistry()
-    await registry.load_from_config(settings.providers_config_path)
+    await registry.load_from_config(settings.providers_config_path, strict_required=not settings.debug)
     set_registry(registry)
 
     # Initialize stream multiplexer (only if credentials are set)
     multiplexer = None
     if settings.alpaca_api_key and settings.alpaca_secret_key:
         connections = get_connection_manager()
+        # Parse comma-separated eager-connect list. "stocks" is the default —
+        # so the first 9:30 ET subscribe by a trading bot doesn't pay the
+        # upstream Alpaca cold-start (~30s of TLS + auth + first-bar drain).
+        eager_types = [t.strip().lower() for t in (settings.stream_eager_connect_types or "").split(",") if t.strip()]
         multiplexer = StreamMultiplexer(
             api_key=settings.alpaca_api_key,
             api_secret=settings.alpaca_secret_key,
@@ -320,12 +253,14 @@ async def lifespan(app: FastAPI):
             fanout_max_inflight=settings.stream_fanout_max_inflight,
             fanout_batch_size=settings.stream_fanout_batch_size,
             on_broadcast=connections.broadcast_to_connection_ids,
+            eager_connect_types=eager_types,
         )
         set_multiplexer(multiplexer)
         await multiplexer.start()
         logger.info(
             "multiplexer_initialized",
             lazy_connect=settings.stream_lazy_connect,
+            eager_connect_types=eager_types,
             options_feed=settings.stream_options_feed,
         )
     else:
@@ -339,7 +274,11 @@ async def lifespan(app: FastAPI):
         from gateway.core.globals import set_sink_registry
         from gateway.core.redis_sink import RedisStreamsSink
 
-        sink_registry = DataSinkRegistry(max_in_flight_per_sink=settings.data_sink_max_inflight_per_sink)
+        sink_registry = DataSinkRegistry(
+            queue_size=settings.data_sink_queue_size,
+            worker_count=settings.data_sink_worker_count,
+            producer_block_timeout_seconds=settings.data_sink_producer_block_timeout_seconds,
+        )
         redis_sink = RedisStreamsSink(
             redis_url=settings.data_sink_redis_url,
             max_len=settings.data_sink_max_stream_len,
@@ -439,6 +378,80 @@ async def lifespan(app: FastAPI):
             )
             logger.warning("treasury_poller_skipped", reason=reason)
 
+    # Start Alpaca quotes REST-fallback poller (ensures equity quotes flow to Heber
+    # without requiring a WebSocket client to subscribe).
+    quotes_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.quotes_poller_enabled:
+        if registry.get("alpaca") is not None:
+            from gateway.core.quotes_poller import start_quotes_poller
+
+            quotes_poller = await start_quotes_poller(
+                symbols=settings.quotes_poller_symbol_list,
+                poll_interval_seconds=settings.quotes_poller_interval_seconds,
+            )
+            logger.info(
+                "quotes_poller_initialized",
+                symbols=len(settings.quotes_poller_symbol_list) if settings.quotes_poller_symbol_list else "default",
+                interval_seconds=settings.quotes_poller_interval_seconds,
+            )
+        else:
+            logger.warning("quotes_poller_skipped", reason="Alpaca provider not available")
+
+    # Start Alpaca trades REST-fallback poller (same rationale as quotes_poller).
+    trades_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.trades_poller_enabled:
+        if registry.get("alpaca") is not None:
+            from gateway.core.trades_poller import start_trades_poller
+
+            trades_poller = await start_trades_poller(
+                symbols=settings.trades_poller_symbol_list,
+                poll_interval_seconds=settings.trades_poller_interval_seconds,
+            )
+            logger.info(
+                "trades_poller_initialized",
+                symbols=len(settings.trades_poller_symbol_list) if settings.trades_poller_symbol_list else "default",
+                interval_seconds=settings.trades_poller_interval_seconds,
+            )
+        else:
+            logger.warning("trades_poller_skipped", reason="Alpaca provider not available")
+
+    # Start Alpaca crypto poller (24/7 — no market-hours gate).
+    crypto_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.crypto_poller_enabled:
+        if registry.get("alpaca") is not None:
+            from gateway.core.crypto_poller import start_crypto_poller
+
+            crypto_poller = await start_crypto_poller(
+                pairs=settings.crypto_poller_pair_list,
+                poll_interval_seconds=settings.crypto_poller_interval_seconds,
+            )
+            logger.info(
+                "crypto_poller_initialized",
+                pairs=len(settings.crypto_poller_pair_list) if settings.crypto_poller_pair_list else "default",
+                interval_seconds=settings.crypto_poller_interval_seconds,
+            )
+        else:
+            logger.warning("crypto_poller_skipped", reason="Alpaca provider not available")
+
+    # Start Alpaca news poller (REST-based; news WS only delivers when a client subscribes).
+    news_poller = None
+    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.news_poller_enabled:
+        if registry.get("alpaca") is not None:
+            from gateway.core.news_poller import start_news_poller
+
+            news_poller = await start_news_poller(
+                symbols=settings.news_poller_symbol_list,
+                poll_interval_seconds=settings.news_poller_interval_seconds,
+                fetch_limit=settings.news_poller_fetch_limit,
+            )
+            logger.info(
+                "news_poller_initialized",
+                symbols=settings.news_poller_symbol_list or "all",
+                interval_seconds=settings.news_poller_interval_seconds,
+            )
+        else:
+            logger.warning("news_poller_skipped", reason="Alpaca provider not available")
+
     option_capture_service = None
     if settings.option_capture_enabled:
         from gateway.core.option_capture import start_option_capture_service
@@ -497,8 +510,8 @@ async def lifespan(app: FastAPI):
     # Step 5: Close client connections with 1001 Going Away
     await connections.close_all(code=1001, reason="Going Away")
 
-    # Step 6: Flush stream-to-sink publish tasks and close sink connections
-    await _drain_stream_sink_publish_tasks()
+    # Step 6: Close sink connections — sink_registry.close_all() drains
+    # the bounded queue and tears down workers before disconnecting.
     if sink_registry:
         await sink_registry.close_all()
 
@@ -507,6 +520,26 @@ async def lifespan(app: FastAPI):
         from gateway.core.treasury_poller import stop_treasury_poller
 
         await stop_treasury_poller()
+
+    if quotes_poller:
+        from gateway.core.quotes_poller import stop_quotes_poller
+
+        await stop_quotes_poller()
+
+    if trades_poller:
+        from gateway.core.trades_poller import stop_trades_poller
+
+        await stop_trades_poller()
+
+    if crypto_poller:
+        from gateway.core.crypto_poller import stop_crypto_poller
+
+        await stop_crypto_poller()
+
+    if news_poller:
+        from gateway.core.news_poller import stop_news_poller
+
+        await stop_news_poller()
 
     if uw_poller:
         from gateway.core.uw_poller import stop_uw_poller
@@ -556,11 +589,23 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RateLimitMiddleware, default_limit=settings.rate_limit_default)
     # Global rate limit (PRD 7.5.1-2) before per-client limits
-    app.add_middleware(GlobalRateLimitMiddleware, trust_proxy_headers=settings.behind_trusted_proxy)
+    app.add_middleware(
+        GlobalRateLimitMiddleware,
+        trust_proxy_headers=settings.behind_trusted_proxy,
+        trusted_proxy_cidrs=settings.trusted_proxy_cidrs,
+    )
+    # CORS: API uses X-Gateway-Key header auth, not cookies, so credentials are
+    # not required. The CORS spec FORBIDS allow_origins=["*"] with credentials=True
+    # (browsers reject; non-browser clients bypass silently). Keep credentials off
+    # whenever using a wildcard origin.
+    cors_origins = ["*"] if settings.debug else []
+    cors_credentials = "*" not in cors_origins
+    if "*" in cors_origins and cors_credentials:
+        raise RuntimeError("CORS misconfig: allow_origins=['*'] with allow_credentials=True is forbidden")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.debug else [],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=cors_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

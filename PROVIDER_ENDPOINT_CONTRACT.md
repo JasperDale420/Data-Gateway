@@ -14,7 +14,7 @@ This file is generated from provider route declarations in `gateway/api/*`.
 
 | Provider | Route Count |
 |---|---:|
-| `unusual_whales` | 125 |
+| `unusual_whales` | 126 |
 | `finnhub` | 45 |
 | `alphavantage` | 30 |
 | `sec` | 10 |
@@ -95,8 +95,8 @@ This file is generated from provider route declarations in `gateway/api/*`.
 | `GET` | `/api/v1/uw/screener/contracts` | `gateway/api/uw/options_data.py:get_options_screener` |
 | `GET` | `/api/v1/uw/screener/option-contracts` | `gateway/api/uw/contracts.py:get_screener_option_contracts` |
 | `GET` | `/api/v1/uw/screener/options` | `gateway/api/uw/screener.py:get_screener_options` |
-| `GET` | `/api/v1/uw/screener/stocks` | `gateway/api/uw/screener.py:get_screener_stocks` |
 | `GET` | `/api/v1/uw/screener/stocks` | `gateway/api/uw/contracts.py:get_screener_stocks_extended` |
+| `GET` | `/api/v1/uw/screener/stocks` | `gateway/api/uw/screener.py:get_screener_stocks` |
 | `GET` | `/api/v1/uw/seasonality/market` | `gateway/api/uw/seasonality.py:get_market_seasonality` |
 | `GET` | `/api/v1/uw/seasonality/monthly-top-performers/{month}` | `gateway/api/uw/extended.py:get_monthly_top_performers` |
 | `GET` | `/api/v1/uw/seasonality/{symbol}` | `gateway/api/uw/seasonality.py:get_ticker_seasonality` |
@@ -135,6 +135,7 @@ This file is generated from provider route declarations in `gateway/api/*`.
 | `GET` | `/api/v1/uw/{symbol}/greek-flow-expiry` | `gateway/api/uw/misc.py:get_greek_flow_expiry` |
 | `GET` | `/api/v1/uw/{symbol}/interpolated-iv` | `gateway/api/uw/flow_analytics.py:get_interpolated_iv` |
 | `GET` | `/api/v1/uw/{symbol}/iv-rank` | `gateway/api/uw/options.py:get_iv_rank` |
+| `GET` | `/api/v1/uw/{symbol}/iv-rank` | `gateway/api/uw/volatility.py:get_iv_rank_alias` |
 | `GET` | `/api/v1/uw/{symbol}/iv-surface` | `gateway/api/uw/volatility.py:get_iv_surface` |
 | `GET` | `/api/v1/uw/{symbol}/iv-term-structure` | `gateway/api/uw/volatility.py:get_iv_term_structure` |
 | `GET` | `/api/v1/uw/{symbol}/max-pain` | `gateway/api/uw/options.py:get_max_pain` |

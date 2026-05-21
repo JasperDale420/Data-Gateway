@@ -164,20 +164,70 @@ SINK_PUBLISH = Counter(
     ["sink", "topic", "status"],  # status: success, error
 )
 
+# Failed-event buffer instrumentation. Without these, the only signal that the
+# RedisStreamsSink is dropping events on overflow is the per-eviction WARNING
+# log line — which we proved on 2026-05-05 fires hundreds of times per second
+# silently for hours when no operator is watching `docker logs`. The Counter
+# drives an alert; the Gauge provides a quick "how full is the buffer right
+# now" probe for dashboards / readiness checks.
+SINK_BUFFER_EVICTIONS = Counter(
+    "gateway_sink_buffer_evictions_total",
+    "Failed-event buffer evictions (oldest event dropped because buffer was full)",
+    ["sink"],
+)
+
+SINK_BUFFER_SIZE = Gauge(
+    "gateway_sink_buffer_size",
+    "Current number of events in the failed-event buffer",
+    ["sink"],
+)
+
+# Bounded-queue + worker-pool gauges/counters. The previous semaphore
+# implementation dropped on saturation silently and only emitted a
+# `data_sink_backpressure_drop` WARNING per drop. The new path uses a
+# bounded asyncio.Queue: producers block with a short timeout and only
+# drop if the timeout itself fires — i.e. the queue is full AND workers
+# can't drain it within `data_sink_producer_block_timeout_seconds`. That
+# is a true emergency (sink stalled or hard-overloaded) and warrants its
+# own counter + alert, distinct from steady-state semaphore behaviour.
+SINK_QUEUE_SIZE = Gauge(
+    "gateway_sink_queue_size",
+    "Current depth of the per-sink dispatch queue",
+    ["sink"],
+)
+
+SINK_QUEUE_CAPACITY = Gauge(
+    "gateway_sink_queue_capacity",
+    "Configured capacity of the per-sink dispatch queue",
+    ["sink"],
+)
+
+SINK_WORKER_COUNT = Gauge(
+    "gateway_sink_worker_count",
+    "Configured number of workers draining the per-sink dispatch queue",
+    ["sink"],
+)
+
+SINK_PRODUCER_TIMEOUT_DROPS = Counter(
+    "gateway_sink_producer_timeout_drops_total",
+    "Events dropped because the producer-side queue-put timed out — emergency-only",
+    ["sink"],
+)
+
 STREAM_SINK_DISPATCH_EVENTS = Counter(
     "gateway_stream_sink_dispatch_events_total",
-    "Stream-to-sink scheduler events",
-    ["status"],  # scheduled, dropped_backpressure, completed, failed, cancelled
+    "Stream-to-sink dispatch lifecycle events",
+    ["status"],  # scheduled, completed, failed, cancelled
 )
 
 STREAM_SINK_PENDING_TASKS = Gauge(
     "gateway_stream_sink_pending_tasks",
-    "Current number of queued stream-to-sink publish tasks",
+    "Current number of queued stream-to-sink dispatch tasks (registry queue depth)",
 )
 
 STREAM_SINK_DISPATCH_LIMIT = Gauge(
     "gateway_stream_sink_dispatch_limit",
-    "Configured stream-to-sink dispatch limits",
+    "Configured stream-to-sink dispatch limits (mirrors registry queue/worker config)",
     ["limit_type"],  # max_inflight_publish, max_pending_tasks
 )
 
@@ -692,6 +742,36 @@ def record_sink_publish(sink: str, topic: str, success: bool) -> None:
     SINK_PUBLISH.labels(sink=sink, topic=topic, status=status).inc()
 
 
+def record_sink_buffer_eviction(sink: str) -> None:
+    """Increment the buffer-eviction counter — drives the silent-data-loss alert."""
+    SINK_BUFFER_EVICTIONS.labels(sink=sink).inc()
+
+
+def set_sink_buffer_size(sink: str, size: int) -> None:
+    """Update the current failed-event buffer size for ``sink``."""
+    SINK_BUFFER_SIZE.labels(sink=sink).set(max(0, size))
+
+
+def set_sink_queue_size(sink: str, size: int) -> None:
+    """Update the current dispatch-queue depth for ``sink``."""
+    SINK_QUEUE_SIZE.labels(sink=sink).set(max(0, size))
+
+
+def set_sink_queue_capacity(sink: str, capacity: int) -> None:
+    """Set the configured dispatch-queue capacity for ``sink``."""
+    SINK_QUEUE_CAPACITY.labels(sink=sink).set(max(0, capacity))
+
+
+def set_sink_worker_count(sink: str, count: int) -> None:
+    """Set the configured worker count draining ``sink``'s dispatch queue."""
+    SINK_WORKER_COUNT.labels(sink=sink).set(max(0, count))
+
+
+def record_sink_producer_timeout_drop(sink: str) -> None:
+    """Increment the producer-side queue-put timeout counter (emergency drop)."""
+    SINK_PRODUCER_TIMEOUT_DROPS.labels(sink=sink).inc()
+
+
 def record_stream_sink_dispatch_event(status: str) -> None:
     """Record stream-to-sink scheduler lifecycle events."""
     STREAM_SINK_DISPATCH_EVENTS.labels(status=status).inc()
@@ -738,7 +818,17 @@ def _threshold_level(value: float, *, warning_at: float, critical_at: float) -> 
 
 
 def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
-    """Get stream-to-sink scheduler telemetry snapshot for admin status surfaces."""
+    """Get stream-to-sink dispatch telemetry snapshot for admin status surfaces.
+
+    "limits" mirror the registry's bounded-queue/worker-pool configuration:
+    - max_inflight_publish maps to ``data_sink_worker_count``
+    - max_pending_tasks  maps to ``data_sink_queue_size``
+
+    Drop accounting now lives on the registry as
+    ``gateway_sink_producer_timeout_drops_total`` (per-sink emergency
+    counter); this snapshot only tracks dispatch-call lifecycle
+    (scheduled / completed / failed / cancelled).
+    """
     snapshot = deepcopy(_STREAM_SINK_DISPATCH_SNAPSHOT)
     limits = snapshot.get("limits", {})
     events = snapshot.get("events", {})
@@ -747,30 +837,29 @@ def get_stream_sink_dispatch_snapshot() -> dict[str, Any]:
     pending_tasks = float(int(snapshot.get("pending_tasks", 0)))
     scheduled = float(int(events.get("scheduled", 0)))
     completed = float(int(events.get("completed", 0)))
-    dropped_backpressure = float(int(events.get("dropped_backpressure", 0)))
 
     pending_utilization = _safe_ratio(pending_tasks, max_pending_tasks)
     completion_rate = _safe_ratio(completed, scheduled)
-    drop_rate = _safe_ratio(dropped_backpressure, scheduled)
     backpressure_level = max(
         _threshold_level(pending_utilization, warning_at=0.7, critical_at=0.9),
-        _threshold_level(drop_rate, warning_at=0.01, critical_at=0.05),
+        _threshold_level(max(0.0, 1.0 - completion_rate), warning_at=0.05, critical_at=0.2),
         key=lambda level: {"healthy": 0, "warning": 1, "critical": 2}[level],
     )
     recommendations: list[str] = []
     if pending_utilization >= 0.7:
         recommendations.append(
-            "Increase data_sink_stream_publish_max_pending (max_pending_tasks) or reduce sink publish load."
+            "Increase data_sink_queue_size or data_sink_worker_count, or inspect sink publish latency."
         )
-    if drop_rate >= 0.01:
-        recommendations.append("Increase data_sink_stream_publish_max_inflight and inspect sink latency.")
     if completion_rate < 0.95:
         recommendations.append("Investigate sink publish failures/timeouts and callback backpressure.")
 
     snapshot["derived"] = {
         "pending_utilization": pending_utilization,
         "completion_rate": completion_rate,
-        "drop_rate": drop_rate,
+        # Producer-timeout drops live on the registry now; preserve the
+        # field for back-compat consumers but always emit 0.0 — operators
+        # should watch gateway_sink_producer_timeout_drops_total instead.
+        "drop_rate": 0.0,
         "completion_gap": max(0.0, 1.0 - completion_rate),
         "backpressure_level": backpressure_level,
         "recommendations": recommendations,

@@ -26,6 +26,16 @@ dependencies = [
     "alpaca-py>=0.34",
     "msgpack>=1.0",
     "orjson>=3.9",
+    "tenacity>=8.0",
+    # NYSE/XNYS trading calendar (holidays, early closes, sessions). Without this,
+    # gateway/core/calendar.py falls back to a hardcoded calendar that only covers
+    # 2024-2026 and would silently produce wrong answers in 2027. Pinned to match
+    # Orion (>=4.13.1); Kairos and Heber use >=4.5 — the >= is compatible with both.
+    "exchange-calendars>=4.13.1",
+    # Pandas is a hard transitive of exchange-calendars and yfinance; calendar.py
+    # imports it directly (`import pandas as pd` for Timestamp arithmetic) so make
+    # the requirement explicit. >=2.0 matches Kairos/Heber; pandas 3.x already in venv.
+    "pandas>=2.0",
     # unusualwhales SDK is installed separately in Docker via copied local package
 ]
 
@@ -45,6 +55,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=4.0",
+    "pytest-timeout>=2.0",
     "ruff>=0.5",
     "pyright>=1.1",
     "pre-commit>=4.0",
@@ -65,10 +76,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.ruff]
-extend = "../ruff-base.toml"
+# ruff-base.toml is a monorepo-root file (../ruff-base.toml) only available in
+# local dev.  CI checks out this repo standalone, so all settings are inlined
+# here instead of using `extend`.
 target-version = "py312"
 line-length = 120
 exclude = ["trading-bot"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]

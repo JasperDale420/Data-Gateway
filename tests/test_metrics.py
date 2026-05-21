@@ -133,27 +133,28 @@ def test_stream_sink_dispatch_snapshot_includes_derived_calibration_metrics() ->
     before = metrics.get_stream_sink_dispatch_snapshot()
     before_scheduled = int(before["events"].get("scheduled", 0))
     before_completed = int(before["events"].get("completed", 0))
-    before_dropped = int(before["events"].get("dropped_backpressure", 0))
 
     metrics.set_stream_sink_dispatch_limits_metrics(max_inflight_publish=5, max_pending_tasks=20)
     metrics.set_stream_sink_pending_tasks(10)
     metrics.record_stream_sink_dispatch_event("scheduled")
     metrics.record_stream_sink_dispatch_event("scheduled")
     metrics.record_stream_sink_dispatch_event("completed")
-    metrics.record_stream_sink_dispatch_event("dropped_backpressure")
+    # Drop accounting now lives on the registry side
+    # (gateway_sink_producer_timeout_drops_total). This snapshot's
+    # drop_rate is pinned to 0.0; backpressure is derived from queue
+    # utilization + completion gap instead.
+    metrics.record_stream_sink_dispatch_event("failed")
 
     after = metrics.get_stream_sink_dispatch_snapshot()
     derived = after["derived"]
 
     expected_scheduled = before_scheduled + 2
     expected_completed = before_completed + 1
-    expected_dropped = before_dropped + 1
     expected_completion_rate = expected_completed / expected_scheduled
-    expected_drop_rate = expected_dropped / expected_scheduled
 
     assert derived["pending_utilization"] == 0.5
     assert derived["completion_rate"] == expected_completion_rate
-    assert derived["drop_rate"] == expected_drop_rate
+    assert derived["drop_rate"] == 0.0
 
 
 def test_stream_fanout_snapshot_includes_derived_calibration_metrics() -> None:
@@ -278,15 +279,14 @@ def test_stream_sink_dispatch_snapshot_includes_calibration_guidance() -> None:
     metrics.set_stream_sink_dispatch_limits_metrics(max_inflight_publish=8, max_pending_tasks=100)
     metrics.set_stream_sink_pending_tasks(95)
     metrics.record_stream_sink_dispatch_event("scheduled")
-    metrics.record_stream_sink_dispatch_event("dropped_backpressure")
 
     snapshot = metrics.get_stream_sink_dispatch_snapshot()
     derived = snapshot["derived"]
-    expected_completion_rate = (before_completed) / (before_scheduled + 1)
+    expected_completion_rate = before_completed / (before_scheduled + 1)
 
     assert derived["backpressure_level"] in {"warning", "critical"}
     assert derived["completion_gap"] == max(0.0, 1.0 - expected_completion_rate)
-    assert any("max_pending_tasks" in hint for hint in derived["recommendations"])
+    assert any("data_sink_queue_size" in hint for hint in derived["recommendations"])
 
 
 def test_stream_fanout_snapshot_includes_calibration_guidance() -> None:

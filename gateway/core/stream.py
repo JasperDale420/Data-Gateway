@@ -26,7 +26,20 @@ from gateway.core.metrics import (
     record_stream_fanout_dispatch_event,
     set_stream_fanout_limits_metrics,
 )
+from gateway.core.security import SYMBOL_PATTERNS
 from gateway.core.validator import get_validator
+
+# OCC option contract format (e.g. "AAPL260116C00200000"). Used by
+# _sanitize_subscription_request to keep equity tickers off the OPRA
+# upstream and option contracts off SIP/IEX — Alpaca silently drops the
+# entire upstream subscribe when the symbol shape doesn't match the
+# stream, leaving downstream clients connected with 0 ticks.
+_OCC_OPTION_PATTERN = SYMBOL_PATTERNS["option_occ"]
+
+
+def _is_occ_option_symbol(symbol: str) -> bool:
+    return bool(_OCC_OPTION_PATTERN.match(symbol))
+
 
 DEFAULT_FANOUT_MAX_INFLIGHT = 100
 DEFAULT_FANOUT_BATCH_SIZE = 32
@@ -512,7 +525,15 @@ class UpstreamConnection:
         trades: set[str] | None,
         news: set[str] | None,
     ) -> tuple[set[str] | None, set[str] | None, set[str] | None, set[str] | None, list[str]]:
-        """Sanitize subscription request, returning (bars, quotes, trades, news, warnings)."""
+        """Sanitize subscription request, returning (bars, quotes, trades, news, warnings).
+
+        Filters out symbols that don't match the upstream stream's expected
+        shape: equity tickers off the OPTIONS (OPRA) stream, option contracts
+        off the STOCKS_SIP/STOCKS_IEX streams. Alpaca silently drops the
+        entire upstream subscribe payload when any symbol mismatches the
+        stream — without this filter a downstream client subscribe still
+        gets ``subscription_ack: ok`` but no ticks ever flow (2026-05-01 RCA).
+        """
         warnings: list[str] = []
         if self.stream_type == AlpacaStreamType.OPTIONS and bars:
             warnings.append(
@@ -525,7 +546,60 @@ class UpstreamConnection:
                 hint="Alpaca options websocket supports quotes and trades, not bars",
             )
             bars = None
+
+        bars, quotes, trades, warnings = self._filter_symbols_by_stream_shape(
+            bars=bars, quotes=quotes, trades=trades, warnings=warnings
+        )
         return bars, quotes, trades, news, warnings
+
+    def _filter_symbols_by_stream_shape(
+        self,
+        *,
+        bars: set[str] | None,
+        quotes: set[str] | None,
+        trades: set[str] | None,
+        warnings: list[str],
+    ) -> tuple[set[str] | None, set[str] | None, set[str] | None, list[str]]:
+        """Drop symbols whose shape doesn't match the upstream stream type.
+
+        - OPTIONS stream accepts only OCC-shaped symbols (e.g. ``AAPL260116C00200000``).
+        - STOCKS_SIP / STOCKS_IEX accept everything except OCC-shaped symbols.
+        - Other stream types (CRYPTO, NEWS) are passed through unchanged — their
+          symbol shapes (``BTC/USD``, free text) are out of scope here.
+        """
+        if self.stream_type == AlpacaStreamType.OPTIONS:
+            keep = _is_occ_option_symbol
+            label = "options"
+        elif self.stream_type in (AlpacaStreamType.STOCKS_SIP, AlpacaStreamType.STOCKS_IEX):
+            keep = lambda sym: not _is_occ_option_symbol(sym)  # noqa: E731
+            label = "stocks"
+        else:
+            return bars, quotes, trades, warnings
+
+        for feed_name, symbol_set in (("bars", bars), ("quotes", quotes), ("trades", trades)):
+            if not symbol_set:
+                continue
+            kept = {s for s in symbol_set if keep(s)}
+            dropped = symbol_set - kept
+            if dropped:
+                warnings.append(
+                    f"{label} stream ignoring {len(dropped)} symbol(s) "
+                    f"with mismatched shape on {feed_name}: {sorted(dropped)[:5]}" + ("..." if len(dropped) > 5 else "")
+                )
+                logger.warning(
+                    "stream_symbol_shape_mismatch",
+                    stream=self.stream_type.value,
+                    feed=feed_name,
+                    dropped_count=len(dropped),
+                    sample=sorted(dropped)[:5],
+                )
+            if feed_name == "bars":
+                bars = kept or None
+            elif feed_name == "quotes":
+                quotes = kept or None
+            else:
+                trades = kept or None
+        return bars, quotes, trades, warnings
 
     async def start(self) -> None:
         """Start the connection and receive loop."""
@@ -753,6 +827,7 @@ class StreamMultiplexer:
         fanout_max_inflight: int = DEFAULT_FANOUT_MAX_INFLIGHT,
         fanout_batch_size: int = DEFAULT_FANOUT_BATCH_SIZE,
         on_broadcast: Callable[[dict[str, Any] | str | bytes, list[str]], Awaitable[int]] | None = None,
+        eager_connect_types: list[str] | None = None,
     ) -> None:
         """Initialize multiplexer.
 
@@ -766,6 +841,10 @@ class StreamMultiplexer:
             fanout_max_inflight: Max concurrent callback deliveries per fanout batch.
             fanout_batch_size: Number of clients to dispatch per gather batch.
             on_broadcast: Optional callback for efficient broadcast (message, client_ids) -> count
+            eager_connect_types: Subset of stream-type names ("stocks", "options",
+                "crypto", "news") to connect eagerly at start(), regardless of
+                lazy_connect. Use this when you want a hot stocks pipe ready for
+                the 9:30 ET open without paying for an always-on options feed.
         """
         self.api_key = api_key
         self.api_secret = api_secret
@@ -774,6 +853,7 @@ class StreamMultiplexer:
         if self._options_feed not in {"opra", "indicative"}:
             raise ValueError("options_feed must be 'opra' or 'indicative'")
         self._lazy_connect = lazy_connect
+        self._eager_connect_types = {t.strip().lower() for t in (eager_connect_types or []) if t.strip()}
         self._fanout_max_inflight = max(1, fanout_max_inflight)
         self._fanout_client_batch_size = max(1, fanout_batch_size)
         self._on_broadcast = on_broadcast
@@ -827,12 +907,22 @@ class StreamMultiplexer:
     async def start(self) -> None:
         """Start the multiplexer.
 
-        If lazy_connect is True (default), connections are only established
-        when the first client subscribes to a stream. This works with Alpaca's
-        Basic plan which only allows 1 concurrent WebSocket connection.
+        Three connection modes (in order of precedence):
+        1. lazy_connect=False  → eagerly start ALL stream types (needs multi-conn plan).
+        2. eager_connect_types → eagerly start only the named stream types
+           (e.g. ["stocks"]) and leave others lazy. This is the recommended
+           production mode: stocks is hot for the 9:30 open, options/crypto/news
+           connect on demand. Avoids paying the upstream Alpaca cold-start cost
+           on the first client subscribe at market open (~30s observed on
+           2026-04-29).
+        3. lazy_connect=True with empty eager set → all streams lazy (Basic plan).
         """
         self._running = True
-        logger.info("multiplexer_starting", lazy_connect=self._lazy_connect)
+        logger.info(
+            "multiplexer_starting",
+            lazy_connect=self._lazy_connect,
+            eager_connect_types=sorted(self._eager_connect_types),
+        )
 
         if not self._lazy_connect:
             # Eager mode: start all connections immediately (requires multi-connection plan)
@@ -840,8 +930,42 @@ class StreamMultiplexer:
                 task = asyncio.create_task(conn.start())
                 self._tasks.append(task)
                 logger.info("stream_started", stream=stream_type.value)
+        elif self._eager_connect_types:
+            # Selective eager: start only the named stream types, leave rest lazy.
+            for stream_type, conn in self._connections.items():
+                if self._stream_type_in_eager_set(stream_type):
+                    task = asyncio.create_task(conn.start())
+                    self._tasks.append(task)
+                    logger.info("stream_started_eager", stream=stream_type.value)
+                else:
+                    logger.info("stream_lazy", stream=stream_type.value)
         else:
             logger.info("lazy_connect_enabled", message="Streams will connect on first subscription")
+
+    def _stream_type_in_eager_set(self, stream_type: AlpacaStreamType) -> bool:
+        """Match stream type against eager_connect_types config (case-insensitive).
+
+        "stocks" matches both STOCKS_SIP and STOCKS_IEX; the configured feed
+        (use_iex flag) determines which one is actually present in self._connections.
+        """
+        name = stream_type.value.lower()  # e.g. "stocks_sip", "stocks_iex", "options"
+        if name in self._eager_connect_types:
+            return True
+        if name.startswith("stocks_") and "stocks" in self._eager_connect_types:
+            return True
+        return False
+
+    def is_stream_ready(self, stream_type: AlpacaStreamType) -> bool:
+        """Return True if the named upstream is connected and authenticated.
+
+        UpstreamConnection.is_connected already gates on both socket OPEN and
+        the auth ACK. Used by the readiness probe to distinguish "Gateway process
+        up" from "Gateway can actually deliver streaming data right now."
+        """
+        conn = self._connections.get(stream_type)
+        if conn is None:
+            return False
+        return bool(conn.is_connected)
 
     async def stop(self) -> None:
         """Stop all upstream connections with aggressive cleanup.

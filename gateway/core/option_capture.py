@@ -97,10 +97,12 @@ class OptionCaptureService:
         calendar: SupportsMarketHours | None = None,
         now_fn: Any | None = None,
         loop_sleep_seconds: float = DEFAULT_LOOP_SLEEP_SECONDS,
+        publish_per_contract_trades: bool = False,
     ) -> None:
         self._alpaca_provider = alpaca_provider
         self._multiplexer = multiplexer
         self._sink_registry = sink_registry
+        self.publish_per_contract_trades = publish_per_contract_trades
         self.symbols = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
         self.interval_seconds = max(1, int(interval_seconds))
         self.market_hours_only = market_hours_only
@@ -151,6 +153,7 @@ class OptionCaptureService:
             symbol_timeout_overrides=settings.option_capture_symbol_timeout_map,
             websocket_enabled=settings.option_capture_ws_enabled,
             option_ws_contract_limit_per_symbol=settings.option_capture_ws_contract_limit_per_symbol,
+            publish_per_contract_trades=settings.option_capture_publish_per_contract_trades,
         )
 
     async def start(self) -> None:
@@ -233,6 +236,8 @@ class OptionCaptureService:
                         symbol_override=symbol,
                     )
                 )
+                if self.publish_per_contract_trades:
+                    envelopes.extend(self._build_per_contract_trade_envelopes(payload, current_time))
                 self._symbol_contracts[symbol] = ws_contracts
                 symbol_quality = self._build_symbol_quality_snapshot(
                     payload=payload,
@@ -592,6 +597,44 @@ class OptionCaptureService:
         if isinstance(contract, dict):
             return dict(contract)
         raise TypeError(f"Unsupported option snapshot contract type: {type(contract)!r}")
+
+    def _build_per_contract_trade_envelopes(
+        self,
+        snapshot_payload: dict[str, Any],
+        ts_ingest: datetime,
+    ) -> list[dict[str, Any]]:
+        """Emit feed=option_trades envelopes for each contract that has a trade.
+
+        Reuses the per-contract data already in chain_json — no extra REST calls.
+        Skips contracts with no last price (never traded today).
+        """
+        envelopes: list[dict[str, Any]] = []
+        chain = snapshot_payload.get("chain_json", {})
+        contracts = chain.get("data", {}).get("contracts", []) if isinstance(chain, dict) else []
+        for contract in contracts:
+            occ_symbol = contract.get("symbol")
+            last_price = _to_float(contract.get("last"))
+            if not occ_symbol or last_price is None or last_price <= 0:
+                continue
+            payload = {
+                "symbol": occ_symbol,
+                "price": last_price,
+                "size": contract.get("last_trade_size") or contract.get("volume") or 0,
+                "timestamp": contract.get("timestamp"),
+            }
+            envelopes.append(
+                wrap_event(
+                    event=payload,
+                    provider="alpaca",
+                    feed="option_trades",
+                    source="rest",
+                    ts_ingest=ts_ingest,
+                    instrument_type_override="option",
+                    instrument_key_override=f"option:OCC:{occ_symbol}",
+                    symbol_override=occ_symbol,
+                )
+            )
+        return envelopes
 
 
 _option_capture_service: OptionCaptureService | None = None

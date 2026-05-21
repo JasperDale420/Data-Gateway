@@ -242,12 +242,20 @@ def test_default_pool_size() -> None:
 
 
 def test_custom_pool_size() -> None:
-    """Custom pool size is accepted and clamped within bounds."""
+    """Custom pool size is accepted, with a defense-in-depth lower bound only.
+
+    Settings.data_sink_redis_pool_size enforces the upper bound (le=128) at
+    config-validation time, so RedisStreamsSink no longer applies an upper
+    cap directly. The lower bound max(1, ...) remains as defense-in-depth
+    for direct callers (tests, scripts).
+    """
     sink = RedisStreamsSink(redis_url="redis://localhost:6379/0", pool_size=16)
     assert sink._pool_size == 16
 
+    # Larger value is now accepted (the old min(64, ...) clamp was dead code
+    # masking the Settings-layer upper bound — see commit 465118b).
     sink_max = RedisStreamsSink(redis_url="redis://localhost:6379/0", pool_size=100)
-    assert sink_max._pool_size == 64  # Clamped to max
+    assert sink_max._pool_size == 100
 
     sink_min = RedisStreamsSink(redis_url="redis://localhost:6379/0", pool_size=0)
     assert sink_min._pool_size == 1  # Clamped to min
@@ -718,6 +726,37 @@ def test_buffer_evicts_oldest_when_full() -> None:
     topics = [t for t, _ in sink._failed_buffer]
     assert "topic.0" not in topics
     assert topics == ["topic.1", "topic.2", "topic.3"]
+
+
+def test_buffer_eviction_increments_prometheus_counter() -> None:
+    """Regression for the 2026-05-05 silent-data-loss outage.
+
+    The DG sink dropped events from the bounded retry buffer for 32 hours
+    while the only signal was a per-eviction WARNING log line. Prometheus
+    must see the eviction so the ``SinkBufferEvictionsActive`` alert fires
+    within minutes instead of going unnoticed for a full trading day.
+    """
+    from gateway.core.metrics import SINK_BUFFER_EVICTIONS, SINK_BUFFER_SIZE
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._failed_buffer = deque(maxlen=2)
+
+    label = "redis_streams"
+    eviction_counter = SINK_BUFFER_EVICTIONS.labels(sink=label)
+    size_gauge = SINK_BUFFER_SIZE.labels(sink=label)
+    start_evictions = eviction_counter._value.get()
+
+    # Fill (no eviction yet) — gauge should track size each append.
+    sink._buffer_failed_event("t", b"p0")
+    assert size_gauge._value.get() == 1
+    sink._buffer_failed_event("t", b"p1")
+    assert size_gauge._value.get() == 2
+    assert eviction_counter._value.get() == start_evictions
+
+    # Overflow — eviction counter must increment, gauge stays at maxlen.
+    sink._buffer_failed_event("t", b"p2")
+    assert size_gauge._value.get() == 2
+    assert eviction_counter._value.get() == start_evictions + 1
 
 
 def test_get_buffer_stats_accurate() -> None:

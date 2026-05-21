@@ -81,6 +81,49 @@ groups:
           summary: "Rate limit exceeded spike"
           description: "More than 10 rate limit events per second in the last 5 minutes."
 
+      # Failed-event buffer overflow: silent data loss in progress.
+      # The bounded retry buffer behind a tripped sink-circuit-breaker is
+      # overflowing, which means the sink itself is unhealthy and we are
+      # dropping the OLDEST buffered events to make room for new ones
+      # (eviction, not just queueing). The 2026-05-05 outage went silent
+      # for 32 hours because no metric here tracked this — operators had
+      # no signal until Kairos's Scout fetched 0 flow alerts the next
+      # trading day.
+      - alert: SinkBufferEvictionsActive
+        expr: sum(rate(gateway_sink_buffer_evictions_total[2m])) by (sink) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sink {{ $labels.sink }} is evicting buffered events — silent data loss"
+          description: "Sink {{ $labels.sink }} is dropping events from its retry buffer at {{ $value | printf \"%.2f\" }}/sec because the buffer is full. The underlying sink (e.g. Redis) is unhealthy. Investigate the sink's circuit breaker and connection state — events being evicted now are unrecoverable."
+
+      # Buffer near capacity (90%) — early warning before eviction starts
+      - alert: SinkBufferNearCapacity
+        expr: max(gateway_sink_buffer_size) by (sink) > 9000
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sink {{ $labels.sink }} retry buffer is > 90% full"
+          description: "Sink {{ $labels.sink }} buffer at {{ $value }} entries (cap 10000). Eviction will start at 100%; address the underlying sink failure now."
+
+      # Sink producer-side queue-put timeout drops — emergency.
+      # The bounded queue + worker pool absorbs steady-state bursts; a
+      # producer drop means the queue is full AND workers can't drain it
+      # within data_sink_producer_block_timeout_seconds (default 100ms).
+      # That is a true sink stall or hard overload, not steady-state
+      # backpressure. Use a 1m lookback with no debounce so any non-zero
+      # rate pages immediately — every drop is a permanently lost event.
+      - alert: SinkProducerTimeoutDrops
+        expr: sum(increase(gateway_sink_producer_timeout_drops_total[1m])) by (sink) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sink {{ $labels.sink }} dropped events at the producer in the last minute"
+          description: "gateway_sink_producer_timeout_drops_total is non-zero on sink {{ $labels.sink }} — the bounded dispatch queue is full AND workers cannot drain it within data_sink_producer_block_timeout_seconds. Any non-zero rate means events are being lost permanently to Heber; investigate sink health immediately. Runbook: check downstream Redis latency, raise data_sink_worker_count / data_sink_queue_size, verify circuit-breaker state on the sink."
+
   - name: gateway_slo
     rules:
       # SLO: 99.9% availability

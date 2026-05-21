@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     stream_use_iex: bool = False  # Use IEX instead of SIP for stocks
     stream_options_feed: str = "opra"  # Options stream feed: opra or indicative
     stream_lazy_connect: bool = True  # Connect to streams on-demand for efficiency
+    # Comma-separated stream types (stocks_sip, stocks_iex, options, crypto, news)
+    # to connect eagerly at Gateway startup, even when stream_lazy_connect is True.
+    # Default eagerly connects the stocks feed so the first trading-bot subscribe
+    # at 9:30 ET doesn't pay the upstream Alpaca cold-start cost (~30s of TLS +
+    # auth + first-bar drain). Verified safe with the Algo Trader Plus plan
+    # (multi-connection); on a Basic plan, set this to "" to keep all streams lazy.
+    stream_eager_connect_types: str = "stocks"
     stream_reconnect_max_retries: int = Field(default=10, ge=1)
     stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
     stream_reconnect_max_delay: float = Field(default=16.0, ge=1.0)
@@ -59,12 +66,68 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_default: int = Field(default=600, ge=1)  # requests per minute
     behind_trusted_proxy: bool = False  # Only trust X-Forwarded-For when behind a known proxy
+    # Comma-separated CIDRs for trusted intermediate proxies (e.g. "10.0.0.0/8,172.16.0.0/12").
+    # When `behind_trusted_proxy=True` AND this is set, X-Forwarded-For is parsed
+    # rightmost-to-leftmost and the first IP NOT in this list is treated as the real
+    # client. Without this, the leftmost (attacker-controlled) IP is used — which
+    # makes per-IP rate limits and IP block lists trivially bypassable.
+    trusted_proxy_cidrs: str = ""
+
+    @field_validator("trusted_proxy_cidrs")
+    @classmethod
+    def _validate_trusted_proxy_cidrs(cls, v: str) -> str:
+        if not v:
+            return v
+        import ipaddress
+
+        for cidr in v.split(","):
+            cidr = cidr.strip()
+            if cidr:
+                try:
+                    ipaddress.ip_network(cidr, strict=False)
+                except ValueError as exc:
+                    raise ValueError(f"trusted_proxy_cidrs: invalid CIDR {cidr!r}: {exc}") from exc
+        return v
 
     # Per-provider rate limits (override hardcoded defaults via env)
     alpaca_rate_limit_per_minute: int = Field(default=10000, ge=1)
     alpaca_rate_limit_per_second: int = Field(default=75, ge=1)
     alpaca_max_concurrent_requests: int = Field(default=25, ge=1)  # see rate_limiter.DEFAULT_ALPACA_MAX_CONCURRENT
-    alpaca_trading_call_timeout_seconds: float = Field(default=15.0, ge=0.5)
+    alpaca_trading_call_timeout_seconds: float = Field(
+        default=15.0,
+        ge=0.5,
+        description=(
+            "Wall-clock timeout (seconds) for READ Alpaca trading calls — "
+            "get_account, get_orders, get_position, get_clock, get_calendar, "
+            "get_portfolio_history, get_assets, etc. Reads can safely retry "
+            "after a 504 (they're idempotent at the broker), so a tighter "
+            "timeout here keeps the per-call ceiling predictable. Writes "
+            "use the separate ``alpaca_trading_write_call_timeout_seconds`` "
+            "knob (default 25s) which permits more slack for opening-bell "
+            "broker slowdowns where surfacing a 504 forces the caller into "
+            "the idempotency-retry contract — less convenient than just "
+            "succeeding once."
+        ),
+    )
+    alpaca_trading_write_call_timeout_seconds: float = Field(
+        default=25.0,
+        ge=0.5,
+        description=(
+            "Wall-clock timeout (seconds) for WRITE Alpaca trading calls — "
+            "create_order, replace_order, cancel_order, cancel_all_orders, "
+            "close_position, close_all_positions. Evidence from 2026-05-15 "
+            "opening bell showed 13 write-class timeouts at the previous "
+            "shared 15s ceiling (3 create_order, 1 close_position, plus 9 "
+            "cancels). Alpaca's broker latency at the market-open burst can "
+            "exceed 15s on writes; bumping the write ceiling to 25s lets "
+            "those calls complete instead of 504'ing into the idempotency "
+            "retry contract (which exists for genuine failures, not for "
+            "merely slow successes). Must stay <= "
+            "``alpaca_trading_http_timeout_seconds`` (default 30s) so the "
+            "HTTP-level safety net still releases threads. Reads keep the "
+            "existing 15s default — see ``alpaca_trading_call_timeout_seconds``."
+        ),
+    )
     alpaca_trading_http_timeout_seconds: float = Field(
         default=30.0,
         ge=1.0,
@@ -73,9 +136,10 @@ class Settings(BaseSettings):
             "requests session. The SDK creates a bare Session() with no timeout, so "
             "asyncio's wait_for cannot cancel an in-flight thread; without this, "
             "alpaca_trading_call_timeout_seconds returns 504 to the caller but leaks "
-            "the trading thread until the OS gives up. Should be > "
-            "alpaca_trading_call_timeout_seconds so the wall-clock keeps user-facing "
-            "behavior unchanged; the HTTP timeout is the safety net for thread release."
+            "the trading thread until the OS gives up. Should be >= the larger of "
+            "alpaca_trading_call_timeout_seconds and alpaca_trading_write_call_timeout_seconds "
+            "so user-facing 504s fire first; the HTTP timeout is the safety net for "
+            "thread release."
         ),
     )
     alpaca_trading_thread_pool_size: int = Field(
@@ -121,14 +185,52 @@ class Settings(BaseSettings):
     # Data Sink (for Heber integration)
     # ─────────────────────────────────────────────────────────────────────────
 
+    # Strict mode: when True, exceptions during EventEnvelope construction or
+    # REST envelope wrapping propagate as 500 instead of returning a degraded
+    # fallback envelope / unwrapped body. Recommended for staging/prod where
+    # silent corruption is worse than a loud failure. Default False preserves
+    # legacy lenient behavior.
+    strict_envelopes: bool = False
+
     data_sink_enabled: bool = False
     data_sink_redis_url: str = Field(default="", alias="GATEWAY_DATA_SINK_REDIS_URL")
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
     data_sink_operation_timeout_seconds: float = Field(default=5.0, ge=0.5)
-    data_sink_redis_pool_size: int = Field(default=8, ge=1, le=32)
-    data_sink_max_inflight_per_sink: int = Field(default=512, ge=64, le=4096)
-    data_sink_stream_publish_max_inflight: int = Field(default=32, ge=1)
-    data_sink_stream_publish_max_pending: int = Field(default=512, ge=1)
+    # Pool size cap raised from 32 → 128. The previous cap left the redis_sink-
+    # layer min(64, ...) clamp dead and capped operators at half the available
+    # connection capacity. 128 connections is well within typical Redis defaults
+    # (maxclients=10000 on the redis:7-alpine image used in compose). Default
+    # stays at 8 — operators must explicitly tune for higher load.
+    data_sink_redis_pool_size: int = Field(default=8, ge=1, le=128)
+
+    # Bounded-queue + worker-pool dispatch parameters. Producers `put` into a
+    # per-sink bounded asyncio.Queue with a short producer-block timeout; a
+    # small worker pool drains the queue and calls sink.publish via the
+    # existing circuit-breaker-protected path. The registry queue is the
+    # *single* in-process gate for sink dispatch — there is no outer
+    # fire-and-forget task gate. Drops happen only if the queue is full
+    # AND workers can't drain it within producer_block_timeout_seconds —
+    # surfaced via gateway_sink_producer_timeout_drops_total.
+    #
+    # Replaces the prior data_sink_max_inflight_per_sink semaphore (default
+    # 512, raised to 2048 in commit 744bba2) which dropped events at the
+    # acquire site with no retry: 32 757 events lost to Heber on 2026-05-15,
+    # 5 872 on 2026-05-18 from this exact mechanism.
+    #
+    # - queue_size: max queued events per sink before producers block.
+    #   Opening-bell bursts have hit ~20K events/min historically; 4096
+    #   covers ~12s of sustained 350 events/sec without producer block.
+    # - worker_count: concurrency for publishes against a single sink.
+    #   Should fit within data_sink_redis_pool_size for the Redis sink.
+    # - producer_block_timeout_seconds: how long a producer waits on a
+    #   full queue before dropping the event. 0.1s is intentionally short
+    #   — the producer here is the upstream stream callback running on
+    #   the asyncio event loop, and longer blocks would stall the Alpaca
+    #   receive loop. A drop is a true emergency (queue is full AND
+    #   workers can't drain in 100ms).
+    data_sink_queue_size: int = Field(default=4096, ge=64, le=65536)
+    data_sink_worker_count: int = Field(default=8, ge=1, le=64)
+    data_sink_producer_block_timeout_seconds: float = Field(default=0.1, ge=0.001, le=5.0)
 
     # Backfill concurrency (per-provider, split by feed weight)
     backfill_lightweight_concurrency: int = Field(default=5, ge=1)
@@ -169,6 +271,56 @@ class Settings(BaseSettings):
 
     # Treasury yield poller
     treasury_poller_maturities: str = "2year,10year"  # comma-separated, e.g. "2year,10year"
+
+    # Alpaca quotes REST-fallback poller. Enable to publish quotes to Heber without
+    # needing a WebSocket client to subscribe.
+    quotes_poller_enabled: bool = True
+    quotes_poller_interval_seconds: int = Field(default=30, ge=5)
+    quotes_poller_symbols: str = ""  # comma-separated; empty = use DEFAULT_QUOTES_SYMBOLS
+
+    @property
+    def quotes_poller_symbol_list(self) -> list[str] | None:
+        """Parse quotes_poller_symbols; return None to use poller defaults."""
+        symbols = [s.strip().upper() for s in self.quotes_poller_symbols.split(",") if s.strip()]
+        return symbols or None
+
+    # Alpaca trades REST-fallback poller. Same rationale as quotes_poller.
+    trades_poller_enabled: bool = True
+    trades_poller_interval_seconds: int = Field(default=30, ge=5)
+    trades_poller_symbols: str = ""  # comma-separated; empty = use DEFAULT_TRADES_SYMBOLS
+
+    @property
+    def trades_poller_symbol_list(self) -> list[str] | None:
+        """Parse trades_poller_symbols; return None to use poller defaults."""
+        symbols = [s.strip().upper() for s in self.trades_poller_symbols.split(",") if s.strip()]
+        return symbols or None
+
+    # Alpaca crypto poller. Crypto trades 24/7; no market-hours gate.
+    crypto_poller_enabled: bool = True
+    crypto_poller_interval_seconds: int = Field(default=60, ge=5)
+    crypto_poller_pairs: str = ""  # comma-separated BASE/QUOTE pairs; empty = DEFAULT_CRYPTO_PAIRS
+
+    @property
+    def crypto_poller_pair_list(self) -> list[str] | None:
+        """Parse crypto_poller_pairs; return None to use poller defaults."""
+        pairs = [p.strip().upper() for p in self.crypto_poller_pairs.split(",") if p.strip()]
+        return pairs or None
+
+    # Emit feed=option_trades envelopes for each contract in the captured chain
+    # snapshot. No additional API calls — reuses snapshot data already fetched.
+    option_capture_publish_per_contract_trades: bool = True
+
+    # Alpaca news REST poller. Replaces missing WS news subscription path.
+    news_poller_enabled: bool = True
+    news_poller_interval_seconds: int = Field(default=120, ge=5)
+    news_poller_fetch_limit: int = Field(default=50, ge=1, le=50)
+    news_poller_symbols: str = ""  # comma-separated; empty = all symbols (market-wide)
+
+    @property
+    def news_poller_symbol_list(self) -> list[str] | None:
+        """Parse news_poller_symbols; return None for market-wide."""
+        symbols = [s.strip().upper() for s in self.news_poller_symbols.split(",") if s.strip()]
+        return symbols or None
 
     @property
     def treasury_poller_maturity_list(self) -> list[str]:

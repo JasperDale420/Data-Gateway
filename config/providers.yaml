@@ -1,9 +1,16 @@
 # Data provider configuration
 # Providers are loaded dynamically at startup
+#
+# `required: true` makes the provider load-critical: when GATEWAY_DEBUG=false
+# (production), a load/init failure for this provider aborts gateway startup
+# rather than silently degrading. Without this flag (default false), failures
+# are logged and the gateway continues. Mark providers referenced by the
+# `routes:` section below as required.
 
 providers:
   alpaca:
     enabled: true
+    required: true  # referenced by routes.stocks + routes.options; also primary streaming source
     module: gateway.providers.alpaca
     class: AlpacaProvider
     priority: 1
@@ -22,6 +29,7 @@ providers:
 
   yfinance:
     enabled: true
+    required: true  # referenced by routes.stocks as fallback
     module: gateway.providers.yfinance
     class: YFinanceProvider
     priority: 2
@@ -62,6 +70,7 @@ providers:
 
   unusual_whales:
     enabled: true
+    required: true  # referenced by routes.flow; primary options-flow source
     module: gateway.providers.uw
     class: UnusualWhalesProvider
     priority: 1
