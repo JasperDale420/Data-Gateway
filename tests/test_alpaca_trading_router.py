@@ -2578,3 +2578,418 @@ async def test_unsafe_client_id_raises_500_before_calling_provider(
     assert exc.value.status_code == 500
     assert exc.value.detail["code"] == "GW-E5008"
     assert call_count["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Codex review follow-ups (CRITICAL/HIGH/MEDIUM findings).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_order_idempotent_retry_does_not_double_prefix_already_owned_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CRITICAL retry contract: when a caller retries with the FULL
+    prefixed key they received in meta.client_order_id (as documented),
+    the gateway must NOT double-prefix to ``c-cerberus-c-cerberus-...``
+    — that would defeat Alpaca-side dedup and double-place on retry."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"id": "ok"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    # Caller retries with the same full key they got back in meta on the
+    # first attempt.
+    already_owned = "c-cerberus-original-key-abc"
+
+    response = await trading.create_order(
+        symbol="AAPL",
+        side="buy",
+        qty=10,
+        client_order_id=already_owned,
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    # NO double-prefix — provider sees the verbatim key.
+    assert captured["client_order_id"] == "c-cerberus-original-key-abc"
+    assert response["meta"]["client_order_id"] == "c-cerberus-original-key-abc"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_idempotent_retry_does_not_double_prefix_already_owned_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same CRITICAL contract for replace_order — PATCH retries must
+    forward the prefixed key as-is so Alpaca-side dedup works."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            # Order owned by cerberus so the pre-check passes.
+            return {"id": order_id, "client_order_id": f"c-cerberus-{order_id}"}
+
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"id": "ok"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    already_owned = "c-cerberus-replace-key-xyz"
+    await trading.replace_order(
+        order_id="orig-1",
+        qty=5,
+        client_order_id=already_owned,
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured["client_order_id"] == "c-cerberus-replace-key-xyz"
+
+
+@pytest.mark.asyncio
+async def test_create_order_rejects_foreign_prefixed_caller_key(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CRITICAL: caller B passing a foreign ``c-A-...`` key must be
+    rejected (400 GW-E4007) — silently rewriting the prefix would mask
+    cross-client replay attempts. The provider's ``create_order`` must
+    NOT be called."""
+    import logging
+
+    create_calls: list[dict[str, Any]] = []
+
+    class _CountingProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            create_calls.append(kwargs)
+            return {"id": "MUST-NOT-RETURN"}
+
+    provider = _CountingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with caplog.at_level(logging.WARNING, logger="data-gateway"), pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=10,
+            client_order_id="c-atlas-replay-key",  # foreign prefix
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "GW-E4007"
+    # No upstream call — defense in depth before Alpaca ever sees the key.
+    assert create_calls == []
+    # Audit log emitted as GW-A4001.
+    audit_records = [r for r in caplog.records if "GW-A4001" in r.getMessage()]
+    assert audit_records, "expected GW-A4001 audit warning for foreign-prefix POST attempt"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_rejects_foreign_prefixed_caller_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same foreign-prefix rejection for PATCH — but the ownership
+    pre-check runs FIRST so a foreign caller_order_id only matters
+    if the order_id itself was owned by the caller (which the
+    pre-check verifies). We exercise the OWNED-order case here so the
+    foreign-key branch in _validate_client_order_id is the one that
+    fires."""
+    replace_calls: list[Any] = []
+
+    class _CountingProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            return {"id": order_id, "client_order_id": f"c-cerberus-{order_id}"}
+
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            replace_calls.append((order_id, kwargs))
+            return {"id": "MUST-NOT-RETURN"}
+
+    provider = _CountingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="orig-foreign-key-1",
+            qty=10,
+            client_order_id="c-atlas-replay",  # foreign-prefixed
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "GW-E4007"
+    # No upstream replace_order call.
+    assert replace_calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_only_cancels_owned_orders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CRITICAL: ``DELETE /orders`` MUST NOT call the bulk
+    ``cancel_all_orders()`` SDK method — that would mass-cancel every
+    other gateway client's open orders on the shared Alpaca account.
+    Instead, list open orders, filter to those owned by the caller,
+    cancel each one individually."""
+    bulk_cancel_calls = {"n": 0}
+    per_order_cancels: list[str] = []
+
+    class _MixedOwnersProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return [
+                {"id": "mine-1", "client_order_id": "c-cerberus-key1"},
+                {"id": "atlas-1", "client_order_id": "c-atlas-key1"},  # foreign
+                {"id": "mine-2", "client_order_id": "c-cerberus-key2"},
+                {"id": "rogue-1", "client_order_id": None},  # un-owned
+                {"id": "3roses-1", "client_order_id": "c-3roses-key1"},  # foreign
+            ]
+
+        def cancel_all_orders(self) -> list[dict[str, Any]]:
+            # If this fires, the test FAILS — that's the
+            # mass-cancel-everyone bug.
+            bulk_cancel_calls["n"] += 1
+            return []
+
+        def cancel_order(self, order_id: str) -> bool:
+            per_order_cancels.append(order_id)
+            return True
+
+    provider = _MixedOwnersProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    # The bulk SDK method MUST NOT have been called.
+    assert bulk_cancel_calls["n"] == 0
+    # Only the owned orders were cancelled — never atlas-1, 3roses-1, or rogue-1.
+    assert sorted(per_order_cancels) == ["mine-1", "mine-2"]
+    assert response["meta"]["count"] == 2
+    assert response["meta"]["owned_count"] == 2
+    assert response["meta"]["errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_with_no_owned_orders_yields_empty_cancels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When NONE of the open orders belong to the caller, the bulk
+    cancel must be a no-op — neither the bulk SDK nor per-order
+    cancels fire. The previous implementation would have cancelled
+    every order in the shared account."""
+    bulk_cancel_calls = {"n": 0}
+    per_order_cancels: list[str] = []
+
+    class _AllForeignProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return [
+                {"id": "atlas-1", "client_order_id": "c-atlas-key1"},
+                {"id": "3roses-1", "client_order_id": "c-3roses-key1"},
+            ]
+
+        def cancel_all_orders(self) -> list[dict[str, Any]]:
+            bulk_cancel_calls["n"] += 1
+            return []
+
+        def cancel_order(self, order_id: str) -> bool:
+            per_order_cancels.append(order_id)
+            return True
+
+    provider = _AllForeignProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert bulk_cancel_calls["n"] == 0
+    assert per_order_cancels == []
+    assert response["data"] == []
+    assert response["meta"]["count"] == 0
+    assert response["meta"]["owned_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_orders_applies_limit_after_filter_not_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HIGH: limit MUST apply AFTER ownership filtering. Pushing the
+    limit upstream means the broker could return N foreign-client orders
+    that get filtered out, leaving the caller with an empty list even
+    if older OWNED orders exist — a reconciliation hazard.
+
+    Verifies (a) the upstream call always requests the 500-order ceiling
+    regardless of caller-supplied limit, and (b) the caller's limit is
+    applied to the FILTERED list."""
+    upstream_limits: list[int] = []
+
+    class _LargeMixedProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
+            upstream_limits.append(kwargs.get("limit"))
+            # First 5 are foreign (atlas), next 3 are owned (cerberus).
+            return [{"id": f"atlas-{i}", "client_order_id": f"c-atlas-key{i}"} for i in range(5)] + [
+                {"id": f"mine-{i}", "client_order_id": f"c-cerberus-key{i}"} for i in range(3)
+            ]
+
+    provider = _LargeMixedProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    # Caller asks for at most 5 orders. Pre-fix: provider would have
+    # been called with limit=5 and returned only the 5 foreign atlas
+    # orders — caller would see empty list. Post-fix: provider is
+    # called with limit=500, gateway filters to owned, then truncates.
+    response = await trading.get_orders(
+        status="open",
+        limit=5,
+        direction="desc",
+        symbols=None,
+        nested=True,
+        side=None,
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    # Upstream limit must be the broker's per-call ceiling.
+    assert upstream_limits == [500], (
+        f"upstream get_orders MUST request the 500-order ceiling regardless of caller's limit, got {upstream_limits}"
+    )
+    # 3 owned orders, capped at caller-limit=5 → all 3 returned.
+    assert len(response["data"]) == 3
+    assert {o["id"] for o in response["data"]} == {"mine-0", "mine-1", "mine-2"}
+
+
+@pytest.mark.asyncio
+async def test_get_orders_caller_limit_truncates_owned_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the caller's limit is SMALLER than the owned count, truncate
+    the owned list at that limit. (Order is preserved from the upstream
+    response — Alpaca's direction= parameter controls that.)"""
+
+    class _ManyOwnedProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return [{"id": f"mine-{i}", "client_order_id": f"c-cerberus-key{i}"} for i in range(10)]
+
+    provider = _ManyOwnedProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.get_orders(
+        status="open",
+        limit=3,
+        direction="desc",
+        symbols=None,
+        nested=True,
+        side=None,
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert len(response["data"]) == 3
+    assert [o["id"] for o in response["data"]] == ["mine-0", "mine-1", "mine-2"]
+    assert response["meta"]["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_audit_log_correctly_attributes_hyphenated_client_id(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MEDIUM: ``heber-watch`` is a real configured client id with a
+    hyphen. The naive first-hyphen split in
+    ``_parse_owner_from_client_order_id`` mis-attributes
+    ``c-heber-watch-abc`` to ``heber``. Fix uses longest-prefix-match
+    against the authenticator's known client ids."""
+    import logging
+
+    # Patch the trading module's known-client-ids lookup to a
+    # deterministic set including the hyphenated id (cerberus is the
+    # caller; heber-watch is the foreign owner whose attribution we
+    # want correct in the audit log).
+    monkeypatch.setattr(
+        trading,
+        "_known_client_ids",
+        lambda: ["cerberus", "atlas", "heber-watch", "heber"],
+    )
+
+    class _ForeignOrderProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            return {"id": order_id, "client_order_id": "c-heber-watch-secret-key"}
+
+    provider = _ForeignOrderProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with caplog.at_level(logging.WARNING, logger="data-gateway"), pytest.raises(HTTPException):
+        await trading.get_order(
+            order_id="foreign-hyphenated-1",
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    audit_records = [r for r in caplog.records if "GW-A4001" in r.getMessage()]
+    assert audit_records
+    msg = audit_records[0].getMessage()
+    # Owner is attributed to the FULL hyphenated id, not just ``heber``.
+    assert '"order_owner_actual": "heber-watch"' in msg or "order_owner_actual=heber-watch" in msg, (
+        f"expected order_owner_actual to be 'heber-watch' (longest-prefix-match), got: {msg}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_order_with_legacy_unprefixed_client_order_id_returns_404(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward-compat: orders placed BEFORE this change shipped have
+    ``client_order_id`` values without the ``c-{id}-`` prefix (e.g.
+    ``dg-abc123`` or anything else the previous code emitted). The
+    ownership check is fail-CLOSED — any order whose
+    ``client_order_id`` doesn't carry the caller's prefix returns 404,
+    so legacy orders are not visible via the new endpoints. This is
+    intentional and the safest backward-compat stance: callers must
+    reconcile their legacy orders out-of-band (Alpaca dashboard, direct
+    SDK) until they re-place with the new prefixed scheme."""
+
+    class _LegacyOrderProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            # Pre-prefix legacy order — was placed by ``cerberus`` but
+            # before the ownership-prefix scheme shipped.
+            return {"id": order_id, "client_order_id": "dg-legacy-key-abc"}
+
+    provider = _LegacyOrderProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_order(
+            order_id="legacy-1",
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    # Fail-closed: legacy orders are NOT readable via this endpoint
+    # after the change ships. This is the documented backward-compat
+    # stance — see PR body for the rationale.
+    assert exc.value.status_code == 404
+    assert exc.value.detail["code"] == "GW-E4404"

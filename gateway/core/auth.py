@@ -210,6 +210,16 @@ class ClientAuthenticator:
         """Get client by ID."""
         return self._clients.get(client_id)
 
+    def list_client_ids(self) -> list[str]:
+        """Return the list of all configured client ids.
+
+        Used by the Alpaca trading router for longest-prefix-match parsing
+        of the ``c-{client.id}-...`` ownership marker on cross-client
+        order-access audit logs. Without this list, hyphenated ids like
+        ``heber-watch`` would be mis-attributed to ``heber``.
+        """
+        return list(self._clients.keys())
+
     def reload(self) -> None:
         """Reload clients from configuration."""
         self._clients.clear()

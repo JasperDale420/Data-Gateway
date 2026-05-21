@@ -124,14 +124,33 @@ def _validate_client_order_id(raw: str | None, client_id: str) -> str | None:
     the route auto-generates a fully-prefixed key via
     ``_generate_client_order_id``).
 
+    Idempotent prefix handling (CRITICAL — DO NOT REGRESS):
+      The gateway returns the FULL prefixed string in ``meta.client_order_id``
+      on success AND in the 504 retry hint. Callers SHOULD retry POST /
+      PATCH with that exact prefixed value (per the retry hint). To make
+      that retry idempotent at Alpaca, a caller-supplied value that is
+      ALREADY prefixed with the caller's own ownership tag must NOT be
+      double-prefixed (``c-cerberus-c-cerberus-abc`` would defeat Alpaca-
+      side dedup and could double-place on retry). We detect the already-
+      owned case and forward the value verbatim.
+
+      Conversely, a key that starts with ``c-<foreign_id>-`` is a
+      misconfigured caller (or cross-client replay attempt) and must be
+      rejected with 400 GW-E4007 — sending it to Alpaca verbatim would
+      either dedupe against another client's order (collision) or
+      pollute the foreign client's idempotency namespace. We DO NOT
+      auto-strip the foreign prefix because that would silently mask an
+      operator error / attack signal.
+
     Validation:
       - Empty / whitespace-only strings → 400 GW-E4006 (silent fallback
         to UUID would defeat Alpaca-side dedup on retry).
+      - Foreign-owner-prefixed keys (``c-<other>-...``) → 400 GW-E4007.
       - The FINAL prefixed string must fit in Alpaca's 128-char ceiling.
-        The caller-supplied portion is therefore capped at
-        ``128 - len(prefix)`` characters; oversize keys raise 400 GW-E4006
-        with a message that surfaces the post-prefix budget so callers can
-        adapt rather than guess.
+        Already-owned keys are validated as-is; un-prefixed keys are
+        validated AFTER prepending the ownership prefix. Oversize keys
+        raise 400 GW-E4006 with a message that surfaces the post-prefix
+        budget so callers can adapt rather than guess.
     """
     if raw is None:
         return None
@@ -147,7 +166,58 @@ def _validate_client_order_id(raw: str | None, client_id: str) -> str | None:
                 ),
             },
         )
+
     prefix = _ownership_prefix(client_id)
+
+    # Idempotent retry path: caller passed back the prefixed key they
+    # received in meta.client_order_id (or in a 504 retry hint).
+    # Accept as-is; do NOT re-prefix.
+    if raw.startswith(prefix):
+        if len(raw) > _CLIENT_ORDER_ID_MAX_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "GW-E4006",
+                    "message": (
+                        f"client_order_id length {len(raw)} exceeds Alpaca's "
+                        f"{_CLIENT_ORDER_ID_MAX_LENGTH}-char ceiling. Even "
+                        "though the supplied key already carries this "
+                        "caller's ownership prefix, the final value still "
+                        "needs to fit. Shorten the key."
+                    ),
+                },
+            )
+        return raw
+
+    # Foreign-owner-prefixed key — caller is either misconfigured (passed
+    # back a key from a different gateway client's meta) or actively
+    # probing another client's namespace. Reject loudly. We DO NOT
+    # rewrite the prefix silently because that would mask the operator
+    # error / attack signal.
+    if raw.startswith("c-"):
+        # Defense-in-depth audit signal — emit GW-A4001 so the same
+        # alert wired for foreign GET / PATCH / DELETE also covers
+        # foreign-prefix POST attempts.
+        _log_foreign_order_access_attempt(
+            caller_id=client_id,
+            order_owner=_parse_owner_from_client_order_id(raw),
+            client_order_id=raw,
+            operation="create_or_replace_order.foreign_prefix_in_caller_key",
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "GW-E4007",
+                "message": (
+                    "client_order_id carries a foreign gateway-client "
+                    "ownership prefix and cannot be used by this client. "
+                    "Either omit the parameter to let the gateway auto-"
+                    "generate one, or supply a key that does NOT start "
+                    "with 'c-' (the gateway will prefix it for you)."
+                ),
+            },
+        )
+
     prefixed = f"{prefix}{raw}"
     if len(prefixed) > _CLIENT_ORDER_ID_MAX_LENGTH:
         # Compute the per-caller budget so the error tells the caller
@@ -198,6 +268,30 @@ def _client_order_id_matches_owner(client_order_id: Any, client_id: str) -> bool
     return client_order_id.startswith(_ownership_prefix(client_id))
 
 
+def _known_client_ids() -> list[str]:
+    """Return the set of client ids known to the authenticator.
+
+    Used for longest-prefix-match parsing in
+    ``_parse_owner_from_client_order_id``. Client IDs containing hyphens
+    (e.g. ``heber-watch``) would otherwise be mis-parsed by a naive
+    first-hyphen split — ``c-heber-watch-abc`` would attribute the order
+    to ``heber`` instead of ``heber-watch``.
+
+    Imports ``get_authenticator`` lazily to avoid a dep cycle at module
+    import time (deps.py imports gateway.core.auth which doesn't import
+    this module, but tightening that loop is brittle). Defensive against
+    test paths where the authenticator hasn't been wired — returns an
+    empty list, and the parser falls back to the naive split which is
+    still correct for any client id without hyphens (the common case).
+    """
+    try:
+        from gateway.api.deps import get_authenticator
+
+        return list(get_authenticator().list_client_ids())
+    except Exception:  # noqa: BLE001 — best-effort audit-log enrichment
+        return []
+
+
 def _parse_owner_from_client_order_id(client_order_id: Any) -> str | None:
     """Best-effort extract the owner client_id from a ``c-{id}-...`` prefix.
 
@@ -208,11 +302,39 @@ def _parse_owner_from_client_order_id(client_order_id: Any) -> str | None:
     for orders without the gateway prefix (e.g. orders placed directly
     against Alpaca outside the gateway, before this change shipped, or
     that lack any client_order_id at all).
+
+    Hyphenated client ids (e.g. ``heber-watch``) need longest-prefix-match
+    against the authenticator's known client list — a naive first-hyphen
+    split would mis-attribute ``c-heber-watch-abc`` to ``heber`` instead
+    of ``heber-watch``. We fall back to the naive split only when the
+    authenticator isn't reachable (e.g. some unit-test paths), which is
+    still correct for any non-hyphenated id.
     """
     if not isinstance(client_order_id, str) or not client_order_id.startswith("c-"):
         return None
-    # Format: c-{client_id}-<rest>. Find the FIRST hyphen after the "c-".
+
+    # Strip the "c-" sentinel. Remaining shape: "{client_id}-{rest}".
     after_c = client_order_id[2:]
+
+    # Preferred path: longest-prefix match against the authenticator's
+    # known client ids. This correctly handles hyphenated ids.
+    known = _known_client_ids()
+    # Sort by length DESC so e.g. "heber-watch" beats "heber" if both
+    # are configured.
+    for candidate in sorted(known, key=len, reverse=True):
+        if not _CLIENT_ID_SAFE_RE.match(candidate):
+            # Defensive: skip ids that wouldn't have been accepted by
+            # the auth-side validator. Shouldn't happen, but if it does
+            # we don't want the lookup to crash on bad config.
+            continue
+        if after_c.startswith(f"{candidate}-"):
+            return candidate
+
+    # Fallback for environments where the authenticator isn't wired
+    # (some unit tests). Naive first-hyphen split — correct for
+    # non-hyphenated ids, may mis-attribute hyphenated ids. Audit log
+    # still carries the full client_order_id so operators can resolve
+    # the truth manually if needed.
     sep_idx = after_c.find("-")
     if sep_idx <= 0:
         return None
@@ -741,6 +863,15 @@ async def get_orders(
     ``client_order_id`` or were placed by another client are stripped
     silently — there is no signal in the response that any orders were
     filtered out. ``meta.count`` reflects the FILTERED count.
+
+    Limit-after-filter (DO NOT REGRESS): we MUST fetch the full open-
+    order list (up to Alpaca's 500-per-call ceiling) and filter LOCALLY
+    before honouring the caller's ``limit``. Pushing the limit upstream
+    risks the broker returning N foreign-client orders that get fully
+    filtered out, leaving the caller with an empty list even when they
+    have older owned orders — a reconciliation hazard that has caused
+    duplicate-order placement in similar fan-out gateways. We always
+    request the upstream ceiling (500) and then ``[:limit]`` post-filter.
     """
     if status not in _VALID_ORDER_QUERY_STATUSES:
         raise HTTPException(
@@ -759,11 +890,13 @@ async def get_orders(
         )
 
     symbols_list = symbols.split(",") if symbols else None
+    # Always request the upstream ceiling (500) so the caller's ``limit``
+    # is applied AFTER ownership filtering — see docstring rationale.
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_orders(
             status=status,
-            limit=limit,
+            limit=500,
             direction=direction,
             symbols=symbols_list,
             nested=nested,
@@ -771,15 +904,17 @@ async def get_orders(
         ),
         operation="get_orders",
     )
-    # Filter to only orders owned by this caller. Defensive against a
-    # provider that returns a non-list (current implementation always
-    # returns list, but typing-wise nothing pins it).
+    # Filter to only orders owned by this caller, THEN truncate to the
+    # caller-requested limit. Defensive against a provider that returns
+    # a non-list (current implementation always returns list, but
+    # typing-wise nothing pins it).
     if isinstance(data, list):
         owned = [
             order
             for order in data
             if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
         ]
+        owned = owned[:limit]
     else:
         owned = data
     return {
@@ -1043,16 +1178,94 @@ async def cancel_all_orders(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Cancel all open orders."""
-    data = await _execute_trading_call(
+    """Cancel all open orders OWNED BY THIS CALLER.
+
+    Ownership filtering (BLOCKER 1, DO NOT REGRESS): the upstream Alpaca
+    ``cancel_orders`` SDK call cancels EVERY open order in the shared
+    account — that would mass-liquidate every other Empire trading
+    client's pending orders on a single misfired DELETE /orders. To
+    isolate the blast radius per gateway client, we (1) list open orders,
+    (2) filter to those whose ``client_order_id`` carries this caller's
+    ``c-{client.id}-`` ownership prefix, and (3) cancel each owned order
+    individually. The provider's bulk ``cancel_all_orders()`` is NEVER
+    called from this endpoint after this change.
+
+    Trade-off: N + 1 round-trips (list + per-order cancel) instead of a
+    single bulk cancel. Acceptable because (a) live-capital callers
+    already tolerate Alpaca's per-call latency, (b) each Empire client's
+    open-order count is typically small (well below the broker rate
+    limit), and (c) the safety guarantee — never cancel another client's
+    orders — is non-negotiable.
+
+    Failures on individual cancels are captured per-order in the response
+    so the caller can reconcile which orders actually cancelled. We do
+    NOT short-circuit on the first failure: cancelling SOME of a
+    client's orders is strictly better than cancelling NONE if a
+    transient Alpaca error hits mid-batch.
+    """
+    # List open orders FIRST so we know what's owned. Reuse get_orders'
+    # filtering by inlining the same prefix check — we can't call the
+    # route function directly here because it expects FastAPI dependency
+    # injection, and we want to bypass the validation of status/direction
+    # query params (we hardcode them).
+    raw_orders = await _execute_trading_call(
         registry=registry,
-        provider_fn=lambda provider: provider.cancel_all_orders(),
-        operation="cancel_all_orders",
+        provider_fn=lambda provider: provider.get_orders(
+            status="open",
+            limit=500,
+            direction="desc",
+            symbols=None,
+            nested=True,
+            side=None,
+        ),
+        operation="cancel_all_orders.list",
     )
+    owned: list[dict[str, Any]] = []
+    if isinstance(raw_orders, list):
+        owned = [
+            order
+            for order in raw_orders
+            if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
+        ]
+
+    cancelled: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for order in owned:
+        order_id = order.get("id") if isinstance(order, dict) else getattr(order, "id", None)
+        if not order_id:
+            # Defensive: skip malformed entries rather than crashing the
+            # whole batch on one bad order.
+            errors.append({"order_id": None, "error": "order missing id field"})
+            continue
+        try:
+            await _execute_trading_call(
+                registry=registry,
+                # Need to bind order_id to lambda local — closure capture
+                # in a loop is a classic Python footgun.
+                provider_fn=(lambda _provider, _oid=order_id: _provider.cancel_order(_oid)),
+                operation="cancel_all_orders.cancel",
+            )
+            cancelled.append({"order_id": order_id, "cancelled": True})
+        except HTTPException as exc:
+            # Don't short-circuit — partial cancellation is strictly
+            # better than no cancellation on transient upstream errors.
+            errors.append(
+                {
+                    "order_id": order_id,
+                    "cancelled": False,
+                    "status_code": exc.status_code,
+                    "detail": exc.detail,
+                }
+            )
     return {
         "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "alpaca"},
+        "data": cancelled,
+        "meta": {
+            "count": len(cancelled),
+            "owned_count": len(owned),
+            "errors": errors,
+            "provider": "alpaca",
+        },
     }
 
 
@@ -1061,7 +1274,20 @@ async def get_positions(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Get all open positions."""
+    """Get all open positions.
+
+    KNOWN LIMITATION (tracked separately — DO NOT extend scope of the
+    per-client-order-isolation PR): Alpaca positions are aggregated at
+    the ACCOUNT level, not per-order. Two gateway clients placing buy
+    orders for AAPL net to a single AAPL position on the shared
+    account. There's no per-client position concept at the broker, so
+    we can't simply filter positions the way we filter orders. A real
+    fix requires a gateway-side ledger that tracks per-client fills
+    derived from owned ``client_order_id`` prefixes — out of scope for
+    the BLOCKER 1/2 emergency patch. Position endpoints therefore
+    remain account-wide for now; trading clients sharing symbols MUST
+    coordinate out-of-band until the ledger lands.
+    """
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_positions(),
