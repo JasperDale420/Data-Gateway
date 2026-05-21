@@ -452,6 +452,12 @@ class RedisStreamsSink(DataSink):
                 record_sink_publish(sink=self.name, topic=topic, success=True)
                 return True
 
+            # NB: do NOT catch asyncio.CancelledError here. The registry
+            # worker loop (gateway/core/data_sink.py) catches CancelledError
+            # at the publish-call boundary and routes the in-flight event
+            # through sink.buffer_event. Catching+buffering here too would
+            # double-buffer the same event into _failed_buffer and replay
+            # it twice on next drain.
             except Exception as e:
                 last_error = e
                 is_last_attempt = attempt >= PUBLISH_RETRY_ATTEMPTS - 1
@@ -479,6 +485,9 @@ class RedisStreamsSink(DataSink):
                         backoff_seconds=round(backoff, 3),
                         error=error_desc,
                     )
+                    # Backoff sleep — CancelledError propagates up to the
+                    # registry worker which handles the buffer routing (see
+                    # comment above the outer try block).
                     await asyncio.sleep(backoff)
 
         # All retries exhausted — buffer the event for drain on reconnect

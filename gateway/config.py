@@ -167,23 +167,35 @@ class Settings(BaseSettings):
     # (maxclients=10000 on the redis:7-alpine image used in compose). Default
     # stays at 8 — operators must explicitly tune for higher load.
     data_sink_redis_pool_size: int = Field(default=8, ge=1, le=128)
-    # In-flight cap raised from 512 → 2048 to absorb opening-bell upstream
-    # bursts before the DataSinkRegistry semaphore saturates. The semaphore
-    # is drop-on-saturation (no retry, no buffer — see data_sink.py:188), so
-    # any event that arrives while 512 publishes are already pending is lost
-    # to Heber permanently. On 2026-05-15 this dropped 19 790 events in one
-    # minute at 08:59 ET (pre-open) and another 11 400 at 09:36 ET (post-
-    # open); 2026-05-18 saw 5 872 drops at the same hour. 2048 gives 4×
-    # burst headroom; tune further via GATEWAY_DATA_SINK_MAX_INFLIGHT_PER_SINK
-    # (validation cap is 4096). Pair with redis_pool_size when scaling.
-    data_sink_max_inflight_per_sink: int = Field(default=2048, ge=64, le=4096)
-    # Dispatch-side concurrency limits. Defaults raised to absorb opening-bell
-    # bursts before the backpressure-drop alert fires. With 64 inflight + 1024
-    # pending and ~5ms publish latency, sustained throughput ≈ 12.8K events/sec.
-    # Real production capacity is still bounded by Redis + network; tune
-    # data_sink_redis_pool_size in concert when scaling these.
-    data_sink_stream_publish_max_inflight: int = Field(default=64, ge=1)
-    data_sink_stream_publish_max_pending: int = Field(default=1024, ge=1)
+
+    # Bounded-queue + worker-pool dispatch parameters. Producers `put` into a
+    # per-sink bounded asyncio.Queue with a short producer-block timeout; a
+    # small worker pool drains the queue and calls sink.publish via the
+    # existing circuit-breaker-protected path. The registry queue is the
+    # *single* in-process gate for sink dispatch — there is no outer
+    # fire-and-forget task gate. Drops happen only if the queue is full
+    # AND workers can't drain it within producer_block_timeout_seconds —
+    # surfaced via gateway_sink_producer_timeout_drops_total.
+    #
+    # Replaces the prior data_sink_max_inflight_per_sink semaphore (default
+    # 512, raised to 2048 in commit 744bba2) which dropped events at the
+    # acquire site with no retry: 32 757 events lost to Heber on 2026-05-15,
+    # 5 872 on 2026-05-18 from this exact mechanism.
+    #
+    # - queue_size: max queued events per sink before producers block.
+    #   Opening-bell bursts have hit ~20K events/min historically; 4096
+    #   covers ~12s of sustained 350 events/sec without producer block.
+    # - worker_count: concurrency for publishes against a single sink.
+    #   Should fit within data_sink_redis_pool_size for the Redis sink.
+    # - producer_block_timeout_seconds: how long a producer waits on a
+    #   full queue before dropping the event. 0.1s is intentionally short
+    #   — the producer here is the upstream stream callback running on
+    #   the asyncio event loop, and longer blocks would stall the Alpaca
+    #   receive loop. A drop is a true emergency (queue is full AND
+    #   workers can't drain in 100ms).
+    data_sink_queue_size: int = Field(default=4096, ge=64, le=65536)
+    data_sink_worker_count: int = Field(default=8, ge=1, le=64)
+    data_sink_producer_block_timeout_seconds: float = Field(default=0.1, ge=0.001, le=5.0)
 
     # Backfill concurrency (per-provider, split by feed weight)
     backfill_lightweight_concurrency: int = Field(default=5, ge=1)
