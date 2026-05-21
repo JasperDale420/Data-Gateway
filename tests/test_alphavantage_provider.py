@@ -320,3 +320,164 @@ def test_top_time_series_items_falls_back_to_sorted_for_unordered_input() -> Non
     top_items = provider._top_time_series_items(series, limit=2)
 
     assert [key for key, _ in top_items] == ["2026-02-03", "2026-02-02"]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# BLOCKER 5: canonical get_bars dispatcher
+# ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_bars_dispatches_daily(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`get_bars(..., "1Day", ...)` must route to `get_daily`."""
+    provider = AlphaVantageProvider()
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    from gateway.schemas import NormalizedBar  # noqa: PLC0415
+
+    aware_ts = __import__("datetime").datetime(2026, 2, 3, tzinfo=__import__("datetime").UTC)
+
+    async def _fake_daily(symbol: str, **kw: Any) -> list[NormalizedBar]:
+        seen.append((symbol, kw))
+        return [
+            NormalizedBar(
+                symbol=symbol,
+                timestamp=aware_ts,
+                open=Decimal("100"),
+                high=Decimal("101"),
+                low=Decimal("99"),
+                close=Decimal("100.5"),
+                volume=Decimal("10"),
+                provider="alphavantage",
+                timeframe="1Day",
+            )
+        ]
+
+    monkeypatch.setattr(provider, "get_daily", _fake_daily)
+    bars = await provider.get_bars(
+        symbols=["AAPL"],
+        timeframe="1Day",
+        start=__import__("datetime").datetime(2026, 2, 1, tzinfo=__import__("datetime").UTC),
+        end=__import__("datetime").datetime(2026, 2, 5, tzinfo=__import__("datetime").UTC),
+    )
+    assert [b.symbol for b in bars] == ["AAPL"]
+    assert seen and seen[0][0] == "AAPL"
+
+
+@pytest.mark.asyncio
+async def test_get_bars_dispatches_intraday(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`get_bars(..., "5Min", ...)` must route to `get_intraday` with `5min`."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from gateway.schemas import NormalizedBar  # noqa: PLC0415
+
+    provider = AlphaVantageProvider()
+    captured: list[dict[str, Any]] = []
+
+    async def _fake_intraday(symbol: str, **kw: Any) -> list[NormalizedBar]:
+        captured.append({"symbol": symbol, **kw})
+        return [
+            NormalizedBar(
+                symbol=symbol,
+                timestamp=datetime(2026, 2, 3, 14, 30, tzinfo=UTC),
+                open=Decimal("100"),
+                high=Decimal("101"),
+                low=Decimal("99"),
+                close=Decimal("100.5"),
+                volume=Decimal("10"),
+                provider="alphavantage",
+                timeframe="5Min",
+            )
+        ]
+
+    monkeypatch.setattr(provider, "get_intraday", _fake_intraday)
+    bars = await provider.get_bars(
+        symbols=["AAPL"],
+        timeframe="5Min",
+        start=datetime(2026, 2, 1, tzinfo=UTC),
+        end=datetime(2026, 2, 5, tzinfo=UTC),
+    )
+    assert len(bars) == 1
+    assert captured[0]["interval"] == "5min"
+
+
+@pytest.mark.asyncio
+async def test_get_bars_dispatches_weekly_and_monthly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from gateway.schemas import NormalizedBar  # noqa: PLC0415
+
+    provider = AlphaVantageProvider()
+    call_log: list[str] = []
+
+    def _make_fake(name: str, ts: datetime) -> Any:
+        async def _fake(symbol: str, **_kw: Any) -> list[NormalizedBar]:
+            call_log.append(name)
+            return [
+                NormalizedBar(
+                    symbol=symbol,
+                    timestamp=ts,
+                    open=Decimal("1"),
+                    high=Decimal("2"),
+                    low=Decimal("1"),
+                    close=Decimal("1"),
+                    volume=Decimal("0"),
+                    provider="alphavantage",
+                )
+            ]
+
+        return _fake
+
+    monkeypatch.setattr(provider, "get_weekly", _make_fake("weekly", datetime(2026, 2, 6, tzinfo=UTC)))
+    monkeypatch.setattr(provider, "get_monthly", _make_fake("monthly", datetime(2026, 2, 1, tzinfo=UTC)))
+
+    await provider.get_bars(["AAPL"], "1Week", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 12, 31, tzinfo=UTC))
+    await provider.get_bars(["AAPL"], "1Month", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 12, 31, tzinfo=UTC))
+    assert call_log == ["weekly", "monthly"]
+
+
+@pytest.mark.asyncio
+async def test_get_bars_filters_by_start_end_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bars outside [start, end] are dropped client-side."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from gateway.schemas import NormalizedBar  # noqa: PLC0415
+
+    provider = AlphaVantageProvider()
+
+    async def _fake_daily(symbol: str, **_kw: Any) -> list[NormalizedBar]:
+        return [
+            NormalizedBar(
+                symbol=symbol,
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                open=Decimal("1"),
+                high=Decimal("1"),
+                low=Decimal("1"),
+                close=Decimal("1"),
+                volume=Decimal("0"),
+                provider="alphavantage",
+            ),
+            NormalizedBar(
+                symbol=symbol,
+                timestamp=datetime(2026, 6, 1, tzinfo=UTC),
+                open=Decimal("1"),
+                high=Decimal("1"),
+                low=Decimal("1"),
+                close=Decimal("1"),
+                volume=Decimal("0"),
+                provider="alphavantage",
+            ),
+        ]
+
+    monkeypatch.setattr(provider, "get_daily", _fake_daily)
+    bars = await provider.get_bars(["AAPL"], "1Day", datetime(2026, 5, 1, tzinfo=UTC), datetime(2026, 7, 1, tzinfo=UTC))
+    assert [b.timestamp.month for b in bars] == [6]
+
+
+@pytest.mark.asyncio
+async def test_get_bars_unknown_timeframe_raises() -> None:
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    provider = AlphaVantageProvider()
+    with pytest.raises(ValueError, match="unsupported timeframe"):
+        await provider.get_bars(["AAPL"], "1Tick", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC))
