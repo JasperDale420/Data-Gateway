@@ -355,6 +355,14 @@ class UpstreamConnection:
         self._receive_task: asyncio.Task | None = None
         self._subscriptions = SubscriptionManager()
         self._connected_event = asyncio.Event()
+        # Guards the dormant-stream restart sequence in
+        # StreamMultiplexer._ensure_connected. Two concurrent subscribers can
+        # both observe `_running == False` (because `start()` only sets
+        # `_running = True` *after* the task scheduler yields), then both
+        # `create_task(conn.start())`, spawning duplicate connect loops on
+        # the same Alpaca endpoint. The lock + double-check pattern
+        # serialises the restart so exactly one start() task is created.
+        self._start_lock = asyncio.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -1025,43 +1033,49 @@ class StreamMultiplexer:
 
         Returns True if connection is ready, False if failed.
         Can restart a dormant stream that previously gave up after max retries.
+
+        Concurrency: the dormant-stream restart sequence is guarded by
+        ``conn._start_lock``. Two concurrent subscribers can otherwise both
+        observe ``_running == False`` (because ``start()`` only flips
+        ``_running = True`` *after* the scheduler yields the created task),
+        each create their own ``conn.start()`` task, and end up with two
+        competing reconnect loops on the same Alpaca endpoint.  The lock
+        plus the post-acquire double-check serialises this.
         """
         conn = self._get_connection(stream_type)
         if not conn:
             return False
 
-        # Already connected
+        # Already connected (fast path, no lock required)
         if conn.is_connected:
             return True
 
-        # Connection task is actively running (connecting or retrying) —
-        # wait for it to finish establishing rather than returning True blindly
-        if conn._running:
-            try:
-                await asyncio.wait_for(conn._connected_event.wait(), timeout=30.0)
-                return conn.is_connected
-            except TimeoutError:
-                logger.warning(
-                    "lazy_connect_wait_timeout",
-                    stream=stream_type.value,
-                    hint="Connection task is running but hasn't authenticated yet",
-                )
-                return False
+        async with conn._start_lock:
+            # Re-check under lock — a parallel _ensure_connected may have
+            # already advanced the connection.
+            if conn.is_connected:
+                return True
 
-        # Stream is dormant (gave up after max retries) — restart it
-        logger.info("restarting_dormant_stream", stream=stream_type.value)
+            # If the connection task is already running, just fall through
+            # to await the event. Otherwise the stream is dormant (gave up
+            # after max retries); set _running synchronously BEFORE
+            # scheduling the start() task so any concurrent subscriber that
+            # races into _ensure_connected while the scheduler is still
+            # queuing our task takes the "task is running" branch instead
+            # of spawning a second start().
+            if not conn._running:
+                logger.info("restarting_dormant_stream", stream=stream_type.value)
+                conn._connected_event.clear()
+                conn._running = True
+                task = asyncio.create_task(conn.start())
+                self._tasks.append(task)
 
-        # Reset the event before starting so we get a clean wait
-        conn._connected_event.clear()
-
-        task = asyncio.create_task(conn.start())
-        self._tasks.append(task)
-
-        # Wait for connection to establish with generous timeout
+        # Wait for connection to establish with generous timeout (outside lock
+        # so other waiters aren't serialised behind this one).
         try:
             await asyncio.wait_for(conn._connected_event.wait(), timeout=30.0)
             logger.info("lazy_connect_established", stream=stream_type.value)
-            return True
+            return conn.is_connected
         except TimeoutError:
             logger.warning(
                 "lazy_connect_timeout",

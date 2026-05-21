@@ -506,12 +506,80 @@ async def test_lazy_connect_returns_false_while_stream_is_still_not_ready() -> N
             is_connected=False,
             _running=True,
             _connected_event=asyncio.Event(),
+            _start_lock=asyncio.Lock(),
         ),
     )
 
     connected = await multiplexer._ensure_connected(AlpacaStreamType.STOCKS_SIP)
 
     assert connected is False
+
+
+@pytest.mark.asyncio
+async def test_lazy_connect_does_not_spawn_duplicate_start_tasks_under_race() -> None:
+    """Two concurrent subscribers waking up a dormant upstream must produce
+    exactly ONE ``conn.start()`` task, not two.
+
+    Regression — codex caught: ``_ensure_connected`` checked ``conn._running``
+    but ``_running`` is only assigned inside ``conn.start()``, *after* the
+    ``create_task`` returns. Two concurrent callers both observed
+    ``_running == False`` and both scheduled ``conn.start()``, producing two
+    competing reconnect loops on the same Alpaca WebSocket.
+    """
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+
+    start_call_count = 0
+    start_release = asyncio.Event()
+
+    class FakeConn:
+        def __init__(self) -> None:
+            self.is_connected = False
+            self._running = False
+            self._connected_event = asyncio.Event()
+            self._start_lock = asyncio.Lock()
+
+        async def start(self) -> None:
+            nonlocal start_call_count
+            start_call_count += 1
+            self._running = True
+            # Block until the test releases us so concurrent callers race
+            # entirely on the "dormant restart" branch.
+            await start_release.wait()
+            # Simulate successful authentication.
+            self.is_connected = True
+            self._connected_event.set()
+
+    fake = FakeConn()
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(Any, fake)
+
+    # Two concurrent subscribers; create the tasks before awaiting so they
+    # race in the same scheduler tick.
+    t1 = asyncio.create_task(multiplexer._ensure_connected(AlpacaStreamType.STOCKS_SIP))
+    t2 = asyncio.create_task(multiplexer._ensure_connected(AlpacaStreamType.STOCKS_SIP))
+
+    # Give both tasks a chance to advance through the lock + dormant branch.
+    # The first wins the lock and schedules start(); the second must see
+    # _running == True under the lock and skip the create_task.
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if start_call_count >= 1:
+            break
+
+    # Release start() so both waiters can observe is_connected and return.
+    start_release.set()
+    results = await asyncio.wait_for(asyncio.gather(t1, t2), timeout=2.0)
+
+    assert results == [True, True]
+    assert start_call_count == 1, f"expected exactly one conn.start() under race, got {start_call_count}"
 
 
 def test_stream_subscription_manager_client_view_reuses_index_set() -> None:
