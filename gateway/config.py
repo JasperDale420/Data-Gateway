@@ -93,7 +93,41 @@ class Settings(BaseSettings):
     alpaca_rate_limit_per_minute: int = Field(default=10000, ge=1)
     alpaca_rate_limit_per_second: int = Field(default=75, ge=1)
     alpaca_max_concurrent_requests: int = Field(default=25, ge=1)  # see rate_limiter.DEFAULT_ALPACA_MAX_CONCURRENT
-    alpaca_trading_call_timeout_seconds: float = Field(default=15.0, ge=0.5)
+    alpaca_trading_call_timeout_seconds: float = Field(
+        default=15.0,
+        ge=0.5,
+        description=(
+            "Wall-clock timeout (seconds) for READ Alpaca trading calls — "
+            "get_account, get_orders, get_position, get_clock, get_calendar, "
+            "get_portfolio_history, get_assets, etc. Reads can safely retry "
+            "after a 504 (they're idempotent at the broker), so a tighter "
+            "timeout here keeps the per-call ceiling predictable. Writes "
+            "use the separate ``alpaca_trading_write_call_timeout_seconds`` "
+            "knob (default 25s) which permits more slack for opening-bell "
+            "broker slowdowns where surfacing a 504 forces the caller into "
+            "the idempotency-retry contract — less convenient than just "
+            "succeeding once."
+        ),
+    )
+    alpaca_trading_write_call_timeout_seconds: float = Field(
+        default=25.0,
+        ge=0.5,
+        description=(
+            "Wall-clock timeout (seconds) for WRITE Alpaca trading calls — "
+            "create_order, replace_order, cancel_order, cancel_all_orders, "
+            "close_position, close_all_positions. Evidence from 2026-05-15 "
+            "opening bell showed 13 write-class timeouts at the previous "
+            "shared 15s ceiling (3 create_order, 1 close_position, plus 9 "
+            "cancels). Alpaca's broker latency at the market-open burst can "
+            "exceed 15s on writes; bumping the write ceiling to 25s lets "
+            "those calls complete instead of 504'ing into the idempotency "
+            "retry contract (which exists for genuine failures, not for "
+            "merely slow successes). Must stay <= "
+            "``alpaca_trading_http_timeout_seconds`` (default 30s) so the "
+            "HTTP-level safety net still releases threads. Reads keep the "
+            "existing 15s default — see ``alpaca_trading_call_timeout_seconds``."
+        ),
+    )
     alpaca_trading_http_timeout_seconds: float = Field(
         default=30.0,
         ge=1.0,
@@ -102,9 +136,10 @@ class Settings(BaseSettings):
             "requests session. The SDK creates a bare Session() with no timeout, so "
             "asyncio's wait_for cannot cancel an in-flight thread; without this, "
             "alpaca_trading_call_timeout_seconds returns 504 to the caller but leaks "
-            "the trading thread until the OS gives up. Should be > "
-            "alpaca_trading_call_timeout_seconds so the wall-clock keeps user-facing "
-            "behavior unchanged; the HTTP timeout is the safety net for thread release."
+            "the trading thread until the OS gives up. Should be >= the larger of "
+            "alpaca_trading_call_timeout_seconds and alpaca_trading_write_call_timeout_seconds "
+            "so user-facing 504s fire first; the HTTP timeout is the safety net for "
+            "thread release."
         ),
     )
     alpaca_trading_thread_pool_size: int = Field(

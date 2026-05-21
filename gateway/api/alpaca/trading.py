@@ -105,6 +105,44 @@ def _generate_client_order_id() -> str:
     return f"{_GATEWAY_CLIENT_ORDER_ID_PREFIX}{uuid.uuid4().hex}"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Write-class trading operations get a longer wall-clock timeout than reads.
+#
+# Reads (get_account, get_orders, get_position, get_clock, get_calendar,
+# get_portfolio_history, get_assets, etc.) are idempotent at the broker —
+# a 504 is safely retryable, so a tighter ceiling keeps per-call latency
+# predictable.
+#
+# Writes (create_order, replace_order, cancel_order, cancel_all_orders,
+# close_position, close_all_positions) need the idempotency-retry contract
+# kicking in on 504 — but surfacing a 504 to the caller forces them through
+# that retry contract (GET by_client_order_id / GET position / etc.), which
+# is more expensive than letting a merely-slow successful call complete. The
+# 2026-05-15 opening-bell window showed 13 write-class timeouts at the prior
+# shared 15s ceiling (3 × create_order, 1 × close_position, 9 × cancel/all)
+# — Alpaca's broker latency on the burst can exceed 15s without failing.
+# Bumping ONLY writes to 25s (configurable via
+# ``alpaca_trading_write_call_timeout_seconds``) lets those calls complete
+# while keeping reads tight. The HTTP-level safety net
+# (``alpaca_trading_http_timeout_seconds``, default 30s) still releases the
+# executor thread on either path.
+#
+# Cancels are grouped with writes because cancelling at the broker is a
+# state mutation — even though it's idempotent at the symbol level, the
+# caller cares whether the cancel applied (the position/order state).
+# ─────────────────────────────────────────────────────────────────────────────
+_WRITE_TRADING_OPERATIONS: frozenset[str] = frozenset(
+    {
+        "create_order",
+        "replace_order",
+        "cancel_order",
+        "cancel_all_orders",
+        "close_position",
+        "close_all_positions",
+    }
+)
+
+
 # Module-level dedicated executor for trading calls (created lazily)
 _trading_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
@@ -257,7 +295,15 @@ async def _run_trading_provider_call(
             retry the close.
     """
     settings = get_settings()
-    timeout_seconds = settings.alpaca_trading_call_timeout_seconds
+    # Writes get a longer wall-clock budget than reads — see
+    # _WRITE_TRADING_OPERATIONS for the rationale. Reads stay at the
+    # existing alpaca_trading_call_timeout_seconds default (15s); writes
+    # use alpaca_trading_write_call_timeout_seconds (default 25s).
+    timeout_seconds = (
+        settings.alpaca_trading_write_call_timeout_seconds
+        if operation in _WRITE_TRADING_OPERATIONS
+        else settings.alpaca_trading_call_timeout_seconds
+    )
     sem = _get_trading_inflight_sem()
 
     # Fast-fail when the in-flight cap is fully reserved. ``locked()`` is safe

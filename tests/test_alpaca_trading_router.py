@@ -228,7 +228,10 @@ async def test_get_orders_times_out_stuck_trading_call(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -607,7 +610,10 @@ async def test_create_order_504_timeout_includes_client_order_id_in_detail(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -657,7 +663,10 @@ async def test_create_order_504_timeout_preserves_caller_client_order_id(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -779,7 +788,10 @@ async def test_close_position_504_timeout_includes_get_position_retry_hint(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -915,7 +927,10 @@ async def test_create_order_504_retry_hint_uses_actual_router_prefix(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -961,7 +976,10 @@ async def test_close_position_504_retry_hint_uses_actual_router_prefix(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -1266,7 +1284,11 @@ def test_create_order_504_via_http_layer_contains_correct_retry_hint_url(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5, alpaca_trading_max_inflight=10),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+            alpaca_trading_max_inflight=10,
+        ),
     )
 
     try:
@@ -1394,7 +1416,10 @@ async def test_replace_order_504_timeout_includes_client_order_id_in_detail(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -1443,7 +1468,10 @@ async def test_replace_order_504_timeout_preserves_caller_client_order_id(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -1664,7 +1692,10 @@ async def test_replace_order_504_retry_hint_uses_actual_router_prefix(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -1719,7 +1750,11 @@ def test_replace_order_504_via_http_layer_contains_correct_retry_hint_url(
     monkeypatch.setattr(
         trading,
         "get_settings",
-        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5, alpaca_trading_max_inflight=10),
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+            alpaca_trading_max_inflight=10,
+        ),
     )
 
     try:
@@ -1745,3 +1780,177 @@ def test_replace_order_504_via_http_layer_contains_correct_retry_hint_url(
     assert f"GET {ALPACA_ROUTER_PREFIX}/orders/orig-http-1" in detail["retry_hint"]
     assert f"GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id" in detail["retry_hint"]
     assert "/api/alpaca/trading/" not in detail["retry_hint"]
+
+
+# ---------------------------------------------------------------------------
+# Read vs write timeout split — writes get a longer ceiling
+# (alpaca_trading_write_call_timeout_seconds, default 25s) than reads
+# (alpaca_trading_call_timeout_seconds, default 15s). Reads are safe to
+# retry after a 504; writes prefer slack-to-completion over forcing the
+# caller into the idempotency-retry contract.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "write_op",
+    [
+        "create_order",
+        "replace_order",
+        "cancel_order",
+        "cancel_all_orders",
+        "close_position",
+        "close_all_positions",
+    ],
+)
+async def test_run_trading_provider_call_uses_write_timeout_for_write_operations(
+    monkeypatch: pytest.MonkeyPatch,
+    write_op: str,
+) -> None:
+    """Write operations must consult alpaca_trading_write_call_timeout_seconds,
+    NOT the read timeout. The split keeps reads tight while letting writes
+    absorb opening-bell broker slowdowns instead of surfacing a 504 that
+    forces the caller through the idempotency-retry contract."""
+    # Pin read timeout long, write timeout at the floor (Settings enforces
+    # ge=0.5 — sanity guard against accidental sub-second timeouts in prod).
+    # A write op must 504 because it's reading the write knob; if it
+    # incorrectly read the read knob it would succeed.
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=5.0,
+            alpaca_trading_write_call_timeout_seconds=0.5,
+            alpaca_trading_max_inflight=10,
+        ),
+    )
+
+    def _slow(_p: Any) -> Any:
+        import time
+
+        time.sleep(1.0)
+        return "should-not-return"
+
+    with pytest.raises(HTTPException) as exc:
+        await trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=_slow,
+            operation=write_op,
+        )
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+    assert exc.value.detail["code"] == "GW-E5004"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "read_op",
+    [
+        "get_account",
+        "get_orders",
+        "get_order",
+        "get_order_by_client_id",
+        "get_positions",
+        "get_position",
+        "get_portfolio_history",
+        "get_assets",
+        "get_asset",
+        "get_clock",
+        "get_calendar",
+    ],
+)
+async def test_run_trading_provider_call_uses_read_timeout_for_read_operations(
+    monkeypatch: pytest.MonkeyPatch,
+    read_op: str,
+) -> None:
+    """Read operations must consult alpaca_trading_call_timeout_seconds, NOT
+    the write knob. Pinned read timeout at the floor (ge=0.5), write
+    timeout long — a read op that incorrectly read the write knob would
+    succeed instead of 504."""
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=5.0,
+            alpaca_trading_max_inflight=10,
+        ),
+    )
+
+    def _slow(_p: Any) -> Any:
+        import time
+
+        time.sleep(1.0)
+        return "should-not-return"
+
+    with pytest.raises(HTTPException) as exc:
+        await trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=_slow,
+            operation=read_op,
+        )
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_run_trading_provider_call_write_timeout_longer_than_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Black-box smoke test of the asymmetry: with read=0.5s and write=2.0s,
+    a 1.0s-sleep write SUCCEEDS while a 1.0s-sleep read 504s. Pins the
+    direction of the split — writes must get MORE budget than reads. The
+    read floor (0.5s) is the Settings ge=0.5 minimum."""
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(
+            alpaca_trading_call_timeout_seconds=0.5,
+            alpaca_trading_write_call_timeout_seconds=2.0,
+            alpaca_trading_max_inflight=10,
+        ),
+    )
+
+    def _med(_p: Any) -> Any:
+        import time
+
+        time.sleep(1.0)
+        return "ok"
+
+    # Read 504s (1.0s > 0.5s read timeout).
+    with pytest.raises(HTTPException) as read_exc:
+        await trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=_med,
+            operation="get_account",
+        )
+    assert read_exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+
+    # Write SUCCEEDS (1.0s < 2.0s write timeout).
+    result = await trading._run_trading_provider_call(
+        provider=SimpleNamespace(),
+        provider_fn=_med,
+        operation="create_order",
+    )
+    assert result == "ok"
+
+
+def test_trading_call_timeout_defaults_keep_writes_slacker_than_reads() -> None:
+    """Sanity check on the default configuration: writes must have AT LEAST
+    as much wall-clock budget as reads, and the HTTP-level safety net must
+    not be lower than the wall-clock timeout. Catches a footgun where a
+    deploy-time override (env var) inverts the relationship without anyone
+    noticing — the regression would silently re-introduce the 2026-05-15
+    opening-bell timeout pattern."""
+    settings = Settings()
+    assert settings.alpaca_trading_write_call_timeout_seconds >= settings.alpaca_trading_call_timeout_seconds, (
+        "writes must get at least as much wall-clock budget as reads"
+    )
+    # HTTP safety net releases the executor thread when the wall-clock
+    # timer fires; if the HTTP timeout is lower, the thread is killed
+    # BEFORE the user-facing 504 fires, which defeats the idempotency
+    # contract (the SDK exception masks the wall-clock timeout).
+    assert settings.alpaca_trading_http_timeout_seconds >= settings.alpaca_trading_write_call_timeout_seconds, (
+        "HTTP timeout must be >= write call timeout — see alpaca_trading_http_timeout_seconds docstring"
+    )
+    assert settings.alpaca_trading_http_timeout_seconds >= settings.alpaca_trading_call_timeout_seconds, (
+        "HTTP timeout must be >= read call timeout"
+    )
