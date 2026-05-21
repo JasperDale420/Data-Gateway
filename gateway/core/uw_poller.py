@@ -973,19 +973,35 @@ class UWPoller(DedupMixin, BasePoller):
         return published
 
     async def _poll_eod_option_volume(self, sink_registry, ticker: str) -> int:
-        """Poll historic option volume for a single ticker."""
+        """Poll historic option volume for a single ticker.
+
+        Each row carries an ``expiry`` field (volume bucketed per expiration),
+        but this is per-underlying analytics -- NOT per-option-contract data.
+        Without the equity overrides below, ``_infer_instrument_type`` would
+        see ``expiry`` in the payload and tag every row as
+        ``instrument_type=option`` with ``instrument_key=option:{ticker}``
+        (no OCC suffix), which Heber's writer-side
+        ``is_valid_instrument_key()`` rejects -- dropping 100% of rows on
+        Bronze→Silver normalization. See ``_poll_eod_iv_term_structure`` for
+        the canonical pattern.
+        """
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_historic_option_volume(ticker)
         if not results:
             return 0
 
+        symbol = ticker.upper()
+        instrument_key = f"equity:{symbol}"
         envelopes = [
             wrap_event(
                 event=item,
                 provider="unusual_whales",
                 feed="historic_option_volume",
                 source="rest",
+                instrument_type_override="equity",
+                instrument_key_override=instrument_key,
+                symbol_override=symbol,
             )
             for item in results
         ]
