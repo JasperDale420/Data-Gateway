@@ -52,8 +52,21 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _merge_tests(static: dict[str, Any], active: dict[str, Any], changes: list[str], label: str) -> None:
-    """Propagate per-test values where static > active (more lenient = larger)."""
-    for test_key, static_val in static.get("tests", {}).items():
+    """Propagate per-test changes from static to active.
+
+    Two-way sync:
+      * Static > active: raise active to static (lenient direction; existing
+        behaviour).
+      * Test removed from static: remove from active as well so renames take
+        effect across CI cache boundaries. Without this, a test renamed in
+        static config (e.g. ``backpressure_task_growth_profile`` ->
+        ``queue_drops_after_block_timeout``) leaves a stale orphan entry in
+        the active cache that the perf gate then complains about as
+        ``missing in junit results``.
+    """
+    static_tests = static.get("tests", {})
+    # First pass: raise active values where static is higher.
+    for test_key, static_val in static_tests.items():
         if not isinstance(static_val, int | float):
             continue
         active_val = active.get("tests", {}).get(test_key, 0)
@@ -62,6 +75,12 @@ def _merge_tests(static: dict[str, Any], active: dict[str, Any], changes: list[s
         if float(static_val) > float(active_val):
             active.setdefault("tests", {})[test_key] = float(static_val)
             changes.append(f"[{label}] {test_key}: {active_val:.4f} -> {static_val:.4f}")
+    # Second pass: prune active entries not in static (handles test renames).
+    active_tests = active.get("tests", {})
+    stale_keys = [k for k in active_tests if k not in static_tests]
+    for k in stale_keys:
+        removed_val = active_tests.pop(k)
+        changes.append(f"[{label}] {k}: REMOVED (was {removed_val})")
 
 
 def _merge_scalar(
