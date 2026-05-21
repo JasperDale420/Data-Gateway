@@ -279,16 +279,21 @@ def _known_client_ids() -> list[str]:
 
     Imports ``get_authenticator`` lazily to avoid a dep cycle at module
     import time (deps.py imports gateway.core.auth which doesn't import
-    this module, but tightening that loop is brittle). Defensive against
-    test paths where the authenticator hasn't been wired — returns an
-    empty list, and the parser falls back to the naive split which is
-    still correct for any client id without hyphens (the common case).
+    this module, but tightening that loop is brittle). The error
+    catches are NARROW (ImportError + AttributeError + FileNotFoundError)
+    so we don't silently swallow real config errors — those should
+    surface elsewhere via the auth-load path. The fallback (empty list
+    → naive first-hyphen parse) is correct for any non-hyphenated id,
+    which covers all production clients except ``heber-watch``; the
+    misattribution is best-effort audit enrichment, not a security
+    control (the foreign-prefix REJECTION uses the caller's own
+    ``client.id`` directly and is not affected).
     """
     try:
         from gateway.api.deps import get_authenticator
 
         return list(get_authenticator().list_client_ids())
-    except Exception:  # noqa: BLE001 — best-effort audit-log enrichment
+    except (ImportError, AttributeError, FileNotFoundError):
         return []
 
 
@@ -844,7 +849,7 @@ _VALID_ORDER_SIDES = frozenset({"buy", "sell"})
 @router.get("/orders", response_model=SuccessResponse)
 async def get_orders(
     status: str = Query(default="open", description="Order status: open, closed, all"),
-    limit: int = Query(default=50, le=500, description="Max orders to return"),
+    limit: int = Query(default=50, ge=1, le=500, description="Max orders to return"),
     direction: str = Query(default="desc", description="Sort direction: asc, desc"),
     symbols: str | None = Query(default=None, description=DESC_COMMA_SYMBOLS),
     nested: bool = Query(default=True, description="Include nested multi-leg orders"),
@@ -872,6 +877,16 @@ async def get_orders(
     have older owned orders — a reconciliation hazard that has caused
     duplicate-order placement in similar fan-out gateways. We always
     request the upstream ceiling (500) and then ``[:limit]`` post-filter.
+
+    Page-boundary limitation (tracked separately): when the shared
+    Alpaca account has MORE THAN 500 open orders, only the newest 500
+    are inspected — owned orders beyond that page are invisible. In
+    practice no Empire trading system runs anywhere near that scale,
+    but a follow-up should add explicit ``after``-cursor pagination so
+    we walk the full open-order set. The current 500-per-call ceiling
+    is enforced upstream by Alpaca's REST API (``GET /v2/orders`` accepts
+    ``limit <= 500``); the bounded result is preferable to the prior
+    silent-truncation behaviour.
     """
     if status not in _VALID_ORDER_QUERY_STATUSES:
         raise HTTPException(
@@ -1202,6 +1217,11 @@ async def cancel_all_orders(
     NOT short-circuit on the first failure: cancelling SOME of a
     client's orders is strictly better than cancelling NONE if a
     transient Alpaca error hits mid-batch.
+
+    Page-boundary limitation (tracked separately, same as get_orders):
+    only the newest 500 open orders are inspected — owned orders beyond
+    that page won't be cancelled. Follow-up should add cursor-based
+    pagination across the full open-order set.
     """
     # List open orders FIRST so we know what's owned. Reuse get_orders'
     # filtering by inlining the same prefix check — we can't call the
@@ -1228,35 +1248,43 @@ async def cancel_all_orders(
             if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
         ]
 
-    cancelled: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-    for order in owned:
+    # Cancel concurrently rather than sequentially. With the default
+    # 25s write timeout × N owned orders, a sequential loop could run
+    # for minutes during an opening-bell mass-cancel; parallel cancels
+    # bounded by the existing in-flight semaphore
+    # (alpaca_trading_max_inflight, default 24) compress that into the
+    # latency of the slowest single cancel.
+    async def _one_cancel(order: dict[str, Any]) -> dict[str, Any]:
         order_id = order.get("id") if isinstance(order, dict) else getattr(order, "id", None)
         if not order_id:
-            # Defensive: skip malformed entries rather than crashing the
-            # whole batch on one bad order.
-            errors.append({"order_id": None, "error": "order missing id field"})
-            continue
+            return {"order_id": None, "cancelled": False, "error": "order missing id field"}
         try:
             await _execute_trading_call(
                 registry=registry,
-                # Need to bind order_id to lambda local — closure capture
-                # in a loop is a classic Python footgun.
+                # Bind order_id via default-arg trick to dodge the
+                # classic loop-closure capture footgun.
                 provider_fn=(lambda _provider, _oid=order_id: _provider.cancel_order(_oid)),
                 operation="cancel_all_orders.cancel",
             )
-            cancelled.append({"order_id": order_id, "cancelled": True})
+            return {"order_id": order_id, "cancelled": True}
         except HTTPException as exc:
-            # Don't short-circuit — partial cancellation is strictly
-            # better than no cancellation on transient upstream errors.
-            errors.append(
-                {
-                    "order_id": order_id,
-                    "cancelled": False,
-                    "status_code": exc.status_code,
-                    "detail": exc.detail,
-                }
-            )
+            return {
+                "order_id": order_id,
+                "cancelled": False,
+                "status_code": exc.status_code,
+                "detail": exc.detail,
+            }
+
+    if owned:
+        # gather with return_exceptions=False; _one_cancel itself never
+        # raises (caught HTTPException above), so any propagating
+        # exception is a real bug we WANT to surface.
+        results = await asyncio.gather(*[_one_cancel(order) for order in owned])
+    else:
+        results = []
+
+    cancelled = [r for r in results if r.get("cancelled")]
+    errors = [r for r in results if not r.get("cancelled")]
     return {
         "success": True,
         "data": cancelled,
