@@ -26,7 +26,6 @@ from gateway.core.metrics import (
     get_stream_sink_dispatch_snapshot,
 )
 from gateway.core.registry import ProviderRegistry
-from gateway.schemas import SuccessResponse
 
 router = APIRouter(tags=["admin"])
 
@@ -579,7 +578,7 @@ def attach_error_buffer_handler() -> None:
     root_logger.addHandler(handler)
 
 
-@router.get("/api/v1/status", response_model=SuccessResponse)
+@router.get("/api/v1/status")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def get_status(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -799,7 +798,7 @@ async def get_status(
     }
 
 
-@router.get("/api/v1/admin/logs/recent", response_model=SuccessResponse)
+@router.get("/api/v1/admin/logs/recent")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def get_recent_logs(
     level: str = Query(default="ERROR", description="Log level filter"),
     limit: int = Query(default=100, le=1000, description="Max entries"),
@@ -824,7 +823,7 @@ async def get_recent_logs(
     }
 
 
-@router.get("/api/v1/admin/errors/summary", response_model=SuccessResponse)
+@router.get("/api/v1/admin/errors/summary")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def get_error_summary(
     client: Client = Depends(require_api_key),
 ):
@@ -845,7 +844,7 @@ async def get_error_summary(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@router.get("/api/v1/admin/rate-limits", response_model=SuccessResponse)
+@router.get("/api/v1/admin/rate-limits")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def get_rate_limit_status(
     provider: str | None = Query(default=None, description="Filter by provider"),
     client: Client = Depends(require_api_key),
@@ -874,7 +873,7 @@ async def get_rate_limit_status(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@router.get("/api/v1/admin/providers", response_model=SuccessResponse)
+@router.get("/api/v1/admin/providers")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def list_providers(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
@@ -919,7 +918,9 @@ async def list_providers(
     }
 
 
-@router.post("/api/v1/admin/providers/{name}/enable", response_model=SuccessResponse)
+@router.post(
+    "/api/v1/admin/providers/{name}/enable"
+)  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def enable_provider(
     name: str,
     client: Client = Depends(require_api_key),
@@ -941,7 +942,9 @@ async def enable_provider(
     }
 
 
-@router.post("/api/v1/admin/providers/{name}/disable", response_model=SuccessResponse)
+@router.post(
+    "/api/v1/admin/providers/{name}/disable"
+)  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def disable_provider(
     name: str,
     client: Client = Depends(require_api_key),
@@ -992,7 +995,7 @@ def _require_admin(client: Client) -> None:
 # ── Cache Management ────────────────────────────────────────────────────────
 
 
-@router.post("/api/v1/admin/cache/clear", response_model=SuccessResponse)
+@router.post("/api/v1/admin/cache/clear")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def admin_cache_clear(
     client: Client = Depends(require_api_key),
     cache: InMemoryCache = Depends(get_cache),
@@ -1009,7 +1012,7 @@ async def admin_cache_clear(
     }
 
 
-@router.get("/api/v1/admin/cache/stats", response_model=SuccessResponse)
+@router.get("/api/v1/admin/cache/stats")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def admin_cache_stats(
     client: Client = Depends(require_api_key),
     cache: InMemoryCache = Depends(get_cache),
@@ -1026,7 +1029,7 @@ async def admin_cache_stats(
 # ── Circuit Breaker Management ──────────────────────────────────────────────
 
 
-@router.get("/api/v1/admin/circuits", response_model=SuccessResponse)
+@router.get("/api/v1/admin/circuits")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def admin_list_circuits(
     client: Client = Depends(require_api_key),
 ):
@@ -1042,7 +1045,7 @@ async def admin_list_circuits(
     }
 
 
-@router.post("/api/v1/admin/circuits/reset", response_model=SuccessResponse)
+@router.post("/api/v1/admin/circuits/reset")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def admin_reset_all_circuits(
     client: Client = Depends(require_api_key),
 ):
@@ -1060,7 +1063,9 @@ async def admin_reset_all_circuits(
     }
 
 
-@router.post("/api/v1/admin/circuits/{name}/reset", response_model=SuccessResponse)
+@router.post(
+    "/api/v1/admin/circuits/{name}/reset"
+)  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def admin_reset_circuit(
     name: str,
     client: Client = Depends(require_api_key),
@@ -1087,7 +1092,9 @@ async def admin_reset_circuit(
 # ── Provider Reload ─────────────────────────────────────────────────────────
 
 
-@router.post("/api/v1/admin/providers/{name}/reload", response_model=SuccessResponse)
+@router.post(
+    "/api/v1/admin/providers/{name}/reload"
+)  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def admin_reload_provider(
     name: str,
     client: Client = Depends(require_api_key),
@@ -1113,7 +1120,7 @@ async def admin_reload_provider(
 # ── Admin Shutdown (super_admin only) ────────────────────────────────────────
 
 
-@router.post("/api/v1/admin/shutdown", response_model=SuccessResponse)
+@router.post("/api/v1/admin/shutdown")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def admin_shutdown(
     client: Client = Depends(require_api_key),
 ):
@@ -1139,7 +1146,7 @@ async def admin_shutdown(
 # ── Security Blocklist ──────────────────────────────────────────────────────
 
 
-@router.get("/api/v1/admin/security/blocklist", response_model=SuccessResponse)
+@router.get("/api/v1/admin/security/blocklist")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def admin_list_blocklist(
     client: Client = Depends(require_api_key),
 ):
@@ -1152,7 +1159,7 @@ async def admin_list_blocklist(
     }
 
 
-@router.post("/api/v1/admin/security/blocklist", response_model=SuccessResponse)
+@router.post("/api/v1/admin/security/blocklist")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def admin_add_to_blocklist(
     client: Client = Depends(require_api_key),
     ip: str = Body(..., embed=True),
