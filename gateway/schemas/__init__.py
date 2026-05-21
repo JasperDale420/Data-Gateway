@@ -1,10 +1,24 @@
 """Pydantic schemas for messages and data.
 
-This module re-exports all models from empire_schemas (the canonical source)
-and adds gateway-specific models not present in the shared package.
+This module re-exports all models from empire_schemas (the canonical
+source) and adds gateway-specific models not present in the shared
+package.
+
+A small set of core models are intentionally shadowed by **gateway-strict
+subclasses** defined in `gateway.schemas._strict`. The strict subclasses
+inherit from the canonical empire-schemas models so `isinstance` still
+works, but add Data-Gateway-side invariants:
+
+  * datetime fields must be timezone-aware (UTC required)
+  * prices/strikes must be > 0
+  * volume/OI/sizes must be >= 0
+  * `ResponseMeta.provider` is required (no silent `"alpaca"` default)
+
+Cleanup of these invariants in `empire-schemas` itself is tracked as a
+follow-up task; until that lands, the gateway is the source of truth.
 """
 
-# ── Re-export everything from empire_schemas ──
+# ── Re-export the empire_schemas models we do NOT shadow ──
 from empire_schemas import (
     FEED_UNIQUE_FIELDS,
     INSTRUMENT_KEY_PATTERNS,
@@ -48,39 +62,25 @@ from empire_schemas import (
     MoversData,
     MoversResponse,
     NewsResponse,
-    NormalizedBar,
     NormalizedCorporateAction,
-    NormalizedDarkpoolTrade,
     NormalizedEarnings,
     NormalizedETFFlow,
     NormalizedETFHolding,
-    NormalizedFlowAlert,
-    NormalizedForexRate,
     NormalizedFTD,
     NormalizedFundamentals,
-    NormalizedGreekExposure,
     NormalizedHottestChain,
-    NormalizedInsiderTrade,
     NormalizedInstitutionHolding,
     NormalizedIVRank,
     NormalizedIVTermStructure,
-    NormalizedMarketTide,
     NormalizedMaxPain,
     NormalizedMostActive,
     NormalizedMover,
-    NormalizedNetPremiumTick,
-    NormalizedNewsArticle,
     NormalizedOIChange,
-    NormalizedOptionContract,
     NormalizedOrderbook,
     NormalizedOrderbookLevel,
-    NormalizedPoliticianTrade,
-    NormalizedQuote,
     NormalizedScreenerResult,
     NormalizedSeasonality,
-    NormalizedSectorTide,
     NormalizedShortData,
-    NormalizedTrade,
     NormalizedVolatilityStats,
     OptionBarsResponse,
     OptionChainResponse,
@@ -97,7 +97,6 @@ from empire_schemas import (
     Position,
     PositionResponse,
     PositionsListResponse,
-    ResponseMeta,
     SnapshotsResponse,
     StockBarsResponse,
     StockQuoteResponse,
@@ -121,10 +120,31 @@ from empire_schemas import (
 # Auction is in empire_schemas.responses but also re-exported here for convenience
 from empire_schemas.responses import Auction
 
+# ── Gateway-strict subclasses (shadow the empire_schemas defaults) ──
+# Imported AFTER the wholesale empire_schemas import above so they win
+# the namespace.
+from gateway.schemas._strict import (  # noqa: E402
+    NormalizedBar,
+    NormalizedDarkpoolTrade,
+    NormalizedFlowAlert,
+    NormalizedForexRate,
+    NormalizedGreekExposure,
+    NormalizedInsiderTrade,
+    NormalizedMarketTide,
+    NormalizedNetPremiumTick,
+    NormalizedNewsArticle,
+    NormalizedOptionContract,
+    NormalizedPoliticianTrade,
+    NormalizedQuote,
+    NormalizedSectorTide,
+    NormalizedTrade,
+    ResponseMeta,
+)
+
 # ── Gateway-specific re-exports from submodules ──
-from gateway.schemas.fundamentals import NormalizedBorrowCost
-from gateway.schemas.news import NormalizedNewsImage
-from gateway.schemas.options import NormalizedOptionTrade
+from gateway.schemas.fundamentals import NormalizedBorrowCost  # noqa: E402
+from gateway.schemas.news import NormalizedNewsImage  # noqa: E402
+from gateway.schemas.options import NormalizedOptionTrade  # noqa: E402
 
 __all__ = [
     "SCHEMA_VERSION",
