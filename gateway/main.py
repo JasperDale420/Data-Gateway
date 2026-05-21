@@ -509,7 +509,12 @@ async def lifespan(app: FastAPI):
     if drain_seconds > 0:
         await asyncio.sleep(drain_seconds)
 
-    # Step 4: Unsubscribe upstream / stop multiplexer
+    # Step 4: Stop streaming PRODUCERS first (option capture, multiplexer).
+    # Order is critical: we must stop everything that emits events into
+    # ``sink_registry`` *before* draining and closing the sink. Otherwise the
+    # registry flips ``_enabled=False`` and any in-flight tail event from a
+    # producer's final iteration is silently dropped (`data_sink.publish_all`
+    # early-returns on a disabled registry).
     if option_capture_service:
         from gateway.core.option_capture import stop_option_capture_service
 
@@ -525,15 +530,10 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("multiplexer_shutdown_error", error=str(e))
 
-    # Step 5: Close client connections with 1001 Going Away
-    await connections.close_all(code=1001, reason="Going Away")
-
-    # Step 6: Close sink connections — sink_registry.close_all() drains
-    # the bounded queue and tears down workers before disconnecting.
-    if sink_registry:
-        await sink_registry.close_all()
-
-    # Step 7: Shutdown remaining services
+    # Step 5: Stop polling PRODUCERS (treasury, quotes, trades, crypto, news,
+    # UW) and the backfill engine + provider registry. Pollers can publish
+    # one last batch on shutdown — keeping the sink open while they stop
+    # guarantees those events get a chance to land in Redis.
     if treasury_poller:
         from gateway.core.treasury_poller import stop_treasury_poller
 
@@ -568,11 +568,22 @@ async def lifespan(app: FastAPI):
 
     await get_backfill_engine().shutdown()
     await registry.shutdown()
+
+    # Step 6: Close client connections with 1001 Going Away
+    await connections.close_all(code=1001, reason="Going Away")
+
+    # Step 7: Drain queues and close sink connections — now that all
+    # producers have stopped, ``sink_registry.close_all()`` can safely drain
+    # the bounded queue and tear down workers without losing tail events.
+    if sink_registry:
+        await sink_registry.close_all()
+
     uptime_task.cancel()
     with suppress(asyncio.CancelledError):
         await uptime_task
     logger.info("gateway_shutdown_complete")
     _set_stream_sink_registry(None)
+    # Step 8: Reset coordinator state for next startup
     ShutdownCoordinator.reset()
 
 

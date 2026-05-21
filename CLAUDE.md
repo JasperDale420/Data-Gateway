@@ -206,13 +206,17 @@ API key auth via `config/clients.yaml`. Each client has: id, key, role (trader/a
 
 ### Graceful Shutdown (8-step)
 
+Producers must stop **before** the sink is drained/closed; otherwise tail
+events from in-flight poller iterations are silently dropped once
+`sink_registry.close_all()` disables the registry.
+
 1. Mark as shutting down (health -> 503)
 2. Notify connected WebSocket clients
 3. Drain period (configurable, default 30s)
-4. Stop option capture + multiplexer (15s timeout)
-5. Close client connections (1001 Going Away)
-6. Flush stream-to-sink publish tasks (2s timeout)
-7. Stop pollers, backfill engine, provider registry
+4. Stop streaming producers — option capture + multiplexer (15s timeout)
+5. Stop polling producers — treasury, quotes, trades, crypto, news, UW pollers + backfill engine + provider registry
+6. Close client connections (1001 Going Away)
+7. Drain bounded queue + close sink connections (`sink_registry.close_all`)
 8. Reset shutdown coordinator
 
 ## Configuration
