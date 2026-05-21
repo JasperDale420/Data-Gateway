@@ -649,6 +649,72 @@ async def test_eager_start_then_immediate_subscriber_does_not_spawn_duplicate_st
     assert start_call_count == 1, f"eager start + subscriber raced into {start_call_count} start() tasks"
 
 
+@pytest.mark.asyncio
+async def test_all_eager_start_then_immediate_subscriber_does_not_spawn_duplicate_start() -> None:
+    """Same regression as the selective-eager test, but for the all-eager
+    code path (``lazy_connect=False``). Both eager branches share the
+    same race; pin both so a future change to one doesn't silently
+    regress the other.
+    """
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=False,
+    )
+
+    start_release = asyncio.Event()
+
+    class FakeConn:
+        def __init__(self) -> None:
+            self.is_connected = False
+            self._running = False
+            self._connected_event = asyncio.Event()
+            self._start_lock = asyncio.Lock()
+            self.start_call_count = 0
+
+        async def start(self) -> None:
+            self.start_call_count += 1
+            self._running = True
+            await start_release.wait()
+            self.is_connected = True
+            self._connected_event.set()
+
+        async def stop(self) -> None:
+            pass
+
+    # Replace one stream's connection so we can race against it.
+    fake = FakeConn()
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(Any, fake)
+    # All-eager mode also walks the OPTIONS / CRYPTO / NEWS conns; stub
+    # them out so `multiplexer.start()` doesn't try to dial real WebSockets.
+    for stream_type in list(multiplexer._connections.keys()):
+        if stream_type is AlpacaStreamType.STOCKS_SIP:
+            continue
+        multiplexer._connections[stream_type] = cast(Any, FakeConn())
+
+    await multiplexer.start()
+    # Subscriber arrives in the same scheduler tick.
+    subscriber = asyncio.create_task(multiplexer._ensure_connected(AlpacaStreamType.STOCKS_SIP))
+
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if fake.start_call_count >= 1:
+            break
+
+    start_release.set()
+    result = await asyncio.wait_for(subscriber, timeout=2.0)
+
+    assert result is True
+    assert fake.start_call_count == 1, (
+        f"all-eager start + subscriber raced into {fake.start_call_count} start() tasks for STOCKS_SIP"
+    )
+
+
 def test_stream_subscription_manager_client_view_reuses_index_set() -> None:
     manager = StreamSubscriptionManager()
     manager.subscribe(client_id="client-1", bars=["AAPL"])
