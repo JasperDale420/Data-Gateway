@@ -96,37 +96,96 @@ def _inject_service_name(
 
 
 def _daily_namer(default_name: str) -> str:
-    """Rename rotated log files from suffix-date to date-in-name format.
+    """Rename rotated log files to a ``{stem}_{YYYY-MM-DD}.log`` form.
 
-    Transforms e.g. ``logs/3roses_2026-03-12.log.2026-03-11``
-    into ``logs/3roses_2026-03-11.log``.
+    ``TimedRotatingFileHandler`` appends ``.YYYY-MM-DD`` to the active
+    filename when it rotates. We want the rotated-out file to be named
+    e.g. ``logs/3roses_2026-03-11.log`` (date-in-name, not suffix-date)
+    so operators can sort and tail dated files easily.
+
+    Transforms:
+
+    * ``logs/3roses.log.2026-03-11``           → ``logs/3roses_2026-03-11.log``
+      (new shape — active file has no date in its name)
+    * ``logs/3roses_2026-03-12.log.2026-03-11`` → ``logs/3roses_2026-03-11.log``
+      (legacy shape — active file already had a date; date in stem is
+      replaced with the rotated date)
+
+    Anything that does not match the trailing ``.YYYY-MM-DD`` pattern is
+    returned unchanged.
+
+    **Collision handling (upgrade path):** when upgrading from the
+    pre-fix code, log directories already contain ``{service}_{date}.log``
+    files written by the buggy old setup. ``TimedRotatingFileHandler.
+    doRollover()`` calls ``os.rename(src, dest)`` and bails out if
+    ``dest`` exists, which would leave the active file unrotated and
+    accumulating forever. To preserve forward progress AND not clobber
+    the legacy archive, we append a ``.N`` sequence suffix on collision:
+    ``{service}_{date}.log.1``, ``.2``, etc. until a free name is found.
+    Operators can manually merge the sequenced files into the legacy
+    archive at their leisure; rollover never blocks.
     """
     match = re.search(r"\.(\d{4}-\d{2}-\d{2})$", default_name)
     if not match:
         return default_name
     date_suffix = match.group(1)
     base = default_name[: match.start()]
-    # base is e.g. "logs/3roses_2026-03-12.log"
-    # Replace the date in the stem with the rotated date
+    # Legacy shape: base already contains a date in the stem
+    # (e.g. "logs/3roses_2026-03-12.log") — replace it with the
+    # rotated date so the file is named for the day it covers.
     stem_match = re.search(r"_\d{4}-\d{2}-\d{2}\.log$", base)
     if stem_match:
         prefix = base[: stem_match.start()]
-        return f"{prefix}_{date_suffix}.log"
-    return default_name
+        candidate = f"{prefix}_{date_suffix}.log"
+    elif base.endswith(".log"):
+        # New shape: base is the active filename without a date
+        # (e.g. "logs/3roses.log"). Insert the rotated date before the
+        # ``.log`` extension so the rotated file becomes
+        # ``logs/3roses_2026-03-11.log``.
+        candidate = f"{base[:-4]}_{date_suffix}.log"
+    else:
+        return default_name
+    # Collision-safe: if a legacy file already occupies the target name,
+    # append .1, .2, ... until a free name is found. Rollover then
+    # always succeeds. Capped at 1000 attempts to avoid infinite loops
+    # in pathological cases.
+    if not os.path.exists(candidate):
+        return candidate
+    for seq in range(1, 1000):
+        sequenced = f"{candidate}.{seq}"
+        if not os.path.exists(sequenced):
+            return sequenced
+    # Fallthrough: 1000 collisions on the same target is implausible;
+    # return the highest sequence and let doRollover fail loudly if the
+    # cap is somehow reached.
+    return f"{candidate}.999"
 
 
 def _make_daily_file_handler(
     log_dir: Path, service_name: str, backup_count: int, *, level: int = logging.DEBUG
 ) -> logging.Handler:
-    """Create a file handler that writes to ``{service}_{YYYY-MM-DD}.log``.
+    """Create a file handler for all log levels with daily rotation.
 
-    Rotates at midnight; old files keep their date in the filename.
+    The active (currently-written) file is ``{service}.log`` — note the
+    bare basename with NO date. When ``TimedRotatingFileHandler`` rotates
+    at midnight, the rotated-out file is renamed via ``_daily_namer`` to
+    ``{service}_{YYYY-MM-DD}.log`` (the date the rotated file covers) and
+    a fresh ``{service}.log`` is opened.
+
+    This naming was changed in 2026-05 to fix a long-running-process bug:
+    the previous implementation baked ``date.today()`` into the active
+    filename at process start, so a process running past midnight kept
+    writing to the original (now misnamed) file forever. The bare basename
+    side-steps that entirely — the active file always has a stable name
+    and only rotated files carry dates.
+
+    Operators tail / log-ship ``{log_dir}/{service}.log`` for the live
+    stream; dated files in the same directory are the historical archive
+    (capped at ``backup_count`` days, default 14).
     """
-    from datetime import date
     from logging.handlers import TimedRotatingFileHandler
 
-    today = date.today().isoformat()
-    filename = log_dir / f"{service_name}_{today}.log"
+    filename = log_dir / f"{service_name}.log"
 
     handler = TimedRotatingFileHandler(
         filename=filename,
@@ -141,15 +200,17 @@ def _make_daily_file_handler(
 
 
 def _make_daily_error_handler(log_dir: Path, service_name: str, backup_count: int) -> logging.Handler:
-    """Create a file handler for WARNING+ logs only.
+    """Create a file handler for WARNING+ logs only with daily rotation.
 
-    Writes to ``{service}_errors_{YYYY-MM-DD}.log``.
+    Active file is ``{service}_errors.log`` (bare basename). On midnight
+    rotation, the rotated-out file becomes
+    ``{service}_errors_{YYYY-MM-DD}.log`` via ``_daily_namer``. See
+    :func:`_make_daily_file_handler` for the rationale behind the
+    date-less active filename.
     """
-    from datetime import date
     from logging.handlers import TimedRotatingFileHandler
 
-    today = date.today().isoformat()
-    filename = log_dir / f"{service_name}_errors_{today}.log"
+    filename = log_dir / f"{service_name}_errors.log"
 
     handler = TimedRotatingFileHandler(
         filename=filename,
