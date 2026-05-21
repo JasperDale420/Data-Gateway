@@ -111,7 +111,7 @@ attach_error_buffer_handler()
 
 
 async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> None:
-    """Callback when stream data arrives. Sends envelope to connected client.
+    """Per-client WS delivery callback (used by the FALLBACK fanout path only).
 
     The envelope contains:
     - event_id: Idempotency hash for deduplication
@@ -120,12 +120,20 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
 
     For backward compatibility, we include both 'envelope' and 'data' fields.
 
-    Sink dispatch is awaited inline. The registry owns a bounded queue +
-    worker pool — ``publish_all`` only blocks if the queue is full and
-    workers cannot drain it within ``data_sink_producer_block_timeout_seconds``
-    (default 100ms). Drops are surfaced via the
-    ``gateway_sink_producer_timeout_drops_total`` counter on the registry
-    side; there is no separate outer drop path here.
+    IMPORTANT: This callback is ONLY invoked in StreamMultiplexer's fallback
+    fanout path. In production the multiplexer is wired with
+    ``on_broadcast=connections.broadcast_to_connection_ids`` which takes the
+    fast-path and never calls on_data per client. Per-envelope side-effects
+    (sink publish, dedup, etc.) MUST live in ``_on_stream_envelope`` (wired
+    as ``on_envelope`` on the multiplexer) — not here — so they fire exactly
+    once per envelope regardless of which fanout path is taken.
+
+    Historical note (2026-05-21): sink publish previously lived inline in
+    this function. Because production uses the broadcast fast-path, sink
+    publish was silently bypassed for ALL streaming events — Heber received
+    zero `source:stream` events while operators believed PR #32's
+    bounded-queue refactor was protecting that path. Fixed by extracting
+    sink dispatch to ``_on_stream_envelope``.
     """
     connections = get_connection_manager()
     connection = connections.get(client_id)
@@ -149,30 +157,39 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
                 error=str(e),
             )
 
-    # Publish to data sink for Heber storage. The registry's bounded queue
-    # is the single in-process gate — producers block briefly only if the
-    # queue is saturated, and drops show up as producer-timeout drops.
+
+async def _on_stream_envelope(envelope: dict) -> None:
+    """Per-envelope sink-dispatch callback. Fires ONCE per upstream envelope,
+    regardless of which fanout path the multiplexer takes (broadcast
+    fast-path OR fallback per-client). This is the single source of truth
+    for streaming → Heber publishing.
+
+    The registry's bounded queue is the single in-process gate — producers
+    block briefly only if the queue is saturated, and drops show up as
+    producer-timeout drops (``gateway_sink_producer_timeout_drops_total``).
+    """
     sink_registry = _stream_sink_registry
-    if sink_registry:
-        record_stream_sink_dispatch_event("scheduled")
+    if sink_registry is None:
+        return
+    record_stream_sink_dispatch_event("scheduled")
+    try:
+        # Pre-serialize once so the Redis sink doesn't have to re-encode.
         try:
-            # Pre-serialize once so the Redis sink doesn't have to re-encode.
-            try:
-                payload: dict | str = orjson.dumps(envelope, default=str).decode()
-            except Exception:
-                payload = envelope
-            await sink_registry.publish_all(STREAM_SINK_TOPIC, payload)
-            record_stream_sink_dispatch_event("completed")
-        except asyncio.CancelledError:
-            record_stream_sink_dispatch_event("cancelled")
-            raise
-        except Exception as exc:
-            record_stream_sink_dispatch_event("failed")
-            logger.warning(
-                "stream_sink_publish_failed",
-                event_id=envelope.get("event_id", "unknown"),
-                error=str(exc),
-            )
+            payload: dict | str = orjson.dumps(envelope, default=str).decode()
+        except Exception:
+            payload = envelope
+        await sink_registry.publish_all(STREAM_SINK_TOPIC, payload)
+        record_stream_sink_dispatch_event("completed")
+    except asyncio.CancelledError:
+        record_stream_sink_dispatch_event("cancelled")
+        raise
+    except Exception as exc:
+        record_stream_sink_dispatch_event("failed")
+        logger.warning(
+            "stream_sink_publish_failed",
+            event_id=envelope.get("event_id", "unknown"),
+            error=str(exc),
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,6 +270,7 @@ async def lifespan(app: FastAPI):
             fanout_max_inflight=settings.stream_fanout_max_inflight,
             fanout_batch_size=settings.stream_fanout_batch_size,
             on_broadcast=connections.broadcast_to_connection_ids,
+            on_envelope=_on_stream_envelope,
             eager_connect_types=eager_types,
         )
         set_multiplexer(multiplexer)
