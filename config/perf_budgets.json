@@ -23,8 +23,8 @@
     "tests/perf/test_perf_replay_bulk_memory.py::test_replay_run_large_message_batch_memory_profile": 0.35,
     "tests/perf/test_perf_replay_bulk_memory.py::test_bulk_results_stream_has_lower_peak_memory_than_jsonl_materialization": 1.4,
     "tests/perf/test_perf_stream_sink.py::test_stream_fanout_respects_inflight_semaphore_bound": 0.2,
-    "tests/perf/test_perf_stream_sink.py::test_sink_publish_backpressure_task_growth_profile": 0.08,
-    "tests/perf/test_perf_stream_sink.py::test_sink_publish_backpressure_multi_sink_bounds": 0.2,
-    "tests/perf/test_perf_stream_sink.py::test_sink_publish_backpressure_with_slow_backend_profile": 0.45
+    "tests/perf/test_perf_stream_sink.py::test_sink_publish_queue_drops_after_block_timeout": 0.9,
+    "tests/perf/test_perf_stream_sink.py::test_sink_publish_queue_multi_sink_independent_bounds": 0.7,
+    "tests/perf/test_perf_stream_sink.py::test_sink_publish_queue_drains_under_slow_backend": 0.25
   }
 }
