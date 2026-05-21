@@ -1294,3 +1294,454 @@ def test_create_order_504_via_http_layer_contains_correct_retry_hint_url(
     assert detail["retry_with"] == "client_order_id"
     assert f"GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id" in detail["retry_hint"]
     assert "/api/alpaca/trading/" not in detail["retry_hint"]
+
+
+# ---------------------------------------------------------------------------
+# replace_order idempotency — mirrors the create_order contract. PATCH must
+# carry the same retry plumbing because Alpaca's replace_order_by_id accepts
+# a client_order_id on the *replacement* and dedupes by it, AND a naive
+# retry against a partially-replaced order can double-modify the position.
+# The retry hint additionally points at GET /orders/{order_id} so the caller
+# can observe the original order transitioning to status="replaced".
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_replace_order_auto_generates_client_order_id_when_caller_omits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller omits client_order_id → gateway mints ``dg-<uuid4hex>`` and
+    threads it to the provider so the replacement is Alpaca-side dedupable."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            captured["order_id"] = order_id
+            captured.update(kwargs)
+            return {"id": "replacement-1", "status": "accepted", "replaces": order_id}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.replace_order(
+        order_id="orig-order-1",
+        qty=15,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured["order_id"] == "orig-order-1"
+    assert captured["client_order_id"] is not None
+    assert captured["client_order_id"].startswith("dg-")
+    assert len(captured["client_order_id"]) == 3 + 32
+    assert response["meta"]["client_order_id"] == captured["client_order_id"]
+    assert response["meta"]["client_order_id_source"] == "gateway"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_preserves_caller_supplied_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller supplies a client_order_id → gateway must use it verbatim."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            captured["order_id"] = order_id
+            captured.update(kwargs)
+            return {"id": "replacement-1"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.replace_order(
+        order_id="orig-order-2",
+        qty=15,
+        client_order_id="caller-replace-key-1",
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured["client_order_id"] == "caller-replace-key-1"
+    assert response["meta"]["client_order_id"] == "caller-replace-key-1"
+    assert response["meta"]["client_order_id_source"] == "caller"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_504_timeout_includes_client_order_id_in_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Critical retry contract: 504 on PATCH must carry the client_order_id
+    in detail. Without it, a naive retry against a replaced order would
+    either no-op or double-modify."""
+
+    class _SlowProvider(_FakeProvider):
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            import time
+
+            time.sleep(0.6)
+            return {"id": "should-not-return"}
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="orig-order-3",
+            qty=20,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "GW-E5004"
+    assert "client_order_id" in detail
+    assert detail["client_order_id"].startswith("dg-")
+    assert detail["client_order_id_source"] == "gateway"
+    assert detail["retry_with"] == "client_order_id"
+    # The retry hint must mention BOTH lookup paths (original order +
+    # by_client_order_id) — distinctive to the PATCH contract.
+    assert "Alpaca natively dedupes" in detail["retry_hint"]
+    assert "DO NOT retry PATCH" in detail["retry_hint"]
+
+
+@pytest.mark.asyncio
+async def test_replace_order_504_timeout_preserves_caller_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When caller supplies the key and it times out, the 504 surfaces THE
+    CALLER'S key so the caller's retry path stays wired correctly."""
+
+    class _SlowProvider(_FakeProvider):
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            import time
+
+            time.sleep(0.6)
+            return {"id": "should-not-return"}
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="orig-order-4",
+            qty=20,
+            client_order_id="caller-replace-retry-key",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["client_order_id"] == "caller-replace-retry-key"
+    assert detail["client_order_id_source"] == "caller"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_503_backpressure_includes_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """503 backpressure path runs BEFORE the call hits Alpaca — the
+    replacement definitely did not apply, but the idempotency key still
+    needs to surface so the caller can safely retry the same logical
+    replacement."""
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_max_inflight=2, alpaca_trading_call_timeout_seconds=5.0),
+    )
+
+    sem = trading._get_trading_inflight_sem()
+    await sem.acquire()
+    await sem.acquire()
+    assert sem.locked()
+
+    with pytest.raises(HTTPException) as exc:
+        await trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=lambda _p: "unused",
+            operation="replace_order",
+            idempotency_context={
+                "client_order_id": "replace-test-key-1",
+                "client_order_id_source": "gateway",
+                "retry_with": "client_order_id",
+                "retry_hint": "stub",
+            },
+        )
+
+    assert exc.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["client_order_id"] == "replace-test-key-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_key", ["", " ", "   ", "\t", "\n\n", " \t \n "])
+async def test_replace_order_rejects_empty_or_whitespace_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+    bad_key: str,
+) -> None:
+    """Empty / whitespace client_order_id must surface as 400 GW-E4006 —
+    same contract as create_order. Silently auto-generating would defeat
+    Alpaca-side dedup on retry."""
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="orig-order-5",
+            qty=10,
+            client_order_id=bad_key,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "GW-E4006"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_rejects_oversize_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same 128-char cap as create_order — Alpaca's REST API rejects above
+    that, the gateway surfaces a structured 400 first."""
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    oversize = "x" * 129
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="orig-order-6",
+            qty=10,
+            client_order_id=oversize,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "GW-E4006"
+    assert "128" in exc.value.detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_replace_order_accepts_max_length_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """128-char key (inclusive max) passes through untouched."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"id": "max-len-replace-ok"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    max_len_key = "y" * 128
+
+    response = await trading.replace_order(
+        order_id="orig-order-7",
+        qty=10,
+        client_order_id=max_len_key,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured["client_order_id"] == max_len_key
+    assert response["meta"]["client_order_id_source"] == "caller"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_non_timeout_5xx_preserves_client_order_id_in_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-timeout 5xx (e.g. 503 from Alpaca during a deployment) must
+    still carry the idempotency key — the rewrite in
+    execute_alpaca_provider_call would otherwise strip it."""
+    import httpx
+
+    class _Http503Provider:
+        def replace_order(self, order_id: str, **kwargs: Any) -> Any:
+            request = httpx.Request("PATCH", f"https://api.alpaca.markets/v2/orders/{order_id}")
+            response = httpx.Response(status_code=503, request=request, text="simulated upstream 503")
+            raise httpx.HTTPStatusError(
+                "simulated Alpaca 503",
+                request=request,
+                response=response,
+            )
+
+    provider = _Http503Provider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    from gateway.api.alpaca import common as _common
+
+    async def _no_rate_limit(provider_name: str, block: bool = True) -> None:  # noqa: ARG001
+        return None
+
+    class _NoSem:
+        def upstream_semaphore(self, name: str) -> None:  # noqa: ARG002
+            return None
+
+    monkeypatch.setattr(_common, "require_provider_rate_limit", _no_rate_limit)
+    monkeypatch.setattr(_common, "get_rate_limiter", lambda: _NoSem())
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="orig-order-8",
+            qty=10,
+            client_order_id="caller-replace-non-timeout-1",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 503
+    detail = exc.value.detail
+    assert isinstance(detail, dict), (
+        f"5xx detail must be a dict carrying the idempotency context, got {type(detail)}: {detail!r}"
+    )
+    assert detail["client_order_id"] == "caller-replace-non-timeout-1"
+    assert detail["client_order_id_source"] == "caller"
+    assert detail["retry_with"] == "client_order_id"
+    assert ALPACA_ROUTER_PREFIX in detail["retry_hint"]
+
+
+@pytest.mark.asyncio
+async def test_replace_order_504_retry_hint_uses_actual_router_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry hint must reference the actual mounted prefix AND both
+    lookup paths (the original-order GET and the by-client-order-id GET).
+    Any drift here sends caller retries to a 404 just like the original
+    URL-drift bug for create_order."""
+
+    class _SlowProvider(_FakeProvider):
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            import time
+
+            time.sleep(0.6)
+            return {"id": "should-not-return"}
+
+    provider = _SlowProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="orig-9",
+            qty=10,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    hint = exc.value.detail["retry_hint"]
+    assert ALPACA_ROUTER_PREFIX in hint
+    # BOTH retry lookup paths are present in the PATCH retry contract.
+    assert f"GET {ALPACA_ROUTER_PREFIX}/orders/orig-9" in hint
+    assert f"GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id" in hint
+    # Old wrong-shape strings must not appear.
+    assert "/api/alpaca/trading/" not in hint
+
+
+def test_replace_order_504_via_http_layer_contains_correct_retry_hint_url(
+    client,
+    monkeypatch,
+    auth_headers,
+    test_registry,
+) -> None:
+    """HTTP-layer through-the-wire test (mirrors the create_order variant).
+    Exercises the full middleware/router stack so future URL drift in the
+    docstring/hint can't escape review."""
+    from gateway.api.deps import require_api_key
+    from gateway.core.auth import Client, ClientPermissions
+    from gateway.main import app
+
+    app.dependency_overrides[require_api_key] = lambda: Client(
+        id="test-trader",
+        permissions=ClientPermissions(
+            providers=["alpaca"],
+            feeds=["bars", "quotes"],
+            max_symbols=100,
+            rate_limit=60,
+        ),
+        role="trader",
+    )
+
+    def _slow_replace(order_id: str, **kwargs: Any) -> dict[str, Any]:
+        import time
+
+        time.sleep(1.0)
+        return {"id": "should-not-return"}
+
+    test_registry.get.return_value.replace_order = _slow_replace
+
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_call_timeout_seconds=0.5, alpaca_trading_max_inflight=10),
+    )
+
+    try:
+        response = client.patch(
+            f"{ALPACA_ROUTER_PREFIX}/orders/orig-http-1?qty=10&client_order_id=http-layer-replace-1",
+            headers=auth_headers,
+        )
+    finally:
+        app.dependency_overrides.pop(require_api_key, None)
+
+    assert response.status_code != 404, (
+        f"Endpoint {ALPACA_ROUTER_PREFIX}/orders/<order_id> returned 404 — "
+        "router prefix has drifted from ALPACA_ROUTER_PREFIX."
+    )
+    assert response.status_code == 504, response.text
+
+    body = response.json()
+    detail = body.get("detail") or body.get("error") or body
+    assert isinstance(detail, dict), f"detail must be a dict, got {body!r}"
+    assert detail["client_order_id"] == "http-layer-replace-1"
+    assert detail["retry_with"] == "client_order_id"
+    # Both retry paths are present.
+    assert f"GET {ALPACA_ROUTER_PREFIX}/orders/orig-http-1" in detail["retry_hint"]
+    assert f"GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id" in detail["retry_hint"]
+    assert "/api/alpaca/trading/" not in detail["retry_hint"]
