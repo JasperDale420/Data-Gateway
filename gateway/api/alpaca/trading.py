@@ -2,6 +2,7 @@
 
 import asyncio
 import concurrent.futures
+import re
 import uuid
 from collections.abc import Callable
 from datetime import date
@@ -31,12 +32,41 @@ TRADING_ASSETS_CACHE_TTL_SECONDS = 600
 TRADING_CALENDAR_CACHE_TTL_SECONDS = 3600
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Idempotency-key prefix for gateway-generated client_order_id values. Used to
-# distinguish auto-generated keys from caller-supplied ones in logs/dashboards.
-# Alpaca's client_order_id max length is 128 chars (per their REST API docs);
-# "dg-" + 32-char UUID hex leaves ample headroom under the ceiling.
+# Per-client ownership-prefix scheme for ``client_order_id`` values sent to
+# Alpaca. Multiple Empire trading systems (Cerberus, 3Roses, Kairos, Orion,
+# Atlas, Orbit) authenticate to this gateway with distinct API keys but
+# SHARE A SINGLE upstream Alpaca account. Without per-client namespacing,
+# any auth'd trading client could:
+#   - Collide with another client's idempotency key (their POST /orders
+#     short-circuits to the *other* client's existing order at Alpaca).
+#   - Probe / enumerate another client's order state via
+#     GET /orders:by_client_order_id (the lookup confirms existence).
+#   - Replay another client's key from its own session.
+#
+# Fix: the gateway prefixes EVERY effective ``client_order_id`` going to
+# Alpaca with ``c-{client.id}-``. The prefix IS the ownership marker — we
+# don't need a separate persisted (order_id → client_id) map for the common
+# ownership-check cases (list / by_client_order_id / get / replace /
+# cancel). Order-id-based lookups still need to fetch from Alpaca and
+# inspect the order's ``client_order_id`` for prefix match (see
+# ``_assert_order_owned_by_caller`` below); that's the unavoidable cost of
+# not maintaining a process-local (order_id → owner) map. We chose
+# stateless verification over an in-memory map for correctness after
+# restart and simplicity — live-capital callers already tolerate Alpaca's
+# baseline API latency, and the extra round-trip happens only on the read
+# paths that hit a specific order_id (replace, cancel, get_order).
+#
+# Auto-generated keys: ``c-{client.id}-dg-{uuid4hex}`` (was ``dg-{uuid4hex}``).
+# Caller-supplied keys: ``c-{client.id}-{caller_value}`` (caller value is
+# transparently prefixed; the caller sees the FULL prefixed string in
+# ``meta.client_order_id`` so they know what to retry with).
+#
+# Alpaca's 128-character ceiling applies to the FINAL prefixed string.
+# Caller-supplied keys are validated AFTER prefixing — see
+# ``_validate_client_order_id``.
 # ─────────────────────────────────────────────────────────────────────────────
 _GATEWAY_CLIENT_ORDER_ID_PREFIX = "dg-"
+_OWNERSHIP_PREFIX_FORMAT = "c-{client_id}-"
 
 # Alpaca enforces a 128-character ceiling on ``client_order_id`` (REST API
 # docs: https://docs.alpaca.markets/reference/postorder — "length <= 128").
@@ -47,22 +77,61 @@ _GATEWAY_CLIENT_ORDER_ID_PREFIX = "dg-"
 # gateway is the only place this check happens before the wire.
 _CLIENT_ORDER_ID_MAX_LENGTH = 128
 
+# Client IDs are embedded in the wire-level ``client_order_id`` prefix.
+# Restrict to characters that Alpaca and the SDK accept (and that don't
+# introduce ambiguity in our own prefix parsing): alphanumeric, hyphen,
+# underscore. ``config/clients.yaml`` ids in production today (cerberus,
+# 3roses, orion, atlas, orbit, kairos, heber-watch, test) all satisfy this.
+# Validated at startup (gateway.core.auth) AND on every prefix build so a
+# misconfigured client (e.g. a colon in the id) fails loudly rather than
+# emitting a malformed key that Alpaca rejects mid-burst.
+_CLIENT_ID_SAFE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
-def _validate_client_order_id(raw: str | None) -> str | None:
-    """Validate a caller-supplied client_order_id.
 
-    Returns the value unchanged when ``None`` (caller omitted the field —
-    gateway will auto-generate downstream). Raises 400 GW-E4006 for empty
-    strings, whitespace-only strings, and strings exceeding Alpaca's 128-char
-    ceiling.
+def _ownership_prefix(client_id: str) -> str:
+    """Return the ownership prefix ``c-{client_id}-`` for a given client id.
 
-    Rejecting empty/whitespace is critical for idempotency: previously, a
-    caller passing ``client_order_id=""`` would receive a fresh
-    gateway-minted UUID labelled ``client_order_id_source="caller"``, and
-    each retry would mint a new UUID — defeating Alpaca-side dedup and
-    risking double-place on 504 retries. Forcing callers to either supply a
-    real key or omit the field entirely makes the idempotency contract
-    unambiguous.
+    Raises 500 GW-E5008 if the client id contains characters that would
+    break our parsing or Alpaca's accepted character set. This is a
+    "should-never-happen" guard — client ids are loaded from
+    ``config/clients.yaml`` at startup and validated there — but defense
+    in depth matters for live-capital trading.
+    """
+    if not client_id or not _CLIENT_ID_SAFE_RE.match(client_id):
+        # 500 (not 400) intentionally: this is a server-side config error,
+        # not a client input fault. Surfacing 400 would mislead the caller
+        # into thinking they could fix it by changing the request body.
+        logger.error("client_id_unsafe_for_order_prefix", client_id=client_id)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "GW-E5008",
+                "message": (
+                    "Gateway client id contains characters not allowed in "
+                    "the order-ownership prefix (must match [A-Za-z0-9_-]+). "
+                    "Fix config/clients.yaml and restart the gateway."
+                ),
+            },
+        )
+    return _OWNERSHIP_PREFIX_FORMAT.format(client_id=client_id)
+
+
+def _validate_client_order_id(raw: str | None, client_id: str) -> str | None:
+    """Validate a caller-supplied client_order_id AND apply the ownership prefix.
+
+    Returns the caller value PREFIXED with ``c-{client_id}-`` ready to send
+    to Alpaca, or ``None`` when the caller omitted the field (in which case
+    the route auto-generates a fully-prefixed key via
+    ``_generate_client_order_id``).
+
+    Validation:
+      - Empty / whitespace-only strings → 400 GW-E4006 (silent fallback
+        to UUID would defeat Alpaca-side dedup on retry).
+      - The FINAL prefixed string must fit in Alpaca's 128-char ceiling.
+        The caller-supplied portion is therefore capped at
+        ``128 - len(prefix)`` characters; oversize keys raise 400 GW-E4006
+        with a message that surfaces the post-prefix budget so callers can
+        adapt rather than guess.
     """
     if raw is None:
         return None
@@ -78,31 +147,132 @@ def _validate_client_order_id(raw: str | None) -> str | None:
                 ),
             },
         )
-    if len(raw) > _CLIENT_ORDER_ID_MAX_LENGTH:
+    prefix = _ownership_prefix(client_id)
+    prefixed = f"{prefix}{raw}"
+    if len(prefixed) > _CLIENT_ORDER_ID_MAX_LENGTH:
+        # Compute the per-caller budget so the error tells the caller
+        # exactly how many characters they have to work with after the
+        # gateway adds the ownership prefix.
+        caller_budget = _CLIENT_ORDER_ID_MAX_LENGTH - len(prefix)
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "GW-E4006",
                 "message": (
-                    f"client_order_id length {len(raw)} exceeds Alpaca's {_CLIENT_ORDER_ID_MAX_LENGTH}-char limit."
+                    f"client_order_id length {len(raw)} exceeds the "
+                    f"per-client budget of {caller_budget} chars "
+                    f"(Alpaca's {_CLIENT_ORDER_ID_MAX_LENGTH}-char ceiling "
+                    f"minus the {len(prefix)}-char ownership prefix "
+                    f"'{prefix}'). Shorten your key or omit the parameter "
+                    "to let the gateway auto-generate one."
                 ),
             },
         )
-    return raw
+    return prefixed
 
 
-def _generate_client_order_id() -> str:
-    """Generate a gateway-side client_order_id for order idempotency.
+def _generate_client_order_id(client_id: str) -> str:
+    """Generate a gateway-side, ownership-prefixed client_order_id.
 
-    Alpaca natively dedupes `submit_order` by client_order_id — if a call
-    times out mid-flight (e.g. our 15s asyncio wait_for fires while the
-    underlying executor thread is still talking to Alpaca), the caller can
-    safely retry with the same client_order_id: Alpaca returns the existing
-    order rather than placing a second one. The gateway returns the
-    auto-generated key in the 504 response detail and in successful
-    response meta so callers always know which key to retry with.
+    Returns ``c-{client_id}-dg-{uuid4hex}``. Alpaca natively dedupes
+    ``submit_order`` by client_order_id — if a call times out mid-flight
+    (e.g. our 15s asyncio wait_for fires while the underlying executor
+    thread is still talking to Alpaca), the caller can safely retry with
+    the same key: Alpaca returns the existing order rather than placing a
+    second one. The gateway returns the auto-generated key in the 504
+    response detail and in successful response meta so callers always know
+    which key to retry with.
     """
-    return f"{_GATEWAY_CLIENT_ORDER_ID_PREFIX}{uuid.uuid4().hex}"
+    return f"{_ownership_prefix(client_id)}{_GATEWAY_CLIENT_ORDER_ID_PREFIX}{uuid.uuid4().hex}"
+
+
+def _client_order_id_matches_owner(client_order_id: Any, client_id: str) -> bool:
+    """Return True iff ``client_order_id`` carries the caller's ownership prefix.
+
+    Defensive against non-string values (Alpaca's SDK may return None or
+    enum-wrapped strings depending on the order shape) — anything that
+    isn't a real string returns False so we fail closed rather than open.
+    """
+    if not isinstance(client_order_id, str):
+        return False
+    return client_order_id.startswith(_ownership_prefix(client_id))
+
+
+def _parse_owner_from_client_order_id(client_order_id: Any) -> str | None:
+    """Best-effort extract the owner client_id from a ``c-{id}-...`` prefix.
+
+    Used for audit logging when a foreign-prefix lookup is rejected — lets
+    operators see WHICH legitimate client the attempted access actually
+    belonged to, which is the load-bearing signal for "is this a
+    misconfigured caller or an active enumeration attack?". Returns None
+    for orders without the gateway prefix (e.g. orders placed directly
+    against Alpaca outside the gateway, before this change shipped, or
+    that lack any client_order_id at all).
+    """
+    if not isinstance(client_order_id, str) or not client_order_id.startswith("c-"):
+        return None
+    # Format: c-{client_id}-<rest>. Find the FIRST hyphen after the "c-".
+    after_c = client_order_id[2:]
+    sep_idx = after_c.find("-")
+    if sep_idx <= 0:
+        return None
+    candidate = after_c[:sep_idx]
+    return candidate if _CLIENT_ID_SAFE_RE.match(candidate) else None
+
+
+def _log_foreign_order_access_attempt(
+    *,
+    caller_id: str,
+    order_owner: str | None,
+    order_id: str | None = None,
+    client_order_id: str | None = None,
+    operation: str,
+) -> None:
+    """Emit a structured WARNING for any cross-client order access attempt.
+
+    Code GW-A4001 (audit warning). Operators alert on this — a non-zero
+    rate means either (a) a misconfigured caller, or (b) an active
+    enumeration / replay attempt against a foreign client's order state.
+    Both deserve immediate attention against the shared Alpaca account.
+    """
+    logger.warning(
+        "alpaca_trading_foreign_order_access_attempt",
+        code="GW-A4001",
+        operation=operation,
+        client_id_attempted=caller_id,
+        order_owner_actual=order_owner,
+        order_id=order_id,
+        client_order_id=client_order_id,
+    )
+
+
+def _foreign_order_not_found(*, order_id: str | None = None) -> HTTPException:
+    """Build the 404 returned for cross-client order access attempts.
+
+    We return 404 (not 403) intentionally: a 403 would confirm the order
+    EXISTS but belongs to someone else, which is exactly the enumeration
+    signal we're trying to deny. A 404 is indistinguishable from a
+    genuinely-unknown order_id.
+    """
+    detail: dict[str, Any] = {
+        "code": "GW-E4404",
+        "message": "Order not found.",
+    }
+    if order_id is not None:
+        detail["order_id"] = order_id
+    return HTTPException(status_code=404, detail=detail)
+
+
+def _extract_client_order_id_from_order(order: Any) -> Any:
+    """Pull ``client_order_id`` from an order returned by the Alpaca provider.
+
+    The provider normalises orders into dicts via ``_model_to_dict``, but
+    we keep this defensive for object-style responses (e.g. attribute
+    access on SDK models if a future provider path skips serialisation).
+    """
+    if isinstance(order, dict):
+        return order.get("client_order_id")
+    return getattr(order, "client_order_id", None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -370,6 +540,54 @@ async def _run_trading_provider_call(
             ) from exc
 
 
+async def _assert_order_owned_by_caller(
+    *,
+    registry: ProviderRegistry,
+    order_id: str,
+    client_id: str,
+    operation: str,
+) -> None:
+    """Stateless ownership verification for an order_id-keyed mutation/read.
+
+    Fetches the order from Alpaca via ``provider.get_order(order_id)``,
+    then checks the returned ``client_order_id`` for this caller's
+    ``c-{client.id}-`` prefix. If absent (foreign client, or a pre-prefix
+    legacy order), logs the GW-A4001 audit warning and raises 404 — NOT
+    403, to avoid confirming existence.
+
+    Used by ``replace_order``, ``cancel_order``, and ``get_order`` so that
+    NO Alpaca write side-effect runs against a foreign client's order. The
+    fetch happens BEFORE the mutating SDK call so a cross-client cancel /
+    replace attempt never reaches Alpaca's executor thread.
+
+    Note: this adds one extra Alpaca round-trip per mutating call. We
+    accept that latency hit in exchange for the simplicity / restart-safety
+    of a stateless ownership check — see ``get_order`` docstring for the
+    Option A vs Option B trade-off discussion.
+
+    Raises:
+        HTTPException 404 GW-E4404 for cross-client / unowned orders.
+        Other HTTPExceptions (5xx from upstream, 404 from Alpaca for an
+        order that genuinely doesn't exist) bubble through unchanged so
+        callers see the broker's view directly.
+    """
+    fetched = await _execute_trading_call(
+        registry=registry,
+        provider_fn=lambda provider: provider.get_order(order_id),
+        operation=f"{operation}.ownership_check",
+    )
+    fetched_client_order_id = _extract_client_order_id_from_order(fetched)
+    if not _client_order_id_matches_owner(fetched_client_order_id, client_id):
+        _log_foreign_order_access_attempt(
+            caller_id=client_id,
+            order_owner=_parse_owner_from_client_order_id(fetched_client_order_id),
+            order_id=order_id,
+            client_order_id=fetched_client_order_id if isinstance(fetched_client_order_id, str) else None,
+            operation=operation,
+        )
+        raise _foreign_order_not_found(order_id=order_id)
+
+
 @router.get("/account", response_model=SuccessResponse)
 async def get_account(
     client: Client = Depends(require_api_key),
@@ -406,12 +624,18 @@ async def create_order(
     """Create a new order.
 
     Idempotency contract (DO NOT REGRESS):
-      - If the caller supplies ``client_order_id``, we use it verbatim.
-        Empty / whitespace-only / oversize keys are rejected with 400
-        GW-E4006 — there is no silent fallback, because a silent fallback
-        breaks Alpaca-side dedup on retry.
+      - The gateway PREFIXES every effective ``client_order_id`` with
+        ``c-{client.id}-`` so distinct trading clients sharing the upstream
+        Alpaca account cannot collide on, enumerate, or replay each other's
+        idempotency keys.
+      - If the caller supplies ``client_order_id``, the gateway transparently
+        prefixes it. Caller sees the FULL prefixed value in
+        ``meta.client_order_id`` so they know what to retry with. Empty /
+        whitespace-only / oversize (after prefixing) keys are rejected with
+        400 GW-E4006 — there is no silent fallback, because a silent
+        fallback breaks Alpaca-side dedup on retry.
       - If the caller does NOT supply one, the gateway auto-generates a
-        ``dg-<uuid4hex>`` key and uses that.
+        ``c-{client.id}-dg-<uuid4hex>`` key and uses that.
       - The effective client_order_id is returned in ``meta.client_order_id``
         on success AND in the 504 timeout error detail. Alpaca natively
         dedupes ``submit_order`` by client_order_id — a caller that sees
@@ -419,13 +643,14 @@ async def create_order(
         existing order rather than placing a second) or GET
         ``{ALPACA_ROUTER_PREFIX}/orders:by_client_order_id`` to check status.
     """
-    # Validate the caller-supplied key BEFORE auto-generating. ``""`` and
-    # whitespace previously slipped through ``client_order_id or
-    # _generate_...`` and ended up with a fresh UUID labelled "caller" —
-    # which destroyed idempotency on retry. See _validate_client_order_id
-    # for the full reasoning.
-    validated_caller_key = _validate_client_order_id(client_order_id)
-    effective_client_order_id = validated_caller_key or _generate_client_order_id()
+    # Validate the caller-supplied key BEFORE auto-generating, and apply
+    # the per-client ownership prefix. ``""`` and whitespace previously
+    # slipped through ``client_order_id or _generate_...`` and ended up
+    # with a fresh UUID labelled "caller" — which destroyed idempotency on
+    # retry. The prefix application is also where we enforce the 128-char
+    # ceiling AFTER prefixing.
+    validated_caller_key = _validate_client_order_id(client_order_id, client.id)
+    effective_client_order_id = validated_caller_key or _generate_client_order_id(client.id)
     gateway_generated = validated_caller_key is None
     idempotency_context: dict[str, Any] = {
         "client_order_id": effective_client_order_id,
@@ -505,7 +730,18 @@ async def get_orders(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Get all orders with optional filters."""
+    """Get all orders with optional filters.
+
+    Ownership filtering (BLOCKER 1, DO NOT REGRESS): the upstream Alpaca
+    account is SHARED across all gateway clients (Cerberus, 3Roses,
+    Kairos, Orion, Atlas, Orbit). Returning the unfiltered list would
+    leak every other client's open orders. We filter client-side here
+    to ONLY return orders whose ``client_order_id`` starts with this
+    caller's ownership prefix ``c-{client.id}-``. Orders that lack a
+    ``client_order_id`` or were placed by another client are stripped
+    silently — there is no signal in the response that any orders were
+    filtered out. ``meta.count`` reflects the FILTERED count.
+    """
     if status not in _VALID_ORDER_QUERY_STATUSES:
         raise HTTPException(
             status_code=400,
@@ -535,10 +771,21 @@ async def get_orders(
         ),
         operation="get_orders",
     )
+    # Filter to only orders owned by this caller. Defensive against a
+    # provider that returns a non-list (current implementation always
+    # returns list, but typing-wise nothing pins it).
+    if isinstance(data, list):
+        owned = [
+            order
+            for order in data
+            if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
+        ]
+    else:
+        owned = data
     return {
         "success": True,
-        "data": data,
-        "meta": {"count": len(data), "provider": "alpaca"},
+        "data": owned,
+        "meta": {"count": len(owned) if isinstance(owned, list) else 0, "provider": "alpaca"},
     }
 
 
@@ -548,12 +795,39 @@ async def get_order(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Get a specific order by ID."""
+    """Get a specific order by ID.
+
+    Ownership-verification design (Option A — stateless, BLOCKER 1):
+      The gateway does NOT maintain an in-process ``(order_id → client_id)``
+      map. Instead, it fetches the order from Alpaca and inspects the
+      returned ``client_order_id`` for this caller's ownership prefix
+      ``c-{client.id}-``. If absent, the gateway returns 404 (NOT 403 —
+      a 403 would confirm the order exists and enable enumeration).
+
+      Trade-off: one extra Alpaca round-trip per read. Acceptable because
+      live-capital callers already tolerate Alpaca's baseline API
+      latency, and statelessness avoids the "map lost on restart" failure
+      mode that would otherwise require a startup rebuild from Alpaca's
+      order list.
+
+      A cross-client attempt is logged as ``GW-A4001`` so operators can
+      alert on enumeration / misconfiguration.
+    """
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_order(order_id),
         operation="get_order",
     )
+    order_client_order_id = _extract_client_order_id_from_order(data)
+    if not _client_order_id_matches_owner(order_client_order_id, client.id):
+        _log_foreign_order_access_attempt(
+            caller_id=client.id,
+            order_owner=_parse_owner_from_client_order_id(order_client_order_id),
+            order_id=order_id,
+            client_order_id=order_client_order_id if isinstance(order_client_order_id, str) else None,
+            operation="get_order",
+        )
+        raise _foreign_order_not_found(order_id=order_id)
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
 
@@ -563,7 +837,34 @@ async def get_order_by_client_id(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Get order by client order ID."""
+    """Get order by client order ID.
+
+    Ownership-verification (BLOCKER 2, DO NOT REGRESS): the gateway
+    prefixes every effective ``client_order_id`` going to Alpaca with
+    ``c-{client.id}-``. A lookup whose supplied key does NOT carry the
+    caller's prefix is either (a) a misconfigured caller passing a raw
+    legacy key (callers MUST pass the prefixed string they received in
+    ``meta.client_order_id`` — that's the contract), or (b) an active
+    enumeration attempt against another client's keys. Both yield 404
+    (NOT 403) so we don't confirm whether the key exists at Alpaca.
+    """
+    if not _client_order_id_matches_owner(client_order_id, client.id):
+        _log_foreign_order_access_attempt(
+            caller_id=client.id,
+            order_owner=_parse_owner_from_client_order_id(client_order_id),
+            client_order_id=client_order_id,
+            operation="get_order_by_client_id",
+        )
+        # Reuse the same 404 shape as foreign order-id lookups; do NOT
+        # echo the supplied key back in the body to avoid log/metric
+        # signals that could be used for enumeration timing analysis.
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "GW-E4404",
+                "message": "Order not found.",
+            },
+        )
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.get_order_by_client_id(client_order_id),
@@ -619,11 +920,25 @@ async def replace_order(
         Both lookups together resolve "did my replacement land?" without
         re-issuing the PATCH and risking a second modification.
     """
+    # Ownership pre-check (BLOCKER 1): replace is a state mutation against
+    # the SHARED Alpaca account, so we MUST verify this caller owns the
+    # original order before letting any Alpaca write side-effect fire. The
+    # check runs BEFORE both the caller-key validation (to avoid leaking
+    # validation-error timing as an enumeration signal) and the SDK call.
+    await _assert_order_owned_by_caller(
+        registry=registry,
+        order_id=order_id,
+        client_id=client.id,
+        operation="replace_order",
+    )
+
     # Same validation contract as create_order — empty / whitespace /
     # oversize keys are rejected BEFORE auto-generation so callers can't
-    # silently slip a bad key past Alpaca-side dedup on retry.
-    validated_caller_key = _validate_client_order_id(client_order_id)
-    effective_client_order_id = validated_caller_key or _generate_client_order_id()
+    # silently slip a bad key past Alpaca-side dedup on retry. Also applies
+    # the per-client ownership prefix ``c-{client.id}-`` so the replacement
+    # order can be uniquely attributed back to this caller on later lookups.
+    validated_caller_key = _validate_client_order_id(client_order_id, client.id)
+    effective_client_order_id = validated_caller_key or _generate_client_order_id(client.id)
     gateway_generated = validated_caller_key is None
     idempotency_context: dict[str, Any] = {
         "client_order_id": effective_client_order_id,
@@ -696,7 +1011,21 @@ async def cancel_order(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Cancel an order by ID."""
+    """Cancel an order by ID.
+
+    Ownership pre-check (BLOCKER 1): cancel is a state mutation against
+    the SHARED Alpaca account. We fetch the order from Alpaca and verify
+    its ``client_order_id`` carries this caller's ``c-{client.id}-``
+    prefix BEFORE the SDK ``cancel_order_by_id`` call. A cross-client
+    attempt returns 404 GW-E4404 (NOT 403, to avoid confirming existence)
+    and the Alpaca cancel never fires. Audit log: GW-A4001.
+    """
+    await _assert_order_owned_by_caller(
+        registry=registry,
+        order_id=order_id,
+        client_id=client.id,
+        operation="cancel_order",
+    )
     success = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.cancel_order(order_id),

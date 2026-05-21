@@ -1,6 +1,7 @@
 """Client authentication and authorization."""
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -8,6 +9,27 @@ import yaml
 
 from gateway.core.audit import get_audit_logger
 from gateway.core.logger import logger
+
+# Client IDs are embedded in the wire-level ``client_order_id`` prefix
+# (``c-{client.id}-...``) that the Alpaca trading router uses to isolate
+# orders per gateway client. Restrict to characters that Alpaca and the
+# SDK accept and that don't introduce ambiguity in our prefix parsing.
+# See ``gateway/api/alpaca/trading.py::_ownership_prefix`` for the
+# downstream consumer. Validated at startup so a misconfigured
+# ``config/clients.yaml`` fails loudly during ``ClientAuthenticator``
+# initialisation rather than emitting malformed order ids mid-burst.
+_CLIENT_ID_SAFE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+class InvalidClientIdError(ValueError):
+    """Raised when a client id in ``config/clients.yaml`` is unsafe for the
+    Alpaca ``client_order_id`` ownership prefix.
+
+    The gateway must refuse to start with such a config: emitting orders
+    with characters that Alpaca rejects mid-burst would silently break a
+    trading client's order flow. Fail-fast at startup so operators see it
+    immediately rather than at the next burst.
+    """
 
 
 @dataclass
@@ -58,6 +80,22 @@ class ClientAuthenticator:
         clients = config.get("clients", [])
         for client_data in clients:
             client_id = client_data["id"]
+
+            # Reject ids that would produce a malformed Alpaca
+            # ``client_order_id`` ownership prefix. See module docstring
+            # for the safe-character contract. Fail-fast here is better
+            # than emitting bad keys against the shared Alpaca account.
+            if not isinstance(client_id, str) or not _CLIENT_ID_SAFE_RE.match(client_id):
+                logger.error(
+                    "clients_invalid_client_id",
+                    client_id=client_id,
+                    safe_pattern=_CLIENT_ID_SAFE_RE.pattern,
+                )
+                raise InvalidClientIdError(
+                    f"client id {client_id!r} contains characters not allowed in the "
+                    f"Alpaca order-ownership prefix. Allowed pattern: "
+                    f"{_CLIENT_ID_SAFE_RE.pattern}. Fix config/clients.yaml."
+                )
 
             permissions = ClientPermissions(
                 providers=client_data.get("permissions", {}).get("providers", []),

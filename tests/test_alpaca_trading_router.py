@@ -34,13 +34,38 @@ class _FakeRegistry:
         return self._providers.get(name)
 
 
+_DEFAULT_TEST_CLIENT_ID = "test-client"
+
+
+def _owned_coid(client_id: str = _DEFAULT_TEST_CLIENT_ID, suffix: str = "fake") -> str:
+    """Build an ownership-prefixed client_order_id for the given test client.
+
+    Matches the gateway's ``c-{client.id}-`` prefix scheme so a
+    ``_FakeProvider`` can return orders that pass the ownership filter on
+    ``get_orders`` / ``get_order`` and the pre-check on ``replace_order``
+    / ``cancel_order``.
+    """
+    return f"c-{client_id}-{suffix}"
+
+
 class _FakeProvider:
-    def __init__(self) -> None:
+    """Fake Alpaca trading provider for router-layer tests.
+
+    Returns orders tagged with the default test client's ownership prefix
+    so they pass the new per-client filtering / verification gates added
+    by BLOCKER 1 fixes. Tests that want to exercise the foreign-prefix /
+    no-prefix branches override individual methods on a per-test subclass
+    (the established pattern in this file).
+    """
+
+    def __init__(self, owner_client_id: str = _DEFAULT_TEST_CLIENT_ID) -> None:
         self.orders_calls: list[dict[str, Any]] = []
         self.cancel_calls: list[str] = []
         self.calendar_calls: list[tuple[date | None, date | None]] = []
         self.assets_calls: list[dict[str, Any]] = []
         self.asset_calls: list[str] = []
+        self.get_order_calls: list[str] = []
+        self._owner_client_id = owner_client_id
 
     def get_account(self) -> dict[str, Any]:
         return {"status": "ACTIVE"}
@@ -50,7 +75,21 @@ class _FakeProvider:
 
     def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
         self.orders_calls.append(kwargs)
-        return [{"id": "o-1"}, {"id": "o-2"}]
+        return [
+            {"id": "o-1", "client_order_id": _owned_coid(self._owner_client_id, "o-1")},
+            {"id": "o-2", "client_order_id": _owned_coid(self._owner_client_id, "o-2")},
+        ]
+
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        # Default behaviour: pretend every order is owned by the test
+        # client so the new ownership pre-check on get_order / cancel /
+        # replace passes for existing tests. Override on subclasses to
+        # exercise the foreign-prefix branch.
+        self.get_order_calls.append(order_id)
+        return {
+            "id": order_id,
+            "client_order_id": _owned_coid(self._owner_client_id, order_id),
+        }
 
     def cancel_order(self, order_id: str) -> bool:
         self.cancel_calls.append(order_id)
@@ -544,11 +583,14 @@ async def test_create_order_auto_generates_client_order_id_when_caller_omits(
         registry=cast(ProviderRegistry, route_registry),
     )
 
-    # Provider saw a generated key.
+    # Provider saw a generated key prefixed with the caller's ownership tag.
     assert captured["client_order_id"] is not None
-    assert captured["client_order_id"].startswith("dg-")
-    assert len(captured["client_order_id"]) == 3 + 32  # "dg-" + uuid4 hex
-    # Caller sees the same key in meta so they know what to retry with.
+    assert captured["client_order_id"].startswith("c-test-client-dg-")
+    assert len(captured["client_order_id"]) == len("c-test-client-dg-") + 32  # uuid4 hex
+    # Caller sees the same FULL prefixed key in meta so they know what to
+    # retry with (and so retry tooling that round-trips the meta value
+    # back through GET /orders:by_client_order_id passes the ownership
+    # check).
     assert response["meta"]["client_order_id"] == captured["client_order_id"]
     assert response["meta"]["client_order_id_source"] == "gateway"
 
@@ -579,8 +621,11 @@ async def test_create_order_preserves_caller_supplied_client_order_id(
         registry=cast(ProviderRegistry, route_registry),
     )
 
-    assert captured["client_order_id"] == "caller-key-abc-123"
-    assert response["meta"]["client_order_id"] == "caller-key-abc-123"
+    # The gateway transparently prefixes the caller-supplied key with
+    # ``c-{client.id}-`` so the order is unambiguously attributed to this
+    # caller on later lookups against the SHARED Alpaca account.
+    assert captured["client_order_id"] == "c-test-client-caller-key-abc-123"
+    assert response["meta"]["client_order_id"] == "c-test-client-caller-key-abc-123"
     assert response["meta"]["client_order_id_source"] == "caller"
 
 
@@ -632,7 +677,7 @@ async def test_create_order_504_timeout_includes_client_order_id_in_detail(
     # The idempotency key MUST be in the 504 body. This is the load-bearing
     # piece that prevents double-place on retry — DO NOT REGRESS.
     assert "client_order_id" in detail
-    assert detail["client_order_id"].startswith("dg-")
+    assert detail["client_order_id"].startswith("c-test-client-dg-")
     assert detail["client_order_id_source"] == "gateway"
     assert detail["retry_with"] == "client_order_id"
     assert "Alpaca natively dedupes" in detail["retry_hint"]
@@ -682,7 +727,10 @@ async def test_create_order_504_timeout_preserves_caller_client_order_id(
     assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
     detail = exc.value.detail
     assert isinstance(detail, dict)
-    assert detail["client_order_id"] == "caller-retry-key-xyz"
+    # 504 carries the FULL prefixed key so callers' retry tooling can pass
+    # it straight back to GET /orders:by_client_order_id without
+    # re-deriving the prefix.
+    assert detail["client_order_id"] == "c-test-client-caller-retry-key-xyz"
     assert detail["client_order_id_source"] == "caller"
 
 
@@ -1082,8 +1130,10 @@ async def test_create_order_rejects_oversize_client_order_id(
 async def test_create_order_accepts_max_length_client_order_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """128-char key (the inclusive maximum) must pass through untouched —
-    only longer keys are rejected."""
+    """A caller key sized to the post-prefix budget (128 - prefix_len) is the
+    inclusive maximum and must pass through. Alpaca's 128-char ceiling
+    applies to the FINAL prefixed string, so the per-caller budget shrinks
+    by the length of ``c-{client.id}-``."""
     captured: dict[str, Any] = {}
 
     class _CapturingProvider(_FakeProvider):
@@ -1095,7 +1145,11 @@ async def test_create_order_accepts_max_length_client_order_id(
     route_registry = _FakeRegistry({"alpaca": provider})
     _helper_monkeypatch(monkeypatch, route_registry=route_registry)
 
-    max_len_key = "x" * 128
+    # client.id == "test-client" → prefix "c-test-client-" is 14 chars.
+    # Per-caller budget is 128 - 14 = 114.
+    prefix_len = len("c-test-client-")
+    max_caller_len = 128 - prefix_len
+    max_len_key = "x" * max_caller_len
 
     response = await trading.create_order(
         symbol="AAPL",
@@ -1106,7 +1160,9 @@ async def test_create_order_accepts_max_length_client_order_id(
         registry=cast(ProviderRegistry, route_registry),
     )
 
-    assert captured["client_order_id"] == max_len_key
+    # Provider sees the FULL 128-char prefixed string (the ceiling).
+    assert captured["client_order_id"] == f"c-test-client-{max_len_key}"
+    assert len(captured["client_order_id"]) == 128
     assert response["meta"]["client_order_id_source"] == "caller"
 
 
@@ -1176,9 +1232,10 @@ async def test_create_order_non_timeout_5xx_preserves_client_order_id_in_detail(
     assert isinstance(detail, dict), (
         f"5xx detail must be a dict carrying the idempotency context, got {type(detail)}: {detail!r}"
     )
-    # Critical retry-contract assertion: caller's key is preserved on a
-    # non-timeout 5xx so they can safely retry / verify.
-    assert detail["client_order_id"] == "caller-non-timeout-key-1"
+    # Critical retry-contract assertion: caller's key (now ownership-
+    # prefixed) is preserved on a non-timeout 5xx so they can safely
+    # retry / verify.
+    assert detail["client_order_id"] == "c-test-client-caller-non-timeout-key-1"
     assert detail["client_order_id_source"] == "caller"
     assert detail["retry_with"] == "client_order_id"
     assert ALPACA_ROUTER_PREFIX in detail["retry_hint"]
@@ -1312,7 +1369,9 @@ def test_create_order_504_via_http_layer_contains_correct_retry_hint_url(
     # in {"success": false, "error": {...}, "detail": {...}} — accept either.
     detail = body.get("detail") or body.get("error") or body
     assert isinstance(detail, dict), f"detail must be a dict, got {body!r}"
-    assert detail["client_order_id"] == "http-layer-test-1"
+    # The gateway prefixes the caller key with ``c-{client.id}-`` for
+    # per-client ownership isolation against the shared Alpaca account.
+    assert detail["client_order_id"] == "c-test-trader-http-layer-test-1"
     assert detail["retry_with"] == "client_order_id"
     assert f"GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id" in detail["retry_hint"]
     assert "/api/alpaca/trading/" not in detail["retry_hint"]
@@ -1355,8 +1414,9 @@ async def test_replace_order_auto_generates_client_order_id_when_caller_omits(
 
     assert captured["order_id"] == "orig-order-1"
     assert captured["client_order_id"] is not None
-    assert captured["client_order_id"].startswith("dg-")
-    assert len(captured["client_order_id"]) == 3 + 32
+    # Prefixed for ownership isolation against the shared Alpaca account.
+    assert captured["client_order_id"].startswith("c-test-client-dg-")
+    assert len(captured["client_order_id"]) == len("c-test-client-dg-") + 32
     assert response["meta"]["client_order_id"] == captured["client_order_id"]
     assert response["meta"]["client_order_id_source"] == "gateway"
 
@@ -1418,8 +1478,11 @@ async def test_replace_order_preserves_caller_supplied_client_order_id(
         registry=cast(ProviderRegistry, route_registry),
     )
 
-    assert captured["client_order_id"] == "caller-replace-key-1"
-    assert response["meta"]["client_order_id"] == "caller-replace-key-1"
+    # The gateway transparently prefixes caller-supplied keys with
+    # ``c-{client.id}-`` so the replacement order can be uniquely
+    # attributed to this caller on later lookups.
+    assert captured["client_order_id"] == "c-test-client-caller-replace-key-1"
+    assert response["meta"]["client_order_id"] == "c-test-client-caller-replace-key-1"
     assert response["meta"]["client_order_id_source"] == "caller"
 
 
@@ -1467,7 +1530,7 @@ async def test_replace_order_504_timeout_includes_client_order_id_in_detail(
     assert isinstance(detail, dict)
     assert detail["code"] == "GW-E5004"
     assert "client_order_id" in detail
-    assert detail["client_order_id"].startswith("dg-")
+    assert detail["client_order_id"].startswith("c-test-client-dg-")
     assert detail["client_order_id_source"] == "gateway"
     assert detail["retry_with"] == "client_order_id"
     # The retry hint must mention BOTH lookup paths (original order +
@@ -1518,7 +1581,9 @@ async def test_replace_order_504_timeout_preserves_caller_client_order_id(
     assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
     detail = exc.value.detail
     assert isinstance(detail, dict)
-    assert detail["client_order_id"] == "caller-replace-retry-key"
+    # FULL prefixed key surfaces in the 504 body so caller retry tooling
+    # can pass it straight back to GET /orders:by_client_order_id.
+    assert detail["client_order_id"] == "c-test-client-caller-replace-retry-key"
     assert detail["client_order_id_source"] == "caller"
 
 
@@ -1618,7 +1683,10 @@ async def test_replace_order_rejects_oversize_client_order_id(
 async def test_replace_order_accepts_max_length_client_order_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """128-char key (inclusive max) passes through untouched."""
+    """A caller key sized to the post-prefix budget (128 - prefix_len) is the
+    inclusive maximum and passes through. Alpaca's 128-char ceiling
+    applies to the FINAL prefixed string — the per-caller budget shrinks
+    by the length of ``c-{client.id}-``."""
     captured: dict[str, Any] = {}
 
     class _CapturingProvider(_FakeProvider):
@@ -1630,7 +1698,9 @@ async def test_replace_order_accepts_max_length_client_order_id(
     route_registry = _FakeRegistry({"alpaca": provider})
     _helper_monkeypatch(monkeypatch, route_registry=route_registry)
 
-    max_len_key = "y" * 128
+    prefix_len = len("c-test-client-")
+    max_caller_len = 128 - prefix_len
+    max_len_key = "y" * max_caller_len
 
     response = await trading.replace_order(
         order_id="orig-order-7",
@@ -1640,7 +1710,9 @@ async def test_replace_order_accepts_max_length_client_order_id(
         registry=cast(ProviderRegistry, route_registry),
     )
 
-    assert captured["client_order_id"] == max_len_key
+    # Provider sees the FULL 128-char prefixed string (the ceiling).
+    assert captured["client_order_id"] == f"c-test-client-{max_len_key}"
+    assert len(captured["client_order_id"]) == 128
     assert response["meta"]["client_order_id_source"] == "caller"
 
 
@@ -1654,6 +1726,11 @@ async def test_replace_order_non_timeout_5xx_preserves_client_order_id_in_detail
     import httpx
 
     class _Http503Provider:
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            # Ownership pre-check sees an order owned by ``test-client``
+            # — passes through to the replace call which then 503s.
+            return {"id": order_id, "client_order_id": f"c-test-client-{order_id}"}
+
         def replace_order(self, order_id: str, **kwargs: Any) -> Any:
             request = httpx.Request("PATCH", f"https://api.alpaca.markets/v2/orders/{order_id}")
             response = httpx.Response(status_code=503, request=request, text="simulated upstream 503")
@@ -1692,7 +1769,8 @@ async def test_replace_order_non_timeout_5xx_preserves_client_order_id_in_detail
     assert isinstance(detail, dict), (
         f"5xx detail must be a dict carrying the idempotency context, got {type(detail)}: {detail!r}"
     )
-    assert detail["client_order_id"] == "caller-replace-non-timeout-1"
+    # FULL ownership-prefixed key is preserved on non-timeout 5xx.
+    assert detail["client_order_id"] == "c-test-client-caller-replace-non-timeout-1"
     assert detail["client_order_id_source"] == "caller"
     assert detail["retry_with"] == "client_order_id"
     assert ALPACA_ROUTER_PREFIX in detail["retry_hint"]
@@ -1777,7 +1855,15 @@ def test_replace_order_504_via_http_layer_contains_correct_retry_hint_url(
         time.sleep(1.0)
         return {"id": "should-not-return"}
 
+    # The replace_order endpoint now runs an ownership pre-check via
+    # provider.get_order(order_id) before mutating — return an order
+    # owned by ``test-trader`` so the pre-check passes and the test
+    # reaches the slow-replace timeout path.
+    def _owned_get_order(order_id: str) -> dict[str, Any]:
+        return {"id": order_id, "client_order_id": f"c-test-trader-{order_id}"}
+
     test_registry.get.return_value.replace_order = _slow_replace
+    test_registry.get.return_value.get_order = _owned_get_order
 
     monkeypatch.setattr(
         trading,
@@ -1806,7 +1892,9 @@ def test_replace_order_504_via_http_layer_contains_correct_retry_hint_url(
     body = response.json()
     detail = body.get("detail") or body.get("error") or body
     assert isinstance(detail, dict), f"detail must be a dict, got {body!r}"
-    assert detail["client_order_id"] == "http-layer-replace-1"
+    # The gateway prefixes the caller key with ``c-{client.id}-`` for
+    # per-client ownership isolation against the shared Alpaca account.
+    assert detail["client_order_id"] == "c-test-trader-http-layer-replace-1"
     assert detail["retry_with"] == "client_order_id"
     # Both retry paths are present.
     assert f"GET {ALPACA_ROUTER_PREFIX}/orders/orig-http-1" in detail["retry_hint"]
@@ -1986,3 +2074,507 @@ def test_trading_call_timeout_defaults_keep_writes_slacker_than_reads() -> None:
     assert settings.alpaca_trading_http_timeout_seconds >= settings.alpaca_trading_call_timeout_seconds, (
         "HTTP timeout must be >= read call timeout"
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-client order ownership isolation (BLOCKER 1 + BLOCKER 2).
+#
+# Multiple Empire trading systems (Cerberus, 3Roses, Kairos, Orion, Atlas,
+# Orbit) share a SINGLE upstream Alpaca account. Without per-client
+# isolation:
+#   - any trading client could list, mutate, or cancel any other client's
+#     open orders against the shared broker account (BLOCKER 1);
+#   - any client could collide with, probe, or replay another client's
+#     ``client_order_id`` (BLOCKER 2).
+#
+# The fix prefixes every effective ``client_order_id`` going to Alpaca with
+# ``c-{client.id}-`` and uses that prefix as the ownership marker on every
+# subsequent lookup / mutation. The tests below pin the contract.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_order_prefixes_auto_generated_client_order_id_with_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto-generated ``client_order_id`` must carry the caller's
+    ownership prefix ``c-{client.id}-``. Without this, multiple gateway
+    clients sharing an upstream Alpaca account cannot be told apart on
+    list/by_client_order_id/get_order lookups."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"id": "owned-1"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.create_order(
+        symbol="AAPL",
+        side="buy",
+        qty=10,
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured["client_order_id"].startswith("c-cerberus-dg-")
+    assert response["meta"]["client_order_id"].startswith("c-cerberus-dg-")
+    assert response["meta"]["client_order_id_source"] == "gateway"
+
+
+@pytest.mark.asyncio
+async def test_create_order_prefixes_caller_supplied_client_order_id_with_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller-supplied ``client_order_id`` must be transparently prefixed
+    with ``c-{client.id}-``. The caller sees the FULL prefixed value in
+    ``meta`` so they know what to retry with."""
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"id": "owned-2"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.create_order(
+        symbol="AAPL",
+        side="buy",
+        qty=10,
+        client_order_id="my-key-abc",
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured["client_order_id"] == "c-cerberus-my-key-abc"
+    assert response["meta"]["client_order_id"] == "c-cerberus-my-key-abc"
+    assert response["meta"]["client_order_id_source"] == "caller"
+
+
+@pytest.mark.asyncio
+async def test_create_order_rejects_caller_key_that_overflows_post_prefix_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-caller key budget is ``128 - len(c-{client.id}-)``. A caller
+    key that fits in 128 chars on its own but would push the prefixed
+    string past 128 must be rejected with 400 GW-E4006, and the error
+    message must reference the per-client budget so the caller knows
+    how many chars they have to work with."""
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    # client.id "cerberus" → prefix "c-cerberus-" is 11 chars → budget = 117.
+    over_budget_caller_key = "x" * 118
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=10,
+            client_order_id=over_budget_caller_key,
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "GW-E4006"
+    # Message MUST tell the caller what their per-client budget actually
+    # is, otherwise they'd see "128" and be confused why a 118-char key
+    # was rejected.
+    assert "per-client budget" in detail["message"]
+    assert "117" in detail["message"]
+    assert "'c-cerberus-'" in detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_get_orders_filters_out_orders_not_owned_by_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``get_orders`` must filter out orders that don't carry the caller's
+    ownership prefix. Without this filter, every client of the shared
+    Alpaca account would see (and could enumerate) every other client's
+    open orders."""
+
+    class _MixedOwnersProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return [
+                # Caller's own order.
+                {"id": "mine-1", "client_order_id": "c-cerberus-key1"},
+                # Foreign client's order — must be filtered out.
+                {"id": "atlas-1", "client_order_id": "c-atlas-key1"},
+                # Foreign client's order with the gateway auto-prefix shape.
+                {"id": "3roses-1", "client_order_id": "c-3roses-dg-abc"},
+                # Order without any client_order_id (e.g. placed outside
+                # the gateway) — must also be filtered out.
+                {"id": "rogue-1", "client_order_id": None},
+                # Empty client_order_id.
+                {"id": "rogue-2", "client_order_id": ""},
+                # Another of caller's own.
+                {"id": "mine-2", "client_order_id": "c-cerberus-key2"},
+            ]
+
+    provider = _MixedOwnersProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.get_orders(
+        status="open",
+        limit=50,
+        direction="desc",
+        symbols=None,
+        nested=True,
+        side=None,
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    ids = {order["id"] for order in response["data"]}
+    assert ids == {"mine-1", "mine-2"}, f"expected only cerberus-owned orders, got {ids}"
+    assert response["meta"]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_order_by_client_order_id_with_foreign_prefix_returns_404(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``GET /orders:by_client_order_id`` MUST return 404 (NOT 403) for a
+    lookup whose supplied key doesn't carry the caller's ownership
+    prefix. A 403 would confirm the key exists at Alpaca, enabling
+    enumeration of foreign client keys. The provider's
+    ``get_order_by_client_id`` must NOT be called."""
+    provider_call_count = {"n": 0}
+
+    class _CountingProvider(_FakeProvider):
+        def get_order_by_client_id(self, client_order_id: str) -> dict[str, Any]:
+            provider_call_count["n"] += 1
+            return {"id": "should-not-be-returned", "client_order_id": client_order_id}
+
+    provider = _CountingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_order_by_client_id(
+            client_order_id="c-atlas-key1",  # foreign-prefixed key
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 404
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "GW-E4404"
+    # Detail must NOT echo the supplied key back — that's an enumeration
+    # signal we deliberately suppress.
+    assert "c-atlas-key1" not in str(detail)
+    # The provider was never called — ownership check rejected before
+    # any upstream Alpaca round-trip.
+    assert provider_call_count["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_order_for_foreign_owned_order_returns_404(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``GET /orders/{order_id}`` fetches the order from Alpaca, inspects
+    the returned ``client_order_id`` for the caller's ownership prefix,
+    and returns 404 if absent. (Option A — stateless verification.) A
+    403 would confirm the order exists at Alpaca, enabling enumeration."""
+
+    class _ForeignOrderProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            # Order exists at Alpaca but belongs to a foreign client.
+            return {"id": order_id, "client_order_id": "c-atlas-key1"}
+
+    provider = _ForeignOrderProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_order(
+            order_id="foreign-1",
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 404
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "GW-E4404"
+    assert detail["order_id"] == "foreign-1"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_for_foreign_owned_order_returns_404_and_skips_replace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``PATCH /orders/{order_id}`` MUST verify ownership BEFORE the
+    Alpaca SDK ``replace_order_by_id`` call fires. A foreign-owned
+    order must return 404, and the SDK's ``replace_order`` must NOT be
+    invoked (no Alpaca side-effect against another client's order)."""
+    replace_calls: list[str] = []
+
+    class _ForeignOrderProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            return {"id": order_id, "client_order_id": "c-3roses-key1"}
+
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            replace_calls.append(order_id)
+            return {"id": "MUST-NOT-RETURN"}
+
+    provider = _ForeignOrderProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="foreign-2",
+            qty=20,
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail["code"] == "GW-E4404"
+    # CRITICAL: no upstream replace was attempted against the foreign
+    # client's order.
+    assert replace_calls == [], f"replace_order MUST NOT fire for a foreign-owned order — saw calls: {replace_calls}"
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_for_foreign_owned_order_returns_404_and_skips_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``DELETE /orders/{order_id}`` MUST verify ownership BEFORE the
+    Alpaca SDK ``cancel_order_by_id`` fires. A foreign-owned order must
+    return 404 and the upstream cancel must NOT be invoked."""
+    cancel_calls: list[str] = []
+
+    class _ForeignOrderProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            return {"id": order_id, "client_order_id": "c-kairos-key1"}
+
+        def cancel_order(self, order_id: str) -> bool:
+            cancel_calls.append(order_id)
+            return True
+
+    provider = _ForeignOrderProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.cancel_order(
+            order_id="foreign-3",
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail["code"] == "GW-E4404"
+    # CRITICAL: no upstream cancel was attempted against the foreign
+    # client's order.
+    assert cancel_calls == [], f"cancel_order MUST NOT fire for a foreign-owned order — saw calls: {cancel_calls}"
+
+
+@pytest.mark.asyncio
+async def test_cross_client_collision_attempt_yields_distinct_orders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client B reusing client A's caller-key MUST result in a DIFFERENT
+    wire-level ``client_order_id`` and therefore a separate order at
+    Alpaca — never a silent short-circuit to A's existing order. The
+    ownership prefix is the load-bearing isolation mechanism."""
+    captured_for_a: dict[str, Any] = {}
+    captured_for_b: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self._call_n = 0
+
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            self._call_n += 1
+            if self._call_n == 1:
+                captured_for_a.update(kwargs)
+                return {"id": "alpaca-side-order-A", "client_order_id": kwargs["client_order_id"]}
+            captured_for_b.update(kwargs)
+            return {"id": "alpaca-side-order-B", "client_order_id": kwargs["client_order_id"]}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    shared_caller_key = "logical-order-42"
+
+    # Client A places an order with key "logical-order-42".
+    await trading.create_order(
+        symbol="AAPL",
+        side="buy",
+        qty=10,
+        client_order_id=shared_caller_key,
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    # Client B tries to reuse client A's key.
+    await trading.create_order(
+        symbol="AAPL",
+        side="buy",
+        qty=10,
+        client_order_id=shared_caller_key,
+        client=cast(Any, SimpleNamespace(id="atlas")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured_for_a["client_order_id"] == "c-cerberus-logical-order-42"
+    assert captured_for_b["client_order_id"] == "c-atlas-logical-order-42"
+    # Distinct keys → distinct orders at Alpaca (no collision / short-circuit).
+    assert captured_for_a["client_order_id"] != captured_for_b["client_order_id"]
+
+
+@pytest.mark.asyncio
+async def test_foreign_order_access_attempt_logs_structured_audit_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every cross-client order-access attempt must emit a structured
+    WARNING with code ``GW-A4001`` carrying both ``client_id_attempted``
+    (who tried) and ``order_owner_actual`` (whose order it really was).
+    Operators alert on this — a non-zero rate is either misconfiguration
+    or active enumeration."""
+    import logging
+
+    class _ForeignOrderProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            return {"id": order_id, "client_order_id": "c-atlas-secret-key"}
+
+    provider = _ForeignOrderProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with caplog.at_level(logging.WARNING, logger="data-gateway"):
+        with pytest.raises(HTTPException) as exc:
+            await trading.get_order(
+                order_id="foreign-audit-1",
+                client=cast(Any, SimpleNamespace(id="cerberus")),
+                registry=cast(ProviderRegistry, route_registry),
+            )
+        assert exc.value.status_code == 404
+
+    # Find the audit record. structlog renders structured fields into the
+    # log message; we assert on substrings of the rendered JSON.
+    audit_records = [rec for rec in caplog.records if "alpaca_trading_foreign_order_access_attempt" in rec.getMessage()]
+    assert audit_records, (
+        f"expected at least one alpaca_trading_foreign_order_access_attempt WARNING, "
+        f"got: {[r.getMessage() for r in caplog.records]}"
+    )
+
+    msg = audit_records[0].getMessage()
+    # All load-bearing fields must be present in the structured log.
+    assert "GW-A4001" in msg
+    assert "client_id_attempted" in msg and "cerberus" in msg
+    assert "order_owner_actual" in msg and "atlas" in msg
+    assert "get_order" in msg
+
+
+@pytest.mark.asyncio
+async def test_foreign_order_access_via_by_client_order_id_logs_audit_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The audit-log requirement extends to ``GET /orders:by_client_order_id``
+    too — a foreign-prefixed key lookup must emit GW-A4001 with
+    ``client_id_attempted`` and ``order_owner_actual`` parsed from the
+    supplied key's prefix."""
+    import logging
+
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with caplog.at_level(logging.WARNING, logger="data-gateway"):
+        with pytest.raises(HTTPException) as exc:
+            await trading.get_order_by_client_id(
+                client_order_id="c-orion-other-key",
+                client=cast(Any, SimpleNamespace(id="cerberus")),
+                registry=cast(ProviderRegistry, route_registry),
+            )
+        assert exc.value.status_code == 404
+
+    audit_records = [rec for rec in caplog.records if "alpaca_trading_foreign_order_access_attempt" in rec.getMessage()]
+    assert audit_records, "expected GW-A4001 audit warning for foreign by_client_order_id lookup"
+    msg = audit_records[0].getMessage()
+    assert "GW-A4001" in msg
+    assert "client_id_attempted" in msg and "cerberus" in msg
+    assert "order_owner_actual" in msg and "orion" in msg
+    assert "get_order_by_client_id" in msg
+
+
+@pytest.mark.asyncio
+async def test_get_order_for_owned_order_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sanity counter-test for the foreign-owner branches above: an order
+    owned by the caller must round-trip without 404 from the ownership
+    check. Without this counter-test a regression that returns 404 for
+    every order would also pass the foreign-owner tests above."""
+
+    class _OwnedProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            return {"id": order_id, "client_order_id": "c-cerberus-key1", "symbol": "AAPL"}
+
+    provider = _OwnedProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.get_order(
+        order_id="mine-1",
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["id"] == "mine-1"
+    assert response["data"]["client_order_id"] == "c-cerberus-key1"
+
+
+@pytest.mark.asyncio
+async def test_unsafe_client_id_raises_500_before_calling_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defense in depth: if a malformed client.id ever reaches the trading
+    router (config drift / future bypass), the ownership-prefix builder
+    must raise 500 GW-E5008 — NOT silently emit a malformed
+    ``client_order_id`` that Alpaca rejects later in the call."""
+    call_count = {"n": 0}
+
+    class _CountingProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            call_count["n"] += 1
+            return {"id": "should-not-return"}
+
+    provider = _CountingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=10,
+            client=cast(Any, SimpleNamespace(id="bad:id:with:colons")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 500
+    assert exc.value.detail["code"] == "GW-E5008"
+    assert call_count["n"] == 0
