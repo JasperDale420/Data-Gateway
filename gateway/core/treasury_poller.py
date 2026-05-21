@@ -266,10 +266,13 @@ class TreasuryYieldPoller(BasePoller):
                     instrument_key_override=f"macro:treasury_yield:{yield_data['maturity']}",
                     symbol_override=f"TREASURY_{yield_data['maturity'].upper()}",
                     ts_ingest=datetime.now(UTC),
+                    # Pass the parsed date as the canonical event timestamp so
+                    # the event_id hash includes it. The previous code patched
+                    # ``envelope["ts_event"]`` *after* the hash was already
+                    # computed from ``datetime.now(UTC)``, so the event_id
+                    # changed on every replay and defeated dedup.
+                    ts_event_override=ts_event,
                 )
-                # Override ts_event after wrap_event (wrap_event may pick it up
-                # from the payload's "date" field, but ISO format is cleaner)
-                envelope["ts_event"] = ts_event.isoformat()
 
                 await sink_registry.publish_all(HEBER_STREAM, envelope)
                 published += 1
