@@ -141,12 +141,38 @@ class CircuitBreaker:
             Exception: Any exception from the underlying function
         """
         async with self._lock:
+            # Track whether this caller was the one to flip OPEN -> HALF_OPEN
+            # (i.e. became the probe) so we know whether to release the
+            # half-open slot if cancellation aborts the call.
+            became_probe = self.state == CircuitState.HALF_OPEN and not self._half_open_in_progress
             await self._check_state()
+            # If _check_state didn't raise and we're now in HALF_OPEN, this
+            # caller is the probe — either via OPEN -> HALF_OPEN transition,
+            # or via the sequential-probe path that just acquired the slot.
+            holding_half_open_slot = self.state == CircuitState.HALF_OPEN
 
         try:
             result = await func(*args, **kwargs)
             await self._on_success()
             return result
+        except asyncio.CancelledError:
+            # CancelledError is a BaseException and bypasses `except Exception`
+            # below. Without explicit handling, a cancelled HALF_OPEN probe
+            # would leave `_half_open_in_progress = True` forever — every
+            # subsequent caller would hit the rejection branch in
+            # `_check_state` and the breaker would deadlock until a manual
+            # `reset()`. Release the slot, then re-raise so cancellation
+            # still propagates to the caller.
+            if holding_half_open_slot:
+                async with self._lock:
+                    if self.state == CircuitState.HALF_OPEN:
+                        self._half_open_in_progress = False
+                        logger.warning(
+                            "circuit_half_open_probe_cancelled",
+                            circuit=self.name,
+                            became_probe=became_probe,
+                        )
+            raise
         except Exception as e:
             await self._on_failure(e)
             raise

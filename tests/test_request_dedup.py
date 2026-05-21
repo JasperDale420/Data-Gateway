@@ -100,6 +100,51 @@ async def test_request_deduplicator_leader_cancel_propagates_to_followers() -> N
     assert dedup.get_pending_count() == 0
 
 
+@pytest.mark.asyncio
+async def test_request_deduplicator_follower_cancel_does_not_poison_others() -> None:
+    """Cancelling one follower must NOT cancel the shared future for other
+    followers or break the leader's completion.
+
+    Regression — codex flagged: followers `await future` directly, so an
+    `asyncio.Task.cancel()` on a follower would propagate cancellation into
+    the shared future, marking it cancelled — every other follower would
+    observe `CancelledError` even though the leader could still complete.
+    Followers now `await asyncio.shield(future)`.
+    """
+    dedup = RequestDeduplicator(lock_stripes=4)
+    leader_started = asyncio.Event()
+    fetcher_blocker = asyncio.Event()
+
+    async def slow_fetcher() -> str:
+        leader_started.set()
+        await fetcher_blocker.wait()
+        return "leader-result"
+
+    leader = asyncio.create_task(dedup.dedupe("bars:AAPL", slow_fetcher))
+    await asyncio.wait_for(leader_started.wait(), timeout=1.0)
+
+    follower_a = asyncio.create_task(dedup.dedupe("bars:AAPL", slow_fetcher))
+    follower_b = asyncio.create_task(dedup.dedupe("bars:AAPL", slow_fetcher))
+    # Let both followers reach `await shield(future)`.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    # Cancel one follower — the other follower AND the leader must still
+    # be able to complete cleanly.
+    follower_a.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(follower_a, timeout=1.0)
+
+    # Release the leader's fetch.
+    fetcher_blocker.set()
+
+    leader_result = await asyncio.wait_for(leader, timeout=1.0)
+    follower_b_result = await asyncio.wait_for(follower_b, timeout=1.0)
+
+    assert leader_result == "leader-result"
+    assert follower_b_result == "leader-result"
+
+
 def test_request_deduplicator_lock_striping_is_stable_for_same_key() -> None:
     dedup = RequestDeduplicator(lock_stripes=8)
     lock_a = dedup._lock_for_key("bars:AAPL")

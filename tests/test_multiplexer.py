@@ -582,6 +582,73 @@ async def test_lazy_connect_does_not_spawn_duplicate_start_tasks_under_race() ->
     assert start_call_count == 1, f"expected exactly one conn.start() under race, got {start_call_count}"
 
 
+@pytest.mark.asyncio
+async def test_eager_start_then_immediate_subscriber_does_not_spawn_duplicate_start() -> None:
+    """``StreamMultiplexer.start()`` in selective-eager mode and a client
+    subscribing in the same scheduler tick must not produce two
+    ``conn.start()`` tasks against the same Alpaca endpoint.
+
+    Regression — codex caught: `start()` did `create_task(conn.start())`
+    without flipping `_running = True` synchronously, so a subscriber that
+    raced into `_ensure_connected` before the scheduler ran the start task
+    observed `_running == False` and scheduled its own `conn.start()`.
+    """
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+        eager_connect_types=["stocks"],
+    )
+
+    start_call_count = 0
+    start_release = asyncio.Event()
+
+    class FakeConn:
+        def __init__(self) -> None:
+            self.is_connected = False
+            self._running = False
+            self._connected_event = asyncio.Event()
+            self._start_lock = asyncio.Lock()
+
+        async def start(self) -> None:
+            nonlocal start_call_count
+            start_call_count += 1
+            self._running = True
+            await start_release.wait()
+            self.is_connected = True
+            self._connected_event.set()
+
+        async def stop(self) -> None:
+            pass
+
+    fake = FakeConn()
+    multiplexer._connections[AlpacaStreamType.STOCKS_SIP] = cast(Any, fake)
+
+    # `start()` schedules the eager `conn.start()` task. Synchronously after
+    # that, a subscriber arrives via `_ensure_connected` — they would
+    # previously see `_running == False` because the scheduler hasn't run
+    # the start task yet.
+    await multiplexer.start()
+    subscriber = asyncio.create_task(multiplexer._ensure_connected(AlpacaStreamType.STOCKS_SIP))
+
+    # Give the scheduler time to run start() and the subscriber.
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if start_call_count >= 1:
+            break
+
+    start_release.set()
+    result = await asyncio.wait_for(subscriber, timeout=2.0)
+
+    assert result is True
+    assert start_call_count == 1, f"eager start + subscriber raced into {start_call_count} start() tasks"
+
+
 def test_stream_subscription_manager_client_view_reuses_index_set() -> None:
     manager = StreamSubscriptionManager()
     manager.subscribe(client_id="client-1", bars=["AAPL"])

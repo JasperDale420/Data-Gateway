@@ -950,15 +950,26 @@ class StreamMultiplexer:
         )
 
         if not self._lazy_connect:
-            # Eager mode: start all connections immediately (requires multi-connection plan)
+            # Eager mode: start all connections immediately (requires multi-connection plan).
+            # Flip `_running = True` synchronously BEFORE scheduling the start
+            # task so any subscriber that arrives in the same scheduler tick
+            # observes the stream as "starting" and doesn't race to schedule
+            # a second `conn.start()` via `_ensure_connected`.
             for stream_type, conn in self._connections.items():
+                conn._running = True
                 task = asyncio.create_task(conn.start())
                 self._tasks.append(task)
                 logger.info("stream_started", stream=stream_type.value)
         elif self._eager_connect_types:
             # Selective eager: start only the named stream types, leave rest lazy.
+            # Same sync `_running = True` flip as the all-eager branch above
+            # — a client subscribing immediately after start() can otherwise
+            # observe `_running == False`, fall into the dormant-restart
+            # branch in `_ensure_connected`, and schedule a duplicate
+            # `conn.start()` task on the same Alpaca endpoint.
             for stream_type, conn in self._connections.items():
                 if self._stream_type_in_eager_set(stream_type):
+                    conn._running = True
                     task = asyncio.create_task(conn.start())
                     self._tasks.append(task)
                     logger.info("stream_started_eager", stream=stream_type.value)

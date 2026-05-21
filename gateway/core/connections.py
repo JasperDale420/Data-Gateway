@@ -209,8 +209,14 @@ class ConnectionManager:
                 timeout_seconds=_BROADCAST_SEND_TIMEOUT_SECONDS,
                 hint="slow client; force-closing to keep fanout flowing",
             )
-            # Force-close the slow client so subsequent broadcasts skip it.
-            # `close()` itself can hang, so bound it too.
+            # CRITICAL: mark unauthenticated FIRST so target selection in
+            # subsequent `broadcast` calls skips this connection immediately,
+            # regardless of whether close() lands cleanly. Without this,
+            # every later broadcast would re-pay the timeout cost against
+            # the same zombie client.
+            connection.authenticated = False
+            # Force-close the slow client. `close()` itself can hang on a
+            # truly wedged peer, so bound it too.
             try:
                 await asyncio.wait_for(
                     connection.websocket.close(code=1011, reason="slow consumer"),

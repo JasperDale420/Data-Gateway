@@ -69,7 +69,12 @@ class RequestDeduplicator:
                 is_new = True
 
         if not is_new:
-            return await future
+            # `asyncio.shield` so a cancelled follower does not poison the
+            # shared future for other followers.  Without shield, cancelling
+            # any follower task propagates the cancellation into `future`,
+            # marking it cancelled — every other follower would observe
+            # `CancelledError` even though the leader may still complete.
+            return await asyncio.shield(future)
 
         try:
             result = await fetcher()
