@@ -105,6 +105,44 @@ def _generate_client_order_id() -> str:
     return f"{_GATEWAY_CLIENT_ORDER_ID_PREFIX}{uuid.uuid4().hex}"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Write-class trading operations get a longer wall-clock timeout than reads.
+#
+# Reads (get_account, get_orders, get_position, get_clock, get_calendar,
+# get_portfolio_history, get_assets, etc.) are idempotent at the broker —
+# a 504 is safely retryable, so a tighter ceiling keeps per-call latency
+# predictable.
+#
+# Writes (create_order, replace_order, cancel_order, cancel_all_orders,
+# close_position, close_all_positions) need the idempotency-retry contract
+# kicking in on 504 — but surfacing a 504 to the caller forces them through
+# that retry contract (GET by_client_order_id / GET position / etc.), which
+# is more expensive than letting a merely-slow successful call complete. The
+# 2026-05-15 opening-bell window showed 13 write-class timeouts at the prior
+# shared 15s ceiling (3 × create_order, 1 × close_position, 9 × cancel/all)
+# — Alpaca's broker latency on the burst can exceed 15s without failing.
+# Bumping ONLY writes to 25s (configurable via
+# ``alpaca_trading_write_call_timeout_seconds``) lets those calls complete
+# while keeping reads tight. The HTTP-level safety net
+# (``alpaca_trading_http_timeout_seconds``, default 30s) still releases the
+# executor thread on either path.
+#
+# Cancels are grouped with writes because cancelling at the broker is a
+# state mutation — even though it's idempotent at the symbol level, the
+# caller cares whether the cancel applied (the position/order state).
+# ─────────────────────────────────────────────────────────────────────────────
+_WRITE_TRADING_OPERATIONS: frozenset[str] = frozenset(
+    {
+        "create_order",
+        "replace_order",
+        "cancel_order",
+        "cancel_all_orders",
+        "close_position",
+        "close_all_positions",
+    }
+)
+
+
 # Module-level dedicated executor for trading calls (created lazily)
 _trading_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
@@ -257,7 +295,15 @@ async def _run_trading_provider_call(
             retry the close.
     """
     settings = get_settings()
-    timeout_seconds = settings.alpaca_trading_call_timeout_seconds
+    # Writes get a longer wall-clock budget than reads — see
+    # _WRITE_TRADING_OPERATIONS for the rationale. Reads stay at the
+    # existing alpaca_trading_call_timeout_seconds default (15s); writes
+    # use alpaca_trading_write_call_timeout_seconds (default 25s).
+    timeout_seconds = (
+        settings.alpaca_trading_write_call_timeout_seconds
+        if operation in _WRITE_TRADING_OPERATIONS
+        else settings.alpaca_trading_call_timeout_seconds
+    )
     sem = _get_trading_inflight_sem()
 
     # Fast-fail when the in-flight cap is fully reserved. ``locked()`` is safe
@@ -537,20 +583,111 @@ async def replace_order(
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Replace/modify an existing order."""
-    data = await _execute_trading_call(
-        registry=registry,
-        provider_fn=lambda provider: provider.replace_order(
-            order_id,
-            qty=qty,
-            limit_price=limit_price,
-            stop_price=stop_price,
-            time_in_force=time_in_force,
-            client_order_id=client_order_id,
+    """Replace/modify an existing order.
+
+    Idempotency contract (DO NOT REGRESS — mirrors create_order):
+      Alpaca's ``replace_order_by_id`` accepts a ``client_order_id`` on the
+      *replacement* order — same dedup semantics as ``submit_order``. If the
+      gateway-side ``asyncio.wait_for`` fires (writes use the 25s
+      ``alpaca_trading_write_call_timeout_seconds`` knob, NOT the 15s read
+      knob) while the underlying executor thread is still talking to Alpaca,
+      the replacement MAY have already applied at the broker. Without an
+      idempotency key the caller has no safe retry path:
+        - Retrying PATCH naively against a replaced order will either no-op
+          (the old order_id is now in a non-replaceable state) OR replace
+          *again* with a new key, double-modifying the position.
+        - The original ``order_id`` is transitioned to ``replaced`` status
+          when the replacement applies; the NEW replacement order is
+          assigned its own id by Alpaca.
+
+      Same plumbing as ``create_order``:
+        - Caller-supplied ``client_order_id`` validated by
+          ``_validate_client_order_id`` (empty/whitespace/oversize → 400
+          GW-E4006).
+        - Missing ``client_order_id`` auto-generated as ``dg-<uuid4hex>``.
+        - Effective key returned in ``meta.client_order_id`` +
+          ``meta.client_order_id_source`` on success.
+        - 503 backpressure + 504 timeout + non-timeout 5xx all carry the
+          key in ``detail.client_order_id`` plus a ``retry_hint`` that
+          points at BOTH:
+            1. ``GET {ALPACA_ROUTER_PREFIX}/orders/{order_id}`` — check
+               the original order's current state (e.g. ``replaced`` means
+               the replacement applied).
+            2. ``GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id`` —
+               check whether the replacement order exists under our key.
+
+        Both lookups together resolve "did my replacement land?" without
+        re-issuing the PATCH and risking a second modification.
+    """
+    # Same validation contract as create_order — empty / whitespace /
+    # oversize keys are rejected BEFORE auto-generation so callers can't
+    # silently slip a bad key past Alpaca-side dedup on retry.
+    validated_caller_key = _validate_client_order_id(client_order_id)
+    effective_client_order_id = validated_caller_key or _generate_client_order_id()
+    gateway_generated = validated_caller_key is None
+    idempotency_context: dict[str, Any] = {
+        "client_order_id": effective_client_order_id,
+        "client_order_id_source": "gateway" if gateway_generated else "caller",
+        "retry_with": "client_order_id",
+        "retry_hint": (
+            "Replacement may have applied at Alpaca despite the 5xx — "
+            "Alpaca natively dedupes by client_order_id. Verify state via "
+            "EITHER "
+            f"GET {ALPACA_ROUTER_PREFIX}/orders/{order_id} (the original "
+            "order transitions to 'replaced' status when a replacement "
+            f"applies) OR GET {ALPACA_ROUTER_PREFIX}/orders:by_client_order_id"
+            f"?client_order_id={effective_client_order_id} (the replacement "
+            "order is keyed by the supplied client_order_id). DO NOT retry "
+            "PATCH naively — re-issuing without these checks risks a "
+            "double-modify against a replaced order."
         ),
-        operation="replace_order",
-    )
-    return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
+    }
+
+    async def _call(provider: Any) -> Any:
+        try:
+            return await _run_trading_provider_call(
+                provider=provider,
+                provider_fn=lambda provider: provider.replace_order(
+                    order_id,
+                    qty=qty,
+                    limit_price=limit_price,
+                    stop_price=stop_price,
+                    time_in_force=time_in_force,
+                    client_order_id=effective_client_order_id,
+                ),
+                operation="replace_order",
+                idempotency_context=idempotency_context,
+            )
+        except ValueError as e:
+            # Mirrors create_order — provider-side input validation (e.g.
+            # TimeInForce(time_in_force) on an unknown enum value) raises
+            # ValueError. Without this branch the exception propagates into
+            # execute_alpaca_provider_call which rewrites unknowns into a
+            # synthetic 502 — surfacing caller-fault input as a retryable
+            # 5xx that the new idempotency-context-merge logic then labels
+            # with retry hints. Caller would chase a phantom Alpaca outage.
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    try:
+        data = await execute_alpaca_provider_call(
+            registry=registry,
+            provider_call=_call,
+        )
+    except HTTPException as exc:
+        # Same reason as create_order: execute_alpaca_provider_call rewrites
+        # APIError/HTTPStatusError into HTTPException with a plain-string
+        # detail — losing the idempotency_context. Re-merge so every 5xx
+        # surfaces the retry contract.
+        raise _merge_idempotency_context_into_5xx(exc, idempotency_context) from exc
+    return {
+        "success": True,
+        "data": data,
+        "meta": {
+            "provider": "alpaca",
+            "client_order_id": effective_client_order_id,
+            "client_order_id_source": "gateway" if gateway_generated else "caller",
+        },
+    }
 
 
 @router.delete("/orders/{order_id}", response_model=SuccessResponse)
