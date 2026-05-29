@@ -226,6 +226,104 @@ async def test_get_quotes_records_requested_batch_size(monkeypatch: pytest.Monke
     assert recorded == [("alpaca", 2)]
 
 
+class _RecordingLogger:
+    """Captures (level, event) pairs so tests can assert log severity."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def _record(self, level: str, event: str, **_: Any) -> None:
+        self.calls.append((level, event))
+
+    def info(self, event: str, **kw: Any) -> None:
+        self._record("info", event, **kw)
+
+    def warning(self, event: str, **kw: Any) -> None:
+        self._record("warning", event, **kw)
+
+    def error(self, event: str, **kw: Any) -> None:
+        self._record("error", event, **kw)
+
+    def debug(self, event: str, **kw: Any) -> None:
+        self._record("debug", event, **kw)
+
+
+class _HTTPErrorResponse:
+    def __init__(self, status: int, url: str) -> None:
+        self._status = status
+        self._url = url
+
+    def raise_for_status(self) -> None:
+        import httpx
+
+        request = httpx.Request("GET", self._url)
+        response = httpx.Response(status_code=self._status, request=request)
+        raise httpx.HTTPStatusError(f"{self._status}", request=request, response=response)
+
+    def json(self) -> dict[str, Any]:
+        return {}
+
+
+class _HTTPErrorClient:
+    def __init__(self, status: int) -> None:
+        self._status = status
+
+    async def get(self, path: str, params: dict[str, Any]) -> _HTTPErrorResponse:
+        return _HTTPErrorResponse(self._status, "https://data.alpaca.markets/v2/stocks/quotes/latest")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "expected_level"), [(400, "warning"), (500, "error")])
+async def test_get_quotes_logs_4xx_as_warning_5xx_as_error(
+    monkeypatch: pytest.MonkeyPatch, status: int, expected_level: str
+) -> None:
+    """Client-caused 4xx (e.g. index symbol SPX → 400) must not flood the ERROR log."""
+    import httpx
+
+    provider = AlpacaProvider()
+    provider._client = cast(Any, _HTTPErrorClient(status))
+    rec = _RecordingLogger()
+    monkeypatch.setattr("gateway.providers.alpaca.market.logger", rec)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.get_quotes(["SPX"])
+
+    levels = {lvl for lvl, event in rec.calls if event == "alpaca_quotes_error"}
+    assert levels == {expected_level}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "expected_level"), [(400, "warning"), (500, "error")])
+async def test_get_bars_logs_4xx_as_warning_5xx_as_error(
+    monkeypatch: pytest.MonkeyPatch, status: int, expected_level: str
+) -> None:
+    """Same severity-by-status convention as the API layer (common.py)."""
+    import httpx
+
+    provider = AlpacaProvider()
+    provider._client = cast(Any, _FakeClient({}))
+
+    async def _raise(*_args: Any, **_kwargs: Any) -> Any:
+        request = httpx.Request("GET", "https://data.alpaca.markets/v2/stocks/bars")
+        response = httpx.Response(status_code=status, request=request)
+        raise httpx.HTTPStatusError(f"{status}", request=request, response=response)
+
+    monkeypatch.setattr(provider, "_paginate", _raise)
+    rec = _RecordingLogger()
+    monkeypatch.setattr("gateway.providers.alpaca.market.logger", rec)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.get_bars(
+            ["SPX"],
+            "1Day",
+            datetime(2026, 1, 14, tzinfo=UTC),
+            datetime(2026, 3, 5, tzinfo=UTC),
+        )
+
+    levels = {lvl for lvl, event in rec.calls if event == "alpaca_bars_error"}
+    assert levels == {expected_level}
+
+
 @pytest.mark.asyncio
 async def test_get_option_quotes_coerces_string_conditions_to_list() -> None:
     provider = AlpacaProvider()

@@ -16,9 +16,31 @@ from gateway.api.alpaca.common import (
     require_api_key,
 )
 from gateway.core.registry import ProviderRegistry
+from gateway.core.symbology import SymbolResolver
 from gateway.schemas import SuccessResponse
 
 router = APIRouter()
+_SYMBOL_RESOLVER = SymbolResolver()
+
+
+def _normalize_stock_symbol_or_raise(symbol: str) -> str:
+    """Normalize stock route symbols and reject option contracts before Alpaca."""
+    normalized = symbol.strip().upper()
+    resolved = _SYMBOL_RESOLVER.resolve(normalized)
+    if resolved.type == "option":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "GW-E4007",
+                "message": (
+                    f"{normalized} is an option contract, not a stock symbol. "
+                    f"Use /api/v1/alpaca/options/{normalized}/bars for option bars."
+                ),
+                "symbol": normalized,
+                "symbol_type": "option",
+            },
+        )
+    return normalized
 
 
 # --- Static-segment routes MUST be registered before parameterized routes ---
@@ -159,7 +181,7 @@ async def get_stock_bars(
     if end.tzinfo is None:
         end = end.replace(tzinfo=UTC)
 
-    normalized = symbol.upper()
+    normalized = _normalize_stock_symbol_or_raise(symbol)
 
     async def _call(provider):
         bars = await provider.get_bars(

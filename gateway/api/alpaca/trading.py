@@ -440,6 +440,17 @@ async def create_order(
             "client_order_id to idempotently re-attempt."
         ),
     }
+    order_log_context: dict[str, Any] = {
+        "client_id": client.id,
+        "symbol": symbol.upper(),
+        "side": side.lower(),
+        "order_type": order_type.lower(),
+        "time_in_force": time_in_force.lower(),
+        "order_class": order_class.lower() if order_class else None,
+        "qty_provided": qty is not None,
+        "notional_provided": notional is not None,
+        "client_order_id_source": "gateway" if gateway_generated else "caller",
+    }
 
     async def _call(provider: Any) -> Any:
         try:
@@ -471,6 +482,7 @@ async def create_order(
         data = await execute_alpaca_provider_call(
             registry=registry,
             provider_call=_call,
+            log_context=order_log_context,
         )
     except HTTPException as exc:
         # execute_alpaca_provider_call rewrites APIError/HTTPStatusError into

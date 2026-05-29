@@ -100,18 +100,24 @@ async def execute_alpaca_provider_call[T](
     registry: ProviderRegistry,
     provider_call: Callable[[Any], Awaitable[T]],
     block: bool = True,
+    log_context: dict[str, Any] | None = None,
 ) -> T:
     """Run Alpaca provider call with shared provider lookup, rate-limit, and error handling.
 
     Acquires an upstream concurrency semaphore (default 25) so that at most N
     requests are in-flight to Alpaca simultaneously, preventing upstream 502s
     when multiple clients burst requests at market open.
+
+    ``log_context`` is merged into provider failure logs only. Routes use it
+    for RCA fields such as client ID, symbol, and order shape; response bodies
+    are unchanged.
     """
     provider = registry.get("alpaca")
     if not provider:
         raise HTTPException(status_code=503, detail=ERR_PROVIDER_NOT_AVAILABLE)
 
     endpoint = getattr(provider_call, "__qualname__", None) or getattr(provider_call, "__name__", "<unknown>")
+    log_fields = {**(log_context or {}), "endpoint": endpoint}
     try:
         await require_provider_rate_limit("alpaca", block=block)
         sem = get_rate_limiter().upstream_semaphore("alpaca") or nullcontext()
@@ -124,14 +130,14 @@ async def execute_alpaca_provider_call[T](
         if status_code < 500:
             logger.warning(
                 "provider_request_failed",
-                endpoint=endpoint,
+                **log_fields,
                 error=str(e),
                 status_code=status_code,
             )
         else:
             logger.error(
                 "provider_request_failed",
-                endpoint=endpoint,
+                **log_fields,
                 exc_info=True,
                 status_code=status_code,
             )
@@ -141,20 +147,20 @@ async def execute_alpaca_provider_call[T](
         if status_code < 500:
             logger.warning(
                 "provider_request_failed",
-                endpoint=endpoint,
+                **log_fields,
                 error=str(e),
                 status_code=status_code,
             )
         else:
             logger.error(
                 "provider_request_failed",
-                endpoint=endpoint,
+                **log_fields,
                 exc_info=True,
                 status_code=status_code,
             )
         raise HTTPException(status_code=status_code, detail=f"Upstream provider error: {status_code}")
     except Exception:
-        logger.error("provider_request_failed", endpoint=endpoint, exc_info=True)
+        logger.error("provider_request_failed", **log_fields, exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream provider error")
 
 
