@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`POST /api/v1/alpaca/orders` accepts an optional `position_intent`** (`gateway/api/alpaca/trading.py`, `gateway/providers/alpaca/trading.py`, `tests/test_alpaca_trading_router.py`, `tests/test_alpaca_trading_position_intent.py`): additive query param (`buy_to_open` / `buy_to_close` / `sell_to_open` / `sell_to_close`) threaded from the endpoint into the Alpaca `MarketOrderRequest`/`LimitOrderRequest`. Lets callers force reduce-only semantics so a close is never converted into an opening (e.g. naked short) position — the counterpart to the related 2026-05-29 flood where ~3,235 close orders/day were rejected as cash-secured-put opens (`40310000`) because the caller had no live long and sent no intent. Invalid values raise a 400. Omitted → `None` (unchanged behavior).
+
 ### Fixed
 
 - **Alpaca order rejection logs now identify the caller and order shape** (`gateway/api/alpaca/common.py`, `gateway/api/alpaca/trading.py`, `tests/test_alpaca_common.py`, `tests/test_alpaca_trading_router.py`): This week's logs showed 10,566 rejected `POST /api/v1/alpaca/orders` attempts, but the existing `provider_request_failed` records did not include the authenticated `client_id`, symbol, side, order type, time-in-force, or idempotency source. `execute_alpaca_provider_call` now accepts optional `log_context`, and `create_order` supplies those RCA fields so the next invalid-order flood can be traced to the responsible trading system without guessing.

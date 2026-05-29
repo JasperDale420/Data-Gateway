@@ -152,6 +152,32 @@ async def test_create_order_maps_value_error_to_400(
 
 
 @pytest.mark.asyncio
+async def test_create_order_threads_position_intent_to_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """position_intent (e.g. sell_to_close) must reach the provider so callers
+    can force reduce-only semantics — Alpaca then never converts a close into
+    an opening (naked short) position."""
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.create_order(
+        symbol="AAPL260529P00315000",
+        side="sell",
+        qty=10,
+        order_type="limit",
+        limit_price=1.0,
+        position_intent="sell_to_close",
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["position_intent"] == "sell_to_close"
+
+
+@pytest.mark.asyncio
 async def test_get_orders_splits_symbols_and_sets_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

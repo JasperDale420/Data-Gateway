@@ -400,6 +400,7 @@ async def create_order(
     take_profit_limit_price: float | None = None,
     stop_loss_stop_price: float | None = None,
     stop_loss_limit_price: float | None = None,
+    position_intent: str | None = None,
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
@@ -471,6 +472,7 @@ async def create_order(
                     take_profit_limit_price=take_profit_limit_price,
                     stop_loss_stop_price=stop_loss_stop_price,
                     stop_loss_limit_price=stop_loss_limit_price,
+                    position_intent=position_intent,
                 ),
                 operation="create_order",
                 idempotency_context=idempotency_context,
