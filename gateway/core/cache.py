@@ -9,7 +9,13 @@ from typing import Any
 
 from cachetools import TTLCache
 
+from gateway.core.log_throttle import LogThrottle
 from gateway.core.logger import logger
+
+# A saturated dedup pool fails set_nx on every published event. Collapse the
+# identical "redis_cache_set_nx_error" warnings to one per minute (per error
+# type) so a real, distinct failure still surfaces promptly.
+_SET_NX_ERROR_LOG_THROTTLE = LogThrottle(interval_seconds=60.0)
 
 
 @dataclass
@@ -347,15 +353,18 @@ class RedisCache:
             logger.warning("redis_cache_set_many_error", count=len(items), error=str(e))
             return 0
 
-    async def set_nx(self, key: str, value: Any, ttl: int | None = None) -> bool:
+    async def set_nx(self, key: str, value: Any, ttl: int | None = None) -> bool | None:
         """Atomically set key only if it does not exist (SET NX EX).
 
-        Returns True if the key was set (first caller wins), False if it already
-        exists. Uses a single Redis SET command with NX and EX flags so there is
-        no TOCTOU window between checking and setting.
+        Returns ``True`` if the key was set (first caller wins), ``False`` if it
+        already exists, and ``None`` if the backend was unavailable (the call
+        could not determine existence). Callers must treat ``None`` as "unknown"
+        and fail open rather than as a duplicate — only ``False`` is a confirmed
+        duplicate. Uses a single Redis SET command with NX and EX flags so there
+        is no TOCTOU window between checking and setting.
         """
         if self._closed or self._loop_is_closed():
-            return False
+            return None
         try:
             await self._ensure_connected()
             if self._redis is None:
@@ -373,8 +382,15 @@ class RedisCache:
                 return True
             return False
         except Exception as e:
-            logger.warning("redis_cache_set_nx_error", key=key, error=str(e))
-            return False
+            allowed, suppressed = _SET_NX_ERROR_LOG_THROTTLE.should_emit(type(e).__name__)
+            if allowed:
+                logger.warning(
+                    "redis_cache_set_nx_error",
+                    key=key,
+                    error=str(e),
+                    suppressed_since_last=suppressed,
+                )
+            return None
 
     async def delete(self, key: str) -> bool:
         """Delete key from Redis cache."""
