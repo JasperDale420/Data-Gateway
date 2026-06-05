@@ -232,7 +232,7 @@ Client Request → Auth Check → Cache Lookup → [Cache Hit] → Return
 | Component | Implementation |
 |-----------|----------------|
 | **Key Generation** | `secrets.token_urlsafe(32)` → 43 char keys |
-| **Key Storage** | SHA-256 hashed in `config/clients.json` |
+| **Key Storage** | SHA-256 hashed in `config/clients.yaml` |
 | **Key Rotation** | CLI tool: `python -m gateway.cli rotate-key <client_id>` |
 | **Rate Limiting** | Per-client configurable limits |
 
@@ -2141,6 +2141,51 @@ GET /api/v1/alpaca/stocks/AAPL/bars?timeframe=1Min&start=2026-01-14T09:30:00Z&li
 
 ---
 
+#### Alpaca Trading Endpoints
+
+Account, position, and order-management routes that proxy Alpaca's live/paper
+trading API. Mutating endpoints require a client role of `trader`, `admin`, or
+`super_admin`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/alpaca/account` | Account info |
+| GET | `/alpaca/positions` | Open positions |
+| GET | `/alpaca/orders` | List orders |
+| POST | `/alpaca/orders` | Submit an order (query params, not JSON body) |
+| DELETE | `/alpaca/orders/{order_id}` | Cancel an order |
+| GET | `/alpaca/clock` | Market clock |
+| GET | `/alpaca/calendar` | Trading calendar |
+
+**Idempotency contract (orders):** `client_order_id` is optional. If omitted,
+the gateway auto-generates a `dg-<uuid>` key and returns it in the response
+meta. Alpaca natively dedupes `submit_order` by `client_order_id`, so a caller
+that receives a `504` (timeout) can safely retry with the same key — the 504
+response detail echoes the key under `idempotency_context`. Supplying an empty
+or whitespace-only `client_order_id` is rejected with `400 GW-E4006` (a silent
+fallback would mint a fresh key per retry and defeat dedup); keys longer than
+Alpaca's 128-char limit are likewise rejected with `GW-E4006`.
+
+**Per-call timeouts (split read/write):** read calls (`get_account`,
+`get_orders`, `get_position`, `get_clock`, `get_calendar`, …) use a 15s
+wall-clock ceiling (`alpaca_trading_write_call_timeout_seconds` controls the
+write side; reads use `alpaca_trading_call_timeout_seconds`); write calls
+(`create_order`, `replace_order`, `cancel_order`, `cancel_all_orders`,
+`close_position`, `close_all_positions`) get a longer 25s ceiling because
+opening-bell broker latency can exceed 15s on writes and surfacing a 504 forces
+the caller into the idempotency-retry contract. An HTTP-level safety net
+(`alpaca_trading_http_timeout_seconds`, default 30s) releases the executor
+thread on either path.
+
+**Error codes:** `GW-E4006` (400, invalid `client_order_id`); `GW-E5004` (504,
+timed out waiting for Alpaca — idempotency context attached so callers can
+verify or retry); `GW-E5005` (503, trading-call backpressure — the in-flight
+cap `alpaca_trading_max_inflight` was reached and the call fast-fails instead of
+queueing). Any 5xx raised while placing/replacing/closing an order re-attaches
+the idempotency context so the retry key is never lost.
+
+---
+
 #### Unusual Whales Endpoints
 
 > [!IMPORTANT]
@@ -2282,7 +2327,7 @@ FINNHUB_API_KEY=xxxxx
 GATEWAY_HOST=0.0.0.0
 GATEWAY_PORT=8080
 GATEWAY_LOG_LEVEL=INFO
-GATEWAY_CACHE_TTL_DEFAULT=60
+GATEWAY_CACHE_DEFAULT_TTL=300
 
 # Redis (optional)
 REDIS_URL=redis://localhost:6379
@@ -2302,8 +2347,8 @@ data-gateway/
 ├── PRD.md
 │
 ├── config/
-│   ├── clients.json          # API keys + permissions
-│   └── settings.yaml         # Gateway configuration
+│   ├── clients.yaml          # API keys + permissions
+│   └── providers.yaml        # Provider routing + capabilities
 │
 ├── gateway/
 │   ├── __init__.py
@@ -3229,7 +3274,7 @@ class CircuitBreaker:
 ┌─────────────────────────────────────────────────────────┐
 │ 1. Load Configuration                                   │
 │    - Parse environment variables                        │
-│    - Load clients.json                                  │
+│    - Load clients.yaml                                  │
 │    - Validate all required config present               │
 │    └─► FAIL: Exit with code 1, log GW-E0001            │
 ├─────────────────────────────────────────────────────────┤
@@ -3273,7 +3318,7 @@ def setup_signal_handlers():
 async def handle_sighup(signum, frame):
     logger.info("SIGHUP received, reloading config", code="GW-I0020")
     try:
-        new_config = load_clients_json()
+        new_config = load_clients_yaml()
         validate_config(new_config)
         await apply_config(new_config)
         logger.info("Config reloaded successfully", code="GW-I0021")
@@ -4119,7 +4164,7 @@ curl http://localhost:8080/health/ready
 
 | Data | Backup Method | Frequency | Retention |
 |------|---------------|-----------|-----------|
-| `clients.json` | Git version control | Every change | Forever |
+| `clients.yaml` | Git version control | Every change | Forever |
 | Docker image | Container registry | Every deploy | 30 days |
 | Environment variables | Secrets manager | On change | Versioned |
 
@@ -5077,6 +5122,21 @@ All gateway errors use the format `GW-XNNNN` where:
 | `WARN` | Recoverable issue, should be monitored |
 | `INFO` | Normal state transitions (connect, subscribe, disconnect) |
 | `DEBUG` | Detailed tracing (disabled in production) |
+
+**Upstream-failure log severity convention:** when a provider call fails, the
+gateway picks the log level by HTTP status class — upstream `4xx` responses
+(client-correctable: bad symbol, invalid params, rate limit) are logged at
+`WARN` without a traceback, while `5xx` responses and unexpected exceptions are
+logged at `ERROR` with `exc_info=True`. This keeps caller-error noise out of the
+error stream so genuine server-side failures stay visible. Implemented in
+`gateway/api/deps.py` and `gateway/api/alpaca/common.py`.
+
+**HTTP-status → error-code mapping:** unhandled `HTTPException`s are rendered
+through `gateway/api/errors.py`, which maps the HTTP status to a default
+`GW-XNNNN` code where the first digit tracks the status class — e.g. `400 →
+GW-E4000`, `404 → GW-E4004`, `429 → GW-E4001`, `503 → GW-E5003`, `504 →
+GW-E5004`. Routes that raise a structured `detail={"code": ...}` (such as the
+Alpaca trading endpoints, see below) keep their explicit code.
 
 ### Correlation IDs
 

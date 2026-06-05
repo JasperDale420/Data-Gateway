@@ -3,7 +3,7 @@
 Provides:
 - EventEnvelope: Pydantic model wrapping all events for downstream routing/storage
 - make_instrument_key: Canonical key generator for consistent instrument identification
-- compute_event_id: SHA256 idempotency hash for dedupe across reconnects/retries
+- compute_event_id: BLAKE2b idempotency hash for dedupe across reconnects/retries
 - wrap_event: Factory function to create envelopes from normalized events
 """
 
@@ -43,7 +43,7 @@ class EventEnvelope(BaseModel):
     """
 
     # Idempotency
-    event_id: str = Field(description="SHA256 idempotency hash (32 chars)")
+    event_id: str = Field(description="BLAKE2b idempotency hash (32 chars)")
 
     # Source identification
     provider: str = Field(description="Data provider: alpaca, unusual_whales, finnhub, etc")

@@ -10,6 +10,8 @@ Data Gateway provides a single WebSocket and REST interface for accessing multip
 - **REST proxy with caching** — Reduce API calls with intelligent caching
 - **Client authentication** — API key based auth with permissions
 - **Provider abstraction** — Plug-and-play data source integration
+- **Idempotent trading** — Alpaca order writes auto-mint a `dg-<uuid>` `client_order_id` so a timeout (504) can be safely retried without double-placing
+- **Bounded-queue sink dispatch** — Streaming events flow to Redis Streams through a per-sink bounded queue + worker pool, dropping only under genuine saturation
 
 ## Architecture
 
@@ -144,16 +146,16 @@ All data flows through a normalization and envelope pipeline before reaching cli
 1. **Raw data** arrives from providers (REST, WebSocket, or poller)
 2. **Normalizer** converts provider-specific formats to standard dataclasses (`NormalizedBar`, `NormalizedQuote`, `NormalizedTrade`)
 3. **Envelope wrapper** adds metadata: event ID, timestamps, instrument key, source lineage
-4. **Deduplicator** computes a SHA-256 hash for idempotent delivery
-5. **Data sink** publishes to Redis Streams for downstream storage (Heber)
+4. **Deduplicator** computes a BLAKE2b idempotency hash so reconnects/retries don't double-publish
+5. **Data sink** publishes to Redis Streams for downstream storage (Heber) via a bounded per-sink queue drained by a worker pool — events are dropped only when the queue is full *and* workers can't drain it within the short producer-block timeout (surfaced as a metric)
 
 ## UW Poller
 
 The Unusual Whales Poller runs independently, continuously polling UW endpoints and publishing results through the data sink.
 
-**Real-time polls** (every 60s): flow alerts, darkpool, market tide, sector tide.
+**Real-time polls**: the poller loop ticks every 15s; flow alerts poll every 5 min, darkpool adaptively (15s/30s/60s by session), and market + sector tide hourly.
 
-**EOD polls** (daily at 4:30 PM ET): 9 per-ticker endpoints including greek exposure, IV rank, OI change, short interest, FTDs, congress trades, and insider trades.
+**EOD polls** (daily at 4:30 PM ET): 8 per-ticker endpoints (greek exposure, IV rank, IV term structure, OI change, historic option volume, short interest, short volume, FTDs) plus 2 market-wide endpoints (congress trades, insider trades).
 
 The **Ticker Universe** manages which symbols are polled:
 
@@ -164,7 +166,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details.
 
 ## Data Sink (Heber Integration)
 
-When enabled, the gateway publishes all events to Redis Streams for downstream consumption by Heber (the storage layer). Events are wrapped in `EventEnvelope` format with idempotent deduplication.
+When enabled, the gateway publishes all events to Redis Streams for downstream consumption by Heber (the storage layer). Events are wrapped in `EventEnvelope` format with idempotent (BLAKE2b) deduplication. Streaming dispatch uses a bounded per-sink queue and worker pool (see `GATEWAY_DATA_SINK_QUEUE_SIZE` / `GATEWAY_DATA_SINK_WORKER_COUNT` in [.env.example](.env.example)) so a slow Redis applies backpressure rather than silently dropping events.
 
 ## API Discovery
 
