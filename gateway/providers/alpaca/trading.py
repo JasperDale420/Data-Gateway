@@ -172,6 +172,7 @@ class AlpacaTradingMixin:
                     stop_price=stop_price,
                     extended_hours=extended_hours,
                     client_order_id=client_order_id,
+                    position_intent=pi,
                 )
             elif order_type.lower() == "stop_limit":
                 request = StopLimitOrderRequest(
@@ -183,6 +184,7 @@ class AlpacaTradingMixin:
                     stop_price=stop_price,
                     extended_hours=extended_hours,
                     client_order_id=client_order_id,
+                    position_intent=pi,
                 )
             else:
                 logger.error("alpaca_order_unsupported_type", order_type=order_type, symbol=symbol)

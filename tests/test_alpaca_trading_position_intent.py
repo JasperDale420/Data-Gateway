@@ -73,3 +73,52 @@ def test_invalid_position_intent_raises_value_error():
             order_type="market",
             position_intent="not_a_real_intent",
         )
+
+
+@pytest.mark.parametrize(
+    ("order_type", "extra_kwargs"),
+    [
+        ("market", {}),
+        ("limit", {"limit_price": 1.0}),
+        ("stop", {"stop_price": 1.0}),
+        ("stop_limit", {"limit_price": 1.0, "stop_price": 1.0}),
+    ],
+)
+def test_position_intent_propagates_for_all_order_types(order_type: str, extra_kwargs: dict[str, Any]):
+    """Reduce-only intent must reach Alpaca for every order type, not just market/limit.
+
+    Regression guard: stop and stop_limit previously dropped position_intent,
+    so a caller's sell_to_close on a stop order silently lost its intent.
+    """
+    prov = _StubProvider()
+    prov.create_order(
+        symbol="AAPL260529P00315000",
+        side="sell",
+        qty=10,
+        order_type=order_type,
+        position_intent="sell_to_close",
+        **extra_kwargs,
+    )
+    assert prov.captured["request"].position_intent == PositionIntent.SELL_TO_CLOSE
+
+
+@pytest.mark.parametrize(
+    ("intent_str", "expected"),
+    [
+        ("buy_to_open", PositionIntent.BUY_TO_OPEN),
+        ("sell_to_open", PositionIntent.SELL_TO_OPEN),
+        ("buy_to_close", PositionIntent.BUY_TO_CLOSE),
+        ("sell_to_close", PositionIntent.SELL_TO_CLOSE),
+    ],
+)
+def test_all_position_intent_values_map(intent_str: str, expected: PositionIntent):
+    prov = _StubProvider()
+    side = "buy" if intent_str.startswith("buy") else "sell"
+    prov.create_order(
+        symbol="AAPL",
+        side=side,
+        qty=1,
+        order_type="market",
+        position_intent=intent_str,
+    )
+    assert prov.captured["request"].position_intent == expected
