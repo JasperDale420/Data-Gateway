@@ -157,6 +157,47 @@ class TestRedisCacheSetNx:
     """
 
     @pytest.mark.asyncio
+    async def test_uses_bounded_blocking_pool_when_max_connections_configured(self, monkeypatch) -> None:
+        """High-volume dedup caches should wait on a bounded pool instead of fanning out connections."""
+        import redis.asyncio as aioredis
+
+        created_pool = object()
+        calls: dict[str, object] = {}
+
+        class _FakeBlockingPool:
+            @staticmethod
+            def from_url(redis_url: str, **kwargs):
+                calls["redis_url"] = redis_url
+                calls["pool_kwargs"] = kwargs
+                return created_pool
+
+        class _FakeRedisClient:
+            def __init__(self, *, connection_pool) -> None:
+                calls["connection_pool"] = connection_pool
+
+        monkeypatch.setattr(aioredis, "BlockingConnectionPool", _FakeBlockingPool)
+        monkeypatch.setattr(aioredis, "Redis", _FakeRedisClient)
+
+        cache = RedisCache(
+            redis_url="redis://test",
+            default_ttl=60,
+            max_connections=32,
+            operation_timeout_seconds=2.5,
+        )
+
+        await cache._ensure_connected()
+
+        assert calls["redis_url"] == "redis://test"
+        assert calls["connection_pool"] is created_pool
+        assert calls["pool_kwargs"] == {
+            "max_connections": 32,
+            "timeout": 2.5,
+            "decode_responses": True,
+            "socket_connect_timeout": 2.5,
+            "socket_timeout": 2.5,
+        }
+
+    @pytest.mark.asyncio
     async def test_returns_true_when_newly_set(self) -> None:
         cache = RedisCache(redis_url="redis://test", default_ttl=60)
         cache._redis = _FakeRedis(result="OK")  # SET NX returns OK when it set the key

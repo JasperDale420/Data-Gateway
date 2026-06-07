@@ -207,15 +207,28 @@ class RedisCache:
 
     KEY_PREFIX = "cache:"
 
-    def __init__(self, redis_url: str, default_ttl: int = 300) -> None:
+    def __init__(
+        self,
+        redis_url: str,
+        default_ttl: int = 300,
+        *,
+        max_connections: int | None = None,
+        operation_timeout_seconds: float | None = None,
+    ) -> None:
         """Initialize Redis cache.
 
         Args:
             redis_url: Redis connection URL
             default_ttl: Default TTL in seconds
+            max_connections: Optional cap for a blocking Redis connection pool.
+            operation_timeout_seconds: Optional socket/pool wait timeout.
         """
         self._redis_url = redis_url
         self.default_ttl = default_ttl
+        self._max_connections = max(1, int(max_connections)) if max_connections is not None else None
+        self._operation_timeout_seconds = (
+            max(0.5, float(operation_timeout_seconds)) if operation_timeout_seconds is not None else None
+        )
         self._redis: Any | None = None
         self._connected = False
         self._closed = False
@@ -242,10 +255,22 @@ class RedisCache:
             try:
                 import redis.asyncio as aioredis
 
-                self._redis = aioredis.from_url(
-                    self._redis_url,
-                    decode_responses=True,
-                )
+                if self._max_connections is not None:
+                    timeout = self._operation_timeout_seconds or 5.0
+                    pool = aioredis.BlockingConnectionPool.from_url(
+                        self._redis_url,
+                        max_connections=self._max_connections,
+                        timeout=timeout,
+                        decode_responses=True,
+                        socket_connect_timeout=timeout,
+                        socket_timeout=timeout,
+                    )
+                    self._redis = aioredis.Redis(connection_pool=pool)
+                else:
+                    self._redis = aioredis.from_url(
+                        self._redis_url,
+                        decode_responses=True,
+                    )
                 self._connected = True
                 logger.info("redis_cache_connected")
             except ImportError:
@@ -436,6 +461,12 @@ class RedisCache:
                     await self._redis.aclose()
                 else:
                     await self._redis.close()
+            except Exception:
+                pass
+            try:
+                pool = getattr(self._redis, "connection_pool", None)
+                if pool is not None:
+                    await pool.disconnect()
             except Exception:
                 pass
             self._redis = None
