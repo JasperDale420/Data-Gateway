@@ -6,6 +6,7 @@ Tests:
 - wrap_event serialization for bars, quotes, trades, flow alerts
 """
 
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -16,9 +17,14 @@ from gateway.core.envelope import (
     SCHEMA_VERSION,
     EventEnvelope,
     compute_event_id,
+    fast_wrap_streaming_event,
     make_instrument_key,
     wrap_event,
 )
+
+# Heber's writer-side option instrument_key validator (heber/models/envelope.py).
+# Mirrored here so the gateway fails fast on any key shape Heber would reject.
+HEBER_OPTION_KEY = re.compile(r"^option:OCC:[A-Z]{1,6}\d{6}[CP]\d{8}$")
 
 
 class TestMakeInstrumentKey:
@@ -258,6 +264,36 @@ class TestWrapEvent:
         assert envelope["ts_ingest"] == "2026-01-15T12:00:05+00:00"
         assert envelope["lineage"]["stream_type"] == "stock"
         assert envelope["lineage"]["sequence"] == "123"
+
+    @pytest.mark.parametrize(
+        "occ_symbol",
+        [
+            "QQQ260609C00690000",  # 3-char root, call (the flooding 0DTE shape)
+            "SPXW260918P07500000",  # 4-char index weekly, put (incident's index options)
+            "ABCDEF260116C00200000",  # 6-char root — regex upper boundary
+            "F260116P00012000",  # 1-char root, put — regex lower boundary
+        ],
+    )
+    def test_fast_path_option_quote_builds_occ_key(self, occ_symbol):
+        """OPRA option quotes arrive with the OCC contract as the symbol (`S`).
+
+        The streaming fast-path must emit a valid `option:OCC:...` key. The old
+        path produced `option:{symbol}` (e.g. `option:QQQ260609C00690000`, no
+        `OCC:` infix), which Heber's writer-side validator rejects — DLQ-ing
+        100% of option quotes and stalling the consumer. Covers a range of OCC
+        root widths since the bug was visible across index weeklies (SPXW) too.
+        """
+        envelope = fast_wrap_streaming_event(
+            event={"S": occ_symbol, "t": "2026-06-09T20:02:11Z", "bp": 1.23, "ap": 1.25},
+            provider="alpaca",
+            feed="quotes",
+            instrument_type="option",
+            ts_ingest=datetime(2026, 6, 9, 20, 2, 11, tzinfo=UTC),
+        )
+
+        assert envelope["instrument_type"] == "option"
+        assert envelope["instrument_key"] == f"option:OCC:{occ_symbol}"
+        assert HEBER_OPTION_KEY.match(envelope["instrument_key"])
 
     def test_wrap_event_accepts_pydantic_event_models(self):
         """Pydantic event payloads should still be converted to dict payloads."""

@@ -521,12 +521,12 @@ def fast_wrap_streaming_event(
     # instrument_key - manual inline construction for speed
     # (Replicates make_instrument_key logic for common cases)
     if instrument_type == "option":
-        # Fast path for options (symbol is key if no contract specific)
-        # But we assume standard "option:SYMBOL" or "option:OCC:..." logic?
-        # make_instrument_key handles crypto normalization too.
-        # For speed, let's call make_instrument_key but optimize it later if needed.
-        # It's dominated by hashing anyway.
-        inst_key = make_instrument_key(symbol, instrument_type)
+        # OPRA option streams send the OCC contract as the symbol (e.g.
+        # "QQQ260609C00690000"). Pass it as the contract so make_instrument_key
+        # emits "option:OCC:{symbol}". Without contract_symbol it falls back to
+        # "option:{symbol}" (no OCC: infix), which Heber's writer-side validator
+        # rejects, DLQ-ing 100% of option quotes.
+        inst_key = make_instrument_key(symbol, instrument_type, contract_symbol=symbol)
     else:
         # Equity is just equity:SYMBOL
         inst_key = f"equity:{symbol}" if instrument_type == "equity" else make_instrument_key(symbol, instrument_type)
