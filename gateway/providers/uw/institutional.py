@@ -141,10 +141,15 @@ class UWInstitutionalMixin:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
-            from unusualwhales.api import market
+            # /api/insider/transactions returns individual insider transactions
+            # (ticker/owner_name/transaction_code per row). The previously used
+            # market.get_insider_trades (/api/market/insider-buy-sells) is a
+            # market-wide aggregate whose rows lack those fields, so 100% were
+            # dropped by the null-field filter below.
+            from unusualwhales.api import insider
 
             response = await self._call_sync(
-                market.get_insider_trades.sync,
+                insider.get_transactions.sync,
                 client=self._client,
                 limit=limit,
             )

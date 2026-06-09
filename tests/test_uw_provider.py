@@ -340,3 +340,125 @@ async def test_get_darkpool_recent_falls_back_to_raw_http_when_sdk_parse_fails(m
 
     assert len(result) == 2
     assert http_client.calls == [("/api/darkpool/recent", {"limit": "2", "offset": "1"})]
+
+
+class _FakeSDKResponse:
+    """Mimics an openapi-generated SDK typed response.
+
+    The SDK puts parsed rows on the ``.data`` attribute and dumps any leftover
+    top-level keys into ``additional_properties``. Tests use this to reproduce
+    the exact response shapes returned by the live UW API.
+    """
+
+    def __init__(self, data=None, additional_properties=None):
+        self.data = data
+        self.additional_properties = additional_properties or {}
+
+
+@pytest.mark.asyncio
+async def test_get_darkpool_recent_reads_sdk_data_attribute(monkeypatch):
+    """SDK ``get_trades_by_date`` returns trades on ``DarkpoolTradeResponse.data``.
+
+    The provider must read ``.data`` (via ``_extract_data``), not
+    ``additional_properties['data']`` — otherwise the primary SDK path returns
+    [] on every call and trades are only ever captured by the raw-HTTP fallback
+    (which fires only on an SDK exception).
+    """
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    sdk_response = _FakeSDKResponse(
+        data=[
+            {"ticker": "AAPL", "price": 201.5, "size": 50, "executed_at": "2026-06-08T13:30:00Z"},
+            {"ticker": "MSFT", "price": 430.1, "size": 25, "executed_at": "2026-06-08T13:30:05Z"},
+        ],
+        additional_properties={},
+    )
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        return sdk_response
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+    monkeypatch.setattr(provider, "_normalize_darkpool_trade", lambda item: item)
+
+    result = await provider.get_darkpool_recent(limit=200)
+
+    assert len(result) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_insiders_uses_transactions_endpoint(monkeypatch):
+    """get_insiders must call ``insider.get_transactions`` (/api/insider/transactions).
+
+    The previous call, ``market.get_insider_trades`` (/api/market/insider-buy-sells),
+    is a market-wide aggregate whose rows have no ticker/owner_name/transaction_code,
+    so 100% of them are dropped by the null-field filter (0 published every day).
+    """
+    from unusualwhales.api import insider as insider_api
+
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    captured: dict = {}
+
+    async def _fake_call_sync(func, *args, **kwargs):
+        captured["func"] = func
+        return _FakeSDKResponse(
+            data=[
+                {
+                    "ticker": "AAPL",
+                    "owner_name": "Jane Doe",
+                    "transaction_code": "P",
+                    "amount": 100,
+                    "price": "150.0",
+                    "transaction_date": "2026-06-08",
+                },
+            ],
+        )
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    txns = await provider.get_insiders(limit=5)
+
+    assert captured["func"] is insider_api.get_transactions.sync
+    assert len(txns) == 1
+    assert txns[0]["ticker"] == "AAPL"
+    assert txns[0]["owner_name"] == "Jane Doe"
+    assert txns[0]["transaction_code"] == "P"
+
+
+@pytest.mark.asyncio
+async def test_get_short_volume_reads_si_key(monkeypatch):
+    """UW ``/shorts/{ticker}/volume-and-ratio`` returns rows under
+    ``additional_properties['si']`` — not ``.data``/``['data']``.
+
+    ``_extract_data`` only checks ``.data``/``['data']``, so the provider must
+    read the ``si`` key or it returns [] on every call (0 published every day).
+    """
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    # Real /shorts/{ticker}/volume-and-ratio rows use keys market_date /
+    # short_volume / short_volume_ratio (not date / short_ratio).
+    sdk_response = _FakeSDKResponse(
+        data=None,
+        additional_properties={
+            "si": [
+                {"market_date": "2026-06-08", "short_volume": "1234567", "short_volume_ratio": "0.42"},
+                {"market_date": "2026-06-05", "short_volume": "1111111", "short_volume_ratio": "0.39"},
+            ]
+        },
+    )
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        return sdk_response
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    result = await provider.get_short_volume("AAPL")
+
+    assert len(result) == 2
+    assert result[0].symbol == "AAPL"
+    assert result[0].date == "2026-06-08"
+    assert result[0].short_interest == 1234567
+    assert str(result[0].short_percent_float) == "0.42"
