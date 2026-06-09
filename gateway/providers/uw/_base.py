@@ -49,6 +49,19 @@ def _safe_int(value: Any) -> int:
     return int(float(value))
 
 
+def _safe_float(value: Any) -> float | None:
+    """Parse a value to float, returning None for missing/empty values.
+
+    The UW API returns numeric greek fields as strings (e.g. '-32823586.24').
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _safe_bool(value: Any, default: bool = False) -> bool:
     """Parse a value to bool, handling string 'false'/'true' from APIs.
 

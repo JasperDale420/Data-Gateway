@@ -428,6 +428,70 @@ async def test_get_insiders_uses_transactions_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_spot_exposures_by_strike_reads_additional_properties_data(monkeypatch):
+    """UW ``/stock/{ticker}/spot-exposures/strike`` returns many strike rows, but the
+    generated SDK model ``SpotGreekExposuresByStrike`` is a single-row shape, so the row
+    list lands in ``additional_properties['data']`` and the model has no ``.data`` attribute.
+
+    The provider must read those rows via ``_extract_data`` and map the real UW field names
+    (call_gamma_oi, put_gamma_oi, call_charm_oi, call_vanna_oi, …). Otherwise it relies on
+    ``_get_data_safe`` (which only checks ``.data``) and the route returns ``data:[]`` on every
+    call despite full upstream data.
+    """
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    # _FakeResponse mirrors the broken model: rows under additional_properties['data'], no .data.
+    sdk_response = _FakeResponse(
+        [
+            {
+                "ticker": "SPY",
+                "strike": "595",
+                "price": "598.12",
+                "date": "2026-06-09",
+                "time": "2026-06-09T20:14:44.000000Z",
+                "call_gamma_oi": "7156967.29",
+                "call_gamma_vol": "1377740.4",
+                "put_gamma_oi": "-32823586.24",
+                "put_gamma_vol": "-874707.84",
+                "call_charm_oi": "84473.11",
+                "call_charm_vol": "70827.11",
+                "put_charm_oi": "-2882891864.45",
+                "put_charm_vol": "-1203437889.62",
+                "call_vanna_oi": "65476.41",
+                "call_vanna_vol": "37.53",
+                "put_vanna_oi": "3102913.98",
+                "put_vanna_vol": "-26709.39",
+                "call_delta_oi": "12529604.54",
+                "call_delta_vol": "8497164.7",
+                "put_delta_oi": "-32386243.26",
+                "put_delta_vol": "176213.46",
+            },
+        ]
+    )
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        return sdk_response
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    rows = await provider.get_spot_exposures_by_strike("spy")
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["symbol"] == "SPY"
+    assert row["strike"] == 595.0
+    assert row["price"] == 598.12
+    assert row["date"] == "2026-06-09"
+    assert row["timestamp"] == "2026-06-09T20:14:44.000000Z"
+    assert row["call_gamma_oi"] == 7156967.29
+    assert row["put_gamma_oi"] == -32823586.24
+    assert row["call_charm_oi"] == 84473.11
+    assert row["call_vanna_oi"] == 65476.41
+    assert row["put_delta_oi"] == -32386243.26
+
+
+@pytest.mark.asyncio
 async def test_get_short_volume_reads_si_key(monkeypatch):
     """UW ``/shorts/{ticker}/volume-and-ratio`` returns rows under
     ``additional_properties['si']`` — not ``.data``/``['data']``.

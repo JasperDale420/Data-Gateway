@@ -7,7 +7,7 @@ from typing import Any
 from gateway.core.logger import logger
 from gateway.schemas import NormalizedIVRank
 
-from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_int
+from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_float, _safe_int
 from .transient import is_transient_upstream_error
 
 
@@ -676,7 +676,13 @@ class UWOptionsMixin:
             raise
 
     async def get_spot_exposures_by_strike(self, symbol: str) -> list[dict[str, Any]]:
-        """Get gamma and options volume confluence per strike."""
+        """Get spot greek (gamma/charm/vanna/delta) exposures per strike.
+
+        UW's ``/stock/{ticker}/spot-exposures/strike`` returns many strike rows, but the
+        generated SDK model is a single-row shape, so the rows arrive under
+        ``additional_properties['data']``. ``_extract_data`` reads that location; using
+        ``_get_data_safe`` (``.data`` only) would silently return [].
+        """
         if not self._client:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
@@ -686,26 +692,33 @@ class UWOptionsMixin:
             response = await self._call_sync(
                 stock.get_spot_exposures_by_strike.sync, client=self._client, ticker=symbol.upper()
             )
-            data = self._get_data_safe(response)
-            if not data:
-                return []
 
             results = []
-            for item in data:
+            for item in self._extract_data(response):
                 get = item.get if isinstance(item, dict) else lambda k, d=None, i=item: getattr(i, k, d)
                 results.append(
                     {
                         "symbol": symbol.upper(),
-                        "strike": float(get("strike") or 0) if get("strike") else None,
-                        "gamma_exposure": (
-                            float(get("gamma_exposure") or get("gex") or 0)
-                            if get("gamma_exposure") or get("gex")
-                            else None
-                        ),
-                        "call_volume": _safe_int(get("call_volume")) if get("call_volume") else None,
-                        "put_volume": _safe_int(get("put_volume")) if get("put_volume") else None,
-                        "call_oi": _safe_int(get("call_oi")) if get("call_oi") else None,
-                        "put_oi": _safe_int(get("put_oi")) if get("put_oi") else None,
+                        "strike": _safe_float(get("strike")),
+                        "price": _safe_float(get("price")),
+                        "date": str(get("date") or ""),
+                        "timestamp": str(get("time") or ""),
+                        "call_gamma_oi": _safe_float(get("call_gamma_oi")),
+                        "call_gamma_vol": _safe_float(get("call_gamma_vol")),
+                        "put_gamma_oi": _safe_float(get("put_gamma_oi")),
+                        "put_gamma_vol": _safe_float(get("put_gamma_vol")),
+                        "call_charm_oi": _safe_float(get("call_charm_oi")),
+                        "call_charm_vol": _safe_float(get("call_charm_vol")),
+                        "put_charm_oi": _safe_float(get("put_charm_oi")),
+                        "put_charm_vol": _safe_float(get("put_charm_vol")),
+                        "call_vanna_oi": _safe_float(get("call_vanna_oi")),
+                        "call_vanna_vol": _safe_float(get("call_vanna_vol")),
+                        "put_vanna_oi": _safe_float(get("put_vanna_oi")),
+                        "put_vanna_vol": _safe_float(get("put_vanna_vol")),
+                        "call_delta_oi": _safe_float(get("call_delta_oi")),
+                        "call_delta_vol": _safe_float(get("call_delta_vol")),
+                        "put_delta_oi": _safe_float(get("put_delta_oi")),
+                        "put_delta_vol": _safe_float(get("put_delta_vol")),
                     }
                 )
 
