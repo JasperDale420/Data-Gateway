@@ -1,4 +1,4 @@
-.PHONY: setup test lint format typecheck run clean
+.PHONY: setup test lint format typecheck run deploy clean
 
 ## Local development setup — installs runtime + local SDK + dev tools.
 ## Bare `uv sync` will NOT work because empire-core, empire-schemas, and
@@ -29,6 +29,13 @@ typecheck:
 ## Start the gateway server (debug mode).
 run: setup
 	uv run uvicorn gateway.main:app --host 0.0.0.0 --port 8080 --reload
+
+## Deploy current source to the running gateway container. Source is
+## bind-mounted, so a restart reloads committed code — committed fixes don't
+## take effect until you run this. Use `make deploy BUILD=1` for dep/Dockerfile
+## changes (rebuilds the image).
+deploy:
+	./scripts/deploy.sh $(if $(BUILD),--build,)
 
 ## Remove cached / compiled artifacts.
 clean:
