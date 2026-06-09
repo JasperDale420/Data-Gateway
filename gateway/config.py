@@ -199,9 +199,10 @@ class Settings(BaseSettings):
     # Pool size cap raised from 32 → 128. The previous cap left the redis_sink-
     # layer min(64, ...) clamp dead and capped operators at half the available
     # connection capacity. 128 connections is well within typical Redis defaults
-    # (maxclients=10000 on the redis:7-alpine image used in compose). Default
-    # stays at 8 — operators must explicitly tune for higher load.
-    data_sink_redis_pool_size: int = Field(default=8, ge=1, le=128)
+    # (maxclients=10000 on the redis:7-alpine image used in compose). The
+    # default keeps headroom above the sink worker count for reconnect churn and
+    # health checks during opening-bell bursts.
+    data_sink_redis_pool_size: int = Field(default=32, ge=1, le=128)
 
     # Bounded-queue + worker-pool dispatch parameters. Producers `put` into a
     # per-sink bounded asyncio.Queue with a short producer-block timeout; a
@@ -218,8 +219,8 @@ class Settings(BaseSettings):
     # 5 872 on 2026-05-18 from this exact mechanism.
     #
     # - queue_size: max queued events per sink before producers block.
-    #   Opening-bell bursts have hit ~20K events/min historically; 4096
-    #   covers ~12s of sustained 350 events/sec without producer block.
+    #   Opening-bell bursts have hit ~20K events/min historically; 16384
+    #   covers ~45s of sustained 350 events/sec without producer block.
     # - worker_count: concurrency for publishes against a single sink.
     #   Should fit within data_sink_redis_pool_size for the Redis sink.
     # - producer_block_timeout_seconds: how long a producer waits on a
@@ -228,8 +229,8 @@ class Settings(BaseSettings):
     #   the asyncio event loop, and longer blocks would stall the Alpaca
     #   receive loop. A drop is a true emergency (queue is full AND
     #   workers can't drain in 100ms).
-    data_sink_queue_size: int = Field(default=4096, ge=64, le=65536)
-    data_sink_worker_count: int = Field(default=8, ge=1, le=64)
+    data_sink_queue_size: int = Field(default=16384, ge=64, le=65536)
+    data_sink_worker_count: int = Field(default=16, ge=1, le=64)
     data_sink_producer_block_timeout_seconds: float = Field(default=0.1, ge=0.001, le=5.0)
 
     # Backfill concurrency (per-provider, split by feed weight)

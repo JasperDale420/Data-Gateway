@@ -190,9 +190,11 @@ class UWFlowMixin:
             )
 
             trades = []
-            data_items = []
-            if response is not None and hasattr(response, "additional_properties") and response.additional_properties:
-                data_items = response.additional_properties.get("data", [])
+            # The SDK puts parsed trades on DarkpoolTradeResponse.data; _extract_data
+            # reads both .data and additional_properties['data']. Reading only
+            # additional_properties here returned [] on every call, so trades were
+            # captured solely by the raw-HTTP fallback (which fires on SDK exceptions).
+            data_items = self._extract_data(response)
             if used_local_offset and offset > 0:
                 data_items = data_items[offset:]
 

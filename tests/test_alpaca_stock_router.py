@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from fastapi import HTTPException
 
 from gateway.api.alpaca import common as alpaca_common
 from gateway.api.alpaca import stock
@@ -154,3 +155,36 @@ async def test_get_stock_bars_normalizes_naive_datetime_to_utc(
     assert captured_kwargs["end"].tzinfo is not None
     assert captured_kwargs["start"].tzinfo == UTC
     assert captured_kwargs["end"].tzinfo == UTC
+
+
+@pytest.mark.asyncio
+async def test_get_stock_bars_rejects_occ_option_contract_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _ProviderShouldNotBeCalled:
+        async def get_bars(self, **_kwargs: Any) -> list[_ModelLike]:
+            raise AssertionError("stock bars route must reject option contracts before Alpaca")
+
+    provider = _ProviderShouldNotBeCalled()
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _noop_rate_limit(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(alpaca_common, "require_provider_rate_limit", _noop_rate_limit)
+
+    with pytest.raises(HTTPException) as exc:
+        await stock.get_stock_bars(
+            symbol="CLF260717C00013000",
+            timeframe="1Day",
+            start=datetime(2026, 3, 14, tzinfo=UTC),
+            end=datetime(2026, 5, 28, tzinfo=UTC),
+            limit=50,
+            feed="sip",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "GW-E4007"
+    assert "/api/v1/alpaca/options/CLF260717C00013000/bars" in exc.value.detail["message"]

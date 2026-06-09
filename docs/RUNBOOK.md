@@ -81,6 +81,11 @@ Full defaults live in `gateway/config.py`; see `.env.example` for a commented te
 | `GATEWAY_SHUTDOWN_DRAIN_SECONDS`          | `30`      | Graceful shutdown drain period       |
 | `GATEWAY_DATA_SINK_ENABLED`              | `false`   | Enable Redis Streams data sink       |
 | `GATEWAY_DATA_SINK_REDIS_URL`            | —         | Redis URL for data sink              |
+| `GATEWAY_DATA_SINK_MAX_STREAM_LEN`       | `100000`  | `heber:events` stream MAXLEN (trim cap) |
+| `GATEWAY_DATA_SINK_REDIS_POOL_SIZE`      | `32`      | Redis connection pool size           |
+| `GATEWAY_DATA_SINK_QUEUE_SIZE`           | `16384`   | Per-sink bounded dispatch queue size |
+| `GATEWAY_DATA_SINK_WORKER_COUNT`         | `16`      | Worker tasks draining each sink queue |
+| `GATEWAY_DATA_SINK_PRODUCER_BLOCK_TIMEOUT_SECONDS` | `0.1` | Producer block-on-full timeout before drop |
 | `GATEWAY_UW_EOD_ENABLED`                | `false`   | Enable daily EOD ticker polling      |
 | `GATEWAY_UW_EOD_HOUR`                   | `16`      | EOD poll hour (ET, 0-23)            |
 | `GATEWAY_UW_EOD_MINUTE`                 | `30`      | EOD poll minute (ET, 0-59)          |
@@ -115,6 +120,19 @@ curl -H "X-Gateway-Key: <key>" http://localhost:8080/metrics
 ```
 
 Returns Prometheus text format. Scrape with Prometheus, Grafana Agent, or Datadog.
+
+Alerting rules live in `config/prometheus_alerts.yml`. The on-call-relevant alerts:
+
+| Alert                       | Severity | Fires when                                           | Meaning |
+|-----------------------------|----------|------------------------------------------------------|---------|
+| `GatewayDown`               | critical | `up{job="data-gateway"} == 0` for 1m                 | Gateway unreachable |
+| `AllUpstreamsDisconnected`  | critical | `sum(gateway_provider_healthy) == 0` for 30s         | No healthy provider; cannot serve data |
+| `SinkProducerTimeoutDrops`  | critical | `gateway_sink_producer_timeout_drops_total` non-zero (1m) | Dispatch queue full AND workers stalled — **events permanently lost to Heber** (see § 6.6) |
+| `SinkBufferEvictionsActive` | critical | `gateway_sink_buffer_evictions_total` rate > 0 (2m)  | Failed-event buffer overflowing — **silent data loss** (see § 6.7) |
+| `SinkBufferNearCapacity`    | warning  | `gateway_sink_buffer_size > 9000` (1m)               | Retry buffer > 90% full; eviction imminent (see § 6.7) |
+| `HighErrorRate`             | warning  | 5xx error ratio > 5% for 5m                          | Elevated server errors |
+| `ProviderUnhealthy`         | warning  | `gateway_provider_healthy == 0` for 2m               | One provider down |
+| `MemoryPressure`            | warning  | `gateway_memory_pressure > 80` for 5m                | Memory above target (see § 6.3) |
 
 ### 3.3  Admin Endpoints (require API key)
 
@@ -257,7 +275,11 @@ async with websockets.connect("ws://localhost:8080/ws") as ws:
 | 403  | Insufficient permissions   | Client lacks access to requested provider/feed          |
 | 429  | Rate limited               | Check `GET /api/v1/rate-limits`; increase client limit  |
 | 502  | Upstream provider error    | Check provider health via `GET /api/v1/providers`       |
-| 503  | Circuit breaker open       | Provider is failing; wait for half-open retry window    |
+| 503  | Circuit breaker open / shutting down | Provider failing (wait for half-open window, § 6.8) or gateway draining |
+
+> Provider HTTP errors are severity-split in the logs: 4xx are client-caused and
+> log at WARNING (not a gateway fault), only 5xx log at ERROR. See § 6.9 before
+> escalating a flood of `provider_request_failed` / `alpaca_bars_error`.
 
 ### 6.3  High memory
 
@@ -288,6 +310,106 @@ redis-cli -u $GATEWAY_DATA_SINK_REDIS_URL ping   # → PONG
 redis-cli -u $GATEWAY_DATA_SINK_REDIS_URL XLEN heber:events
 ```
 
+### 6.6  Sink producer-timeout drops (`SinkProducerTimeoutDrops` — CRITICAL)
+
+Streaming events are dispatched to each sink through a **bounded `asyncio.Queue`
+drained by a worker pool** (`gateway/core/data_sink.py`). The producer is the
+upstream Alpaca stream callback; it `put`s onto the queue and blocks for at most
+`GATEWAY_DATA_SINK_PRODUCER_BLOCK_TIMEOUT_SECONDS` (default 0.1s) when the queue
+is full. This is the **only drop path** in the dispatch layer — and **every drop
+is a permanently lost event** (it never reaches Heber, with no buffer or retry).
+
+A drop increments `gateway_sink_producer_timeout_drops_total{sink}` and logs at
+`CRITICAL` (`data_sink_producer_timeout_drop`). A non-zero rate means the queue
+is full **and** workers cannot drain it within 100ms — a true sink stall or hard
+overload, not steady-state backpressure (the queue absorbs ~45s of a 350 ev/s
+opening-bell burst at the default size).
+
+Triage:
+
+1. Confirm the rate: `curl -s localhost:8080/metrics | grep producer_timeout_drops`.
+2. The workers are blocked on `sink.publish` → downstream Redis is the usual
+   cause. Check Redis latency and the sink circuit breaker (§ 6.8) and Redis
+   connectivity (§ 6.5).
+3. If Redis is healthy but throughput is genuinely higher than provisioned,
+   raise `GATEWAY_DATA_SINK_WORKER_COUNT` and/or `GATEWAY_DATA_SINK_QUEUE_SIZE`
+   and restart.
+
+### 6.7  Failed-event buffer eviction / silent data loss (`SinkBufferEvictionsActive`)
+
+When a publish exhausts its retries (or the sink circuit is OPEN), the event is
+held in the Redis sink's **failed-event buffer** — a `deque` capped at 10,000
+entries (`gateway/core/redis_sink.py`). The buffer **drains automatically on the
+next successful reconnect**. While it is filling it emits the
+`gateway_sink_buffer_size{sink}` gauge; once full, each new event **evicts the
+oldest** (permanently lost) and increments
+`gateway_sink_buffer_evictions_total{sink}`.
+
+`SinkBufferNearCapacity` (warning, >9000) is the early signal; act before
+`SinkBufferEvictionsActive` (critical) starts paging.
+
+**This failure mode caused a 32-hour silent data outage on 2026-05-05.**
+`docker-compose.yml` had raised `GATEWAY_DATA_SINK_MAX_STREAM_LEN` to 500,000
+while Redis was still capped at `--maxmemory 1gb`. The `heber:events` stream
+crossed ~200K entries, Redis hit memory pressure, `XADD` started timing out past
+the 5s operation timeout, the `data_sink:redis_streams` circuit opened, and every
+publish was buffered locally. The 10,000-entry buffer overflowed within minutes
+and evicted for 32 hours before anyone noticed (Kairos's Scout fetched 0 flow
+alerts the next trading day).
+
+Recovery:
+
+1. Check the stream size against the Redis memory cap:
+   ```bash
+   redis-cli -u $GATEWAY_DATA_SINK_REDIS_URL XLEN heber:events
+   redis-cli -u $GATEWAY_DATA_SINK_REDIS_URL CONFIG GET maxmemory
+   redis-cli -u $GATEWAY_DATA_SINK_REDIS_URL INFO memory | grep used_memory_human
+   ```
+   At ~3 KB/entry, ensure `MAXLEN × 3 KB` plus the dedup cache fits under
+   `maxmemory`. Keep `GATEWAY_DATA_SINK_MAX_STREAM_LEN` consistent with the
+   Redis memory budget — never raise the stream cap without raising `maxmemory`.
+2. If Redis is memory-pressured, raise the cap live and persist it in compose:
+   ```bash
+   redis-cli -u $GATEWAY_DATA_SINK_REDIS_URL CONFIG SET maxmemory 2gb
+   ```
+3. Once `XADD` latency normalizes the `data_sink:redis_streams` circuit closes
+   automatically and the buffer drains on reconnect. Confirm recovery with the
+   buffer gauge falling to 0 and stream growth resuming.
+
+> Note: the failed-event buffer is **in-memory only**. Events still buffered when
+> the gateway shuts down are logged (`redis_sink_close_buffer_nonempty`) but
+> **not persisted to disk** — they are lost.
+
+### 6.8  Sink circuit breaker behaviour
+
+The data-sink circuit (`gateway/core/circuit_breaker.py`,
+`data_sink:redis_streams`) opens after **20 consecutive failures** and probes
+recovery after **15s** (HALF_OPEN → CLOSED on 2 successes). Each counted failure
+has already survived 3 in-sink retries, so reaching 20 means Redis is genuinely
+down.
+
+Opening the **data-sink** circuit is **controlled degradation**, not an incident:
+it logs at WARNING with code `GW-W1013` (`circuit_opened`), events route to the
+failed-event buffer (§ 6.7), and it self-heals when Redis recovers. **Provider**
+circuits (`alpaca_rest`, `uw_rest`, etc.) instead log at ERROR (`GW-E1011`) and
+are genuine upstream failures. Inspect/reset via `GET /api/v1/status` and the
+circuit-breaker registry.
+
+### 6.9  Error-log triage — provider HTTP errors are severity-split
+
+Provider/API HTTP errors are split by status code, so **log severity tells you
+whether it is your problem** (`gateway/api/alpaca/common.py`,
+`gateway/providers/alpaca/market.py`):
+
+- **4xx → WARNING, NOT a gateway fault.** These are client-caused — e.g. a client
+  requesting an index symbol like `SPX` from `/v2/stocks/bars` returns 400. A
+  flood of `provider_request_failed` / `alpaca_bars_error` at **WARNING** with a
+  4xx `status_code` is a **misconfigured client**, not an incident. Do not chase
+  these; identify the client (the log carries its ID/symbol context) and fix the
+  request.
+- **5xx → ERROR.** Only these are genuine upstream provider failures worth
+  paging on. `HighErrorRate` keys off the 5xx ratio, not 4xx.
+
 ---
 
 ## 7  Maintenance Scripts
@@ -305,14 +427,21 @@ redis-cli -u $GATEWAY_DATA_SINK_REDIS_URL XLEN heber:events
 
 ## 8  Graceful Shutdown
 
-On `SIGTERM` or `SIGINT`:
+On `SIGTERM` or `SIGINT`, the lifespan handler (`gateway/main.py`) runs the
+8-step sequence tracked by `ShutdownCoordinator` (`gateway/core/shutdown.py`):
 
-1. Gateway stops accepting new connections.
-2. In-flight requests drain for up to `GATEWAY_SHUTDOWN_DRAIN_SECONDS` (default 30s).
-3. WebSocket connections receive a close frame.
-4. Stream sink publish tasks drain (2s timeout).
-5. Provider connections close.
-6. Process exits.
+1. **Mark shutting down** — `/health` and `/health/ready` return 503 `shutting_down`.
+2. **Notify connected clients** — broadcast a shutdown message over WebSocket.
+3. **Drain period** — continue delivering queued messages for up to
+   `GATEWAY_SHUTDOWN_DRAIN_SECONDS` (default 30s).
+4. **Stop option capture + multiplexer** — unsubscribe from upstream Alpaca.
+5. **Close client connections** — WebSocket close frame `1001` Going Away.
+6. **Close sink connections** — `sink_registry.close_all()` drains the per-sink
+   worker queues, then makes a final attempt to flush the failed-event buffer to
+   Redis (events still buffered after this are logged and lost — § 6.7).
+7. **Shutdown remaining services** — pollers (UW, treasury, quotes, trades,
+   crypto, news), backfill engine, provider registry.
+8. **Reset the shutdown coordinator.**
 
 On `SIGHUP`:
 

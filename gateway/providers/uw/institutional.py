@@ -78,12 +78,26 @@ class UWInstitutionalMixin:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
-            from unusualwhales.api import congress
 
-            response = await self._call_sync(congress.get_trades.sync, client=self._client, limit=limit)
+            def _request_recent_trades() -> Any:
+                response = self._client.get_httpx_client().request(
+                    "get",
+                    "/api/congress/recent-trades",
+                    params={"limit": limit},
+                )
+                response.raise_for_status()
+                return response.json()
 
             trades = []
-            for item in self._extract_data(response):
+            payload = await self._call_sync(_request_recent_trades)
+            if isinstance(payload, dict):
+                data_items = payload.get("data", [])
+            elif isinstance(payload, list):
+                data_items = payload
+            else:
+                data_items = []
+
+            for item in data_items:
                 try:
                     get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
                     ticker = get("ticker") or get("symbol") or ""
@@ -127,10 +141,15 @@ class UWInstitutionalMixin:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         try:
-            from unusualwhales.api import market
+            # /api/insider/transactions returns individual insider transactions
+            # (ticker/owner_name/transaction_code per row). The previously used
+            # market.get_insider_trades (/api/market/insider-buy-sells) is a
+            # market-wide aggregate whose rows lack those fields, so 100% were
+            # dropped by the null-field filter below.
+            from unusualwhales.api import insider
 
             response = await self._call_sync(
-                market.get_insider_trades.sync,
+                insider.get_transactions.sync,
                 client=self._client,
                 limit=limit,
             )

@@ -74,7 +74,13 @@ def _helper_monkeypatch(
     *,
     route_registry: _FakeRegistry,
 ) -> None:
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         assert registry is cast(ProviderRegistry, route_registry)
         assert block is False
         provider_obj = registry.get("alpaca")
@@ -143,6 +149,32 @@ async def test_create_order_maps_value_error_to_400(
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "invalid order"
+
+
+@pytest.mark.asyncio
+async def test_create_order_threads_position_intent_to_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """position_intent (e.g. sell_to_close) must reach the provider so callers
+    can force reduce-only semantics — Alpaca then never converts a close into
+    an opening (naked short) position."""
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.create_order(
+        symbol="AAPL260529P00315000",
+        side="sell",
+        qty=10,
+        order_type="limit",
+        limit_price=1.0,
+        position_intent="sell_to_close",
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["position_intent"] == "sell_to_close"
 
 
 @pytest.mark.asyncio
@@ -220,7 +252,13 @@ async def test_get_orders_times_out_stuck_trading_call(
     provider = _SlowProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         assert registry is cast(ProviderRegistry, route_registry)
         return await provider_call(registry.get("alpaca"))
 
@@ -554,6 +592,50 @@ async def test_create_order_auto_generates_client_order_id_when_caller_omits(
 
 
 @pytest.mark.asyncio
+async def test_create_order_passes_order_context_to_failure_logger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    captured: dict[str, Any] = {}
+
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
+        assert registry is cast(ProviderRegistry, route_registry)
+        captured["log_context"] = log_context
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
+
+    await trading.create_order(
+        symbol="spy",
+        side="BUY",
+        qty=10,
+        order_type="Market",
+        time_in_force="Day",
+        client=cast(Any, SimpleNamespace(id="orion")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured["log_context"] == {
+        "client_id": "orion",
+        "symbol": "SPY",
+        "side": "buy",
+        "order_type": "market",
+        "time_in_force": "day",
+        "order_class": None,
+        "qty_provided": True,
+        "notional_provided": False,
+        "client_order_id_source": "gateway",
+    }
+
+
+@pytest.mark.asyncio
 async def test_create_order_preserves_caller_supplied_client_order_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -603,7 +685,13 @@ async def test_create_order_504_timeout_includes_client_order_id_in_detail(
     provider = _SlowProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         return await provider_call(registry.get("alpaca"))
 
     monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
@@ -656,7 +744,13 @@ async def test_create_order_504_timeout_preserves_caller_client_order_id(
     provider = _SlowProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         return await provider_call(registry.get("alpaca"))
 
     monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
@@ -781,7 +875,13 @@ async def test_close_position_504_timeout_includes_get_position_retry_hint(
     provider = _SlowProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         return await provider_call(registry.get("alpaca"))
 
     monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
@@ -853,6 +953,36 @@ async def test_close_position_success_meta_includes_symbol(
 
 
 @pytest.mark.asyncio
+async def test_close_position_rejects_negative_qty_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Provider:
+        called = False
+
+        def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> dict[str, Any]:
+            self.called = True
+            return {"id": "should-not-call"}
+
+    provider = _Provider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol="CRNC",
+            qty=-8000.0,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert "qty" in str(exc.value.detail).lower()
+    assert "-8000.0" in str(exc.value.detail)
+    assert provider.called is False
+
+
+@pytest.mark.asyncio
 async def test_run_trading_provider_call_admits_concurrent_within_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -920,7 +1050,13 @@ async def test_create_order_504_retry_hint_uses_actual_router_prefix(
     provider = _SlowProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         return await provider_call(registry.get("alpaca"))
 
     monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
@@ -969,7 +1105,13 @@ async def test_close_position_504_retry_hint_uses_actual_router_prefix(
     provider = _SlowProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         return await provider_call(registry.get("alpaca"))
 
     monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
@@ -1441,7 +1583,13 @@ async def test_replace_order_504_timeout_includes_client_order_id_in_detail(
     provider = _SlowProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         return await provider_call(registry.get("alpaca"))
 
     monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
@@ -1493,7 +1641,13 @@ async def test_replace_order_504_timeout_preserves_caller_client_order_id(
     provider = _SlowProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         return await provider_call(registry.get("alpaca"))
 
     monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
@@ -1717,7 +1871,13 @@ async def test_replace_order_504_retry_hint_uses_actual_router_prefix(
     provider = _SlowProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
 
-    async def _execute_alpaca_call(*, registry: ProviderRegistry, provider_call: Any, block: bool = False):
+    async def _execute_alpaca_call(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
         return await provider_call(registry.get("alpaca"))
 
     monkeypatch.setattr(trading, "execute_alpaca_provider_call", _execute_alpaca_call)
