@@ -179,6 +179,31 @@ class TestWrapEvent:
         assert envelope["instrument_type"] == "option"
         assert "validated" in envelope["quality_flags"]
 
+    def test_options_flow_envelope_uses_option_chain_for_occ_key(self):
+        """UW flow alerts carry the OCC contract in `option_chain`.
+
+        The envelope must build a valid `option:OCC:...` key from it. Without
+        this the key is `option:{symbol}` (e.g. `option:SPX`), which Heber's
+        writer-side validator rejects — its regex requires
+        `option:OCC:[A-Z]{1,6}\\d{6}[CP]\\d{8}` — so 100% of flow alerts are
+        dropped before reaching Bronze.
+        """
+        flow = {
+            "symbol": "SPX",
+            "timestamp": "2026-06-08T20:58:59Z",
+            "strike": 7500.0,
+            "expiry": "2026-09-18",
+            "put_call": "put",
+            "premium": 1500000,
+            "volume": 5000,
+            "option_chain": "SPX260918P07500000",
+        }
+
+        envelope = wrap_event(flow, provider="unusual_whales", feed="flow_alerts", source="rest")
+
+        assert envelope["instrument_type"] == "option"
+        assert envelope["instrument_key"] == "option:OCC:SPX260918P07500000"
+
     def test_envelope_serializable(self):
         """Envelope can be JSON serialized."""
         import json

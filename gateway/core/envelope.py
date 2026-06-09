@@ -348,8 +348,11 @@ def wrap_event(
     # Infer instrument type
     instrument_type = instrument_type_override or _infer_instrument_type(feed, symbol, payload)
 
-    # Generate instrument key
-    contract_symbol = payload.get("contract_symbol") or payload.get("contract")
+    # Generate instrument key. UW options-flow feeds carry the OCC contract in
+    # `option_chain` (not contract_symbol/contract); without it option keys
+    # degrade to the malformed `option:{symbol}` form, which Heber's writer-side
+    # validator rejects (regex requires `option:OCC:...`), dropping 100% of rows.
+    contract_symbol = payload.get("contract_symbol") or payload.get("contract") or payload.get("option_chain")
     instrument_key = instrument_key_override or make_instrument_key(symbol, instrument_type, contract_symbol)
 
     # Extract unique fields for event ID
