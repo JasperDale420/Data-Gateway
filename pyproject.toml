@@ -81,7 +81,6 @@ build-backend = "hatchling.build"
 # here instead of using `extend`.
 target-version = "py312"
 line-length = 120
-exclude = ["trading-bot"]
 
 [tool.ruff.format]
 quote-style = "double"
