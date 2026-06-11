@@ -1,91 +1,157 @@
-# Client API keys for gateway authentication
-# Keys are stored as plaintext for development; use hashed keys in production
-# Optional: role can be set to "trader", "admin", or "super_admin" for restricted endpoints
-
 clients:
-  # Cerberus trading system
-  - id: cerberus
-    key: gw_cerberus_dev_key_12345
-    role: trader
-    permissions:
-      providers: ["alpaca", "uw", "yfinance", "finnhub", "alphavantage", "sec"]
-      feeds: ["bars", "quotes", "trades", "flow"]
-      max_symbols: 1000
-      rate_limit: 600  # requests per minute
-    enabled: true
-
-  # 3Roses daytrading system
-  - id: 3roses
-    key: gw_3roses_trading_key_98765
-    role: trader
-    permissions:
-      providers: ["alpaca"]
-      feeds: ["bars", "quotes", "trades", "news"]
-      max_symbols: 1000
-      rate_limit: 6000  # ~5000 symbols scanned pre-market
-    enabled: true
-
-  # Orion trading system
-  - id: orion
-    key: gw_orion_trading_key_55555
-    role: trader
-    permissions:
-      providers: ["alpaca", "uw", "yfinance", "finnhub"]
-      feeds: ["bars", "quotes", "trades", "flow", "news", "options"]
-      max_symbols: 1000
-      rate_limit: 600
-    enabled: true
-
-  # Atlas research system
-  - id: atlas
-    key: gw_atlas_research_key_24680
-    role: trader
-    permissions:
-      providers: ["alpaca", "uw", "yfinance", "finnhub", "alphavantage", "sec"]
-      feeds: ["bars", "quotes", "trades", "flow", "news", "options", "option_trades", "option_bars", "option_quotes", "crypto_bars", "crypto_trades", "crypto_quotes", "flow_alerts", "ticker_flow", "darkpool", "darkpool_ticker", "congress_trades", "insider_trades", "institutions", "greek_exposure", "earnings", "market_tide", "sector_tide"]
-      max_symbols: 1000
-      rate_limit: 600
-    enabled: true
-
-  # ORBIT options-flow trading system
-  - id: orbit
-    key: gw_orbit_trading_key_77742
-    role: trader
-    permissions:
-      providers: ["alpaca", "uw", "yfinance", "finnhub"]
-      feeds: ["bars", "quotes", "trades", "flow", "options", "flow_alerts"]
-      max_symbols: 100
-      rate_limit: 600
-    enabled: true
-
-  # Kairos options swing trading system
-  - id: kairos
-    key: gw_kairos_trading_key_83291
-    role: trader
-    permissions:
-      providers: ["alpaca", "uw"]
-      feeds: ["bars", "quotes", "trades", "options", "option_quotes", "flow", "flow_alerts", "greek_exposure"]
-      max_symbols: 100
-      rate_limit: 600
-    enabled: true
-
-  # Heber Watch service (alert barrier checker — reads snapshots from Alpaca)
-  - id: heber-watch
-    key: gw_heber_watch_key_44931
-    role: trader
-    permissions:
-      providers: ["alpaca", "yfinance"]
-      feeds: ["bars", "quotes", "trades"]
-      max_symbols: 500
-      rate_limit: 300
-    enabled: true
-
-  # Development/testing client
-  - id: test
-    key: gw_test_dev_key_67890
-    permissions:
-      providers: ["alpaca"]
-      feeds: ["bars", "quotes"]
-      max_symbols: 100
-      rate_limit: 60
-    enabled: true
+- enabled: true
+  id: cerberus
+  key: gw_cerberus_dev_key_12345
+  permissions:
+    feeds:
+    - bars
+    - quotes
+    - trades
+    - flow
+    max_symbols: 1000
+    providers:
+    - alpaca
+    - uw
+    - yfinance
+    - finnhub
+    - alphavantage
+    - sec
+    rate_limit: 600
+  role: trader
+- enabled: true
+  id: 3roses
+  key: gw_3roses_trading_key_98765
+  permissions:
+    feeds:
+    - bars
+    - quotes
+    - trades
+    - news
+    max_symbols: 1000
+    providers:
+    - alpaca
+    rate_limit: 6000
+  role: trader
+- enabled: true
+  id: orion
+  key_hash: sha256:f3d49a71ec78efe05c91759cc84d14e6fb457264439241651e09478d3bb7bfc8
+  old_key_hashes: []
+  permissions:
+    feeds:
+    - bars
+    - quotes
+    - trades
+    - flow
+    - news
+    - options
+    max_symbols: 1000
+    providers:
+    - alpaca
+    - uw
+    - yfinance
+    - finnhub
+    rate_limit: 600
+  role: trader
+- enabled: true
+  id: atlas
+  key: gw_atlas_research_key_24680
+  permissions:
+    feeds:
+    - bars
+    - quotes
+    - trades
+    - flow
+    - news
+    - options
+    - option_trades
+    - option_bars
+    - option_quotes
+    - crypto_bars
+    - crypto_trades
+    - crypto_quotes
+    - flow_alerts
+    - ticker_flow
+    - darkpool
+    - darkpool_ticker
+    - congress_trades
+    - insider_trades
+    - institutions
+    - greek_exposure
+    - earnings
+    - market_tide
+    - sector_tide
+    max_symbols: 1000
+    providers:
+    - alpaca
+    - uw
+    - yfinance
+    - finnhub
+    - alphavantage
+    - sec
+    rate_limit: 600
+  role: trader
+- enabled: true
+  id: orbit
+  key: gw_orbit_trading_key_77742
+  permissions:
+    feeds:
+    - bars
+    - quotes
+    - trades
+    - flow
+    - options
+    - flow_alerts
+    max_symbols: 100
+    providers:
+    - alpaca
+    - uw
+    - yfinance
+    - finnhub
+    rate_limit: 600
+  role: trader
+- enabled: true
+  id: kairos
+  # Plaintext lives only in Kairos/.env (KAIROS_DATA_GATEWAY_API_KEY);
+  # only the hash is committed (see gateway/core/auth.py F-13 warning).
+  key_hash: sha256:27a5fb6e090f87ebdff1e57ff59c289bee5bf95c774131703de7b92bbef6b0e1  # pragma: allowlist secret
+  permissions:
+    feeds:
+    - bars
+    - quotes
+    - trades
+    - options
+    - option_quotes
+    - flow
+    - flow_alerts
+    - greek_exposure
+    max_symbols: 100
+    providers:
+    - alpaca
+    - uw
+    rate_limit: 600
+  role: trader
+- enabled: true
+  id: heber-watch
+  key: gw_heber_watch_key_44931
+  permissions:
+    feeds:
+    - bars
+    - quotes
+    - trades
+    max_symbols: 500
+    providers:
+    - alpaca
+    - yfinance
+    rate_limit: 300
+  role: trader
+- enabled: true
+  id: test
+  key: gw_test_dev_key_67890
+  permissions:
+    feeds:
+    - bars
+    - quotes
+    max_symbols: 100
+    providers:
+    - alpaca
+    rate_limit: 60
