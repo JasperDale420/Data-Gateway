@@ -161,6 +161,9 @@ omit = ["tests/*", "scripts/*", "*/__init__.py"]
 
 [tool.coverage.report]
 show_missing = true
+# Coverage floor set ~5 points below the measured total (48% as of 2026-06-10)
+# so CI stays green while preventing regressions. Raise as coverage improves.
+fail_under = 43
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

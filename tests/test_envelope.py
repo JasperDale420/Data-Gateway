@@ -9,12 +9,14 @@ Tests:
 import re
 from datetime import UTC, datetime
 from decimal import Decimal
+from unittest import mock
 
 import pytest
 from pydantic import BaseModel
 
 from gateway.core.envelope import (
     SCHEMA_VERSION,
+    EnvelopeWrapError,
     EventEnvelope,
     compute_event_id,
     fast_wrap_streaming_event,
@@ -175,6 +177,7 @@ class TestWrapEvent:
             "premium": 1500000,
             "volume": 5000,
             "open_interest": 10000,
+            "option_chain": "AAPL260117C00200000",
         }
 
         envelope = wrap_event(flow, provider="unusual_whales", feed="flow", source="rest")
@@ -321,6 +324,93 @@ class TestWrapEvent:
         envelope = wrap_event(snapshot_payload, provider="alpaca", feed="snapshots", source="rest")
         assert isinstance(envelope["symbol"], str)
         assert envelope["provider"] == "alpaca"
+
+
+class TestWrapEventFailure:
+    """Wrap failures must be loud: never emit a malformed key, always count."""
+
+    def _failing_bar(self) -> dict:
+        return {"symbol": "AAPL", "t": "2026-01-15T12:00:00Z", "o": 150, "c": 151}
+
+    def test_failure_raises_envelope_wrap_error_lenient(self):
+        """Lenient mode (default) raises a tagged EnvelopeWrapError, never returns unknown:."""
+        with (
+            mock.patch(
+                "gateway.core.envelope.record_envelope_created",
+                side_effect=RuntimeError("boom"),
+            ),
+            pytest.raises(EnvelopeWrapError),
+        ):
+            wrap_event(self._failing_bar(), provider="alpaca", feed="bars", source="websocket")
+
+    def test_failure_raises_original_in_strict_mode(self):
+        """Strict mode propagates the original exception so middleware can 500."""
+        settings = mock.Mock()
+        settings.strict_envelopes = True
+        with (
+            mock.patch(
+                "gateway.core.envelope.record_envelope_created",
+                side_effect=RuntimeError("boom"),
+            ),
+            mock.patch("gateway.config.get_settings", return_value=settings),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            wrap_event(self._failing_bar(), provider="alpaca", feed="bars", source="websocket")
+
+    def test_failure_increments_alerting_counter(self):
+        """A wrap failure always increments the dropped-message alerting counter."""
+        with (
+            mock.patch(
+                "gateway.core.envelope.record_envelope_created",
+                side_effect=RuntimeError("boom"),
+            ),
+            mock.patch("gateway.core.envelope.record_message_dropped") as counter,
+            pytest.raises(EnvelopeWrapError),
+        ):
+            wrap_event(self._failing_bar(), provider="alpaca", feed="bars", source="websocket")
+        counter.assert_called_once_with(reason="envelope_wrap_error")
+
+    def test_failure_never_returns_unknown_key(self):
+        """The fallback never silently ships an unknown:/malformed instrument key."""
+        with mock.patch(
+            "gateway.core.envelope.record_envelope_created",
+            side_effect=RuntimeError("boom"),
+        ):
+            try:
+                result = wrap_event(self._failing_bar(), provider="alpaca", feed="bars")
+            except EnvelopeWrapError:
+                result = None
+            assert result is None, "wrap failure must raise, not return a degraded envelope"
+
+    def test_failure_raises_when_settings_unavailable(self):
+        """If settings cannot load, prefer raising loudly over a silent malformed key."""
+        with (
+            mock.patch(
+                "gateway.core.envelope.record_envelope_created",
+                side_effect=RuntimeError("boom"),
+            ),
+            mock.patch("gateway.config.get_settings", side_effect=RuntimeError("no settings")),
+            pytest.raises(EnvelopeWrapError, match="settings unavailable"),
+        ):
+            wrap_event(self._failing_bar(), provider="alpaca", feed="bars")
+
+    def test_option_payload_without_occ_contract_raises_and_counts(self):
+        """Option-shaped events must not emit malformed option:{symbol} keys."""
+        payload = {
+            "symbol": "AAPL",
+            "timestamp": "2026-01-15T12:00:00Z",
+            "strike": 200.0,
+            "expiry": "2026-01-17",
+            "put_call": "call",
+        }
+
+        with (
+            mock.patch("gateway.core.envelope.record_message_dropped") as counter,
+            pytest.raises(EnvelopeWrapError, match="invalid instrument_key"),
+        ):
+            wrap_event(payload, provider="unusual_whales", feed="flow_alerts", source="rest")
+
+        counter.assert_called_once_with(reason="envelope_wrap_error")
 
 
 class TestEventEnvelopeModel:

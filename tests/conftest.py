@@ -311,3 +311,95 @@ def test_api_key() -> str:
 def disabled_api_key() -> str:
     """Canonical disabled API key used for auth tests."""
     return DEFAULT_DISABLED_API_KEY
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Real-Redis Integration Fixtures (marked `integration`)
+#
+# These target a REAL Redis instance and skip gracefully when none is
+# reachable, so the default local run is never broken. URL comes from
+# GATEWAY_TEST_REDIS_URL (default redis://localhost:6379/15). DB 15 is a
+# throwaway test database that is flushed before and after each test.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import pytest_asyncio  # noqa: E402
+
+DEFAULT_TEST_REDIS_URL = "redis://localhost:6379/15"
+
+
+def _test_redis_url() -> str:
+    """Resolve the integration Redis URL from the environment."""
+    return os.environ.get("GATEWAY_TEST_REDIS_URL", DEFAULT_TEST_REDIS_URL)
+
+
+async def _redis_reachable(url: str) -> bool:
+    """Return True if a real Redis answers PING at ``url``."""
+    try:
+        import redis.asyncio as aioredis
+    except ImportError:
+        return False
+
+    client = aioredis.from_url(url, socket_connect_timeout=1.0, socket_timeout=1.0)
+    try:
+        await client.ping()
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+
+
+@pytest_asyncio.fixture
+async def redis_probe():
+    """A raw redis.asyncio client on the flushed test DB.
+
+    Skips the test if no Redis is reachable. Flushes the test database before
+    and after the test so streams/keys never leak between tests or into a real
+    deployment (DB 15 is reserved for tests).
+    """
+    url = _test_redis_url()
+    if not await _redis_reachable(url):
+        pytest.skip(f"no Redis reachable at {url} (set GATEWAY_TEST_REDIS_URL)")
+
+    import redis.asyncio as aioredis
+
+    client = aioredis.from_url(url, decode_responses=False)
+    await client.flushdb()
+    try:
+        yield client
+    finally:
+        try:
+            await client.flushdb()
+        finally:
+            await client.aclose()
+
+
+@pytest_asyncio.fixture
+async def redis_sink(redis_probe):
+    """A RedisStreamsSink wired to the flushed test DB.
+
+    Depends on ``redis_probe`` so the skip-if-unreachable and flush behavior is
+    shared. Closes the sink (and its connection pool) after the test.
+    """
+    from gateway.core.redis_sink import RedisStreamsSink
+
+    sink = RedisStreamsSink(redis_url=_test_redis_url())
+    try:
+        yield sink
+    finally:
+        await sink.close()
+
+
+@pytest_asyncio.fixture
+async def redis_cache(redis_probe):
+    """A RedisCache wired to the flushed test DB for dedup tests."""
+    from gateway.core.cache import RedisCache
+
+    cache = RedisCache(redis_url=_test_redis_url(), default_ttl=60)
+    try:
+        yield cache
+    finally:
+        await cache.close()

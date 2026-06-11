@@ -214,6 +214,7 @@ class RedisCache:
         *,
         max_connections: int | None = None,
         operation_timeout_seconds: float | None = None,
+        worker_count: int | None = None,
     ) -> None:
         """Initialize Redis cache.
 
@@ -222,10 +223,33 @@ class RedisCache:
             default_ttl: Default TTL in seconds
             max_connections: Optional cap for a blocking Redis connection pool.
             operation_timeout_seconds: Optional socket/pool wait timeout.
+            worker_count: Number of concurrent callers (data_sink worker pool)
+                that share this cache. When set, ``max_connections`` is raised
+                to at least this value so the pool can never be smaller than the
+                concurrency that draws from it.
+
+        Pool sizing vs. worker count:
+            When used as the data_sink dedup cache, every sink worker calls
+            ``set_nx`` once per published event, so up to ``worker_count``
+            connections are checked out concurrently. If ``max_connections`` is
+            smaller than ``worker_count``, the BlockingConnectionPool serializes
+            workers and, under opening-bell bursts, the contention surfaced as
+            the "Too many connections" flood. Passing ``worker_count`` here ties
+            the two together so they cannot silently mismatch.
         """
         self._redis_url = redis_url
         self.default_ttl = default_ttl
-        self._max_connections = max(1, int(max_connections)) if max_connections is not None else None
+        if max_connections is not None:
+            max_connections = max(1, int(max_connections))
+            if worker_count is not None and max_connections < worker_count:
+                logger.warning(
+                    "redis_cache_pool_smaller_than_workers",
+                    max_connections=max_connections,
+                    worker_count=worker_count,
+                    msg="Raising pool size to worker_count so the dedup pool can't starve sink workers.",
+                )
+                max_connections = int(worker_count)
+        self._max_connections = max_connections
         self._operation_timeout_seconds = (
             max(0.5, float(operation_timeout_seconds)) if operation_timeout_seconds is not None else None
         )

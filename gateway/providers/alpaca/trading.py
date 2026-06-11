@@ -213,8 +213,17 @@ class AlpacaTradingMixin:
         symbols: list[str] | None = None,
         nested: bool = True,
         side: str | None = None,
+        after: datetime | None = None,
+        until: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """Get all orders with optional filters."""
+        """Get all orders with optional filters.
+
+        ``after`` / ``until`` filter by the order's ``submitted_at`` timestamp
+        (Alpaca's GetOrdersRequest semantics — NOT filled_at). They are the
+        pagination cursor: Alpaca caps each page at 500 orders and exposes no
+        page_token for orders, so a caller pages by advancing the
+        ``after``/``until`` window across the submitted_at range.
+        """
         if not self._trading_client:
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
@@ -226,6 +235,8 @@ class AlpacaTradingMixin:
                 symbols=symbols,
                 nested=nested,
                 side=OrderSide(side) if side else None,
+                after=after,
+                until=until,
             )
             orders = self._trading_client.get_orders(request)
             result = [self._model_to_dict(o) for o in orders]

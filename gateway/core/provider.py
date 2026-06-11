@@ -126,7 +126,17 @@ class DataProvider(ABC):
         raise NotImplementedError("Provider does not support historical bars")
 
     async def get_quotes(self, symbols: list[str]) -> list[NormalizedQuote]:
-        """Fetch current quotes."""
+        """Fetch current quotes for multiple symbols.
+
+        Multi-symbol error contract (all providers must conform):
+        - Per-symbol failures are skipped, not fatal. A symbol that errors or
+          has no quote is omitted from the result; the remaining symbols are
+          still returned (partial results).
+        - An empty ``symbols`` list returns an empty list.
+        - Total failure (every requested symbol fails) returns an empty list
+          rather than raising. Infrastructure errors that prevent any work
+          (e.g. provider not initialized) still raise.
+        """
         raise NotImplementedError("Provider does not support quotes")
 
     async def get_trades(

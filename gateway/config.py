@@ -185,11 +185,14 @@ class Settings(BaseSettings):
     # Data Sink (for Heber integration)
     # ─────────────────────────────────────────────────────────────────────────
 
-    # Strict mode: when True, exceptions during EventEnvelope construction or
-    # REST envelope wrapping propagate as 500 instead of returning a degraded
-    # fallback envelope / unwrapped body. Recommended for staging/prod where
-    # silent corruption is worse than a loud failure. Default False preserves
-    # legacy lenient behavior.
+    # Strict mode controls the *error surface* on envelope-wrap failure, not
+    # whether failures are tolerated. Wrap failures are NEVER silently degraded
+    # into an ``unknown:{symbol}`` key (Heber rejects those, dropping the record
+    # on Bronze→Silver) — they always increment an alerting counter and raise.
+    # When True, the original exception propagates so the REST middleware returns
+    # a 500; when False (default), a tagged ``EnvelopeWrapError`` is raised which
+    # callers (REST middleware, pollers) catch to drop the single bad event and
+    # keep moving.
     strict_envelopes: bool = False
 
     data_sink_enabled: bool = False
@@ -272,6 +275,12 @@ class Settings(BaseSettings):
 
     # Treasury yield poller
     treasury_poller_maturities: str = "2year,10year"  # comma-separated, e.g. "2year,10year"
+
+    # UW flow WebSocket fan-out. When enabled, the UW poller's published flow
+    # envelopes are also delivered to WS clients subscribed to provider=uw /
+    # feed in {flow, flow_alerts}. Additive: inert unless a client subscribes,
+    # and never touches the Alpaca multiplexer or the Redis heber:events publish.
+    ws_flow_fanout_enabled: bool = True
 
     # Alpaca quotes REST-fallback poller. Enable to publish quotes to Heber without
     # needing a WebSocket client to subscribe.

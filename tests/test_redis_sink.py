@@ -374,6 +374,40 @@ async def test_publish_batch_retries_failed_chunk(
     assert result == 10
 
 
+@pytest.mark.asyncio
+async def test_publish_batch_handles_baseexception_gather_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    """gather(return_exceptions=True) can return CancelledError, a BaseException."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = _HealthyRedisClient()
+    sink._connected = True
+
+    async def _cancelled(_chunk: list) -> int:
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(sink, "_publish_chunk", _cancelled)
+
+    result = await sink.publish_batch([("gateway.stream.bars", {"symbol": "AAPL"})])
+
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_publish_batch_indexed_handles_baseexception_gather_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Indexed batch mode must also treat CancelledError as a failed chunk."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+    sink._redis = _HealthyRedisClient()
+    sink._connected = True
+
+    async def _cancelled(_chunk: list) -> set[int]:
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(sink, "_publish_chunk_indexed", _cancelled)
+
+    result = await sink.publish_batch_indexed([("gateway.stream.bars", {"symbol": "AAPL"})])
+
+    assert result == set()
+
+
 # ── Binary Mode Tests ─────────────────────────────────────────────────
 
 

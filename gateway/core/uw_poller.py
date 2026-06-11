@@ -10,6 +10,7 @@ Features:
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, time
 from time import monotonic as _monotonic
 from typing import TYPE_CHECKING, Any
@@ -24,6 +25,13 @@ from gateway.core.ticker_universe import TickerUniverse
 
 if TYPE_CHECKING:
     from gateway.providers.uw import UnusualWhalesProvider
+
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from gateway.core.logger import logger
 from gateway.core.timeutils import parse_timestamp
@@ -106,6 +114,12 @@ class UWPoller(DedupMixin, BasePoller):
 
         # Track EOD polling — once per trading day
         self._last_eod_date: str | None = None
+
+        # Optional flow fan-out tap. When set (see gateway.main), each flow
+        # envelope that was successfully published to heber:events is also
+        # handed to this coroutine for WS delivery. Default None ⇒ zero behavior
+        # change. Flow only — darkpool/tide/EOD never invoke it.
+        self.on_flow_envelope: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
         # Deduplication cache — OrderedDict for O(1) FIFO eviction.
         self._init_dedup(cache_ttl_seconds=7200)  # 2 hours
@@ -202,12 +216,18 @@ class UWPoller(DedupMixin, BasePoller):
         envelopes: list[dict[str, Any]],
         dedupe_prefix: str,
         missing_event_log: str,
+        on_published: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> tuple[int, int]:
         """Publish envelopes via batch pipeline with deduplication.
 
         Uses ``publish_all_batch`` when the sink registry supports it
         (single Redis pipeline per call) and falls back to individual
         ``publish_all`` calls otherwise.
+
+        ``on_published`` (flow only) is awaited once per envelope that was
+        actually written to Redis, AFTER the publish, so a WS fan-out tap sees
+        exactly the deduplicated set the Redis stream saw. A tap failure is
+        swallowed and never affects the publish result.
         """
         if not envelopes:
             return 0, 0
@@ -237,32 +257,43 @@ class UWPoller(DedupMixin, BasePoller):
         if not to_publish:
             return 0, duplicates
 
-        # Mark all event_ids as seen *before* publishing so the dedup state is
-        # unambiguous regardless of partial pipeline failure. The previous
-        # `to_publish[:published]` slice assumed the first N items succeeded,
-        # but Redis pipeline-with-`transaction=False` can fail at arbitrary
-        # indices, leading to wrong items being marked. Failed publishes are
-        # buffered and drained at the sink level (`RedisStreamsSink._buffer_failed_event`
-        # + `_drain_buffer`), so optimistic marking does not lose events.
-        redis_items: list[tuple[str, Any]] = []
-        for _envelope, event_id, cache_key in to_publish:
-            if event_id:
-                self._mark_seen(event_id)
-                if self._redis_dedupe is not None and cache_key:
-                    redis_items.append((cache_key, True))
-
-        if redis_items:
-            await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
-
-        # Publish (batch when supported, otherwise per-envelope)
+        # Publish first (batch when supported, otherwise per-envelope), then mark
+        # dedup state ONLY for events that were successfully published. Marking
+        # before publishing would suppress re-publish on a failed batch, so a
+        # later cycle could never re-send a lost event. Content-derived event_ids
+        # keep Heber-side dedup effective if a re-publish produces a duplicate.
+        #
+        # ``published_indices`` holds the EXACT positions in ``to_publish`` that
+        # landed in Redis — not a "first N" count. On a partial Redis failure
+        # (e.g. item 0 fails, item 1 succeeds) the count path would mark/fan-out
+        # item 0 (which Heber never got) and drop item 1 (which Heber DID get),
+        # breaking the push/poll event-id parity Orion's deduper relies on.
         messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, envelope) for envelope, _, _ in to_publish]
+        # ``published_indices`` is the EXACT set of positions in ``to_publish``
+        # that landed in Redis when the sink can report them; ``published`` is
+        # the count returned for logging/back-compat.
+        published_indices: set[int] | None
+        published: int
         try:
-            if hasattr(sink_registry, "publish_all_batch"):
+            if hasattr(sink_registry, "publish_all_batch_indexed"):
+                published_indices = await sink_registry.publish_all_batch_indexed(messages)
+                published = len(published_indices)
+            elif hasattr(sink_registry, "publish_all_batch"):
                 published = await sink_registry.publish_all_batch(messages)
+                if published >= len(messages):
+                    # Full success — every event landed, so mark/tap them all.
+                    published_indices = set(range(len(messages)))
+                else:
+                    # Count-only partial: the API does not say WHICH events
+                    # landed. Marking the first N could permanently suppress an
+                    # event that never reached Redis, so mark/tap none and let a
+                    # later cycle re-publish (Heber-side dedup absorbs any dup).
+                    published_indices = None
             else:
                 # Fallback for mocks / non-registry objects
                 for topic, envelope in messages:
                     await sink_registry.publish_all(topic, envelope)
+                published_indices = set(range(len(messages)))
                 published = len(messages)
         except Exception as exc:
             logger.warning(
@@ -270,7 +301,28 @@ class UWPoller(DedupMixin, BasePoller):
                 count=len(messages),
                 error=str(exc),
             )
+            published_indices = set()
             published = 0
+
+        if published_indices:
+            redis_items: list[tuple[str, Any]] = []
+            for idx in sorted(published_indices):
+                envelope, event_id, cache_key = to_publish[idx]
+                if event_id:
+                    self._mark_seen(event_id)
+                    if self._redis_dedupe is not None and cache_key:
+                        redis_items.append((cache_key, True))
+                # Fan published flow envelopes out to WS subscribers. Best-effort:
+                # a tap failure must never break the publish accounting. Only the
+                # exact succeeded envelopes are tapped, so push mirrors the Redis
+                # stream set exactly (event-id parity holds on partial failures).
+                if on_published is not None:
+                    try:
+                        await on_published(envelope)
+                    except Exception as tap_exc:
+                        logger.warning("uw_poller_flow_tap_failed", error=str(tap_exc))
+            if redis_items and self._redis_dedupe is not None:
+                await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
 
         return published, duplicates
 
@@ -453,166 +505,158 @@ class UWPoller(DedupMixin, BasePoller):
 
             await asyncio.sleep(base_interval)
 
-    async def _poll_flow_alerts(self, sink_registry, limit: int) -> None:
-        """Poll and publish flow alerts with deduplication."""
-        if self._provider is None:
-            raise RuntimeError("UW provider not initialized")
-        try:
-            alerts = await self._provider.get_flow_alerts(limit=limit)
-            out_of_order = 0
-            prev_ts: datetime | None = None
-            envelopes: list[dict[str, Any]] = []
+    def _build_feed_envelopes(
+        self,
+        records: list[Any],
+        *,
+        feed: str,
+        out_of_order_log: str,
+        use_model_dump: bool = True,
+        sector: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Build envelopes from a record list, returning them plus the count of
+        records whose ``ts_event`` regressed relative to the previous record.
 
-            for alert in alerts:
+        ``use_model_dump`` serializes each record via ``model_dump()``; when
+        false the raw record (already a dict) is wrapped directly (sector tide).
+        """
+        out_of_order = 0
+        prev_ts: datetime | None = None
+        envelopes: list[dict[str, Any]] = []
+
+        for idx, record in enumerate(records):
+            try:
                 envelope = wrap_event(
-                    event=alert.model_dump(),
+                    event=record.model_dump() if use_model_dump else record,
                     provider="unusual_whales",
-                    feed="flow_alerts",
+                    feed=feed,
                     source="rest",
                 )
-
-                ts_event = self._parse_ts(envelope.get("ts_event"))
-                if ts_event and prev_ts and ts_event < prev_ts:
-                    out_of_order += 1
-                    logger.debug(
-                        "uw_flow_out_of_order_ts",
-                        prev_ts=prev_ts.isoformat(),
-                        curr_ts=ts_event.isoformat(),
-                    )
-                if ts_event:
-                    prev_ts = ts_event
-                envelopes.append(envelope)
-
-            published, duplicates = await self._publish_envelopes(
-                sink_registry=sink_registry,
-                envelopes=envelopes,
-                dedupe_prefix="uw:flow",
-                missing_event_log="uw_flow_missing_event_id",
-            )
-
-            logger.info(
-                "uw_poller_flow_published",
-                fetched=len(alerts),
-                published=published,
-                duplicates=duplicates,
-                out_of_order=out_of_order,
-            )
-        except Exception as e:
-            if is_transient_upstream_error(e):
-                logger.warning("uw_poller_flow_error", error=str(e))
-            else:
-                logger.error("uw_poller_flow_error", error=str(e), exc_info=True)
-
-    async def _poll_darkpool(self, sink_registry, limit: int) -> None:
-        """Poll and publish darkpool trades with deduplication."""
-        if self._provider is None:
-            raise RuntimeError("UW provider not initialized")
-        try:
-            trades = await self._provider.get_darkpool_recent(limit=limit)
-            out_of_order = 0
-            prev_ts: datetime | None = None
-            envelopes: list[dict[str, Any]] = []
-
-            for trade in trades:
-                envelope = wrap_event(
-                    event=trade.model_dump(),
-                    provider="unusual_whales",
-                    feed="darkpool",
-                    source="rest",
+            except Exception as exc:
+                logger.warning(
+                    "uw_poller_envelope_build_skipped",
+                    feed=feed,
+                    record_index=idx,
+                    error=str(exc),
                 )
+                continue
 
-                ts_event = self._parse_ts(envelope.get("ts_event"))
-                if ts_event and prev_ts and ts_event < prev_ts:
-                    out_of_order += 1
-                    logger.debug(
-                        "uw_darkpool_out_of_order_ts",
-                        prev_ts=prev_ts.isoformat(),
-                        curr_ts=ts_event.isoformat(),
-                    )
-                if ts_event:
-                    prev_ts = ts_event
-                envelopes.append(envelope)
+            ts_event = self._parse_ts(envelope.get("ts_event"))
+            if ts_event and prev_ts and ts_event < prev_ts:
+                out_of_order += 1
+                extra = {"sector": sector} if sector is not None else {}
+                logger.debug(
+                    out_of_order_log,
+                    prev_ts=prev_ts.isoformat(),
+                    curr_ts=ts_event.isoformat(),
+                    **extra,
+                )
+            if ts_event:
+                prev_ts = ts_event
+            envelopes.append(envelope)
 
-            published, duplicates = await self._publish_envelopes(
-                sink_registry=sink_registry,
-                envelopes=envelopes,
-                dedupe_prefix="uw:darkpool",
-                missing_event_log="uw_darkpool_missing_event_id",
-            )
+        return envelopes, out_of_order
 
-            logger.info(
-                "uw_poller_darkpool_published",
-                fetched=len(trades),
-                published=published,
-                duplicates=duplicates,
-                out_of_order=out_of_order,
-            )
-        except Exception as e:
-            if is_transient_upstream_error(e):
-                logger.warning("uw_poller_darkpool_error", error=str(e))
-            else:
-                logger.error("uw_poller_darkpool_error", error=str(e), exc_info=True)
+    async def _poll_single_feed(
+        self,
+        sink_registry,
+        *,
+        fetch,
+        feed: str,
+        dedupe_prefix: str,
+        missing_event_log: str,
+        log_event: str,
+        out_of_order_log: str,
+        error_log: str,
+        slice_recent: bool = False,
+        log_only_when_active: bool = False,
+        on_published: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> None:
+        """Fetch one UW feed, build envelopes, publish, and log.
 
-    async def _poll_market_tide(self, sink_registry) -> None:
-        """Poll and publish market tide data.
-
-        Since we poll every 5 minutes but UW publishes every minute,
-        we fetch all tides and take the last 5 to avoid missing data.
-        Deduplication ensures we don't republish overlapping records.
+        Shared body for the single-fetch pollers (flow, darkpool, market_tide).
+        ``slice_recent`` keeps only the last 5 records and adds ``recent`` to the
+        published log; ``log_only_when_active`` suppresses the summary log when
+        nothing was published or deduplicated (both market tide behavior).
+        ``on_published`` (flow only) is forwarded to ``_publish_envelopes`` so
+        published envelopes can be tapped for WS fan-out.
         """
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
         try:
-            tides = await self._provider.get_market_tide()
+            records = await fetch()
+            # Take last 5 to cover the 5-minute polling gap (market tide).
+            effective = records[-5:] if slice_recent and len(records) > 5 else records
 
-            # Take last 5 to cover the 5-minute polling gap
-            recent_tides = tides[-5:] if len(tides) > 5 else tides
-
-            out_of_order = 0
-            prev_ts: datetime | None = None
-            envelopes: list[dict[str, Any]] = []
-
-            for tide in recent_tides:
-                envelope = wrap_event(
-                    event=tide.model_dump(),
-                    provider="unusual_whales",
-                    feed="market_tide",
-                    source="rest",
-                )
-
-                ts_event = self._parse_ts(envelope.get("ts_event"))
-                if ts_event and prev_ts and ts_event < prev_ts:
-                    out_of_order += 1
-                    logger.debug(
-                        "uw_market_tide_out_of_order_ts",
-                        prev_ts=prev_ts.isoformat(),
-                        curr_ts=ts_event.isoformat(),
-                    )
-                if ts_event:
-                    prev_ts = ts_event
-                envelopes.append(envelope)
-
+            envelopes, out_of_order = self._build_feed_envelopes(
+                effective, feed=feed, out_of_order_log=out_of_order_log
+            )
             published, duplicates = await self._publish_envelopes(
                 sink_registry=sink_registry,
                 envelopes=envelopes,
-                dedupe_prefix="uw:market_tide",
-                missing_event_log="uw_market_tide_missing_event_id",
+                dedupe_prefix=dedupe_prefix,
+                missing_event_log=missing_event_log,
+                on_published=on_published,
             )
 
-            if published or duplicates:
-                logger.info(
-                    "uw_poller_market_tide_published",
-                    fetched=len(tides),
-                    recent=len(recent_tides),
-                    published=published,
-                    duplicates=duplicates,
-                    out_of_order=out_of_order,
-                )
+            if log_only_when_active and not (published or duplicates):
+                return
+            log_fields: dict[str, Any] = {
+                "fetched": len(records),
+                "published": published,
+                "duplicates": duplicates,
+                "out_of_order": out_of_order,
+            }
+            if slice_recent:
+                log_fields["recent"] = len(effective)
+            logger.info(log_event, **log_fields)
         except Exception as e:
             if is_transient_upstream_error(e):
-                logger.warning("uw_poller_market_tide_error", error=str(e))
+                logger.warning(error_log, error=str(e))
             else:
-                logger.error("uw_poller_market_tide_error", error=str(e), exc_info=True)
+                logger.error(error_log, error=str(e), exc_info=True)
+
+    async def _poll_flow_alerts(self, sink_registry, limit: int) -> None:
+        """Poll and publish flow alerts with deduplication."""
+        await self._poll_single_feed(
+            sink_registry,
+            fetch=lambda: self._provider.get_flow_alerts(limit=limit),
+            feed="flow_alerts",
+            dedupe_prefix="uw:flow",
+            missing_event_log="uw_flow_missing_event_id",
+            log_event="uw_poller_flow_published",
+            out_of_order_log="uw_flow_out_of_order_ts",
+            error_log="uw_poller_flow_error",
+            on_published=self.on_flow_envelope,
+        )
+
+    async def _poll_darkpool(self, sink_registry, limit: int) -> None:
+        """Poll and publish darkpool trades with deduplication."""
+        await self._poll_single_feed(
+            sink_registry,
+            fetch=lambda: self._provider.get_darkpool_recent(limit=limit),
+            feed="darkpool",
+            dedupe_prefix="uw:darkpool",
+            missing_event_log="uw_darkpool_missing_event_id",
+            log_event="uw_poller_darkpool_published",
+            out_of_order_log="uw_darkpool_out_of_order_ts",
+            error_log="uw_poller_darkpool_error",
+        )
+
+    async def _poll_market_tide(self, sink_registry) -> None:
+        """Poll and publish market tide data (last 5 records cover the poll gap)."""
+        await self._poll_single_feed(
+            sink_registry,
+            fetch=lambda: self._provider.get_market_tide(),
+            feed="market_tide",
+            dedupe_prefix="uw:market_tide",
+            missing_event_log="uw_market_tide_missing_event_id",
+            log_event="uw_poller_market_tide_published",
+            out_of_order_log="uw_market_tide_out_of_order_ts",
+            error_log="uw_poller_market_tide_error",
+            slice_recent=True,
+            log_only_when_active=True,
+        )
 
     async def _poll_sector_tides(self, sink_registry) -> None:
         """Poll and publish sector tide data for all GICS sectors.
@@ -632,29 +676,14 @@ class UWPoller(DedupMixin, BasePoller):
 
                 # Take last 5 records for each sector
                 recent_tides = tides[-5:] if len(tides) > 5 else tides
-                prev_ts: datetime | None = None
-                sector_envelopes: list[dict[str, Any]] = []
-
-                for tide in recent_tides:
-                    envelope = wrap_event(
-                        event=tide,
-                        provider="unusual_whales",
-                        feed="sector_tide",
-                        source="rest",
-                    )
-
-                    ts_event = self._parse_ts(envelope.get("ts_event"))
-                    if ts_event and prev_ts and ts_event < prev_ts:
-                        total_out_of_order += 1
-                        logger.debug(
-                            "uw_sector_tide_out_of_order_ts",
-                            sector=sector,
-                            prev_ts=prev_ts.isoformat(),
-                            curr_ts=ts_event.isoformat(),
-                        )
-                    if ts_event:
-                        prev_ts = ts_event
-                    sector_envelopes.append(envelope)
+                sector_envelopes, sector_out_of_order = self._build_feed_envelopes(
+                    recent_tides,
+                    feed="sector_tide",
+                    out_of_order_log="uw_sector_tide_out_of_order_ts",
+                    use_model_dump=False,
+                    sector=sector,
+                )
+                total_out_of_order += sector_out_of_order
 
                 published, duplicates = await self._publish_envelopes(
                     sink_registry=sink_registry,
@@ -913,12 +942,17 @@ class UWPoller(DedupMixin, BasePoller):
         if not results:
             return 0
 
+        symbol = ticker.upper()
+        instrument_key = f"equity:{symbol}"
         envelopes = [
             wrap_event(
                 event=item,
                 provider="unusual_whales",
                 feed="historic_option_volume",
                 source="rest",
+                instrument_type_override="equity",
+                instrument_key_override=instrument_key,
+                symbol_override=symbol,
             )
             for item in results
         ]
@@ -1009,13 +1043,62 @@ class UWPoller(DedupMixin, BasePoller):
         )
         return published
 
+    async def _fetch_with_retry(self, fetch_label: str, fetch):
+        """Run an EOD fetch with bounded retry on transient upstream errors.
+
+        UW occasionally answers EOD market-wide endpoints with a single 5xx
+        (e.g. congress_trades returned one 503 and dropped to zero rows). Retry
+        transient upstream failures with exponential backoff so a momentary
+        brownout doesn't silently zero out a feed for the whole day.
+        """
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=retry_if_exception(is_transient_upstream_error),
+            reraise=True,
+        ):
+            with attempt:
+                if attempt.retry_state.attempt_number > 1:
+                    logger.warning(
+                        "uw_eod_fetch_retry",
+                        feed=fetch_label,
+                        attempt=attempt.retry_state.attempt_number,
+                    )
+                return await fetch()
+        return []
+
+    @staticmethod
+    def _stamp_filing_ts_event(items: list[dict], *date_keys: str) -> None:
+        """Stamp a stable ``timestamp`` onto each item from its filing date.
+
+        Congress/insider payloads carry no event-time field, so ``wrap_event``
+        falls back to ``now()`` and the SAME trade re-fetched on a later run gets
+        a fresh ``ts_event`` (and therefore a fresh ``event_id``), producing
+        duplicate Bronze rows. Deriving ``timestamp`` from the filing date
+        (falling back to the transaction date) makes the event_id content-stable
+        across runs so Heber-side dedup absorbs any re-publish.
+        """
+        for item in items:
+            if not isinstance(item, dict) or item.get("timestamp"):
+                continue
+            for key in date_keys:
+                value = item.get(key)
+                if value:
+                    item["timestamp"] = value
+                    break
+
     async def _poll_eod_congress_trades(self, sink_registry) -> int:
         """Poll congress trades (market-wide, no ticker needed)."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_congress_trades(limit=200)
+        results = await self._fetch_with_retry(
+            "congress_trades",
+            lambda: self._provider.get_congress_trades(limit=200),
+        )
         if not results:
             return 0
+
+        self._stamp_filing_ts_event(results, "filed_at_date", "transaction_date")
 
         envelopes = [
             wrap_event(
@@ -1039,9 +1122,14 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll insider trades (market-wide, no ticker needed)."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_insiders(limit=200)
+        results = await self._fetch_with_retry(
+            "insider_trades",
+            lambda: self._provider.get_insiders(limit=200),
+        )
         if not results:
             return 0
+
+        self._stamp_filing_ts_event(results, "filing_date", "transaction_date")
 
         envelopes = [
             wrap_event(

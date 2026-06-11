@@ -8,28 +8,29 @@ Provides:
 """
 
 import hashlib
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, NoReturn
 
 from pydantic import BaseModel, Field
 
 from gateway.core.logger import logger
-from gateway.core.metrics import record_envelope_created
+from gateway.core.metrics import record_envelope_created, record_message_dropped
 from gateway.core.timeutils import parse_timestamp
 
 
 class EnvelopeWrapError(RuntimeError):
-    """Raised when envelope construction fails and strict_envelopes=True.
+    """Raised when envelope construction cannot produce a valid sink event.
 
-    The default lenient behavior returns a degraded fallback envelope so the
-    pipeline keeps moving; strict mode promotes that into a hard failure
-    surface so silent data corruption is preferred over loud errors.
+    Callers that publish to Heber should catch this and skip the bad event
+    rather than emitting malformed ``unknown:*`` or option keys.
     """
 
 
 # Schema version for envelope format
 SCHEMA_VERSION = "v1"
+_OCC_OPTION_KEY_RE = re.compile(r"^option:OCC:[A-Z]{1,6}\d{6}[CP]\d{8}$")
 
 
 class EventEnvelope(BaseModel):
@@ -288,6 +289,45 @@ def _infer_instrument_type(feed: str, symbol: str, payload: dict) -> str:
     return "equity"
 
 
+def _validate_instrument_key(instrument_type: str, instrument_key: str) -> None:
+    """Reject key shapes known to be dropped by Heber's writer validator."""
+    if not instrument_key or instrument_key.startswith("unknown:"):
+        raise ValueError(f"invalid instrument_key: {instrument_key!r}")
+    if instrument_type == "option" and not _OCC_OPTION_KEY_RE.match(instrument_key):
+        raise ValueError(f"invalid instrument_key: {instrument_key!r}")
+
+
+def _raise_wrap_failure(
+    *,
+    provider: str,
+    feed: str,
+    symbol: str,
+    error: Exception,
+) -> NoReturn:
+    logger.error(
+        "event_envelope_failed",
+        provider=provider,
+        feed=feed,
+        symbol=symbol,
+        error=str(error),
+        exc_info=True,
+    )
+    record_message_dropped(reason="envelope_wrap_error")
+
+    try:
+        from gateway.config import get_settings
+
+        strict = get_settings().strict_envelopes
+    except Exception as settings_exc:
+        raise EnvelopeWrapError(
+            f"wrap_event failed for {provider}/{feed}/{symbol} and settings unavailable: {error}"
+        ) from settings_exc
+
+    if strict:
+        raise error
+    raise EnvelopeWrapError(f"wrap_event failed for {provider}/{feed}/{symbol}: {error}") from error
+
+
 def wrap_event(
     event: dict | BaseModel,
     provider: str,
@@ -354,6 +394,10 @@ def wrap_event(
     # validator rejects (regex requires `option:OCC:...`), dropping 100% of rows.
     contract_symbol = payload.get("contract_symbol") or payload.get("contract") or payload.get("option_chain")
     instrument_key = instrument_key_override or make_instrument_key(symbol, instrument_type, contract_symbol)
+    try:
+        _validate_instrument_key(instrument_type, instrument_key)
+    except Exception as e:
+        _raise_wrap_failure(provider=provider, feed=feed, symbol=symbol, error=e)
 
     # Extract unique fields for event ID
     unique_fields = _extract_unique_fields(feed, payload)
@@ -413,46 +457,9 @@ def wrap_event(
         return envelope
 
     except Exception as e:
-        logger.error(
-            "event_envelope_failed",
-            provider=provider,
-            feed=feed,
-            symbol=symbol,
-            error=str(e),
-            exc_info=True,
-        )
-        # Strict mode: promote silent corruption into a loud failure. The
-        # caller's try/except (or FastAPI exception handler) is responsible
-        # for deciding whether to drop the event, retry, or 500 the request.
-        # Lenient mode (default): return a minimal fallback envelope so the
-        # pipeline keeps moving. The fallback is flagged with
-        # quality_flags=["error"] so downstream consumers can detect it.
-        try:
-            from gateway.config import get_settings
-
-            if get_settings().strict_envelopes:
-                raise EnvelopeWrapError(f"wrap_event failed for {provider}/{feed}/{symbol}: {e}") from e
-        except EnvelopeWrapError:
-            raise
-        except Exception:
-            # Settings unavailable (e.g. during very early init) — treat as lenient.
-            pass
-
-        return {
-            "event_id": event_id,
-            "provider": provider,
-            "feed": feed,
-            "source": source,
-            "instrument_type": "unknown",
-            "instrument_key": f"unknown:{symbol}",
-            "symbol": symbol,
-            "ts_event": ts_event.isoformat() if ts_event else None,
-            "ts_ingest": ts_ingest.isoformat() if ts_ingest else None,
-            "schema_version": SCHEMA_VERSION,
-            "lineage": {},
-            "quality_flags": ["error"],
-            "payload": payload,
-        }
+        # Never ship an ``unknown:{symbol}`` or malformed key to the sink:
+        # Heber rejects those and the records drop silently on Bronze→Silver.
+        _raise_wrap_failure(provider=provider, feed=feed, symbol=symbol, error=e)
 
 
 def fast_wrap_streaming_event(

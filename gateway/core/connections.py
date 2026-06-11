@@ -188,7 +188,7 @@ class ConnectionManager:
         if isinstance(message, str | bytes):
             payload = message
         else:
-            payload = orjson.dumps(message)
+            payload = orjson.dumps(message, default=str)
 
         # Identify target connections
         # If client_ids is provided, use the index to find connections O(TargetClients)
@@ -244,7 +244,7 @@ class ConnectionManager:
         if isinstance(message, str | bytes):
             payload = message
         else:
-            payload = orjson.dumps(message)
+            payload = orjson.dumps(message, default=str)
 
         targets: list[Connection] = []
         if connection_ids:

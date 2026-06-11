@@ -658,3 +658,97 @@ class TestWorkerCancellationRouting:
         log_text = "\n".join(record.getMessage() for record in caplog.records)
         assert "data_sink_worker_inflight_event_lost" in log_text or "inflight_event_lost" in log_text
         release_event.set()
+
+
+# ── Indexed Batch Publish: Count-Only Sink Contract ──────────────────
+
+
+class _CountOnlySink(DataSink):
+    """Sink with publish_batch (count) but no publish_batch_indexed.
+
+    Returns a configurable count so tests can exercise full vs partial.
+    """
+
+    def __init__(self, return_count: int, sink_name: str = "count-only") -> None:
+        self._name = sink_name
+        self._return_count = return_count
+        self.batches: list[list] = []
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def publish(self, topic: str, data: Any) -> bool:
+        return True
+
+    async def publish_batch(self, messages: list) -> int:
+        self.batches.append(messages)
+        return self._return_count
+
+    async def health_check(self) -> bool:
+        return True
+
+
+class TestPublishAllBatchIndexedCountOnlySink:
+    """publish_all_batch_indexed must not confirm ambiguous indices.
+
+    A count-only sink returning a PARTIAL count cannot identify which events
+    landed. Those indices must be excluded from the exact-success set — never
+    fall back to all_indices, which would let the poller mark/tap an event
+    Heber may never have received.
+    """
+
+    @pytest.mark.asyncio
+    async def test_partial_count_only_excludes_all_indices(self) -> None:
+        """A count-only sink returning a partial count → empty exact set."""
+        sink = _CountOnlySink(return_count=2, sink_name="count-partial")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        messages = [("heber:events", {"event_id": f"e{i}"}) for i in range(5)]
+        succeeded = await registry.publish_all_batch_indexed(messages)
+
+        # 2 of 5 landed but we don't know WHICH → confirm none.
+        assert succeeded == set()
+
+    @pytest.mark.asyncio
+    async def test_full_count_only_confirms_all_indices(self) -> None:
+        """A count-only sink returning a FULL count confirms every index."""
+        sink = _CountOnlySink(return_count=5, sink_name="count-full")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        messages = [("heber:events", {"event_id": f"e{i}"}) for i in range(5)]
+        succeeded = await registry.publish_all_batch_indexed(messages)
+
+        assert succeeded == set(range(5))
+
+    @pytest.mark.asyncio
+    async def test_indexed_intersected_with_count_only_partial(self) -> None:
+        """An indexed sink's exact set is wiped out when a count-only sink
+        returns a partial — nothing is confirmed across all participating sinks."""
+
+        class _IndexedSink(DataSink):
+            @property
+            def name(self) -> str:
+                return "indexed"
+
+            async def publish(self, topic: str, data: Any) -> bool:
+                return True
+
+            async def publish_batch_indexed(self, messages: list) -> set[int]:
+                return {0, 1, 2, 3, 4}
+
+            async def health_check(self) -> bool:
+                return True
+
+        registry = DataSinkRegistry()
+        registry.register(_IndexedSink())
+        registry.register(_CountOnlySink(return_count=2, sink_name="count-partial-2"))
+
+        messages = [("heber:events", {"event_id": f"e{i}"}) for i in range(5)]
+        succeeded = await registry.publish_all_batch_indexed(messages)
+
+        # Indexed sink confirmed all 5; count-only partial confirms none →
+        # intersection is empty.
+        assert succeeded == set()

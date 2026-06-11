@@ -68,6 +68,23 @@ providers:
       bars: true
       quotes: true
 
+  massive:
+    enabled: true
+    # Not in routes yet — loads and is directly callable, but does not serve
+    # live stocks traffic until verified against a real API key.
+    module: gateway.providers.massive
+    class: MassiveProvider
+    priority: 4
+    config:
+      api_key_env: MASSIVE_API_KEY  # pragma: allowlist secret
+      base_url: https://api.massive.com
+      bars_max_concurrency: 2  # Free tier: 5 calls/min
+      min_request_interval_seconds: 13.0  # Free tier pacing (~5/min); lower/0 on a paid tier
+    capabilities:
+      streaming: false
+      historical: true
+      bars: true
+
   unusual_whales:
     enabled: true
     required: true  # referenced by routes.flow; primary options-flow source

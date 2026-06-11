@@ -12,6 +12,7 @@ from gateway.api.deps import get_authenticator, get_connection_manager
 from gateway.config import Settings, get_settings
 from gateway.core.auth import ClientAuthenticator
 from gateway.core.connections import ConnectionManager, is_benign_ws_close_error
+from gateway.core.flow_fanout import FLOW_FEED
 from gateway.core.logger import logger
 from gateway.core.security import get_input_validator
 
@@ -103,6 +104,16 @@ async def websocket_endpoint(
             pass
         except Exception as e:
             logger.warning("multiplexer_disconnect_error", connection_id=connection_id, error=str(e))
+
+        # Drop any UW flow fan-out subscriptions held by this connection.
+        try:
+            from gateway.api.deps import get_flow_fanout
+
+            flow_fanout = get_flow_fanout()
+            if flow_fanout is not None:
+                flow_fanout.client_disconnect(connection_id)
+        except Exception as e:
+            logger.warning("flow_fanout_disconnect_error", connection_id=connection_id, error=str(e))
 
         await connections.disconnect(connection_id)
 
@@ -440,15 +451,19 @@ async def _handle_message(
                 "message": "Not authenticated",
             }
 
-        validation_error = validator.validate_symbols_array(
-            symbols, max_symbols=connection.client.permissions.max_symbols
-        )
-        if validation_error:
-            return {
-                "type": "error",
-                "error_code": validation_error.code,
-                "message": validation_error.message,
-            }
+        # UW flow accepts an empty symbol list (firehose / ALL); only validate
+        # when symbols are present. Alpaca feeds still require ≥1 symbol.
+        flow_request = _is_uw_flow_request(provider, feeds)
+        if symbols or not flow_request:
+            validation_error = validator.validate_symbols_array(
+                symbols, max_symbols=connection.client.permissions.max_symbols
+            )
+            if validation_error:
+                return {
+                    "type": "error",
+                    "error_code": validation_error.code,
+                    "message": validation_error.message,
+                }
 
         # Enforce provider permissions
         if not _has_provider_permission(connection.client, provider):
@@ -468,16 +483,89 @@ async def _handle_message(
                     "message": f"Feed access denied: {required_feed}",
                 }
 
-        # Enforce total subscription limit
-        new_entries = {f"{feed}:{s}" for feed in feeds for s in symbols}
+        # Enforce total subscription limit. Flow feeds are STORED under the
+        # canonical FLOW_FEED key (flow_alerts:<symbol>), not the caller's
+        # alias (flow:<symbol>). Computing the quota off the raw alias would
+        # make an idempotent re-subscribe of the same flow symbol look like a
+        # brand-new slot (the stored flow_alerts:<symbol> never matches the
+        # alias flow:<symbol>), wrongly rejecting at the cap. Normalize flow
+        # feeds to FLOW_FEED here so re-subscribes are free.
+        new_entries = {f"{FLOW_FEED if (flow_request and f in _FLOW_FEEDS) else f}:{s}" for f in feeds for s in symbols}
+        # A symbol-less UW flow request is the firehose: it produces no per-symbol
+        # entries above, so without counting its sentinel here it could be added
+        # even at the cap (quota off-by-one). Account it as a single entry that
+        # subsumes any prior per-symbol flow entries for this connection.
+        if flow_request and not symbols:
+            new_entries.add(f"{FLOW_FEED}:*")
+            prior_flow_symbols = {
+                s for s in connection.subscriptions if s.startswith(f"{FLOW_FEED}:") and s != f"{FLOW_FEED}:*"
+            }
+        else:
+            prior_flow_symbols = set()
         current = len(connection.subscriptions)
-        total_after = current + len(new_entries - connection.subscriptions)
+        # Per-symbol flow entries the firehose will subsume don't add to the
+        # post-subscribe total, so exclude them from the count.
+        total_after = current - len(prior_flow_symbols) + len(new_entries - connection.subscriptions)
         if total_after > connection.client.permissions.ws_subscriptions_max:
             return {
                 "type": "error",
                 "error_code": "GW-E8002",
                 "message": (f"Maximum {connection.client.permissions.ws_subscriptions_max} subscriptions allowed"),
             }
+
+        # UW flow channel: route to the fan-out (additive; does not touch the
+        # Alpaca multiplexer). An empty symbols list ⇒ ALL flow (firehose).
+        if _is_uw_flow_request(provider, feeds):
+            from gateway.api.deps import get_flow_fanout
+
+            flow_fanout = get_flow_fanout()
+            if flow_fanout is None:
+                return {
+                    "type": "subscription_ack",
+                    "status": "error",
+                    "error_code": "GW-E5002",
+                    "message": "Flow fan-out not initialized — UW flow streaming unavailable",
+                    "provider": provider,
+                    "feeds": feeds,
+                }
+            flow_fanout.subscribe(connection_id, symbols)
+            # Record the subscription for status/quota accounting. An empty
+            # symbols list is the firehose (ALL flow); without an explicit
+            # entry it would count as zero subscriptions and be invisible in
+            # status/quota, so register it under a sentinel.
+            if symbols:
+                connection.subscriptions.update({f"{FLOW_FEED}:{s}" for s in symbols})
+            else:
+                # Firehose subsumes any prior per-symbol flow entries — the
+                # fan-out drops those buckets internally (flow_fanout.subscribe),
+                # so leaving them in connection.subscriptions would be stale
+                # accounting that double-counts against the quota and misreports
+                # status. Clear them and keep only the firehose sentinel.
+                stale_flow = {
+                    s for s in connection.subscriptions if s.startswith(f"{FLOW_FEED}:") and s != f"{FLOW_FEED}:*"
+                }
+                connection.subscriptions.difference_update(stale_flow)
+                connection.subscriptions.add(f"{FLOW_FEED}:*")
+            ack: dict[str, Any] = {
+                "type": "subscription_ack",
+                "status": "ok",
+                "provider": provider,
+                "feeds": [FLOW_FEED],
+                "subscribed": sorted(symbols),
+                "failed": [],
+            }
+            # The fan-out exists but no producer is attached (data sink / Redis
+            # UW poller never started): the subscribe is registered but no flow
+            # envelope can ever arrive. Surface that instead of a bare "ok" so
+            # the client isn't silently starved.
+            if not flow_fanout.producer_wired:
+                ack["status"] = "warning"
+                ack["warning_code"] = "GW-W5003"
+                ack["message"] = (
+                    "Flow producer not wired — subscription registered but no flow data will arrive "
+                    "until the UW poller starts"
+                )
+            return ack
 
         # Try to use multiplexer if available
         try:
@@ -632,6 +720,33 @@ async def _handle_message(
                 "message": f"Provider access denied: {provider}",
             }
 
+        # UW flow channel: route to the fan-out. Empty symbols ⇒ drop all flow.
+        if _is_uw_flow_request(provider, feeds):
+            from gateway.api.deps import get_flow_fanout
+
+            flow_fanout = get_flow_fanout()
+            if flow_fanout is not None:
+                flow_fanout.unsubscribe(connection_id, symbols)
+            if symbols:
+                for symbol in symbols:
+                    connection.subscriptions.discard(f"{FLOW_FEED}:{symbol}")
+            else:
+                # Empty symbols ⇒ the fan-out's client_disconnect drops EVERY
+                # flow bucket for this connection (firehose + all per-symbol).
+                # Mirror that fully in connection accounting: discarding only
+                # the firehose sentinel would leave stale flow_alerts:<symbol>
+                # entries from earlier per-symbol subscribes, which would
+                # double-count against the quota and misreport status.
+                stale_flow = {s for s in connection.subscriptions if s.startswith(f"{FLOW_FEED}:")}
+                connection.subscriptions.difference_update(stale_flow)
+            return {
+                "type": "unsubscription_ack",
+                "status": "ok",
+                "provider": provider,
+                "feeds": [FLOW_FEED],
+                "unsubscribed": sorted(set(symbols)),
+            }
+
         # Try to use multiplexer if available
         try:
             from gateway.api.deps import get_multiplexer
@@ -720,7 +835,22 @@ def _normalize_feed_permission(feed: str) -> str:
         return "quotes"
     if "trades" in f:
         return "trades"
+    if "flow" in f:
+        return "flow"
     return f
+
+
+# UW provider aliases and the feed names that route to the flow fan-out instead
+# of the Alpaca multiplexer.
+_UW_PROVIDERS = {"uw", "unusual_whales"}
+_FLOW_FEEDS = {"flow", "flow_alerts"}
+
+
+def _is_uw_flow_request(provider: str, feeds: list[str]) -> bool:
+    """True when this subscribe/unsubscribe targets the UW flow channel."""
+    if provider.lower() not in _UW_PROVIDERS:
+        return False
+    return any(str(f).lower() in _FLOW_FEEDS for f in feeds)
 
 
 def _has_feed_permission(client: Any, required_feed: str) -> bool:

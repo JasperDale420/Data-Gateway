@@ -7,6 +7,7 @@ __pycache__/
 # Runtime logs and generated artifacts
 logs/
 index.scip
+*.scip
 .Python
 build/
 develop-eggs/
@@ -45,6 +46,7 @@ htmlcov/
 .nox/
 .coverage
 .coverage.*
+*.coverage
 .cache
 nosetests.xml
 coverage.xml
@@ -93,6 +95,10 @@ sonar_scan.log
 
 # Large log files
 gateway_errors_24h.log
+gateway_errors_*.log
 
 # Agent output files
 .agents/
+
+# Rotation handoff (contains live secrets)
+config/ROTATION_HANDOFF.md

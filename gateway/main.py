@@ -95,7 +95,7 @@ from gateway.api.middleware import (
     SecurityHeadersMiddleware,
 )
 from gateway.config import get_settings
-from gateway.core.globals import set_multiplexer, set_registry
+from gateway.core.globals import set_flow_fanout, set_multiplexer, set_registry
 from gateway.core.logger import logger
 from gateway.core.metrics import (
     init_metrics,
@@ -361,6 +361,17 @@ async def lifespan(app: FastAPI):
     except OSError:
         logger.warning("sighup_handler_failed", reason="Not supported on this platform")
 
+    # Construct the UW flow WS fan-out (additive; inert until a client
+    # subscribes). Registered as the poller's flow tap below so published flow
+    # envelopes are also delivered over WS without touching the Redis publish.
+    flow_fanout = None
+    if settings.ws_flow_fanout_enabled:
+        from gateway.core.flow_fanout import FlowFanout
+
+        flow_fanout = FlowFanout(get_connection_manager())
+        set_flow_fanout(flow_fanout)
+        logger.info("flow_fanout_initialized")
+
     # Start UW background poller (if data sink is enabled)
     uw_poller = None
     if settings.data_sink_enabled and settings.data_sink_redis_url:
@@ -376,10 +387,18 @@ async def lifespan(app: FastAPI):
             eod_minute=settings.uw_eod_minute,
             eod_concurrency=settings.uw_eod_concurrency,
         )
+        # Tap the poller's flow path so published flow envelopes fan out over WS.
+        # Mark the fan-out producer-wired so a flow subscribe ACKs "ok" only
+        # when envelopes can actually arrive (the subscribe handler warns
+        # otherwise — e.g. when the data sink / Redis poller never started).
+        if flow_fanout is not None:
+            uw_poller.on_flow_envelope = flow_fanout.deliver
+            flow_fanout.mark_producer_wired()
         logger.info(
             "uw_poller_initialized",
             interval_seconds=300,
             eod_enabled=settings.uw_eod_enabled,
+            flow_fanout=flow_fanout is not None,
         )
 
     # Start Treasury yield background poller (if data sink is enabled and AlphaVantage is ready)
@@ -570,6 +589,10 @@ async def lifespan(app: FastAPI):
         from gateway.core.uw_poller import stop_uw_poller
 
         await stop_uw_poller()
+
+    # Clear the flow fan-out global so a subsequent in-process restart rebuilds
+    # it against the fresh connection manager.
+    set_flow_fanout(None)
 
     from gateway.core.backfill import get_backfill_engine
 

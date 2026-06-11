@@ -73,6 +73,7 @@ class RedisStreamsSink(DataSink):
         approximate_trim: bool = True,
         operation_timeout_seconds: float = DEFAULT_OPERATION_TIMEOUT_SECONDS,
         pool_size: int = DEFAULT_POOL_SIZE,
+        worker_count: int | None = None,
     ) -> None:
         """Initialize Redis Streams sink.
 
@@ -82,6 +83,20 @@ class RedisStreamsSink(DataSink):
             approximate_trim: Use ~ for more efficient trimming
             operation_timeout_seconds: Timeout for Redis operations
             pool_size: Max connections in the Redis connection pool
+            worker_count: Number of data_sink registry workers that publish
+                through this sink concurrently. When set, ``pool_size`` is
+                raised to at least this value so the pool can never be smaller
+                than the concurrency drawing from it.
+
+        Pool sizing vs. worker count:
+            The data_sink registry runs ``worker_count`` coroutines that each
+            call ``publish``/``publish_batch`` against this single sink, so up
+            to ``worker_count`` connections are checked out at once. A
+            ``pool_size`` below ``worker_count`` makes the BlockingConnectionPool
+            serialize workers and, with the dedup cache fanning out its own
+            connections on the same Redis, contributed to the "Too many
+            connections" flood. Passing ``worker_count`` ties them together so
+            they cannot silently drift apart.
         """
         self._redis_url = redis_url
         self._max_len = max_len
@@ -90,7 +105,16 @@ class RedisStreamsSink(DataSink):
         # Settings.data_sink_redis_pool_size is already validated to [1, 128]
         # via field constraints; this is a defense-in-depth lower bound for
         # callers constructing the sink directly (tests, scripts).
-        self._pool_size = max(1, int(pool_size))
+        pool_size = max(1, int(pool_size))
+        if worker_count is not None and pool_size < worker_count:
+            logger.warning(
+                "redis_sink_pool_smaller_than_workers",
+                pool_size=pool_size,
+                worker_count=worker_count,
+                msg="Raising pool size to worker_count so workers can't starve on connections.",
+            )
+            pool_size = int(worker_count)
+        self._pool_size = pool_size
         self._redis: Any = None
         self._connected = False
         self._connect_lock = asyncio.Lock()
@@ -554,11 +578,11 @@ class RedisStreamsSink(DataSink):
 
         total_published = 0
         for i, result in enumerate(results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 logger.warning(
                     "redis_sink_chunk_exception",
                     chunk_index=i,
-                    error=str(result),
+                    error=str(result) or type(result).__name__,
                 )
                 for topic, _ in chunks[i]:
                     record_sink_publish(sink=self.name, topic=topic, success=False)
@@ -567,16 +591,83 @@ class RedisStreamsSink(DataSink):
 
         return total_published
 
+    async def publish_batch_indexed(
+        self,
+        messages: list[tuple[str, dict[str, Any] | str | bytes]],
+    ) -> set[int]:
+        """Publish multiple messages and return the EXACT succeeded indices.
+
+        Identical wire behavior to ``publish_batch`` but reports *which*
+        messages landed (by position in ``messages``) rather than only a count.
+        On a partial Redis failure (e.g. item 0 fails, item 1 succeeds) the
+        returned set is ``{1}`` — never ``{0}`` ("first N"). Callers that must
+        preserve a per-event contract (flow WS fan-out parity with the Redis
+        stream) use this so they fan out exactly the events Heber received.
+        """
+        if not messages:
+            return set()
+
+        await self._ensure_connected()
+
+        chunks = [messages[i : i + BATCH_CHUNK_SIZE] for i in range(0, len(messages), BATCH_CHUNK_SIZE)]
+        chunk_offsets = list(range(0, len(messages), BATCH_CHUNK_SIZE))
+
+        sem = asyncio.Semaphore(MAX_CONCURRENT_CHUNKS)
+
+        async def _process_chunk_with_retry(chunk: list) -> set[int]:
+            async with sem:
+                succeeded = await self._publish_chunk_indexed(chunk)
+                if not succeeded and len(chunk) > 0:
+                    # Retry once on total failure (mirror publish_batch).
+                    await self._ensure_connected()
+                    succeeded = await self._publish_chunk_indexed(chunk)
+                    if succeeded:
+                        logger.info(
+                            "redis_sink_chunk_retry_success",
+                            chunk_size=len(chunk),
+                            published=len(succeeded),
+                        )
+                return succeeded
+
+        results = await asyncio.gather(
+            *[_process_chunk_with_retry(chunk) for chunk in chunks],
+            return_exceptions=True,
+        )
+
+        published_indices: set[int] = set()
+        for chunk_idx, result in enumerate(results):
+            offset = chunk_offsets[chunk_idx]
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "redis_sink_chunk_exception",
+                    chunk_index=chunk_idx,
+                    error=str(result) or type(result).__name__,
+                )
+                for topic, _ in chunks[chunk_idx]:
+                    record_sink_publish(sink=self.name, topic=topic, success=False)
+            else:
+                for local_idx in result:
+                    published_indices.add(offset + local_idx)
+
+        return published_indices
+
     async def _publish_chunk(
         self,
         chunk: list[tuple[str, dict[str, Any] | str | bytes]],
     ) -> int:
         """Execute a single pipeline chunk. Returns number published."""
+        return len(await self._publish_chunk_indexed(chunk))
+
+    async def _publish_chunk_indexed(
+        self,
+        chunk: list[tuple[str, dict[str, Any] | str | bytes]],
+    ) -> set[int]:
+        """Execute a single pipeline chunk. Returns succeeded local indices."""
         client = self._redis
         if client is None:
             for topic, _ in chunk:
                 record_sink_publish(sink=self.name, topic=topic, success=False)
-            return 0
+            return set()
 
         try:
             async with client.pipeline(transaction=False) as pipe:
@@ -598,7 +689,7 @@ class RedisStreamsSink(DataSink):
                 timeout = self._operation_timeout_seconds + (len(chunk) / 500) * 0.5
                 results = await asyncio.wait_for(pipe.execute(), timeout=timeout)
 
-            published = 0
+            succeeded: set[int] = set()
             for i, result in enumerate(results):
                 topic = chunk[i][0]
                 if isinstance(result, Exception):
@@ -609,15 +700,15 @@ class RedisStreamsSink(DataSink):
                     )
                     record_sink_publish(sink=self.name, topic=topic, success=False)
                 else:
-                    published += 1
+                    succeeded.add(i)
                     record_sink_publish(sink=self.name, topic=topic, success=True)
 
             logger.debug(
                 "redis_sink_chunk_published",
                 chunk_size=len(chunk),
-                published=published,
+                published=len(succeeded),
             )
-            return published
+            return succeeded
 
         except Exception as e:
             error_msg = str(e) if str(e) else type(e).__name__
@@ -633,7 +724,7 @@ class RedisStreamsSink(DataSink):
             )
             for topic, _ in chunk:
                 record_sink_publish(sink=self.name, topic=topic, success=False)
-            return 0
+            return set()
 
     async def health_check(self) -> bool:
         """Check Redis connection health."""

@@ -124,6 +124,38 @@ groups:
           summary: "Sink {{ $labels.sink }} dropped events at the producer in the last minute"
           description: "gateway_sink_producer_timeout_drops_total is non-zero on sink {{ $labels.sink }} — the bounded dispatch queue is full AND workers cannot drain it within data_sink_producer_block_timeout_seconds. Any non-zero rate means events are being lost permanently to Heber; investigate sink health immediately. Runbook: check downstream Redis latency, raise data_sink_worker_count / data_sink_queue_size, verify circuit-breaker state on the sink."
 
+      # Per-feed zero-row alert during market hours.
+      # A continuously-polled feed (flow_alerts, darkpool) that creates zero
+      # envelopes over a full poll window while the market is open is a silent
+      # data-loss signal — either the upstream UW endpoint is failing, the
+      # poller stalled, or normalization is dropping every record (as happened
+      # on 2026-06-09 with malformed option keys). We alert on the per-feed
+      # envelope-creation counter (gateway_envelopes_created_total) staying flat.
+      #
+      # Market-hours gate: hour()/day_of_week() are evaluated in UTC. US regular
+      # session 09:30-16:00 ET maps to ~13:30-21:00 UTC; we use the conservative
+      # 15:00-20:00 UTC core to avoid DST edges and the open/close minutes.
+      # NOTE: this only fires for feeds that already have a metric series (i.e.
+      # produced at least once historically). A feed that has NEVER emitted has
+      # no series and cannot be alerted on here.
+      - alert: FeedZeroEnvelopesMarketHours
+        expr: |
+          (
+            sum by (provider, feed) (
+              increase(gateway_envelopes_created_total{feed=~"flow_alerts|darkpool"}[15m])
+            ) == 0
+          )
+          and on() (hour() >= 15)
+          and on() (hour() < 20)
+          and on() (day_of_week() >= 1)
+          and on() (day_of_week() <= 5)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Feed {{ $labels.provider }}/{{ $labels.feed }} produced zero envelopes during market hours"
+          description: "No EventEnvelopes created for {{ $labels.provider }}/{{ $labels.feed }} over the last 15 minutes while the market is open. The upstream endpoint may be failing, the poller may be stalled, or every record may be dropped during normalization. Check the poller logs and the UW upstream."
+
   - name: gateway_slo
     rules:
       # SLO: 99.9% availability

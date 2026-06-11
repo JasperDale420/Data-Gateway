@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gateway.core.data_sink import DataSinkRegistry
+    from gateway.core.flow_fanout import FlowFanout
     from gateway.core.registry import ProviderRegistry
     from gateway.core.stream import StreamMultiplexer
 
@@ -54,6 +55,22 @@ def get_multiplexer() -> StreamMultiplexer:
     if _multiplexer is None:
         raise RuntimeError("Stream multiplexer not initialized")
     return _multiplexer
+
+
+# ── Flow Fan-out ─────────────────────────────────────────────────────────────
+
+_flow_fanout: FlowFanout | None = None
+
+
+def set_flow_fanout(flow_fanout: FlowFanout | None) -> None:
+    """Set the global UW flow fan-out (called during startup)."""
+    global _flow_fanout
+    _flow_fanout = flow_fanout
+
+
+def get_flow_fanout() -> FlowFanout | None:
+    """Get the UW flow fan-out (may be None if disabled / not initialized)."""
+    return _flow_fanout
 
 
 # ── Data Sink Registry ───────────────────────────────────────────────────────

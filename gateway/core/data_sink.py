@@ -456,6 +456,105 @@ class DataSinkRegistry:
 
         return total_published
 
+    async def publish_all_batch_indexed(
+        self,
+        messages: list[tuple[str, dict[str, Any]]],
+    ) -> set[int]:
+        """Batch-publish and return the EXACT succeeded message indices.
+
+        Like ``publish_all_batch`` but reports *which* messages landed (by
+        position in ``messages``) instead of a count. An index is reported
+        succeeded only if it landed in every batch-capable sink — for the
+        single Redis stream sink in production this is exactly the set of
+        events written to ``heber:events``. This lets per-event contracts
+        (flow WS fan-out parity) fan out only the events Heber received,
+        rather than the "first N" approximation a count forces.
+
+        Non-batch sinks fall through to individual ``publish`` (optimistic,
+        matching ``publish_all_batch``) and do not constrain the index set.
+        """
+        if not self._enabled or not self._sinks or not messages:
+            return set()
+
+        all_indices = set(range(len(messages)))
+        succeeded: set[int] | None = None
+
+        for sink in self._sinks:
+            # Check circuit state before any publish attempt.
+            try:
+                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+                if breaker.state == CircuitState.OPEN:
+                    if hasattr(sink, "buffer_event"):
+                        for msg_topic, msg_data in messages:
+                            sink.buffer_event(msg_topic, msg_data)
+                        logger.warning(
+                            "data_sink_batch_circuit_open_buffered",
+                            sink=sink.name,
+                            count=len(messages),
+                        )
+                    else:
+                        logger.warning(
+                            "data_sink_batch_circuit_open",
+                            sink=sink.name,
+                            count=len(messages),
+                        )
+                    # Circuit-open buffering is not a confirmed Redis write, so
+                    # nothing landed for this sink — intersect to the empty set.
+                    succeeded = set() if succeeded is None else (succeeded & set())
+                    continue
+            except Exception:
+                pass  # If breaker lookup fails, proceed with publish
+
+            if hasattr(sink, "publish_batch_indexed"):
+                try:
+                    sink_indices = await sink.publish_batch_indexed(messages)
+                except Exception:
+                    logger.exception(
+                        "data_sink_batch_publish_failed",
+                        sink=sink.name,
+                        count=len(messages),
+                    )
+                    sink_indices = set()
+                succeeded = sink_indices if succeeded is None else (succeeded & sink_indices)
+            elif hasattr(sink, "publish_batch"):
+                # Count-only sink: it cannot say WHICH indices landed. A FULL
+                # count (== len(messages)) confirms every index. A PARTIAL count
+                # is ambiguous — we don't know which events made it — so those
+                # indices must be reported NOT-fully-confirmed (intersect to the
+                # empty set), never optimistically passed through as all_indices.
+                # Marking/tapping an ambiguously-published event would break the
+                # per-event Heber/WS parity the indexed contract guarantees.
+                try:
+                    count = await sink.publish_batch(messages)
+                except Exception:
+                    logger.exception(
+                        "data_sink_batch_publish_failed",
+                        sink=sink.name,
+                        count=len(messages),
+                    )
+                    count = 0
+                if count >= len(messages):
+                    confirmed = all_indices
+                else:
+                    confirmed = set()
+                    logger.warning(
+                        "data_sink_count_only_partial_unconfirmed",
+                        sink=sink.name,
+                        published=count,
+                        total=len(messages),
+                    )
+                succeeded = confirmed if succeeded is None else (succeeded & confirmed)
+            else:
+                for topic, data in messages:
+                    task = asyncio.create_task(self._safe_publish(sink, topic, data))
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+
+        # If no sink reported per-index results (no batch-capable sink wired,
+        # only fire-and-forget publish fallbacks), fall back to optimistic
+        # all-indices so callers don't drop everything.
+        return succeeded if succeeded is not None else all_indices
+
     async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish with error handling."""
         try:

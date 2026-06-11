@@ -4,7 +4,7 @@ import asyncio
 import concurrent.futures
 import uuid
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -511,15 +511,73 @@ _VALID_ORDER_SIDES = frozenset({"buy", "sell"})
 @router.get("/orders", response_model=SuccessResponse)
 async def get_orders(
     status: str = Query(default="open", description="Order status: open, closed, all"),
-    limit: int = Query(default=50, le=500, description="Max orders to return"),
+    limit: int = Query(default=50, le=500, description="Max orders to return (Alpaca hard cap 500)"),
     direction: str = Query(default="desc", description="Sort direction: asc, desc"),
     symbols: str | None = Query(default=None, description=DESC_COMMA_SYMBOLS),
     nested: bool = Query(default=True, description="Include nested multi-leg orders"),
     side: str | None = Query(default=None, description="Filter by side: buy, sell"),
+    after: datetime | None = Query(
+        default=None,
+        description=(
+            "Only orders with submitted_at AFTER this timestamp (ISO 8601, tz-aware). "
+            "Filters by submitted_at, NOT filled_at."
+        ),
+    ),
+    until: datetime | None = Query(
+        default=None,
+        description=(
+            "Only orders with submitted_at UNTIL/BEFORE this timestamp (ISO 8601, tz-aware). "
+            "Filters by submitted_at, NOT filled_at."
+        ),
+    ),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Get all orders with optional filters."""
+    """Get all orders with optional filters.
+
+    ──────────────────────────────────────────────────────────────────────────
+    ORION SAME-DAY-FILL COVERAGE CONTRACT (consumed by Orion reconciliation)
+    ──────────────────────────────────────────────────────────────────────────
+    Params:
+      - ``status``     : "open" | "closed" | "all". Use "all" for fill coverage.
+      - ``after``      : ISO 8601 tz-aware datetime. Returns orders with
+                         submitted_at STRICTLY AFTER this value.
+      - ``until``      : ISO 8601 tz-aware datetime. Returns orders with
+                         submitted_at STRICTLY BEFORE this value.
+      - ``limit``      : ≤ 500 (Alpaca hard cap per page).
+      - ``direction``  : "asc" | "desc" — pagination walk order over submitted_at.
+      - ``nested``     : keep True so bracket legs (the GTC exit fills) are nested
+                         under the parent order.
+
+    Semantics & caveat (IMPORTANT):
+      ``after``/``until`` filter by **submitted_at**, NOT by filled_at — this is
+      Alpaca's GetOrdersRequest behaviour, and Alpaca's orders API exposes no
+      page_token (the activities/FILL endpoint that filters by transaction_time
+      is NOT surfaced by the installed alpaca-py 0.43.2 SDK). Consequence: a GTC
+      bracket exit submitted on a PRIOR day but FILLED today will NOT appear in a
+      ``after=<today 00:00 ET>`` window.
+
+    How Orion PROVES it has every same-day FILL despite the submitted_at filter:
+      1. Page with ``status=all`` and ``direction=asc``, starting ``after`` far
+         enough back to include every order that could still be open today
+         (i.e. back past the oldest still-open submitted_at — in practice the
+         GTC exits live on the entry day, so reach back to the oldest entry).
+      2. Advance the cursor: set the next page's ``after`` to the max
+         submitted_at seen in the page (exclusive), repeat until a page returns
+         < limit rows. This walks the full submitted_at history with no 500 cap
+         truncation.
+      3. Client-side, keep only orders whose ``client_order_id`` starts with
+         ``orion_`` (Orion attribution) AND whose ``filled_at`` falls in today's
+         session. Each order carries ``order_id`` (``id``), ``client_order_id``,
+         ``symbol``, ``filled_qty``, ``filled_avg_price``, and ``filled_at`` —
+         giving the order_id→client_order_id map and the fill data directly. With
+         ``nested=True``, bracket child fills appear under ``legs``.
+      Because every order that can fill today must have been submitted at-or-
+      before today, paging the full submitted_at range with ``status=all``
+      guarantees the order is in the result set; the client-side ``filled_at``
+      filter then proves same-day fill coverage with no 500-cap blind spot.
+    ──────────────────────────────────────────────────────────────────────────
+    """
     if status not in _VALID_ORDER_QUERY_STATUSES:
         raise HTTPException(
             status_code=400,
@@ -536,6 +594,33 @@ async def get_orders(
             detail=f"Invalid side '{side}'. Must be one of: {sorted(_VALID_ORDER_SIDES)}",
         )
 
+    # Reject NAIVE after/until. A tz-naive datetime serializes to the wire as
+    # if it were UTC, silently shifting the submitted_at window for any caller
+    # whose intent was a different zone — Orion pages with UTC tz-aware values,
+    # so a naive value that slipped through would skew the fill-coverage window
+    # and miss fills. Forcing tz-aware makes the contract unambiguous.
+    for _name, _value in (("after", after), ("until", until)):
+        if isinstance(_value, datetime) and _value.tzinfo is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "GW-E4007",
+                    "message": (
+                        f"'{_name}' must be timezone-aware (e.g. ISO 8601 with a UTC offset like "
+                        f"'2026-06-10T00:00:00Z'). A naive datetime would be silently treated as UTC "
+                        "and shift the submitted_at window."
+                    ),
+                },
+            )
+    if isinstance(after, datetime) and isinstance(until, datetime) and after > until:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "GW-E4007",
+                "message": f"'after' ({after.isoformat()}) must not be later than 'until' ({until.isoformat()}).",
+            },
+        )
+
     symbols_list = symbols.split(",") if symbols else None
     data = await _execute_trading_call(
         registry=registry,
@@ -546,6 +631,8 @@ async def get_orders(
             symbols=symbols_list,
             nested=nested,
             side=side,
+            after=after,
+            until=until,
         ),
         operation="get_orders",
     )

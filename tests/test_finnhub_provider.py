@@ -120,6 +120,30 @@ async def test_get_quotes_skips_errors_without_failing_batch(
 
 
 @pytest.mark.asyncio
+async def test_get_quotes_total_failure_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Contract: when every symbol fails, return an empty list (no raise)."""
+    provider = FinnhubProvider()
+    provider._quotes_max_concurrency = 3
+
+    async def _fake_get_quote(symbol: str):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(provider, "get_quote", _fake_get_quote)
+
+    quotes = await provider.get_quotes(["AAPL", "MSFT"])
+
+    assert quotes == []
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_empty_input_returns_empty() -> None:
+    """Contract: empty symbols list returns an empty list."""
+    provider = FinnhubProvider()
+
+    assert await provider.get_quotes([]) == []
+
+
+@pytest.mark.asyncio
 async def test_get_quotes_records_requested_batch_size(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = FinnhubProvider()
     provider._quotes_max_concurrency = 2

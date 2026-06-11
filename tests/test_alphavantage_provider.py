@@ -93,6 +93,50 @@ async def test_get_quotes_respects_bounded_concurrency(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
+async def test_get_quotes_skips_per_symbol_failures_and_returns_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contract: a failing symbol is skipped; remaining symbols are returned."""
+    provider = AlphaVantageProvider()
+    provider._quotes_max_concurrency = 3
+
+    async def _fake_get_quote(symbol: str):
+        if symbol == "FAIL":
+            raise RuntimeError("boom")
+        return symbol
+
+    monkeypatch.setattr(provider, "get_quote", _fake_get_quote)
+
+    results = await provider.get_quotes(["AAPL", "FAIL", "MSFT"])
+
+    assert results == ["AAPL", "MSFT"]
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_total_failure_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Contract: when every symbol fails, return an empty list (no raise)."""
+    provider = AlphaVantageProvider()
+    provider._quotes_max_concurrency = 3
+
+    async def _fake_get_quote(symbol: str):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(provider, "get_quote", _fake_get_quote)
+
+    results = await provider.get_quotes(["AAPL", "MSFT"])
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_empty_input_returns_empty() -> None:
+    """Contract: empty symbols list returns an empty list."""
+    provider = AlphaVantageProvider()
+
+    assert await provider.get_quotes([]) == []
+
+
+@pytest.mark.asyncio
 async def test_fetch_json_injects_api_key_and_returns_payload() -> None:
     provider = AlphaVantageProvider()
     provider._api_key = "demo"  # pragma: allowlist secret

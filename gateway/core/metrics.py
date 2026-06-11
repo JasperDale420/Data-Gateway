@@ -51,6 +51,12 @@ CACHE_MISSES = Counter(
     ["cache_type"],
 )
 
+CACHE_ERRORS = Counter(
+    "gateway_cache_errors_total",
+    "Total cache backend errors",
+    ["cache_type", "operation"],  # operation: read, write
+)
+
 CACHE_SIZE = Gauge(
     "gateway_cache_size",
     "Current cache size",
@@ -265,22 +271,35 @@ OPTION_CAPTURE_FAILED_SYMBOLS = Counter(
     "Option capture symbol failures across cycles",
 )
 
-OPTION_CAPTURE_SYMBOL_CONTRACTS = Gauge(
-    "gateway_option_capture_symbol_contracts",
-    "Contracts seen and tracked by option capture",
-    ["symbol", "kind"],  # snapshot_contracts, ws_tracked_contracts
+# Option-capture quality is aggregated across symbols rather than carrying a
+# per-symbol label, which would grow unbounded as the option universe expands.
+# The histograms expose P50/P95/P99 (computed by Prometheus from buckets) and a
+# running sum/count; the symbols_tracked gauge reports how many underlyings were
+# observed in the most recent capture cycle. Per-symbol detail remains available
+# via the in-memory admin snapshot (get_option_capture_snapshot).
+OPTION_CAPTURE_CONTRACTS = Histogram(
+    "gateway_option_capture_contracts",
+    "Distribution of contracts seen/tracked per symbol per capture (sum = total contracts)",
+    ["kind"],  # snapshot_contracts, ws_tracked_contracts
+    buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000),
 )
 
-OPTION_CAPTURE_QUALITY_RATIO = Gauge(
+OPTION_CAPTURE_QUALITY_RATIO = Histogram(
     "gateway_option_capture_quality_ratio",
-    "Option capture field coverage ratios",
-    ["symbol", "metric"],  # greeks_coverage, iv_coverage, nonzero_open_interest, bid_ask_coverage
+    "Distribution of option capture field coverage ratios across symbols",
+    ["metric"],  # greeks_coverage, iv_coverage, nonzero_open_interest, bid_ask_coverage
+    buckets=(0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0),
 )
 
-OPTION_CAPTURE_SNAPSHOT_AGE = Gauge(
+OPTION_CAPTURE_SNAPSHOT_AGE = Histogram(
     "gateway_option_capture_snapshot_age_seconds",
-    "Age of the latest snapshot payload observed for each underlying",
-    ["symbol"],
+    "Distribution of latest-snapshot age across underlyings",
+    buckets=(1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600),
+)
+
+OPTION_CAPTURE_SYMBOLS_TRACKED = Gauge(
+    "gateway_option_capture_symbols_tracked",
+    "Number of underlyings observed in the most recent option capture cycle",
 )
 
 OPTION_CAPTURE_WS_EVENTS = Counter(
@@ -473,6 +492,11 @@ def record_cache_hit(cache_type: str = "memory") -> None:
 def record_cache_miss(cache_type: str = "memory") -> None:
     """Record cache miss."""
     CACHE_MISSES.labels(cache_type=cache_type).inc()
+
+
+def record_cache_error(cache_type: str = "memory", operation: str = "unknown") -> None:
+    """Record cache backend errors separately from ordinary misses."""
+    CACHE_ERRORS.labels(cache_type=cache_type, operation=operation).inc()
 
 
 def record_provider_request(provider: str, success: bool, duration: float) -> None:
@@ -960,27 +984,21 @@ def record_option_capture_symbol_metrics(
     nonzero_open_interest_ratio: float,
     bid_ask_coverage_ratio: float,
 ) -> None:
-    """Record per-symbol option capture quality gauges and admin snapshot state."""
+    """Record option capture quality as bounded aggregates plus admin snapshot state.
+
+    Prometheus metrics are aggregated across symbols (no per-symbol label) to keep
+    cardinality bounded; per-symbol detail lives in the in-memory admin snapshot.
+    """
     safe_symbol = symbol.strip().upper()
-    OPTION_CAPTURE_SYMBOL_CONTRACTS.labels(symbol=safe_symbol, kind="snapshot_contracts").set(
-        max(0, snapshot_contracts)
-    )
-    OPTION_CAPTURE_SYMBOL_CONTRACTS.labels(symbol=safe_symbol, kind="ws_tracked_contracts").set(
-        max(0, ws_tracked_contracts)
-    )
-    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="greeks_coverage").set(
-        max(0.0, min(1.0, greeks_coverage_ratio))
-    )
-    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="iv_coverage").set(
-        max(0.0, min(1.0, iv_coverage_ratio))
-    )
-    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="nonzero_open_interest").set(
+    OPTION_CAPTURE_CONTRACTS.labels(kind="snapshot_contracts").observe(max(0, snapshot_contracts))
+    OPTION_CAPTURE_CONTRACTS.labels(kind="ws_tracked_contracts").observe(max(0, ws_tracked_contracts))
+    OPTION_CAPTURE_QUALITY_RATIO.labels(metric="greeks_coverage").observe(max(0.0, min(1.0, greeks_coverage_ratio)))
+    OPTION_CAPTURE_QUALITY_RATIO.labels(metric="iv_coverage").observe(max(0.0, min(1.0, iv_coverage_ratio)))
+    OPTION_CAPTURE_QUALITY_RATIO.labels(metric="nonzero_open_interest").observe(
         max(0.0, min(1.0, nonzero_open_interest_ratio))
     )
-    OPTION_CAPTURE_QUALITY_RATIO.labels(symbol=safe_symbol, metric="bid_ask_coverage").set(
-        max(0.0, min(1.0, bid_ask_coverage_ratio))
-    )
-    OPTION_CAPTURE_SNAPSHOT_AGE.labels(symbol=safe_symbol).set(max(0.0, snapshot_age_seconds))
+    OPTION_CAPTURE_QUALITY_RATIO.labels(metric="bid_ask_coverage").observe(max(0.0, min(1.0, bid_ask_coverage_ratio)))
+    OPTION_CAPTURE_SNAPSHOT_AGE.observe(max(0.0, snapshot_age_seconds))
 
     symbols = _OPTION_CAPTURE_SNAPSHOT["symbols"]
     if isinstance(symbols, dict):
@@ -993,6 +1011,7 @@ def record_option_capture_symbol_metrics(
             "nonzero_open_interest_ratio": max(0.0, min(1.0, nonzero_open_interest_ratio)),
             "bid_ask_coverage_ratio": max(0.0, min(1.0, bid_ask_coverage_ratio)),
         }
+        OPTION_CAPTURE_SYMBOLS_TRACKED.set(len(symbols))
 
 
 def record_option_capture_ws_update(*, added: int = 0, removed: int = 0) -> None:

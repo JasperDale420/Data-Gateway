@@ -6,8 +6,10 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.testclient import TestClient
 
+import gateway.api.middleware.cache as cache_module
 from gateway.api import deps as deps_module
 from gateway.api.middleware import CacheMiddleware, EventEnvelopeMiddleware
+from gateway.config import get_settings
 
 
 async def _json_stream(payload: bytes) -> AsyncIterator[bytes]:
@@ -35,6 +37,39 @@ def test_cache_middleware_bypasses_streaming_json() -> None:
     assert response2.json()["data"]["value"] == 1
 
 
+def test_cache_middleware_records_cache_read_errors(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class _FailingCache:
+        async def get(self, _key: str):
+            raise RuntimeError("cache backend down")
+
+        async def set(self, _key: str, _value: dict, ttl: int | None = None) -> None:
+            return None
+
+    monkeypatch.setattr(CacheMiddleware, "_get_cache", lambda self: _FailingCache())
+    monkeypatch.setattr(CacheMiddleware, "_cache_type", lambda self, cache: "memory")
+    monkeypatch.setattr(
+        cache_module,
+        "record_cache_error",
+        lambda cache_type, operation: calls.append((cache_type, operation)),
+        raising=False,
+    )
+
+    app = FastAPI()
+    app.add_middleware(CacheMiddleware, default_ttl=60, max_body_bytes=4096)
+
+    @app.get("/health/cache-error")
+    async def cache_error_endpoint():
+        return JSONResponse({"success": True, "data": {"value": 1}})
+
+    client = TestClient(app)
+    response = client.get("/health/cache-error")
+
+    assert response.status_code == 200
+    assert calls == [("memory", "read")]
+
+
 def test_envelope_middleware_wraps_small_json() -> None:
     app = FastAPI()
     app.add_middleware(EventEnvelopeMiddleware, max_body_bytes=4096)
@@ -52,6 +87,28 @@ def test_envelope_middleware_wraps_small_json() -> None:
     assert data["success"] is True
     assert "envelope" in data
     assert data["data"]["symbol"] == "AAPL"
+
+
+def test_envelope_middleware_strict_mode_surfaces_wrap_failures() -> None:
+    settings = get_settings()
+    original_strict = settings.strict_envelopes
+    settings.strict_envelopes = True
+
+    app = FastAPI()
+    app.add_middleware(EventEnvelopeMiddleware, max_body_bytes=4096)
+
+    @app.get("/api/v1/uw/flow/AAPL")
+    async def malformed_flow_endpoint():
+        return JSONResponse({"success": True, "data": {"symbol": "AAPL"}})
+
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        response = client.get("/api/v1/uw/flow/AAPL")
+    finally:
+        settings.strict_envelopes = original_strict
+
+    assert response.status_code == 500
+    assert "X-Gateway-Envelope" not in response.headers
 
 
 def test_envelope_middleware_bypasses_streaming_json() -> None:
@@ -109,7 +166,13 @@ def test_envelope_middleware_wraps_uw_flow_list_with_sink_enabled() -> None:
     @app.get("/api/v1/uw/flow/all")
     async def flow_endpoint():
         return JSONResponse(
-            {"success": True, "data": [{"symbol": "AAPL"}, {"symbol": "MSFT"}]},
+            {
+                "success": True,
+                "data": [
+                    {"ticker": "AAPL", "option_chain": "AAPL260619C00190000"},
+                    {"ticker": "MSFT", "option_chain": "MSFT260619P00350000"},
+                ],
+            },
         )
 
     try:
@@ -122,6 +185,8 @@ def test_envelope_middleware_wraps_uw_flow_list_with_sink_enabled() -> None:
     assert response.status_code == 200
     assert response.headers["X-Gateway-Envelope"] == "true"
     assert "envelope" in data
+    assert data["envelope"]["instrument_type"] == "aggregate"
+    assert data["envelope"]["instrument_key"] == "aggregate:unusual_whales:flow_alerts"
     assert len(data["data"]) == 2
 
 

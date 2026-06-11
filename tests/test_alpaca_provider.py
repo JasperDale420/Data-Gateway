@@ -451,6 +451,49 @@ def test_close_position_qty_zero_is_forwarded_not_silently_defaulted() -> None:
     assert call["percentage"] is None
 
 
+class _OrdersRecordingTradingClient:
+    """Records the GetOrdersRequest passed to get_orders for assertion."""
+
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
+    def get_orders(self, request: Any) -> list[_FakeOrder]:
+        self.requests.append(request)
+        return [_FakeOrder(id="o-1", client_order_id="orion_abc", filled_at="2026-06-10T15:30:00Z")]
+
+
+def test_get_orders_threads_after_until_to_sdk_request() -> None:
+    """O2b: after/until date params reach the SDK GetOrdersRequest so Orion can
+    page the submitted_at window for same-day fill coverage."""
+    provider = AlpacaProvider()
+    fake_client = _OrdersRecordingTradingClient()
+    provider._trading_client = cast(Any, fake_client)
+
+    after = datetime(2026, 6, 10, 0, 0, tzinfo=UTC)
+    until = datetime(2026, 6, 11, 0, 0, tzinfo=UTC)
+    result = provider.get_orders(status="all", limit=500, after=after, until=until)
+
+    assert len(fake_client.requests) == 1
+    req = fake_client.requests[0]
+    assert req.after == after
+    assert req.until == until
+    # The returned order carries the fields Orion's reconciliation maps on.
+    assert result[0]["client_order_id"] == "orion_abc"
+
+
+def test_get_orders_after_until_default_to_none() -> None:
+    """O2b: omitting after/until leaves them unset (back-compat for existing callers)."""
+    provider = AlpacaProvider()
+    fake_client = _OrdersRecordingTradingClient()
+    provider._trading_client = cast(Any, fake_client)
+
+    provider.get_orders(status="open")
+
+    req = fake_client.requests[0]
+    assert req.after is None
+    assert req.until is None
+
+
 @pytest.mark.asyncio
 async def test_initialize_allows_explicit_option_feed_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APCA_API_KEY_ID", "dummy-id")  # pragma: allowlist secret

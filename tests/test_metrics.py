@@ -73,6 +73,15 @@ def test_update_memory_metrics_if_due_force_bypasses_throttle(monkeypatch) -> No
     assert calls["count"] == 1
 
 
+def test_cache_error_counter_records_operation() -> None:
+    before = metrics.CACHE_ERRORS.labels(cache_type="memory", operation="read")._value.get()
+
+    metrics.record_cache_error("memory", "read")
+
+    after = metrics.CACHE_ERRORS.labels(cache_type="memory", operation="read")._value.get()
+    assert after == before + 1
+
+
 async def test_metrics_endpoint_calls_throttled_updater(monkeypatch) -> None:
     called = {"update": 0}
 
@@ -269,6 +278,32 @@ def test_option_capture_snapshot_tracks_quality_and_websocket_updates() -> None:
     assert after["symbols"]["SPY"]["iv_coverage_ratio"] == 0.8
     assert after["symbols"]["SPY"]["nonzero_open_interest_ratio"] == 0.5
     assert after["symbols"]["SPY"]["bid_ask_coverage_ratio"] == 0.9
+
+
+def test_option_capture_symbol_metrics_carry_no_per_symbol_label() -> None:
+    metrics.record_option_capture_symbol_metrics(
+        symbol="QQQ",
+        snapshot_contracts=120,
+        ws_tracked_contracts=60,
+        snapshot_age_seconds=45.0,
+        greeks_coverage_ratio=0.7,
+        iv_coverage_ratio=0.6,
+        nonzero_open_interest_ratio=0.4,
+        bid_ask_coverage_ratio=0.85,
+    )
+
+    for collector in (
+        metrics.OPTION_CAPTURE_CONTRACTS,
+        metrics.OPTION_CAPTURE_QUALITY_RATIO,
+        metrics.OPTION_CAPTURE_SNAPSHOT_AGE,
+        metrics.OPTION_CAPTURE_SYMBOLS_TRACKED,
+    ):
+        assert "symbol" not in collector._labelnames
+
+    # Histograms accumulate observations rather than per-symbol gauge series.
+    contracts_count = metrics.OPTION_CAPTURE_CONTRACTS.labels(kind="snapshot_contracts")._sum.get()
+    assert contracts_count >= 120
+    assert metrics.OPTION_CAPTURE_SYMBOLS_TRACKED._value.get() >= 1
 
 
 def test_stream_sink_dispatch_snapshot_includes_calibration_guidance() -> None:

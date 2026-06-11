@@ -105,6 +105,279 @@ async def test_publish_envelopes_respects_max_inflight_limit() -> None:
     assert sink.max_inflight <= 2
 
 
+class _FailingSinkRegistry:
+    """Sink whose batch publish always raises (simulates Redis pipeline failure)."""
+
+    def __init__(self) -> None:
+        self.batch_calls = 0
+
+    async def publish_all_batch(self, messages: list[tuple[str, dict]]) -> int:
+        self.batch_calls += 1
+        raise RuntimeError("pipeline down")
+
+
+class _CountingSinkRegistry:
+    """Sink that records every successfully published envelope."""
+
+    def __init__(self) -> None:
+        self.published: list[dict] = []
+
+    async def publish_all_batch(self, messages: list[tuple[str, dict]]) -> int:
+        for _stream, envelope in messages:
+            self.published.append(envelope)
+        return len(messages)
+
+
+@pytest.mark.asyncio
+async def test_publish_envelopes_does_not_mark_on_publish_failure() -> None:
+    """A failed batch publish must NOT mark events seen, so a later cycle re-publishes."""
+    poller = UWPoller()
+    poller._redis_dedupe = None
+    failing = _FailingSinkRegistry()
+
+    envelopes = [{"event_id": "e1", "feed": "congress_trades"}]
+
+    published, duplicates = await poller._publish_envelopes(
+        sink_registry=failing,
+        envelopes=envelopes,
+        dedupe_prefix="uw:congress",
+        missing_event_log="uw_congress_missing_event_id",
+    )
+
+    assert published == 0
+    assert duplicates == 0
+    assert "e1" not in poller._seen_ids  # not marked → eligible for re-publish
+
+    # A later cycle with a healthy sink re-publishes the same event.
+    healthy = _CountingSinkRegistry()
+    published2, _ = await poller._publish_envelopes(
+        sink_registry=healthy,
+        envelopes=envelopes,
+        dedupe_prefix="uw:congress",
+        missing_event_log="uw_congress_missing_event_id",
+    )
+    assert published2 == 1
+    assert [e["event_id"] for e in healthy.published] == ["e1"]
+    assert "e1" in poller._seen_ids
+
+
+@pytest.mark.asyncio
+async def test_publish_envelopes_does_not_mark_ambiguous_partial_batch() -> None:
+    """A count-only partial batch cannot prove which events landed.
+
+    Marking the first N as seen would permanently suppress an event that may
+    not have reached Redis. In this ambiguous fallback, prefer possible
+    duplicate re-publish over possible loss.
+    """
+    poller = UWPoller()
+    poller._redis_dedupe = None
+
+    class _PartialSink:
+        async def publish_all_batch(self, messages: list[tuple[str, dict]]) -> int:
+            return 1  # one landed, but this API does not say which one
+
+    envelopes = [
+        {"event_id": "p1", "feed": "insider_trades"},
+        {"event_id": "p2", "feed": "insider_trades"},
+    ]
+
+    published, _ = await poller._publish_envelopes(
+        sink_registry=_PartialSink(),
+        envelopes=envelopes,
+        dedupe_prefix="uw:insider",
+        missing_event_log="uw_insider_missing_event_id",
+    )
+
+    assert published == 1
+    assert "p1" not in poller._seen_ids
+    assert "p2" not in poller._seen_ids
+
+
+@pytest.mark.asyncio
+async def test_publish_envelopes_marks_exact_indexed_successes() -> None:
+    """Indexed batch publishing marks and taps only the exact landed events."""
+    poller = UWPoller()
+    poller._redis_dedupe = None
+    delivered: list[str] = []
+
+    class _IndexedPartialSink:
+        async def publish_all_batch_indexed(self, messages: list[tuple[str, dict]]) -> set[int]:
+            return {1}
+
+    async def _tap(envelope: dict) -> None:
+        delivered.append(envelope["event_id"])
+
+    envelopes = [
+        {"event_id": "i0", "feed": "flow_alerts"},
+        {"event_id": "i1", "feed": "flow_alerts"},
+        {"event_id": "i2", "feed": "flow_alerts"},
+    ]
+
+    published, duplicates = await poller._publish_envelopes(
+        sink_registry=_IndexedPartialSink(),
+        envelopes=envelopes,
+        dedupe_prefix="uw:flow",
+        missing_event_log="uw_flow_missing_event_id",
+        on_published=_tap,
+    )
+
+    assert published == 1
+    assert duplicates == 0
+    assert set(poller._seen_ids) == {"i1"}
+    assert delivered == ["i1"]
+
+
+def test_build_feed_envelopes_skips_malformed_record_without_dropping_batch() -> None:
+    """Strict envelope failures skip only that UW item, not the whole poll batch."""
+    poller = UWPoller()
+
+    records = [
+        SimpleNamespace(model_dump=lambda: {"ticker": "AAPL", "timestamp": "2026-06-10T15:30:00Z"}),
+        SimpleNamespace(
+            model_dump=lambda: {
+                "ticker": "AAPL",
+                "option_chain": "AAPL260619C00190000",
+                "timestamp": "2026-06-10T15:31:00Z",
+            }
+        ),
+    ]
+
+    envelopes, out_of_order = poller._build_feed_envelopes(
+        records,
+        feed="flow_alerts",
+        out_of_order_log="uw_flow_out_of_order_ts",
+    )
+
+    assert out_of_order == 0
+    assert len(envelopes) == 1
+    assert envelopes[0]["instrument_key"] == "option:OCC:AAPL260619C00190000"
+
+
+@pytest.mark.asyncio
+async def test_registry_publish_all_batch_indexed_reports_exact_partial_success() -> None:
+    """The real DataSinkRegistry forwards exact succeeded indices from the sink.
+
+    G2 end-to-end: a partial Redis failure (e1 fails, e2 succeeds) must surface
+    as the exact index {1}, not a count, so the poller fans out the event Heber
+    actually received and not the "first N" approximation.
+    """
+    from gateway.core.data_sink import DataSinkRegistry
+
+    class _PartialIndexedSink:
+        name = "partial_redis"
+        record_publish_metrics = True
+
+        async def publish_batch_indexed(self, messages: list[tuple[str, dict]]) -> set[int]:
+            # e1 (index 0) failed in the Redis pipeline; e2 (index 1) landed.
+            return {1}
+
+        async def health_check(self) -> bool:
+            return True
+
+    registry = DataSinkRegistry()
+    registry._sinks.append(_PartialIndexedSink())  # type: ignore[arg-type]
+
+    indices = await registry.publish_all_batch_indexed(
+        [(HEBER_STREAM, {"event_id": "e1"}), (HEBER_STREAM, {"event_id": "e2"})]
+    )
+    assert indices == {1}
+
+
+@pytest.mark.asyncio
+async def test_eod_congress_event_ids_are_content_stable_across_runs() -> None:
+    """Re-fetching the same congress trade must yield the same event_id."""
+    poller = UWPoller()
+
+    trade = {
+        "ticker": "AAPL",
+        "name": "Jane Doe",
+        "transaction_date": "2026-06-09",
+        "filed_at_date": "2026-06-10",
+    }
+
+    class _Provider:
+        async def get_congress_trades(self, limit: int = 200):  # noqa: ARG002
+            return [dict(trade)]
+
+    poller._provider = _Provider()
+
+    run_event_ids: list[str] = []
+
+    async def _capture(**kwargs):
+        run_event_ids.extend(e["event_id"] for e in kwargs["envelopes"])
+        return len(kwargs["envelopes"]), 0
+
+    poller._publish_envelopes = _capture  # type: ignore[method-assign]
+    await poller._poll_eod_congress_trades(sink_registry=_FakeSinkRegistry())
+    await poller._poll_eod_congress_trades(sink_registry=_FakeSinkRegistry())
+
+    assert len(run_event_ids) == 2
+    assert run_event_ids[0] == run_event_ids[1]
+
+
+@pytest.mark.asyncio
+async def test_eod_congress_fetch_retries_transient_error() -> None:
+    """A single transient 5xx on the EOD congress fetch is retried, not dropped."""
+    import httpx
+
+    poller = UWPoller()
+
+    async def _publish(**kwargs):
+        return len(kwargs["envelopes"]), 0
+
+    poller._publish_envelopes = _publish  # type: ignore[method-assign]
+
+    calls = {"n": 0}
+
+    def _make_503() -> httpx.HTTPStatusError:
+        request = httpx.Request("GET", "https://api.unusualwhales.com/api/congress/recent-trades")
+        response = httpx.Response(503, request=request)
+        return httpx.HTTPStatusError("503", request=request, response=response)
+
+    class _FlakyProvider:
+        async def get_congress_trades(self, limit: int = 200):  # noqa: ARG002
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _make_503()
+            return [{"ticker": "AAPL", "name": "Jane Doe", "transaction_date": "2026-06-09"}]
+
+    poller._provider = _FlakyProvider()
+
+    published = await poller._poll_eod_congress_trades(sink_registry=_FakeSinkRegistry())
+
+    assert calls["n"] == 2  # retried once after the 503
+    assert published == 1
+
+
+@pytest.mark.asyncio
+async def test_eod_historic_option_volume_uses_equity_instrument_key() -> None:
+    """Per-underlying option-volume rows carry expiry but are not OCC contracts."""
+    poller = UWPoller()
+
+    class _Provider:
+        async def get_historic_option_volume(self, ticker: str):
+            return [
+                {
+                    "symbol": ticker,
+                    "date": "2026-06-10",
+                    "expiry": "2026-06-19",
+                    "volume": 1000,
+                    "timestamp": "2026-06-10T21:00:00Z",
+                }
+            ]
+
+    poller._provider = _Provider()
+    poller._redis_dedupe = None
+    sink = _FakeSinkRegistry()
+
+    published = await poller._poll_eod_option_volume(sink_registry=sink, ticker="SPY")
+
+    assert published == 1
+    envelope = sink.calls[0][1]
+    assert envelope["instrument_type"] == "equity"
+    assert envelope["instrument_key"] == "equity:SPY"
+
+
 @pytest.mark.asyncio
 async def test_poll_darkpool_emits_canonical_darkpool_feed(monkeypatch: pytest.MonkeyPatch) -> None:
     poller = UWPoller()
@@ -209,3 +482,119 @@ async def test_runtime_snapshot_includes_sink_available() -> None:
     snapshot = poller.get_runtime_snapshot()
     assert "sink_available" in snapshot
     assert snapshot["sink_available"] is False  # No sink configured by default
+
+
+@pytest.mark.asyncio
+async def test_on_flow_envelope_tap_fires_only_for_published_flow_envelopes() -> None:
+    """The flow tap is invoked once per envelope actually written to Redis.
+
+    Deduped envelopes (seen / redis hit) are NOT tapped — push must mirror the
+    heber:events publish set exactly so Orion's parity holds.
+    """
+    poller = UWPoller()
+    poller._mark_seen("dup1")  # pre-seen → deduped, must not be tapped
+    poller._redis_dedupe = None
+    sink = _FakeSinkRegistry()
+
+    tapped: list[dict] = []
+
+    async def _tap(envelope: dict) -> None:
+        tapped.append(envelope)
+
+    poller.on_flow_envelope = _tap
+
+    envelopes = [
+        {"event_id": "dup1", "feed": "flow_alerts", "symbol": "AAPL"},
+        {"event_id": "new1", "feed": "flow_alerts", "symbol": "TSLA"},
+        {"event_id": "new2", "feed": "flow_alerts", "symbol": "NVDA"},
+    ]
+
+    published, duplicates = await poller._publish_envelopes(
+        sink_registry=sink,
+        envelopes=envelopes,
+        dedupe_prefix="uw:flow",
+        missing_event_log="uw_flow_missing_event_id",
+        on_published=poller.on_flow_envelope,
+    )
+
+    assert published == 2
+    assert duplicates == 1
+    assert [e["event_id"] for e in tapped] == ["new1", "new2"]
+
+
+@pytest.mark.asyncio
+async def test_tap_failure_does_not_break_publish_accounting() -> None:
+    poller = UWPoller()
+    poller._redis_dedupe = None
+    sink = _FakeSinkRegistry()
+
+    async def _boom(_envelope: dict) -> None:
+        raise RuntimeError("fan-out down")
+
+    published, duplicates = await poller._publish_envelopes(
+        sink_registry=sink,
+        envelopes=[{"event_id": "e1", "feed": "flow_alerts", "symbol": "AAPL"}],
+        dedupe_prefix="uw:flow",
+        missing_event_log="uw_flow_missing_event_id",
+        on_published=_boom,
+    )
+
+    assert published == 1
+    assert duplicates == 0
+
+
+@pytest.mark.asyncio
+async def test_darkpool_publish_passes_no_flow_tap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the flow path forwards on_published; darkpool must pass None."""
+    poller = UWPoller()
+
+    class _FakeProvider:
+        async def get_darkpool_recent(self, limit: int = 200):  # noqa: ARG002
+            return [SimpleNamespace(model_dump=lambda: {"symbol": "AAPL", "ts_event": "2026-02-10T14:30:00Z"})]
+
+    captured: dict[str, Any] = {}
+
+    async def _capture_publish(**kwargs):
+        captured["on_published"] = kwargs.get("on_published")
+        return len(kwargs["envelopes"]), 0
+
+    poller._provider = cast(Any, _FakeProvider())
+    monkeypatch.setattr(poller, "_publish_envelopes", _capture_publish)
+
+    await poller._poll_darkpool(sink_registry=_FakeSinkRegistry(), limit=1)
+    assert captured["on_published"] is None
+
+
+@pytest.mark.asyncio
+async def test_flow_publish_forwards_flow_tap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flow path forwards poller.on_flow_envelope to _publish_envelopes."""
+    poller = UWPoller()
+
+    async def _tap(_env: dict) -> None:
+        return None
+
+    poller.on_flow_envelope = _tap
+
+    class _FakeProvider:
+        async def get_flow_alerts(self, limit: int = 200):  # noqa: ARG002
+            return [
+                SimpleNamespace(
+                    model_dump=lambda: {
+                        "ticker": "AAPL",
+                        "option_chain": "AAPL240119C00190000",
+                        "timestamp": "2026-02-10T14:30:00Z",
+                    }
+                )
+            ]
+
+    captured: dict[str, Any] = {}
+
+    async def _capture_publish(**kwargs):
+        captured["on_published"] = kwargs.get("on_published")
+        return len(kwargs["envelopes"]), 0
+
+    poller._provider = cast(Any, _FakeProvider())
+    monkeypatch.setattr(poller, "_publish_envelopes", _capture_publish)
+
+    await poller._poll_flow_alerts(sink_registry=_FakeSinkRegistry(), limit=1)
+    assert captured["on_published"] is _tap

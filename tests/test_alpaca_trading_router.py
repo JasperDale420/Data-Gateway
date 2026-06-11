@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -198,6 +199,171 @@ async def test_get_orders_splits_symbols_and_sets_count(
 
     assert provider.orders_calls[0]["symbols"] == ["AAPL", "MSFT"]
     assert response["meta"]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_orders_threads_after_until_to_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O2b: after/until date filters are passed through to the provider so Orion
+    can page the submitted_at window for same-day fill coverage."""
+    from datetime import UTC, datetime
+
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    after = datetime(2026, 6, 10, 0, 0, tzinfo=UTC)
+    until = datetime(2026, 6, 11, 0, 0, tzinfo=UTC)
+    await trading.get_orders(
+        status="all",
+        limit=500,
+        direction="asc",
+        symbols=None,
+        nested=True,
+        side=None,
+        after=after,
+        until=until,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    call = provider.orders_calls[0]
+    assert call["after"] == after
+    assert call["until"] == until
+
+
+@pytest.mark.asyncio
+async def test_get_orders_after_until_passed_as_none_unaffects_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O2b additive: after/until=None threads None through (existing callers unaffected)."""
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    await trading.get_orders(
+        status="open",
+        limit=50,
+        direction="desc",
+        symbols=None,
+        nested=True,
+        side=None,
+        after=None,
+        until=None,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    call = provider.orders_calls[0]
+    assert call["after"] is None
+    assert call["until"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_field", ["after", "until"])
+async def test_get_orders_rejects_naive_after_until(
+    monkeypatch: pytest.MonkeyPatch,
+    bad_field: str,
+) -> None:
+    """G8: a naive (tz-unaware) after/until is rejected with 400 GW-E4007 and
+    never reaches the provider — a naive value serializes as UTC and silently
+    shifts the submitted_at window, missing fills."""
+    from datetime import UTC, datetime
+
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    naive = datetime(2026, 6, 10, 0, 0)  # noqa: DTZ001 — intentionally naive
+    aware = datetime(2026, 6, 11, 0, 0, tzinfo=UTC)
+    after = naive if bad_field == "after" else aware
+    until = naive if bad_field == "until" else aware
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_orders(
+            status="all",
+            limit=500,
+            direction="asc",
+            symbols=None,
+            nested=True,
+            side=None,
+            after=after,
+            until=until,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "GW-E4007"
+    assert bad_field in exc.value.detail["message"]
+    assert provider.orders_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_orders_rejects_after_later_than_until(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G8: after > until is a degenerate window — reject with 400 GW-E4007 and
+    don't call the provider."""
+    from datetime import UTC, datetime
+
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    after = datetime(2026, 6, 11, 0, 0, tzinfo=UTC)
+    until = datetime(2026, 6, 10, 0, 0, tzinfo=UTC)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_orders(
+            status="all",
+            limit=500,
+            direction="asc",
+            symbols=None,
+            nested=True,
+            side=None,
+            after=after,
+            until=until,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "GW-E4007"
+    assert provider.orders_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_orders_valid_tz_aware_pair_passes_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G8: a valid tz-aware after<=until pair passes validation and threads
+    through to the provider's GetOrdersRequest unchanged."""
+    from datetime import UTC, datetime
+
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    after = datetime(2026, 6, 10, 0, 0, tzinfo=UTC)
+    until = datetime(2026, 6, 11, 0, 0, tzinfo=UTC)
+    await trading.get_orders(
+        status="all",
+        limit=500,
+        direction="asc",
+        symbols=None,
+        nested=True,
+        side=None,
+        after=after,
+        until=until,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    call = provider.orders_calls[0]
+    assert call["after"] == after
+    assert call["until"] == until
 
 
 @pytest.mark.asyncio
@@ -2146,3 +2312,349 @@ def test_trading_call_timeout_defaults_keep_writes_slacker_than_reads() -> None:
     assert settings.alpaca_trading_http_timeout_seconds >= settings.alpaca_trading_call_timeout_seconds, (
         "HTTP timeout must be >= read call timeout"
     )
+
+
+# ---------------------------------------------------------------------------
+# M0.4 — Trading-route authorization characterization. These pin TODAY's
+# observable authz behavior at the HTTP layer (require_api_key →
+# _enforce_trading_role in gateway/api/deps.py) BEFORE M1 introduces a finer
+# 'trading' permission for granted clients. The role gate currently admits any
+# client whose role is trader/admin/super_admin and 403s everyone else
+# (GW-E2008).
+#
+# Robustness to the M1 permission addition:
+#   - The "granted" client is configured with role=trader AND a forward-compat
+#     ``trading`` permission marker (a ``trading`` feed plus a ``trading: true``
+#     key — unknown keys are ignored by the loader today, see
+#     gateway/core/auth.ClientAuthenticator._load_clients). So whether M1 keys
+#     the new gate off the role, a feed, or a dedicated permission, this client
+#     keeps its trading rights and these success assertions stay valid.
+#   - The "denied" client has role=client and no trading marker, so it is
+#     denied under both today's role gate and any finer M1 gate.
+#
+# The authz lives in require_api_key, NOT in the route handlers — so these go
+# through the real FastAPI TestClient stack (auth → middleware → router) rather
+# than invoking the route coroutines directly like the unit tests above.
+# ---------------------------------------------------------------------------
+
+_AUTHZ_GRANTED_KEY = "gw_m04_granted_trader_key"  # pragma: allowlist secret
+_AUTHZ_DENIED_KEY = "gw_m04_denied_client_key"  # pragma: allowlist secret
+# M1: a trader-role client that LACKS the new ``trading`` capability. It clears
+# the coarse role gate but must be 403'd on mutating order/position routes.
+_AUTHZ_TRADER_NO_CAP_KEY = "gw_m1_trader_no_trading_cap_key"  # pragma: allowlist secret
+
+
+@pytest.fixture
+def _authz_clients(tmp_path: Path):
+    """Mount a real authenticator with two clients exercising the trading gate.
+
+    - granted: role=trader plus a forward-compatible ``trading`` permission
+      marker so it retains trading rights after M1's finer permission lands.
+    - denied: role=client with no trading marker — denied today and post-M1.
+    """
+    from gateway.api.deps import get_authenticator
+    from gateway.core.auth import ClientAuthenticator
+    from gateway.main import app as _app
+
+    clients_file = tmp_path / "authz_clients.yaml"
+    clients_file.write_text(
+        f"""
+clients:
+  - id: m04-granted-trader
+    key: "{_AUTHZ_GRANTED_KEY}"
+    role: trader
+    permissions:
+      providers: [alpaca]
+      feeds: [bars, trading]
+      trading: true
+      max_symbols: 100
+      rate_limit: 600
+    enabled: true
+  - id: m04-denied-client
+    key: "{_AUTHZ_DENIED_KEY}"
+    role: client
+    permissions:
+      providers: [alpaca]
+      feeds: [bars]
+      max_symbols: 100
+      rate_limit: 600
+    enabled: true
+  - id: m1-trader-no-trading-cap
+    key: "{_AUTHZ_TRADER_NO_CAP_KEY}"
+    role: trader
+    permissions:
+      providers: [alpaca]
+      feeds: [bars]
+      max_symbols: 100
+      rate_limit: 600
+    enabled: true
+"""
+    )
+    authenticator = ClientAuthenticator(clients_file)
+    # override_deps (autouse) already overrode get_authenticator with the
+    # default test authenticator; replace it with ours for the duration.
+    previous = _app.dependency_overrides.get(get_authenticator)
+    _app.dependency_overrides[get_authenticator] = lambda: authenticator
+    try:
+        yield
+    finally:
+        if previous is not None:
+            _app.dependency_overrides[get_authenticator] = previous
+        else:
+            _app.dependency_overrides.pop(get_authenticator, None)
+
+
+def _authz_headers(key: str) -> dict[str, str]:
+    return {"X-Gateway-Key": key}
+
+
+def _stub_trading_provider(test_registry) -> Any:
+    """Wire the mock provider so write-class trading calls return cleanly."""
+    from unittest.mock import MagicMock
+
+    provider = test_registry.get.return_value
+    provider.create_order = MagicMock(return_value={"id": "ord-m04", "status": "accepted"})
+    provider.cancel_order = MagicMock(return_value=True)
+    provider.close_position = MagicMock(return_value={"id": "close-m04", "status": "accepted"})
+    return provider
+
+
+def _stub_alpaca_account_mutation_provider(test_registry) -> Any:
+    """Wire account/watchlist mutation calls that must be blocked by authz."""
+    from unittest.mock import MagicMock
+
+    provider = _stub_trading_provider(test_registry)
+    provider.set_account_configurations = MagicMock(return_value={"suspend_trade": True})
+    provider.create_watchlist = MagicMock(return_value={"id": "wl-1", "name": "Test"})
+    provider.update_watchlist = MagicMock(return_value={"id": "wl-1", "name": "Updated"})
+    provider.delete_watchlist = MagicMock(return_value=True)
+    provider.add_asset_to_watchlist = MagicMock(return_value={"symbol": "AAPL"})
+    provider.remove_asset_from_watchlist = MagicMock(return_value={"symbol": "AAPL"})
+    return provider
+
+
+def test_authz_granted_trader_can_create_order(client, test_registry, _authz_clients) -> None:
+    """A client that retains trading rights (role=trader + trading permission
+    marker) CAN place an order. Pins the 200 success envelope shape."""
+    _stub_trading_provider(test_registry)
+
+    response = client.post(
+        f"{ALPACA_ROUTER_PREFIX}/orders?symbol=AAPL&side=buy&qty=1",
+        headers=_authz_headers(_AUTHZ_GRANTED_KEY),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["id"] == "ord-m04"
+    assert body["data"]["status"] == "accepted"
+    # Idempotency contract surfaces the effective key in meta — gateway-minted
+    # here because the caller omitted client_order_id.
+    assert body["meta"]["provider"] == "alpaca"
+    assert body["meta"]["client_order_id"].startswith("dg-")
+    assert body["meta"]["client_order_id_source"] == "gateway"
+
+
+def test_authz_granted_trader_can_cancel_order(client, test_registry, _authz_clients) -> None:
+    """A trading-rights client CAN cancel an order. Pins the 200 cancel shape."""
+    _stub_trading_provider(test_registry)
+
+    response = client.delete(
+        f"{ALPACA_ROUTER_PREFIX}/orders/ord-m04",
+        headers=_authz_headers(_AUTHZ_GRANTED_KEY),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"] == {"order_id": "ord-m04", "cancelled": True}
+    assert body["meta"]["provider"] == "alpaca"
+
+
+def test_authz_granted_trader_can_close_position(client, test_registry, _authz_clients) -> None:
+    """A trading-rights client CAN close a position. Pins the 200 close shape,
+    including the upper-cased symbol echoed in meta."""
+    _stub_trading_provider(test_registry)
+
+    response = client.delete(
+        f"{ALPACA_ROUTER_PREFIX}/positions/aapl",
+        headers=_authz_headers(_AUTHZ_GRANTED_KEY),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["id"] == "close-m04"
+    assert body["meta"]["provider"] == "alpaca"
+    assert body["meta"]["symbol"] == "AAPL"
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("post", f"{ALPACA_ROUTER_PREFIX}/orders?symbol=AAPL&side=buy&qty=1"),
+        ("delete", f"{ALPACA_ROUTER_PREFIX}/orders/ord-m04"),
+        ("delete", f"{ALPACA_ROUTER_PREFIX}/positions/AAPL"),
+    ],
+)
+def test_authz_denied_client_role_gets_403(client, test_registry, _authz_clients, method: str, path: str) -> None:
+    """A non-trader (role=client) key is forbidden from the write-class trading
+    endpoints with 403 GW-E2008, and the provider is NEVER reached. Pins the
+    denial code and the structured error envelope.
+
+    Scoped to write endpoints (POST orders / DELETE orders / DELETE positions):
+    these are non-cacheable so they reach the route-level require_api_key gate
+    directly. Cacheable GET trading reads (e.g. /account) are authenticated by
+    CacheMiddleware against the process-global authenticator, which the
+    per-test DI override does not reach — that is a separate middleware-auth
+    concern, not the route-level trading-role gate under characterization here.
+    """
+    provider = _stub_trading_provider(test_registry)
+
+    response = getattr(client, method)(path, headers=_authz_headers(_AUTHZ_DENIED_KEY))
+
+    assert response.status_code == 403, response.text
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "GW-E2008"
+    assert body["error"]["message"] == "Trading access required"
+    # Backward-compat detail mirror.
+    assert body["detail"]["code"] == "GW-E2008"
+    # The role gate rejects BEFORE the handler runs — no order/cancel/close
+    # ever hit the provider.
+    provider.create_order.assert_not_called()
+    provider.cancel_order.assert_not_called()
+    provider.close_position.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# M1 — fine-grained ``trading`` capability gate. Order-/position-mutating
+# routes (POST orders, PATCH/DELETE order, DELETE/close positions) now require
+# permissions.trading == true ON TOP of the trader role. A trader-role client
+# WITHOUT the capability clears _enforce_trading_role but is 403'd by
+# _enforce_trading_capability (GW-E2009) before the handler runs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("post", f"{ALPACA_ROUTER_PREFIX}/orders?symbol=AAPL&side=buy&qty=1"),
+        ("delete", f"{ALPACA_ROUTER_PREFIX}/orders/ord-m1"),
+        ("patch", f"{ALPACA_ROUTER_PREFIX}/orders/ord-m1?qty=2"),
+        ("delete", f"{ALPACA_ROUTER_PREFIX}/positions/AAPL"),
+    ],
+)
+def test_authz_trader_without_trading_capability_gets_403(
+    client, test_registry, _authz_clients, method: str, path: str
+) -> None:
+    """A trader-role key LACKING the ``trading`` capability is 403'd on every
+    mutating order/position route with GW-E2009, and the provider is never
+    reached."""
+    from unittest.mock import MagicMock
+
+    provider = _stub_trading_provider(test_registry)
+    provider.replace_order = MagicMock(return_value={"id": "ord-m1", "status": "replaced"})
+
+    response = getattr(client, method)(path, headers=_authz_headers(_AUTHZ_TRADER_NO_CAP_KEY))
+
+    assert response.status_code == 403, response.text
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "GW-E2009"
+    assert body["error"]["message"] == "Trading capability required"
+    assert body["detail"]["code"] == "GW-E2009"
+    provider.create_order.assert_not_called()
+    provider.cancel_order.assert_not_called()
+    provider.replace_order.assert_not_called()
+    provider.close_position.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("patch", f"{ALPACA_ROUTER_PREFIX}/account/configurations?suspend_trade=true"),
+        ("post", f"{ALPACA_ROUTER_PREFIX}/watchlists?name=blocked&symbols=AAPL"),
+        ("put", f"{ALPACA_ROUTER_PREFIX}/watchlists/wl-1?name=blocked"),
+        ("delete", f"{ALPACA_ROUTER_PREFIX}/watchlists/wl-1"),
+        ("post", f"{ALPACA_ROUTER_PREFIX}/watchlists/wl-1/assets?symbol=AAPL"),
+        ("delete", f"{ALPACA_ROUTER_PREFIX}/watchlists/wl-1/assets/AAPL"),
+    ],
+)
+def test_authz_trader_without_trading_capability_cannot_mutate_alpaca_account_state(
+    client, test_registry, _authz_clients, method: str, path: str
+) -> None:
+    """Trader-role clients without ``trading: true`` must not mutate Alpaca state
+    through account configuration or watchlist endpoints either."""
+    provider = _stub_alpaca_account_mutation_provider(test_registry)
+
+    response = getattr(client, method)(path, headers=_authz_headers(_AUTHZ_TRADER_NO_CAP_KEY))
+
+    assert response.status_code == 403, response.text
+    body = response.json()
+    assert body["error"]["code"] == "GW-E2009"
+    provider.set_account_configurations.assert_not_called()
+    provider.create_watchlist.assert_not_called()
+    provider.update_watchlist.assert_not_called()
+    provider.delete_watchlist.assert_not_called()
+    provider.add_asset_to_watchlist.assert_not_called()
+    provider.remove_asset_from_watchlist.assert_not_called()
+
+
+def test_authz_trader_without_trading_capability_can_create_order_with_cap(
+    client, test_registry, _authz_clients
+) -> None:
+    """The granted client carries ``trading: true`` and CAN still place an
+    order under the new capability gate — proving the gate admits, not just
+    denies."""
+    _stub_trading_provider(test_registry)
+
+    response = client.post(
+        f"{ALPACA_ROUTER_PREFIX}/orders?symbol=AAPL&side=buy&qty=1",
+        headers=_authz_headers(_AUTHZ_GRANTED_KEY),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["id"] == "ord-m04"
+
+
+def test_real_config_grants_trading_capability_to_kairos_cerberus_3roses() -> None:
+    """The live clients.yaml must grant ``trading: true`` to exactly the three
+    order-placing systems (kairos, cerberus, 3roses) and withhold it from the
+    read-only trader clients (orion, atlas, orbit)."""
+    from gateway.core.auth import ClientAuthenticator
+
+    config_path = Path(__file__).resolve().parents[1] / "config" / "clients.yaml"
+    auth = ClientAuthenticator(config_path)
+
+    for client_id in ("kairos", "cerberus", "3roses"):
+        c = auth.get_client(client_id)
+        assert c is not None, client_id
+        assert c.permissions.trading is True, f"{client_id} should have trading capability"
+
+    for client_id in ("orion", "atlas", "orbit"):
+        c = auth.get_client(client_id)
+        assert c is not None, client_id
+        assert c.permissions.trading is False, f"{client_id} should NOT have trading capability"
+
+
+def test_real_config_restricts_plaintext_to_powerless_test_client() -> None:
+    """The dev/test client stays enabled for fixtures but must be powerless, and
+    every real client must use a hashed key.
+
+    The test client is the credential the test suite authenticates with (see
+    conftest), so it cannot be disabled here. The security invariant that
+    matters is that it carries no trading/admin capability and that the test
+    client is the *only* client permitted to use a plaintext key.
+    """
+    from gateway.core.auth import ClientAuthenticator
+
+    config_path = Path(__file__).resolve().parents[1] / "config" / "clients.yaml"
+    auth = ClientAuthenticator(config_path)
+
+    test_client = auth.get_client("test")
+    assert test_client is not None
+    assert test_client.role == "client"  # not trader/admin/super_admin
+    assert test_client.permissions.trading is False
+    # Only the powerless test client may use a plaintext key; all real clients hashed.
+    assert set(auth._plaintext_keys.values()) <= {"test"}
