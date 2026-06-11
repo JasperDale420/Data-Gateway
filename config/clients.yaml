@@ -1,7 +1,7 @@
 clients:
 - enabled: true
   id: cerberus
-  key: gw_cerberus_dev_key_12345
+  key_hash: sha256:14d6b06aec2e093731e33ee81d3aa1a612e6025a861be44dbf4a8fa81b6f4c44  # pragma: allowlist secret
   permissions:
     feeds:
     - bars
@@ -17,10 +17,11 @@ clients:
     - alphavantage
     - sec
     rate_limit: 600
+    trading: true
   role: trader
 - enabled: true
   id: 3roses
-  key: gw_3roses_trading_key_98765
+  key_hash: sha256:bd06fec769dfad9dfa433ce9c7832ddffb06de5b2a06029cae1f5e61f7773ee6  # pragma: allowlist secret
   permissions:
     feeds:
     - bars
@@ -31,6 +32,7 @@ clients:
     providers:
     - alpaca
     rate_limit: 6000
+    trading: true
   role: trader
 - enabled: true
   id: orion
@@ -54,7 +56,7 @@ clients:
   role: trader
 - enabled: true
   id: atlas
-  key: gw_atlas_research_key_24680
+  key_hash: sha256:171ff654a02c1eb678bce3671940aa5df8bda018e6850b3445589158b0c967fa  # pragma: allowlist secret
   permissions:
     feeds:
     - bars
@@ -92,7 +94,7 @@ clients:
   role: trader
 - enabled: true
   id: orbit
-  key: gw_orbit_trading_key_77742
+  key_hash: sha256:cfc93ddd13dca95a5b67cd0de81110efba2e7d9605d81dacca22d9294d0918c1  # pragma: allowlist secret
   permissions:
     feeds:
     - bars
@@ -129,10 +131,11 @@ clients:
     - alpaca
     - uw
     rate_limit: 600
+    trading: true
   role: trader
 - enabled: true
   id: heber-watch
-  key: gw_heber_watch_key_44931
+  key_hash: sha256:6e9a33c16ff0190a2e60a640b85bee30cb4fed9cccb80a711237eb4587428cb6  # pragma: allowlist secret
   permissions:
     feeds:
     - bars

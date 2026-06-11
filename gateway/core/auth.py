@@ -1,6 +1,7 @@
 """Client authentication and authorization."""
 
 import hashlib
+import hmac
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -19,6 +20,7 @@ class ClientPermissions:
     max_symbols: int = 100
     rate_limit: int = 60  # requests per minute
     ws_subscriptions_max: int = 500  # max WebSocket subscriptions
+    trading: bool = False  # capability to place/mutate orders and positions
 
 
 @dataclass
@@ -64,6 +66,7 @@ class ClientAuthenticator:
                 feeds=client_data.get("permissions", {}).get("feeds", []),
                 max_symbols=client_data.get("permissions", {}).get("max_symbols", 100),
                 rate_limit=client_data.get("permissions", {}).get("rate_limit", 60),
+                trading=bool(client_data.get("permissions", {}).get("trading", False)),
             )
 
             client = Client(
@@ -124,10 +127,15 @@ class ClientAuthenticator:
         # Check plaintext keys (dev mode)
         client_id = self._plaintext_keys.get(api_key)
 
-        # Check hashed keys (production mode)
+        # Check hashed keys (production mode). Compare the computed digest
+        # against each stored hash with hmac.compare_digest so a timing
+        # side-channel can't be used to recover a valid key byte-by-byte.
         if not client_id:
             key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-            client_id = self._hashed_keys.get(key_hash)
+            for stored_hash, stored_client_id in self._hashed_keys.items():
+                if hmac.compare_digest(key_hash, stored_hash):
+                    client_id = stored_client_id
+                    break
 
         if not client_id:
             # Never log raw key material. SHA256-prefix gives correlation ability

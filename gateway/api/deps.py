@@ -16,9 +16,11 @@ from gateway.core.connections import ConnectionManager
 # Re-exported from core.globals for backward compatibility.
 # All API-layer callers import these from here.
 from gateway.core.globals import (
+    get_flow_fanout,  # noqa: F401
     get_multiplexer,  # noqa: F401
     get_registry,  # noqa: F401
     get_sink_registry,  # noqa: F401
+    set_flow_fanout,  # noqa: F401
     set_multiplexer,  # noqa: F401
     set_registry,  # noqa: F401
     set_sink_registry,  # noqa: F401
@@ -110,6 +112,8 @@ def require_api_key(
     _enforce_admin_role(request.url.path, client)
     # Enforce role-based access for trading endpoints
     _enforce_trading_role(request.url.path, client)
+    # Enforce the fine-grained `trading` capability on order-/position-mutating routes
+    _enforce_trading_capability(request.method, request.url.path, client)
 
     # Enforce provider permissions based on path
     provider = _extract_provider_from_path(request.url.path)
@@ -154,6 +158,32 @@ def _enforce_trading_role(path: str, client: Client) -> None:
                 detail={
                     "code": "GW-E2008",
                     "message": "Trading access required",
+                },
+            )
+
+
+def _enforce_trading_capability(method: str, path: str, client: Client) -> None:
+    """Require the fine-grained ``trading`` capability on Alpaca state mutations.
+
+    Read-only trading routes (GET account/clock/calendar/positions/portfolio)
+    stay at the coarser ``_enforce_trading_role`` gate. Routes that place,
+    replace, cancel, close, or otherwise mutate Alpaca account/watchlist state
+    demand ``trading: true`` so trader-role observers cannot move money or
+    alter broker account settings.
+    """
+    mutating_prefixes = (
+        "/api/v1/alpaca/orders",
+        "/api/v1/alpaca/positions",
+        "/api/v1/alpaca/account/configurations",
+        "/api/v1/alpaca/watchlists",
+    )
+    if method in ("POST", "PATCH", "PUT", "DELETE") and path.startswith(mutating_prefixes):
+        if not client.permissions.trading:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "GW-E2009",
+                    "message": "Trading capability required",
                 },
             )
 
