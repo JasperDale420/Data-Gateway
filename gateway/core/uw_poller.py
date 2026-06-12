@@ -728,7 +728,7 @@ class UWPoller(DedupMixin, BasePoller):
         # Already polled today
         if self._last_eod_date == today_str:
             return False
-        if self._eod_state.should_skip(today_str):
+        if self._eod_state.should_defer(today_str):
             return False
 
         # Only fire after the configured time

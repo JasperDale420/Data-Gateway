@@ -1,3 +1,5 @@
+import json
+import logging
 from datetime import UTC, datetime, timedelta
 
 from gateway.core.uw_eod_state import UwEodRunState, UwEodStateStore
@@ -38,5 +40,31 @@ def test_eod_state_claim_allows_retry_after_stale_running_marker(tmp_path):
     )
 
     store = UwEodStateStore(path, stale_after_seconds=60)
+
+    assert store.claim("2026-06-12") is True
+
+
+def test_eod_state_claim_lock_is_exclusive_across_store_instances(tmp_path):
+    path = tmp_path / "uw_eod_state.json"
+    first = UwEodStateStore(path, stale_after_seconds=3600)
+    second = UwEodStateStore(path, stale_after_seconds=3600)
+
+    with first._claim_lock(blocking=True) as first_acquired:
+        assert first_acquired is True
+        with second._claim_lock(blocking=False) as second_acquired:
+            assert second_acquired is False
+
+
+def test_eod_state_invalid_json_is_treated_as_missing_and_logged(tmp_path, caplog):
+    path = tmp_path / "uw_eod_state.json"
+    path.write_text("{not valid json")
+    store = UwEodStateStore(path, stale_after_seconds=3600)
+
+    with caplog.at_level(logging.WARNING, logger="data-gateway"):
+        assert store.should_skip("2026-06-12") is False
+
+    records = [json.loads(record.getMessage()) for record in caplog.records if record.getMessage().startswith("{")]
+    warnings = [record for record in records if record.get("message") == "uw_eod_state_read_failed"]
+    assert warnings
 
     assert store.claim("2026-06-12") is True

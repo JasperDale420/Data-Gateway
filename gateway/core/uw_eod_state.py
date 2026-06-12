@@ -1,7 +1,10 @@
 """Persistent run-state guard for Unusual Whales EOD polling."""
 
+import fcntl
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -33,41 +36,78 @@ class UwEodStateStore:
         state = self._read_state()
         return state is not None and state.trading_date == trading_date and state.status == "completed"
 
+    def should_defer(self, trading_date: str) -> bool:
+        """Return True when this trading date is completed or already running."""
+        state = self._read_state()
+        if state is None or state.trading_date != trading_date:
+            return False
+        if state.status == "completed":
+            return True
+        return not self._is_running_stale(state)
+
     def claim(self, trading_date: str) -> bool:
         """Claim an EOD run unless the same trading date is done or actively running."""
-        state = self._read_state()
-        if state is not None and state.trading_date == trading_date:
-            if state.status == "completed":
-                return False
-            if not self._is_running_stale(state):
+        with self._claim_lock() as acquired:
+            if not acquired:
                 return False
 
-        self._write_state(
-            UwEodRunState(
-                trading_date=trading_date,
-                status="running",
-                started_at=datetime.now(UTC).isoformat(),
+            state = self._read_state()
+            if state is not None and state.trading_date == trading_date:
+                if state.status == "completed":
+                    return False
+                if not self._is_running_stale(state):
+                    return False
+
+            self._write_state(
+                UwEodRunState(
+                    trading_date=trading_date,
+                    status="running",
+                    started_at=datetime.now(UTC).isoformat(),
+                )
             )
-        )
-        return True
+            return True
 
     def mark_completed(self, trading_date: str, totals: dict) -> None:
         """Persist completion for the trading date, preserving the original start time."""
-        state = self._read_state()
-        started_at = (
-            state.started_at
-            if state is not None and state.trading_date == trading_date
-            else datetime.now(UTC).isoformat()
-        )
-        self._write_state(
-            UwEodRunState(
-                trading_date=trading_date,
-                status="completed",
-                started_at=started_at,
-                completed_at=datetime.now(UTC).isoformat(),
-                totals=totals,
+        with self._claim_lock() as _acquired:
+            state = self._read_state()
+            started_at = (
+                state.started_at
+                if state is not None and state.trading_date == trading_date
+                else datetime.now(UTC).isoformat()
             )
-        )
+            self._write_state(
+                UwEodRunState(
+                    trading_date=trading_date,
+                    status="completed",
+                    started_at=started_at,
+                    completed_at=datetime.now(UTC).isoformat(),
+                    totals=totals,
+                )
+            )
+
+    @contextmanager
+    def _claim_lock(self, blocking: bool = True) -> Iterator[bool]:
+        """Hold an exclusive lock for read-check-write state transitions."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self._path.with_name(f"{self._path.name}.lock")
+        lock_file = lock_path.open("a+", encoding="utf-8")
+        acquired = False
+        try:
+            operation = fcntl.LOCK_EX
+            if not blocking:
+                operation |= fcntl.LOCK_NB
+            try:
+                fcntl.flock(lock_file.fileno(), operation)
+            except BlockingIOError:
+                yield False
+                return
+            acquired = True
+            yield True
+        finally:
+            if acquired:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
 
     def _read_state(self) -> UwEodRunState | None:
         if not self._path.exists():

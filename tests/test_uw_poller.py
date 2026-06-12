@@ -7,7 +7,7 @@ from typing import Any, cast
 import pytest
 
 import gateway.core.uw_poller as uw_poller_module
-from gateway.core.uw_eod_state import UwEodStateStore
+from gateway.core.uw_eod_state import UwEodRunState, UwEodStateStore
 from gateway.core.uw_poller import HEBER_STREAM, UWPoller, get_uw_poller_snapshot
 
 
@@ -442,6 +442,30 @@ def test_should_poll_eod_uses_persistent_completed_state(tmp_path) -> None:
     assert poller._should_poll_eod() is False
 
 
+def test_should_poll_eod_skips_active_running_marker_without_claim_log(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "uw_eod_state.json"
+    today = uw_poller_module.datetime.now(uw_poller_module.ET).strftime("%Y-%m-%d")
+    store = UwEodStateStore(path, stale_after_seconds=3600)
+    assert store.claim(today) is True
+
+    poller = UWPoller(eod_hour=0, eod_minute=0)
+    poller._calendar = SimpleNamespace(is_trading_day=lambda _date: True)
+    poller._eod_state = UwEodStateStore(path, stale_after_seconds=3600)
+
+    info_messages: list[str] = []
+
+    def _capture_info(message: str, **_kwargs) -> None:
+        info_messages.append(message)
+
+    monkeypatch.setattr(uw_poller_module.logger, "info", _capture_info)
+
+    assert poller._should_poll_eod() is False
+    assert "uw_eod_skipped_persistent_state" not in info_messages
+
+
 @pytest.mark.asyncio
 async def test_poll_eod_snapshots_skips_active_same_day_state_after_restart(tmp_path) -> None:
     path = tmp_path / "uw_eod_state.json"
@@ -461,6 +485,56 @@ async def test_poll_eod_snapshots_skips_active_same_day_state_after_restart(tmp_
     poller._eod_state = UwEodStateStore(path, stale_after_seconds=3600)
 
     await poller._poll_eod_snapshots(sink_registry=_FakeSinkRegistry())
+
+
+@pytest.mark.asyncio
+async def test_poll_eod_snapshots_marks_persistent_state_completed_after_success(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "uw_eod_state.json"
+    today = uw_poller_module.datetime.now(uw_poller_module.ET).strftime("%Y-%m-%d")
+
+    class _TickerUniverse:
+        all_tickers = ["SPY"]
+
+        async def refresh_dynamic(self, _provider) -> None:
+            return None
+
+    async def _per_ticker(_sink_registry, _ticker: str) -> int:
+        return 1
+
+    async def _market_wide(_sink_registry) -> int:
+        return 2
+
+    poller = UWPoller()
+    poller._provider = object()  # type: ignore[assignment]
+    poller._ticker_universe = cast(Any, _TickerUniverse())
+    poller._eod_state = UwEodStateStore(path, stale_after_seconds=3600)
+
+    for method_name in (
+        "_poll_eod_greek_exposure",
+        "_poll_eod_iv_rank",
+        "_poll_eod_iv_term_structure",
+        "_poll_eod_oi_change",
+        "_poll_eod_option_volume",
+        "_poll_eod_short_interest",
+        "_poll_eod_short_volume",
+        "_poll_eod_ftds",
+    ):
+        monkeypatch.setattr(poller, method_name, _per_ticker)
+    monkeypatch.setattr(poller, "_poll_eod_congress_trades", _market_wide)
+    monkeypatch.setattr(poller, "_poll_eod_insiders", _market_wide)
+
+    await poller._poll_eod_snapshots(sink_registry=_FakeSinkRegistry())
+
+    state = UwEodRunState.model_validate_json(path.read_text())
+    assert state.trading_date == today
+    assert state.status == "completed"
+    assert state.completed_at is not None
+    assert state.totals["greek_exposure"] == {"published": 1, "errors": 0}
+    assert state.totals["congress_trades"] == {"published": 2, "errors": 0}
+    assert poller._last_eod_date == today
 
 
 def test_uw_poller_runtime_snapshot_includes_tuning_fields() -> None:
