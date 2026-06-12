@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 import gateway.core.uw_poller as uw_poller_module
+from gateway.core.uw_eod_state import UwEodStateStore
 from gateway.core.uw_poller import HEBER_STREAM, UWPoller, get_uw_poller_snapshot
 
 
@@ -418,11 +419,48 @@ def test_uw_poller_publish_limit_reads_from_settings(monkeypatch: pytest.MonkeyP
             cache_redis_enabled=False,
             cache_redis_url="",
             uw_poller_publish_max_inflight=7,
+            uw_eod_state_path="/tmp/uw-eod-state-test.json",
+            uw_eod_claim_stale_after_seconds=3600,
         ),
     )
 
     poller = UWPoller()
     assert poller._publish_max_inflight == 7
+
+
+def test_should_poll_eod_uses_persistent_completed_state(tmp_path) -> None:
+    path = tmp_path / "uw_eod_state.json"
+    today = uw_poller_module.datetime.now(uw_poller_module.ET).strftime("%Y-%m-%d")
+    store = UwEodStateStore(path, stale_after_seconds=3600)
+    assert store.claim(today) is True
+    store.mark_completed(today, totals={})
+
+    poller = UWPoller(eod_hour=0, eod_minute=0)
+    poller._calendar = SimpleNamespace(is_trading_day=lambda _date: True)
+    poller._eod_state = store
+
+    assert poller._should_poll_eod() is False
+
+
+@pytest.mark.asyncio
+async def test_poll_eod_snapshots_skips_active_same_day_state_after_restart(tmp_path) -> None:
+    path = tmp_path / "uw_eod_state.json"
+    today = uw_poller_module.datetime.now(uw_poller_module.ET).strftime("%Y-%m-%d")
+    first_instance = UwEodStateStore(path, stale_after_seconds=3600)
+    assert first_instance.claim(today) is True
+
+    class _TickerUniverse:
+        all_tickers = ["SPY"]
+
+        async def refresh_dynamic(self, _provider) -> None:
+            raise AssertionError("persistent EOD claim should skip before refreshing tickers")
+
+    poller = UWPoller()
+    poller._provider = object()  # type: ignore[assignment]
+    poller._ticker_universe = cast(Any, _TickerUniverse())
+    poller._eod_state = UwEodStateStore(path, stale_after_seconds=3600)
+
+    await poller._poll_eod_snapshots(sink_registry=_FakeSinkRegistry())
 
 
 def test_uw_poller_runtime_snapshot_includes_tuning_fields() -> None:

@@ -254,6 +254,15 @@ class Settings(BaseSettings):
     uw_core_tickers: str = ""  # comma-separated override, empty = use defaults
     uw_dynamic_ticker_count: int = Field(default=20, ge=0)
     uw_eod_concurrency: int = Field(default=5, ge=1, le=20)
+    uw_eod_state_path: Path = Field(
+        default=Path("/app/logs/state/uw_eod_state.json"),
+        description="Persistent JSON state file used to prevent duplicate UW EOD runs across restarts",
+    )
+    uw_eod_claim_stale_after_seconds: int = Field(
+        default=7200,
+        ge=300,
+        description="Allow a UW EOD run to be retried when a running claim is older than this many seconds",
+    )
 
     # Alpaca option chain capture
     option_capture_enabled: bool = False
