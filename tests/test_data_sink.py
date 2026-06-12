@@ -331,6 +331,25 @@ class _BlockingSink(DataSink):
         return True
 
 
+class _InstrumentedBlockingSink(_BlockingSink):
+    """Blocking sink that exposes how many publishes workers have started."""
+
+    def __init__(self, release_event: asyncio.Event, sink_name: str = "blocking") -> None:
+        super().__init__(release_event, sink_name)
+        self.started = 0
+
+    async def publish(self, topic: str, data: Any) -> bool:
+        self.started += 1
+        return await super().publish(topic, data)
+
+    async def wait_until_started(self, count: int) -> None:
+        for _ in range(50):
+            if self.started >= count:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"expected {count} in-flight publishes, got {self.started}")
+
+
 @pytest.mark.asyncio
 async def test_low_priority_publish_sheds_when_queue_pressure_exceeds_threshold() -> None:
     """Low-priority REST publishing should shed once the queue reaches the utilization threshold."""
@@ -354,6 +373,32 @@ async def test_low_priority_publish_sheds_when_queue_pressure_exceeds_threshold(
 
 
 @pytest.mark.asyncio
+async def test_low_priority_publish_sheds_when_worker_inflight_pressure_exceeds_threshold() -> None:
+    """Low-priority REST publishing should include worker in-flight publishes in utilization."""
+    release_event = asyncio.Event()
+    registry = DataSinkRegistry(
+        queue_size=2,
+        worker_count=2,
+        producer_block_timeout_seconds=0.5,
+    )
+    sink = _InstrumentedBlockingSink(release_event, sink_name="redis_streams")
+    registry.register(sink)
+
+    for i in range(2):
+        await registry.publish_all("heber:events", {"event_id": f"inflight-pressure-{i}"})
+
+    try:
+        await sink.wait_until_started(2)
+
+        assert registry.get_queue_depth("redis_streams") == 0
+        assert registry.get_queue_utilization("redis_streams") == pytest.approx(0.5)
+        assert registry.can_accept_low_priority("redis_streams", max_utilization=0.5) is False
+    finally:
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+
+@pytest.mark.asyncio
 async def test_low_priority_publish_accepts_below_threshold() -> None:
     """Low-priority REST publishing is allowed while queue utilization stays below the threshold."""
     release_event = asyncio.Event()
@@ -372,6 +417,28 @@ async def test_low_priority_publish_accepts_below_threshold() -> None:
 
     release_event.set()
     await registry.drain_queues(timeout_seconds=2.0)
+
+
+@pytest.mark.asyncio
+async def test_low_priority_publish_rejects_missing_or_disabled_sink() -> None:
+    """Low-priority REST publishing should not target missing or disabled sink queues."""
+    registry = DataSinkRegistry()
+
+    assert registry.can_accept_low_priority("redis_streams", max_utilization=0.70) is False
+
+    release_event = asyncio.Event()
+    sink = _BlockingSink(release_event, sink_name="other_sink")
+    registry.register(sink)
+    try:
+        assert registry.can_accept_low_priority("redis_streams", max_utilization=0.70) is False
+        assert registry.can_accept_low_priority("other_sink", max_utilization=0.70) is True
+
+        registry.disable()
+
+        assert registry.can_accept_low_priority("other_sink", max_utilization=0.70) is False
+    finally:
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
 
 
 class TestBoundedQueueDispatch:

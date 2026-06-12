@@ -132,6 +132,7 @@ class DataSinkRegistry:
         }
         self._sink_queues: dict[str, asyncio.Queue[tuple[str, Any]]] = {}
         self._sink_workers: dict[str, list[asyncio.Task[None]]] = {}
+        self._sink_inflight: dict[str, int] = {}
 
     def set_dedup_cache(self, cache: Any) -> None:
         """Set dedup cache after initialization (for lazy setup)."""
@@ -150,6 +151,7 @@ class DataSinkRegistry:
             return
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=self._queue_size)
         self._sink_queues[sink.name] = queue
+        self._sink_inflight[sink.name] = 0
         set_sink_queue_capacity(sink.name, self._queue_size)
         set_sink_queue_size(sink.name, 0)
         set_sink_worker_count(sink.name, self._worker_count)
@@ -189,17 +191,21 @@ class DataSinkRegistry:
         return queue.qsize() if queue is not None else 0
 
     def get_queue_utilization(self, sink_name: str) -> float:
-        """Return current queue utilization ratio for ``sink_name``."""
+        """Return queued plus worker-in-flight utilization ratio for ``sink_name``."""
         queue = self._sink_queues.get(sink_name)
         if queue is None:
             return 0.0
-        maxsize = queue.maxsize or self._queue_size
-        if maxsize <= 0:
+        queue_capacity = queue.maxsize or self._queue_size
+        worker_capacity = len(self._sink_workers.get(sink_name, []))
+        total_capacity = queue_capacity + worker_capacity
+        if total_capacity <= 0:
             return 0.0
-        return queue.qsize() / maxsize
+        return (queue.qsize() + self._sink_inflight.get(sink_name, 0)) / total_capacity
 
     def can_accept_low_priority(self, sink_name: str, *, max_utilization: float) -> bool:
         """Return whether a low-priority publish may enter ``sink_name``'s queue."""
+        if not self._enabled or not self._sinks or sink_name not in self._sink_queues:
+            return False
         return self.get_queue_utilization(sink_name) < max_utilization
 
     async def publish_all(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
@@ -341,6 +347,7 @@ class DataSinkRegistry:
                     return
                 topic, data = item
                 self._publish_stats["scheduled"] += 1
+                self._sink_inflight[sink.name] = self._sink_inflight.get(sink.name, 0) + 1
                 try:
                     await self._safe_publish(sink, topic, data)
                 except asyncio.CancelledError:
@@ -363,6 +370,8 @@ class DataSinkRegistry:
                         topic=topic,
                     )
             finally:
+                if item is not _SHUTDOWN_SENTINEL:
+                    self._sink_inflight[sink.name] = max(0, self._sink_inflight.get(sink.name, 0) - 1)
                 if not acked:
                     queue.task_done()
                     set_sink_queue_size(sink.name, queue.qsize())
