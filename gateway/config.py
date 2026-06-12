@@ -235,6 +235,20 @@ class Settings(BaseSettings):
     data_sink_queue_size: int = Field(default=16384, ge=64, le=65536)
     data_sink_worker_count: int = Field(default=16, ge=1, le=64)
     data_sink_producer_block_timeout_seconds: float = Field(default=0.1, ge=0.001, le=5.0)
+    rest_sink_excluded_feeds: str = Field(
+        default="greek_exposure,iv_rank,iv_term_structure,short_data,ftd,flow_alerts,darkpool",
+        description="Comma-separated feed names that REST envelope middleware must not publish into live Heber stream",
+    )
+    rest_sink_low_priority_max_queue_utilization: float = Field(
+        default=0.70,
+        ge=0.0,
+        le=1.0,
+        description="Shed low-priority REST sink publishing when sink queue utilization is at or above this threshold",
+    )
+
+    @property
+    def rest_sink_excluded_feed_set(self) -> set[str]:
+        return {item.strip() for item in self.rest_sink_excluded_feeds.split(",") if item.strip()}
 
     # Backfill concurrency (per-provider, split by feed weight)
     backfill_lightweight_concurrency: int = Field(default=5, ge=1)

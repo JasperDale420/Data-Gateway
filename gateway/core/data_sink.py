@@ -188,6 +188,20 @@ class DataSinkRegistry:
         queue = self._sink_queues.get(sink_name)
         return queue.qsize() if queue is not None else 0
 
+    def get_queue_utilization(self, sink_name: str) -> float:
+        """Return current queue utilization ratio for ``sink_name``."""
+        queue = self._sink_queues.get(sink_name)
+        if queue is None:
+            return 0.0
+        maxsize = queue.maxsize or self._queue_size
+        if maxsize <= 0:
+            return 0.0
+        return queue.qsize() / maxsize
+
+    def can_accept_low_priority(self, sink_name: str, *, max_utilization: float) -> bool:
+        """Return whether a low-priority publish may enter ``sink_name``'s queue."""
+        return self.get_queue_utilization(sink_name) < max_utilization
+
     async def publish_all(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish to all registered sinks.
 
