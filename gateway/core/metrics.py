@@ -214,10 +214,28 @@ SINK_WORKER_COUNT = Gauge(
     ["sink"],
 )
 
+SINK_QUEUE_UTILIZATION = Gauge(
+    "gateway_sink_queue_utilization",
+    "Current sink dispatch utilization including queued plus worker-in-flight events",
+    ["sink"],
+)
+
 SINK_PRODUCER_TIMEOUT_DROPS = Counter(
     "gateway_sink_producer_timeout_drops_total",
     "Events dropped because the producer-side queue-put timed out — emergency-only",
     ["sink"],
+)
+
+SINK_PRODUCER_TIMEOUT_DROPS_BY_FEED = Counter(
+    "gateway_sink_producer_timeout_drops_by_feed_total",
+    "Events dropped because producer-side queue-put timed out, partitioned by source/feed",
+    ["sink", "source", "feed"],
+)
+
+REST_LOW_PRIORITY_SHED = Counter(
+    "gateway_rest_low_priority_shed_total",
+    "Low-priority REST sink publishes shed before enqueueing",
+    ["feed"],
 )
 
 STREAM_SINK_DISPATCH_EVENTS = Counter(
@@ -791,9 +809,36 @@ def set_sink_worker_count(sink: str, count: int) -> None:
     SINK_WORKER_COUNT.labels(sink=sink).set(max(0, count))
 
 
-def record_sink_producer_timeout_drop(sink: str) -> None:
+def set_sink_queue_utilization(sink: str, utilization: float) -> None:
+    """Set current sink queue utilization ratio."""
+    SINK_QUEUE_UTILIZATION.labels(sink=sink).set(max(0.0, utilization))
+
+
+def _clean_metric_label(value: str | None, default: str = "unknown") -> str:
+    if not isinstance(value, str):
+        return default
+    cleaned = value.strip()
+    return cleaned or default
+
+
+def record_sink_producer_timeout_drop(
+    sink: str,
+    *,
+    source: str | None = None,
+    feed: str | None = None,
+) -> None:
     """Increment the producer-side queue-put timeout counter (emergency drop)."""
     SINK_PRODUCER_TIMEOUT_DROPS.labels(sink=sink).inc()
+    SINK_PRODUCER_TIMEOUT_DROPS_BY_FEED.labels(
+        sink=sink,
+        source=_clean_metric_label(source),
+        feed=_clean_metric_label(feed),
+    ).inc()
+
+
+def record_low_priority_rest_shed(feed: str) -> None:
+    """Increment the low-priority REST shed counter."""
+    REST_LOW_PRIORITY_SHED.labels(feed=_clean_metric_label(feed)).inc()
 
 
 def record_stream_sink_dispatch_event(status: str) -> None:

@@ -145,6 +145,45 @@ async def test_get_status_includes_stream_sink_dispatch_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_get_status_includes_data_sink_backpressure_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _SinkRegistry:
+        def get_backpressure_snapshot(self) -> dict[str, Any]:
+            return {
+                "queue_size": 8,
+                "worker_count": 2,
+                "producer_block_timeout_seconds": 0.1,
+                "sinks": {"redis_streams": {"queue_depth": 2, "queue_utilization": 0.2}},
+                "publish_stats": {
+                    "queued": 5,
+                    "dropped_producer_timeout": 1,
+                    "by_source_feed": {"poller:darkpool": {"dropped_producer_timeout": 1}},
+                },
+            }
+
+    monkeypatch.setattr(admin, "get_sink_registry", lambda: _SinkRegistry(), raising=False)
+    monkeypatch.setattr(admin, "get_stream_sink_dispatch_snapshot", lambda: {})
+    monkeypatch.setattr(admin, "get_stream_fanout_snapshot", lambda: {})
+
+    response = await admin.get_status(
+        client=cast(Client, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, _FakeRegistry()),
+        cache=cast(InMemoryCache, _FakeCache()),
+        connections=cast(ConnectionManager, _FakeConnections()),
+        include_provider_health=False,
+        include_stream_tuning_summary=False,
+        include_uw_poller_runtime=False,
+        include_option_capture_runtime=False,
+    )
+
+    snapshot = response["data"]["data_sink_backpressure"]
+    assert snapshot["queue_size"] == 8
+    assert snapshot["sinks"]["redis_streams"]["queue_utilization"] == 0.2
+    assert snapshot["publish_stats"]["by_source_feed"]["poller:darkpool"]["dropped_producer_timeout"] == 1
+
+
+@pytest.mark.asyncio
 async def test_get_status_can_skip_provider_health_checks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 from unittest.mock import patch
 
@@ -18,6 +19,26 @@ from gateway.core.data_sink import DataSink, DataSinkRegistry
 from gateway.core.log_throttle import LogThrottle
 
 # ── Mock Sinks ───────────────────────────────────────────────────────
+
+
+def test_event_log_context_extracts_only_string_identifiers() -> None:
+    payload = {
+        "event_id": "evt-1",
+        "feed": "bars",
+        "provider": "alpaca",
+        "instrument_key": "equity:AAPL",
+        "symbol": "AAPL",
+        "count": 3,
+    }
+
+    assert data_sink_module._event_log_context(payload) == {
+        "event_id": "evt-1",
+        "feed": "bars",
+        "provider": "alpaca",
+        "instrument_key": "equity:AAPL",
+    }
+    assert data_sink_module._event_log_context({"event_id": 123, "feed": None}) == {}
+    assert data_sink_module._event_log_context("not-json") == {}
 
 
 class _TrackingSink(DataSink):
@@ -441,6 +462,47 @@ async def test_low_priority_publish_rejects_missing_or_disabled_sink() -> None:
         await registry.drain_queues(timeout_seconds=2.0)
 
 
+@pytest.mark.asyncio
+async def test_backpressure_snapshot_includes_queue_and_partitioned_publish_stats() -> None:
+    """Backpressure snapshot should expose queue state and source/feed status counts."""
+    release_event = asyncio.Event()
+    registry = DataSinkRegistry(
+        queue_size=3,
+        worker_count=1,
+        producer_block_timeout_seconds=0.5,
+    )
+    sink = _BlockingSink(release_event, sink_name="redis_streams")
+    registry.register(sink)
+
+    await registry.publish_all(
+        "heber:events",
+        {"event_id": "evt-bars-1", "source": "poller", "feed": "bars"},
+        source="poller",
+    )
+    await registry.publish_all(
+        "heber:events",
+        {"event_id": "evt-bars-2", "source": "poller", "feed": "bars"},
+        source="poller",
+    )
+    registry.record_low_priority_shed(feed="bars", source="rest")
+
+    try:
+        snapshot = registry.get_backpressure_snapshot()
+
+        assert snapshot["queue_size"] == 3
+        assert snapshot["worker_count"] == 1
+        assert snapshot["producer_block_timeout_seconds"] == 0.5
+        assert snapshot["sinks"]["redis_streams"]["queue_depth"] >= 1
+        assert snapshot["sinks"]["redis_streams"]["queue_utilization"] > 0
+        assert snapshot["publish_stats"]["queued"] >= 2
+        assert snapshot["publish_stats"]["low_priority_shed"] == 1
+        assert snapshot["publish_stats"]["by_source_feed"]["poller:bars"]["queued"] == 2
+        assert snapshot["publish_stats"]["by_source_feed"]["rest:bars"]["low_priority_shed"] == 1
+    finally:
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+
 class TestBoundedQueueDispatch:
     """Tests that verify the bounded queue + worker pool dispatch path."""
 
@@ -608,6 +670,50 @@ class TestBoundedQueueDispatch:
 
         after = SINK_PRODUCER_TIMEOUT_DROPS.labels(sink="metric-emit")._value.get()
         assert after - before == 3
+
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+    @pytest.mark.asyncio
+    async def test_producer_timeout_drop_records_feed_source_stats_and_log_context(self, caplog) -> None:
+        """Producer timeout drops include event context and partitioned backpressure counters."""
+        release_event = asyncio.Event()
+        registry = DataSinkRegistry(
+            queue_size=1,
+            worker_count=1,
+            producer_block_timeout_seconds=0.01,
+        )
+        sink = _BlockingSink(release_event, sink_name="drop-context")
+        registry.register(sink)
+
+        dropped_payload = {
+            "event_id": "drop-ctx",
+            "provider": "unusual_whales",
+            "feed": "darkpool",
+            "instrument_key": "equity:SPY",
+            "source": "poller",
+        }
+
+        with (
+            patch.object(data_sink_module, "_PRODUCER_DROP_LOG_THROTTLE", LogThrottle(60.0)),
+            caplog.at_level("CRITICAL", logger="data-gateway"),
+        ):
+            await registry.publish_all("heber:events", {"event_id": "absorb-1", "feed": "darkpool"}, source="poller")
+            await registry.publish_all("heber:events", {"event_id": "absorb-2", "feed": "darkpool"}, source="poller")
+            await registry.publish_all("heber:events", dropped_payload, source="poller")
+
+        snapshot = registry.get_backpressure_snapshot()
+        partition = snapshot["publish_stats"]["by_source_feed"]["poller:darkpool"]
+        assert partition["queued"] == 2
+        assert partition["dropped_producer_timeout"] == 1
+
+        records = [json.loads(record.getMessage()) for record in caplog.records if record.getMessage().startswith("{")]
+        drop_logs = [record for record in records if record.get("message") == "data_sink_producer_timeout_drop"]
+        assert drop_logs
+        assert drop_logs[-1]["event_id"] == "drop-ctx"
+        assert drop_logs[-1]["provider"] == "unusual_whales"
+        assert drop_logs[-1]["feed"] == "darkpool"
+        assert drop_logs[-1]["instrument_key"] == "equity:SPY"
 
         release_event.set()
         await registry.drain_queues(timeout_seconds=2.0)

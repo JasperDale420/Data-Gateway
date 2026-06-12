@@ -1,6 +1,7 @@
 """EventEnvelope middleware - wraps all REST API responses in universal envelope."""
 
 import asyncio
+import inspect
 import json
 import re
 
@@ -308,7 +309,10 @@ class EventEnvelopeMiddleware:
                     payload=payload,
                 )
                 if sink_envelopes:
-                    tasks = [sink_registry.publish_all(topic, se) for se in sink_envelopes]
+                    tasks = [
+                        self._publish_sink_envelope(sink_registry=sink_registry, topic=topic, envelope=se, feed=feed)
+                        for se in sink_envelopes
+                    ]
                     task = asyncio.create_task(self._publish_sink_batch(tasks, path=path))
                     self._background_tasks.add(task)
                     task.add_done_callback(self._background_tasks.discard)
@@ -384,6 +388,35 @@ class EventEnvelopeMiddleware:
                 path=path,
                 failed=len(failures),
             )
+
+    async def _publish_sink_envelope(
+        self,
+        *,
+        sink_registry: object,
+        topic: str,
+        envelope: dict,
+        feed: str,
+    ) -> None:
+        """Publish a REST sink envelope while supporting legacy test doubles."""
+        publish_all = sink_registry.publish_all
+        if self._publish_all_accepts_sink_labels(publish_all):
+            await publish_all(topic, envelope, source="rest", feed=feed)
+            return
+        await publish_all(topic, envelope)
+
+    @staticmethod
+    def _publish_all_accepts_sink_labels(publish_all: object) -> bool:
+        """Return whether ``publish_all`` accepts Task 3 source/feed labels."""
+        try:
+            parameters = inspect.signature(publish_all).parameters.values()
+        except (TypeError, ValueError):
+            return True
+        names = set()
+        for parameter in parameters:
+            if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+                return True
+            names.add(parameter.name)
+        return {"source", "feed"}.issubset(names)
 
     def _extract_route_info(self, path: str) -> tuple[str, str]:
         """Extract provider and feed from request path."""
@@ -499,12 +532,25 @@ class EventEnvelopeMiddleware:
             from gateway.config import get_settings
 
             settings = get_settings()
-            return bool(
+            accepted = bool(
                 can_accept(
                     "redis_streams",
                     max_utilization=settings.rest_sink_low_priority_max_queue_utilization,
                 )
             )
+            if not accepted:
+                record_shed = getattr(sink_registry, "record_low_priority_shed", None)
+                if callable(record_shed):
+                    try:
+                        record_shed(feed=feed, source="rest")
+                    except Exception as shed_exc:
+                        logger.warning(
+                            "rest_envelope_sink_shed_record_failed",
+                            path=path,
+                            feed=feed,
+                            error=str(shed_exc),
+                        )
+            return accepted
         except Exception as exc:
             logger.warning(
                 "rest_envelope_sink_pressure_check_failed",
