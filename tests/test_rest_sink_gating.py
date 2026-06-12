@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -8,6 +10,24 @@ from fastapi.testclient import TestClient
 
 import gateway.api.deps as deps_module
 from gateway.api.middleware.envelope import EventEnvelopeMiddleware
+
+
+async def _wrap_response(middleware: EventEnvelopeMiddleware, *, path: str, payload: dict) -> list[dict]:
+    messages: list[dict] = []
+    body = json.dumps(payload).encode()
+    initial_message = {
+        "type": "http.response.start",
+        "status": 200,
+        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+    }
+
+    async def send(message: dict) -> None:
+        messages.append(message)
+
+    await middleware._wrap_and_send(path=path, body=body, initial_message=initial_message, send=send)
+    if middleware._background_tasks:
+        await asyncio.gather(*middleware._background_tasks)
+    return messages
 
 
 def test_rest_sink_skips_gex_when_heavy_feed_disabled(monkeypatch):
@@ -78,6 +98,33 @@ def test_rest_sink_allows_alpaca_bars_when_queue_pressure_is_normal(monkeypatch)
     )
 
 
+def test_rest_sink_allows_alpaca_trades_when_queue_pressure_is_normal(monkeypatch):
+    monkeypatch.setenv("GATEWAY_REST_SINK_EXCLUDED_FEEDS", "greek_exposure,flow_alerts,darkpool")
+    from gateway.config import get_settings
+
+    get_settings.cache_clear()
+    middleware = EventEnvelopeMiddleware(app=lambda scope, receive, send: None)
+
+    assert (
+        middleware._is_sink_publish_eligible(
+            path="/api/v1/alpaca/stocks/SPY/trades",
+            payload={
+                "symbol": "SPY",
+                "trades": [
+                    {
+                        "timestamp": "2026-06-12T13:30:00Z",
+                        "price": "500.25",
+                        "size": 100,
+                        "trade_id": "t1",
+                    }
+                ],
+            },
+            feed="trades",
+        )
+        is True
+    )
+
+
 def test_queue_pressure_skips_background_publish_but_keeps_response_enveloped(monkeypatch):
     class _PressureSinkRegistry:
         def __init__(self) -> None:
@@ -139,3 +186,92 @@ def test_queue_pressure_skips_background_publish_but_keeps_response_enveloped(mo
     assert data["envelope"]["feed"] == "bars"
     assert data["data"]["symbol"] == "SPY"
     assert sink_registry.published == []
+
+
+def test_fake_sink_registry_without_pressure_hook_still_publishes_eligible_rest_event(monkeypatch):
+    class _LegacySinkRegistry:
+        def __init__(self) -> None:
+            self.published: list[tuple[str, dict]] = []
+
+        async def publish_all(self, topic: str, data: dict) -> None:
+            self.published.append((topic, data))
+
+    monkeypatch.setenv("GATEWAY_REST_SINK_EXCLUDED_FEEDS", "greek_exposure,flow_alerts,darkpool")
+    from gateway.config import get_settings
+
+    get_settings.cache_clear()
+    sink_registry = _LegacySinkRegistry()
+    previous_sink = deps_module.get_sink_registry()
+    deps_module.set_sink_registry(sink_registry)
+    middleware = EventEnvelopeMiddleware(app=lambda scope, receive, send: None)
+
+    try:
+        messages = asyncio.run(
+            _wrap_response(
+                middleware,
+                path="/api/v1/alpaca/stocks/SPY/trades",
+                payload={
+                    "success": True,
+                    "data": {
+                        "symbol": "SPY",
+                        "trades": [
+                            {
+                                "timestamp": "2026-06-12T13:30:00Z",
+                                "price": "500.25",
+                                "size": 100,
+                                "trade_id": "t1",
+                            }
+                        ],
+                    },
+                },
+            )
+        )
+    finally:
+        deps_module.set_sink_registry(previous_sink)
+        get_settings.cache_clear()
+
+    response_body = json.loads(messages[-1]["body"])
+    assert response_body["envelope"]["feed"] == "trades"
+    assert len(sink_registry.published) == 1
+    assert sink_registry.published[0][0] == "heber:events"
+    assert sink_registry.published[0][1]["feed"] == "trades"
+
+
+def test_excluded_feed_skip_logs_reason_for_uw_rest_feed(monkeypatch, caplog):
+    class _FakeSinkRegistry:
+        async def publish_all(self, topic: str, data: dict) -> None:
+            raise AssertionError("excluded feed must not publish")
+
+    monkeypatch.setenv("GATEWAY_REST_SINK_EXCLUDED_FEEDS", "greek_exposure,flow_alerts,darkpool")
+    from gateway.config import get_settings
+
+    get_settings.cache_clear()
+    previous_sink = deps_module.get_sink_registry()
+    deps_module.set_sink_registry(_FakeSinkRegistry())
+    middleware = EventEnvelopeMiddleware(app=lambda scope, receive, send: None)
+
+    try:
+        with caplog.at_level(logging.DEBUG, logger="data-gateway"):
+            messages = asyncio.run(
+                _wrap_response(
+                    middleware,
+                    path="/api/v1/uw/gex/SPY",
+                    payload={
+                        "success": True,
+                        "data": [{"symbol": "SPY", "call_gamma": 1}],
+                    },
+                )
+            )
+    finally:
+        deps_module.set_sink_registry(previous_sink)
+        get_settings.cache_clear()
+
+    response_body = json.loads(messages[-1]["body"])
+    assert response_body["envelope"]["feed"] == "greek_exposure"
+
+    records = [json.loads(record.getMessage()) for record in caplog.records if record.getMessage().startswith("{")]
+    skip_logs = [record for record in records if record.get("message") == "rest_envelope_sink_publish_skipped"]
+    assert skip_logs
+    assert skip_logs[-1]["path"] == "/api/v1/uw/gex/SPY"
+    assert skip_logs[-1]["feed"] == "greek_exposure"
+    assert skip_logs[-1]["reason"] == "excluded_feed"
