@@ -53,6 +53,7 @@ clients:
     - yfinance
     - finnhub
     rate_limit: 600
+    trading: true
   role: trader
 - enabled: true
   id: atlas
