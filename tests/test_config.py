@@ -11,6 +11,16 @@ def test_data_sink_defaults_cover_opening_bell_burst_capacity() -> None:
     assert settings.data_sink_redis_pool_size == 32
 
 
+def test_rest_sink_excluded_feed_defaults_cover_heavy_uw_feeds() -> None:
+    settings = Settings(_env_file=None)
+
+    excluded_feeds = settings.rest_sink_excluded_feed_set
+
+    assert "greek_exposure" in excluded_feeds
+    assert "flow_alerts" in excluded_feeds
+    assert "darkpool" in excluded_feeds
+
+
 def test_data_sink_dedup_cache_uses_bounded_redis_pool_settings() -> None:
     from gateway.main import _create_data_sink_dedup_cache
 

@@ -163,15 +163,26 @@ async def detailed_status(
     # Include data sink health if configured
     sink_registry = get_sink_registry()
     if sink_registry:
+        sink_backpressure: dict[str, Any] = {}
+        get_backpressure_snapshot = getattr(sink_registry, "get_backpressure_snapshot", None)
+        if callable(get_backpressure_snapshot):
+            try:
+                sink_backpressure = get_backpressure_snapshot()
+            except Exception:
+                logger.exception("health_data_sink_backpressure_snapshot_failed")
         try:
             sink_results = await sink_registry.health_check_all()
             all_healthy = all(sink_results.values())
             components["data_sink"] = {
                 "status": "ok" if all_healthy else "degraded",
                 "sinks": {name: "ok" if healthy else "degraded" for name, healthy in sink_results.items()},
+                "backpressure": sink_backpressure,
             }
         except Exception:
-            components["data_sink"] = {"status": "degraded"}
+            components["data_sink"] = {
+                "status": "degraded",
+                "backpressure": sink_backpressure,
+            }
 
     return {
         "status": "ok",

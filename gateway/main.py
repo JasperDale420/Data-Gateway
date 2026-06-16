@@ -178,7 +178,7 @@ async def _on_stream_envelope(envelope: dict) -> None:
             payload: dict | str = orjson.dumps(envelope, default=str).decode()
         except Exception:
             payload = envelope
-        await sink_registry.publish_all(STREAM_SINK_TOPIC, payload)
+        await sink_registry.publish_all(STREAM_SINK_TOPIC, payload, source="poller", feed=envelope.get("feed"))
         record_stream_sink_dispatch_event("completed")
     except asyncio.CancelledError:
         record_stream_sink_dispatch_event("cancelled")

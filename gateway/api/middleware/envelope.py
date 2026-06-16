@@ -1,6 +1,7 @@
 """EventEnvelope middleware - wraps all REST API responses in universal envelope."""
 
 import asyncio
+import inspect
 import json
 import re
 
@@ -284,11 +285,21 @@ class EventEnvelopeMiddleware:
             from gateway.api.deps import get_sink_registry
 
             sink_registry = get_sink_registry()
-            should_publish_to_sink = self._is_sink_publish_eligible(
+            sink_skip_reason = self._sink_publish_skip_reason(
                 path=path,
                 payload=payload,
                 feed=feed,
             )
+            should_publish_to_sink = sink_skip_reason is None
+            if sink_registry and should_publish_to_sink:
+                should_publish_to_sink = self._can_accept_low_priority_sink(
+                    sink_registry=sink_registry,
+                    path=path,
+                    feed=feed,
+                )
+                if not should_publish_to_sink:
+                    sink_skip_reason = "queue_pressure"
+
             if sink_registry and should_publish_to_sink:
                 topic = "heber:events"
                 sink_envelopes = self._build_sink_envelopes(
@@ -298,14 +309,22 @@ class EventEnvelopeMiddleware:
                     payload=payload,
                 )
                 if sink_envelopes:
-                    tasks = [sink_registry.publish_all(topic, se) for se in sink_envelopes]
+                    tasks = [
+                        self._publish_sink_envelope(sink_registry=sink_registry, topic=topic, envelope=se, feed=feed)
+                        for se in sink_envelopes
+                    ]
                     task = asyncio.create_task(self._publish_sink_batch(tasks, path=path))
                     self._background_tasks.add(task)
                     task.add_done_callback(self._background_tasks.discard)
                 else:
                     logger.debug("rest_envelope_sink_publish_empty", path=path, feed=feed)
-            elif sink_registry and not should_publish_to_sink:
-                logger.debug("rest_envelope_sink_publish_skipped", path=path, feed=feed)
+            elif sink_registry and sink_skip_reason:
+                logger.debug(
+                    "rest_envelope_sink_publish_skipped",
+                    path=path,
+                    feed=feed,
+                    reason=sink_skip_reason,
+                )
 
             logger.debug(
                 "rest_envelope_wrapped",
@@ -369,6 +388,35 @@ class EventEnvelopeMiddleware:
                 path=path,
                 failed=len(failures),
             )
+
+    async def _publish_sink_envelope(
+        self,
+        *,
+        sink_registry: object,
+        topic: str,
+        envelope: dict,
+        feed: str,
+    ) -> None:
+        """Publish a REST sink envelope while supporting legacy test doubles."""
+        publish_all = sink_registry.publish_all
+        if self._publish_all_accepts_sink_labels(publish_all):
+            await publish_all(topic, envelope, source="rest", feed=feed)
+            return
+        await publish_all(topic, envelope)
+
+    @staticmethod
+    def _publish_all_accepts_sink_labels(publish_all: object) -> bool:
+        """Return whether ``publish_all`` accepts Task 3 source/feed labels."""
+        try:
+            parameters = inspect.signature(publish_all).parameters.values()
+        except (TypeError, ValueError):
+            return True
+        names = set()
+        for parameter in parameters:
+            if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+                return True
+            names.add(parameter.name)
+        return {"source", "feed"}.issubset(names)
 
     def _extract_route_info(self, path: str) -> tuple[str, str]:
         """Extract provider and feed from request path."""
@@ -439,28 +487,78 @@ class EventEnvelopeMiddleware:
 
     def _is_sink_publish_eligible(self, path: str, payload: object, feed: str) -> bool:
         """Allow sink publishing only for routes with known ingest-safe payload shapes."""
+        return self._sink_publish_skip_reason(path=path, payload=payload, feed=feed) is None
+
+    def _sink_publish_skip_reason(self, path: str, payload: object, feed: str) -> str | None:
+        """Return the reason a REST payload should not be published to the live sink."""
+        try:
+            from gateway.config import get_settings
+
+            if feed in get_settings().rest_sink_excluded_feed_set:
+                return "excluded_feed"
+        except Exception as exc:
+            logger.warning("rest_envelope_sink_settings_unavailable", path=path, feed=feed, error=str(exc))
+
         # Skip known aggregate-only bundles in phase 1 to avoid malformed ingest events.
         if path.startswith("/api/v1/alpaca/screener/"):
-            return False
+            return "ineligible_payload"
 
         if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/bars"):
             bars_items = payload.get("bars") if isinstance(payload, dict) else None
-            return isinstance(bars_items, list) and len(bars_items) > 0
+            return None if isinstance(bars_items, list) and len(bars_items) > 0 else "ineligible_payload"
 
         if path.startswith("/api/v1/alpaca/stocks/") and path.endswith("/trades"):
             trades_items = payload.get("trades") if isinstance(payload, dict) else None
-            return isinstance(trades_items, list) and len(trades_items) > 0
+            return None if isinstance(trades_items, list) and len(trades_items) > 0 else "ineligible_payload"
 
         if path.startswith("/api/v1/uw/flow/") and feed == "flow_alerts":
-            return isinstance(payload, list) and len(payload) > 0
+            return None if isinstance(payload, list) and len(payload) > 0 else "ineligible_payload"
 
         if path.startswith("/api/v1/uw/gex/") and feed == "greek_exposure":
-            return isinstance(payload, list) and len(payload) > 0
+            return None if isinstance(payload, list) and len(payload) > 0 else "ineligible_payload"
 
         if path.startswith("/api/v1/uw/darkpool/") and feed == "darkpool":
-            return isinstance(payload, list) and len(payload) > 0
+            return None if isinstance(payload, list) and len(payload) > 0 else "ineligible_payload"
 
-        return False
+        return "ineligible_payload"
+
+    def _can_accept_low_priority_sink(self, *, sink_registry: object, path: str, feed: str) -> bool:
+        """Check optional sink-registry pressure hook without affecting response wrapping."""
+        can_accept = getattr(sink_registry, "can_accept_low_priority", None)
+        if not callable(can_accept):
+            return True
+
+        try:
+            from gateway.config import get_settings
+
+            settings = get_settings()
+            accepted = bool(
+                can_accept(
+                    "redis_streams",
+                    max_utilization=settings.rest_sink_low_priority_max_queue_utilization,
+                )
+            )
+            if not accepted:
+                record_shed = getattr(sink_registry, "record_low_priority_shed", None)
+                if callable(record_shed):
+                    try:
+                        record_shed(feed=feed, source="rest")
+                    except Exception as shed_exc:
+                        logger.warning(
+                            "rest_envelope_sink_shed_record_failed",
+                            path=path,
+                            feed=feed,
+                            error=str(shed_exc),
+                        )
+            return accepted
+        except Exception as exc:
+            logger.warning(
+                "rest_envelope_sink_pressure_check_failed",
+                path=path,
+                feed=feed,
+                error=str(exc),
+            )
+            return True
 
     def _build_sink_envelopes(
         self,

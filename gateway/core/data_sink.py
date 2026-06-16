@@ -30,10 +30,12 @@ from gateway.core.circuit_breaker import CircuitOpenError, CircuitState, get_cir
 from gateway.core.log_throttle import LogThrottle
 from gateway.core.logger import logger
 from gateway.core.metrics import (
+    record_low_priority_rest_shed,
     record_sink_producer_timeout_drop,
     record_sink_publish,
     set_sink_queue_capacity,
     set_sink_queue_size,
+    set_sink_queue_utilization,
     set_sink_worker_count,
 )
 
@@ -88,6 +90,18 @@ class DataSink(ABC):
 _SHUTDOWN_SENTINEL: Any = object()
 
 
+def _event_log_context(data: Any) -> dict[str, str]:
+    """Extract high-signal event identifiers for drop logs."""
+    if not isinstance(data, dict):
+        return {}
+    context: dict[str, str] = {}
+    for key in ("event_id", "feed", "provider", "instrument_key"):
+        value = data.get(key)
+        if isinstance(value, str):
+            context[key] = value
+    return context
+
+
 class DataSinkRegistry:
     """Registry for managing multiple data sinks.
 
@@ -129,9 +143,12 @@ class DataSinkRegistry:
             "scheduled": 0,
             "queued": 0,
             "dropped_producer_timeout": 0,
+            "low_priority_shed": 0,
         }
+        self._publish_stats_by_source_feed: dict[str, dict[str, int]] = {}
         self._sink_queues: dict[str, asyncio.Queue[tuple[str, Any]]] = {}
         self._sink_workers: dict[str, list[asyncio.Task[None]]] = {}
+        self._sink_inflight: dict[str, int] = {}
 
     def set_dedup_cache(self, cache: Any) -> None:
         """Set dedup cache after initialization (for lazy setup)."""
@@ -150,8 +167,10 @@ class DataSinkRegistry:
             return
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=self._queue_size)
         self._sink_queues[sink.name] = queue
+        self._sink_inflight[sink.name] = 0
         set_sink_queue_capacity(sink.name, self._queue_size)
         set_sink_queue_size(sink.name, 0)
+        set_sink_queue_utilization(sink.name, 0.0)
         set_sink_worker_count(sink.name, self._worker_count)
         workers: list[asyncio.Task[None]] = []
         for idx in range(self._worker_count):
@@ -183,12 +202,116 @@ class DataSinkRegistry:
         """Return publish scheduling/backpressure statistics."""
         return self._publish_stats.copy()
 
+    def _source_feed_key(
+        self,
+        data: dict[str, Any] | str | bytes | None,
+        *,
+        source: str | None,
+        feed: str | None,
+    ) -> str:
+        source_value = source if isinstance(source, str) and source.strip() else None
+        if source_value is None and isinstance(data, dict):
+            raw_source = data.get("source")
+            if isinstance(raw_source, str) and raw_source.strip():
+                source_value = raw_source
+        if source_value in {"rest", "websocket"} and source is None:
+            source_value = "poller"
+        source_value = source_value or "unknown"
+        feed_value = feed if isinstance(feed, str) and feed.strip() else None
+        if feed_value is None and isinstance(data, dict):
+            raw_feed = data.get("feed")
+            if isinstance(raw_feed, str) and raw_feed.strip():
+                feed_value = raw_feed
+        return f"{source_value}:{feed_value or 'unknown'}"
+
+    def _record_partitioned_publish_stat(
+        self,
+        status: str,
+        data: dict[str, Any] | str | bytes | None = None,
+        *,
+        source: str | None,
+        feed: str | None = None,
+    ) -> None:
+        partition = self._publish_stats_by_source_feed.setdefault(
+            self._source_feed_key(data, source=source, feed=feed),
+            {
+                "queued": 0,
+                "dropped_producer_timeout": 0,
+                "low_priority_shed": 0,
+            },
+        )
+        partition[status] = int(partition.get(status, 0)) + 1
+
+    def record_low_priority_shed(self, *, feed: str, source: str = "rest") -> None:
+        """Record a low-priority publish that was intentionally shed before enqueue."""
+        self._publish_stats["low_priority_shed"] += 1
+        self._record_partitioned_publish_stat(
+            "low_priority_shed",
+            None,
+            source=source,
+            feed=feed,
+        )
+        if source == "rest":
+            record_low_priority_rest_shed(feed=feed)
+
     def get_queue_depth(self, sink_name: str) -> int:
         """Return current queue depth for ``sink_name`` (bounded-queue path only)."""
         queue = self._sink_queues.get(sink_name)
         return queue.qsize() if queue is not None else 0
 
-    async def publish_all(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
+    def get_queue_utilization(self, sink_name: str) -> float:
+        """Return queued plus worker-in-flight utilization ratio for ``sink_name``."""
+        queue = self._sink_queues.get(sink_name)
+        if queue is None:
+            return 0.0
+        queue_capacity = queue.maxsize or self._queue_size
+        worker_capacity = len(self._sink_workers.get(sink_name, []))
+        total_capacity = queue_capacity + worker_capacity
+        if total_capacity <= 0:
+            return 0.0
+        return (queue.qsize() + self._sink_inflight.get(sink_name, 0)) / total_capacity
+
+    def _update_sink_queue_metrics(self, sink_name: str) -> None:
+        queue = self._sink_queues.get(sink_name)
+        if queue is None:
+            return
+        set_sink_queue_size(sink_name, queue.qsize())
+        set_sink_queue_utilization(sink_name, self.get_queue_utilization(sink_name))
+
+    def get_backpressure_snapshot(self) -> dict[str, Any]:
+        """Return current bounded-queue and backpressure diagnostics."""
+        return {
+            "queue_size": self._queue_size,
+            "worker_count": self._worker_count,
+            "producer_block_timeout_seconds": self._producer_block_timeout_seconds,
+            "sinks": {
+                name: {
+                    "queue_depth": queue.qsize(),
+                    "queue_utilization": self.get_queue_utilization(name),
+                    "inflight": self._sink_inflight.get(name, 0),
+                }
+                for name, queue in self._sink_queues.items()
+            },
+            "publish_stats": {
+                **self._publish_stats.copy(),
+                "by_source_feed": {key: value.copy() for key, value in self._publish_stats_by_source_feed.items()},
+            },
+        }
+
+    def can_accept_low_priority(self, sink_name: str, *, max_utilization: float) -> bool:
+        """Return whether a low-priority publish may enter ``sink_name``'s queue."""
+        if not self._enabled or not self._sinks or sink_name not in self._sink_queues:
+            return False
+        return self.get_queue_utilization(sink_name) < max_utilization
+
+    async def publish_all(
+        self,
+        topic: str,
+        data: dict[str, Any] | str | bytes,
+        *,
+        source: str | None = None,
+        feed: str | None = None,
+    ) -> None:
         """Publish to all registered sinks.
 
         Under the bounded-queue path (default), this awaits a slot in each
@@ -256,13 +379,16 @@ class DataSinkRegistry:
             except Exception:
                 pass  # If breaker lookup fails, proceed with publish
 
-            await self._enqueue_for_sink(sink, topic, data)
+            await self._enqueue_for_sink(sink, topic, data, source=source, feed=feed)
 
     async def _enqueue_for_sink(
         self,
         sink: DataSink,
         topic: str,
         data: dict[str, Any] | str | bytes,
+        *,
+        source: str | None,
+        feed: str | None,
     ) -> None:
         """Enqueue a (topic, data) tuple for ``sink``'s worker pool.
 
@@ -273,6 +399,11 @@ class DataSinkRegistry:
         """
         self._ensure_workers(sink)
         queue = self._sink_queues[sink.name]
+        partition_feed = feed
+        if partition_feed is None and isinstance(data, dict):
+            raw_feed = data.get("feed")
+            if isinstance(raw_feed, str):
+                partition_feed = raw_feed
         try:
             await asyncio.wait_for(
                 queue.put((topic, data)),
@@ -280,7 +411,13 @@ class DataSinkRegistry:
             )
         except TimeoutError:
             self._publish_stats["dropped_producer_timeout"] += 1
-            record_sink_producer_timeout_drop(sink.name)
+            self._record_partitioned_publish_stat(
+                "dropped_producer_timeout",
+                data,
+                source=source,
+                feed=partition_feed,
+            )
+            record_sink_producer_timeout_drop(sink.name, source=source, feed=partition_feed)
             allowed, suppressed = _PRODUCER_DROP_LOG_THROTTLE.should_emit(sink.name)
             if allowed:
                 logger.critical(
@@ -290,13 +427,15 @@ class DataSinkRegistry:
                     queue_size=self._queue_size,
                     producer_block_timeout_seconds=self._producer_block_timeout_seconds,
                     suppressed_since_last=suppressed,
+                    **_event_log_context(data),
                 )
             if not sink.record_publish_metrics:
                 record_sink_publish(sink=sink.name, topic=topic, success=False)
             return
 
         self._publish_stats["queued"] += 1
-        set_sink_queue_size(sink.name, queue.qsize())
+        self._record_partitioned_publish_stat("queued", data, source=source, feed=partition_feed)
+        self._update_sink_queue_metrics(sink.name)
 
     async def _sink_worker_loop(
         self,
@@ -327,6 +466,7 @@ class DataSinkRegistry:
                     return
                 topic, data = item
                 self._publish_stats["scheduled"] += 1
+                self._sink_inflight[sink.name] = self._sink_inflight.get(sink.name, 0) + 1
                 try:
                     await self._safe_publish(sink, topic, data)
                 except asyncio.CancelledError:
@@ -336,7 +476,7 @@ class DataSinkRegistry:
                     self._safe_buffer_event(sink, topic, data, reason="cancelled")
                     queue.task_done()
                     acked = True
-                    set_sink_queue_size(sink.name, queue.qsize())
+                    self._update_sink_queue_metrics(sink.name)
                     raise
                 except Exception:
                     # _safe_publish handles its own logging; this is a
@@ -349,9 +489,11 @@ class DataSinkRegistry:
                         topic=topic,
                     )
             finally:
+                if item is not _SHUTDOWN_SENTINEL:
+                    self._sink_inflight[sink.name] = max(0, self._sink_inflight.get(sink.name, 0) - 1)
                 if not acked:
                     queue.task_done()
-                    set_sink_queue_size(sink.name, queue.qsize())
+                    self._update_sink_queue_metrics(sink.name)
 
     def _safe_buffer_event(
         self,
@@ -640,6 +782,9 @@ class DataSinkRegistry:
                 timeout_seconds=timeout_seconds,
                 queue_depths={name: q.qsize() for name, q in self._sink_queues.items()},
             )
+        finally:
+            for sink_name in self._sink_queues:
+                self._update_sink_queue_metrics(sink_name)
 
         # Phase 2: send sentinels to wind down workers. Use put() with the
         # remaining budget so a hammered queue (full of post-flush late
@@ -685,6 +830,7 @@ class DataSinkRegistry:
         finally:
             for sink_name in list(self._sink_queues.keys()):
                 set_sink_queue_size(sink_name, 0)
+                set_sink_queue_utilization(sink_name, 0.0)
 
     async def close_all(self) -> None:
         """Close all sinks and the dedup cache."""

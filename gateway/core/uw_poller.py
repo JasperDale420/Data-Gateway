@@ -22,6 +22,7 @@ from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
 from gateway.core.ticker_universe import TickerUniverse
+from gateway.core.uw_eod_state import UwEodStateStore
 
 if TYPE_CHECKING:
     from gateway.providers.uw import UnusualWhalesProvider
@@ -114,6 +115,10 @@ class UWPoller(DedupMixin, BasePoller):
 
         # Track EOD polling — once per trading day
         self._last_eod_date: str | None = None
+        self._eod_state = UwEodStateStore(
+            settings.uw_eod_state_path,
+            stale_after_seconds=settings.uw_eod_claim_stale_after_seconds,
+        )
 
         # Optional flow fan-out tap. When set (see gateway.main), each flow
         # envelope that was successfully published to heber:events is also
@@ -723,6 +728,8 @@ class UWPoller(DedupMixin, BasePoller):
         # Already polled today
         if self._last_eod_date == today_str:
             return False
+        if self._eod_state.should_defer(today_str):
+            return False
 
         # Only fire after the configured time
         if now_et.hour < self._eod_hour:
@@ -735,10 +742,14 @@ class UWPoller(DedupMixin, BasePoller):
 
     async def _poll_eod_snapshots(self, sink_registry) -> None:
         """Orchestrate all EOD per-ticker polls with bounded concurrency."""
+        today_str = datetime.now(ET).strftime("%Y-%m-%d")
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
         if self._ticker_universe is None:
             raise RuntimeError("Ticker universe not initialized for EOD polling")
+        if not self._eod_state.claim(today_str):
+            logger.info("uw_eod_skipped_persistent_state", trading_date=today_str)
+            return
 
         # Refresh dynamic tickers from screener
         await self._ticker_universe.refresh_dynamic(self._provider)
@@ -813,7 +824,8 @@ class UWPoller(DedupMixin, BasePoller):
             totals["insider_trades"] = {"published": 0, "errors": 1}
 
         # Mark today as polled
-        self._last_eod_date = datetime.now(ET).strftime("%Y-%m-%d")
+        self._eod_state.mark_completed(today_str, totals=totals)
+        self._last_eod_date = today_str
 
         logger.info("uw_eod_completed", totals=totals)
 

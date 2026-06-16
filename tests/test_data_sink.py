@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 from unittest.mock import patch
 
@@ -18,6 +19,26 @@ from gateway.core.data_sink import DataSink, DataSinkRegistry
 from gateway.core.log_throttle import LogThrottle
 
 # ── Mock Sinks ───────────────────────────────────────────────────────
+
+
+def test_event_log_context_extracts_only_string_identifiers() -> None:
+    payload = {
+        "event_id": "evt-1",
+        "feed": "bars",
+        "provider": "alpaca",
+        "instrument_key": "equity:AAPL",
+        "symbol": "AAPL",
+        "count": 3,
+    }
+
+    assert data_sink_module._event_log_context(payload) == {
+        "event_id": "evt-1",
+        "feed": "bars",
+        "provider": "alpaca",
+        "instrument_key": "equity:AAPL",
+    }
+    assert data_sink_module._event_log_context({"event_id": 123, "feed": None}) == {}
+    assert data_sink_module._event_log_context("not-json") == {}
 
 
 class _TrackingSink(DataSink):
@@ -331,6 +352,157 @@ class _BlockingSink(DataSink):
         return True
 
 
+class _InstrumentedBlockingSink(_BlockingSink):
+    """Blocking sink that exposes how many publishes workers have started."""
+
+    def __init__(self, release_event: asyncio.Event, sink_name: str = "blocking") -> None:
+        super().__init__(release_event, sink_name)
+        self.started = 0
+
+    async def publish(self, topic: str, data: Any) -> bool:
+        self.started += 1
+        return await super().publish(topic, data)
+
+    async def wait_until_started(self, count: int) -> None:
+        for _ in range(50):
+            if self.started >= count:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"expected {count} in-flight publishes, got {self.started}")
+
+
+@pytest.mark.asyncio
+async def test_low_priority_publish_sheds_when_queue_pressure_exceeds_threshold() -> None:
+    """Low-priority REST publishing should shed once the queue reaches the utilization threshold."""
+    release_event = asyncio.Event()
+    registry = DataSinkRegistry(
+        queue_size=2,
+        worker_count=1,
+        producer_block_timeout_seconds=0.5,
+    )
+    sink = _BlockingSink(release_event, sink_name="redis_streams")
+    registry.register(sink)
+
+    for i in range(3):
+        await registry.publish_all("heber:events", {"event_id": f"pressure-{i}"})
+
+    assert registry.get_queue_utilization("redis_streams") >= 1.0
+    assert registry.can_accept_low_priority("redis_streams", max_utilization=1.0) is False
+
+    release_event.set()
+    await registry.drain_queues(timeout_seconds=2.0)
+
+
+@pytest.mark.asyncio
+async def test_low_priority_publish_sheds_when_worker_inflight_pressure_exceeds_threshold() -> None:
+    """Low-priority REST publishing should include worker in-flight publishes in utilization."""
+    release_event = asyncio.Event()
+    registry = DataSinkRegistry(
+        queue_size=2,
+        worker_count=2,
+        producer_block_timeout_seconds=0.5,
+    )
+    sink = _InstrumentedBlockingSink(release_event, sink_name="redis_streams")
+    registry.register(sink)
+
+    for i in range(2):
+        await registry.publish_all("heber:events", {"event_id": f"inflight-pressure-{i}"})
+
+    try:
+        await sink.wait_until_started(2)
+
+        assert registry.get_queue_depth("redis_streams") == 0
+        assert registry.get_queue_utilization("redis_streams") == pytest.approx(0.5)
+        assert registry.can_accept_low_priority("redis_streams", max_utilization=0.5) is False
+    finally:
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+
+@pytest.mark.asyncio
+async def test_low_priority_publish_accepts_below_threshold() -> None:
+    """Low-priority REST publishing is allowed while queue utilization stays below the threshold."""
+    release_event = asyncio.Event()
+    registry = DataSinkRegistry(
+        queue_size=4,
+        worker_count=1,
+        producer_block_timeout_seconds=0.5,
+    )
+    sink = _BlockingSink(release_event, sink_name="redis_streams")
+    registry.register(sink)
+
+    await registry.publish_all("heber:events", {"event_id": "below-threshold"})
+
+    assert registry.get_queue_utilization("redis_streams") < 0.70
+    assert registry.can_accept_low_priority("redis_streams", max_utilization=0.70) is True
+
+    release_event.set()
+    await registry.drain_queues(timeout_seconds=2.0)
+
+
+@pytest.mark.asyncio
+async def test_low_priority_publish_rejects_missing_or_disabled_sink() -> None:
+    """Low-priority REST publishing should not target missing or disabled sink queues."""
+    registry = DataSinkRegistry()
+
+    assert registry.can_accept_low_priority("redis_streams", max_utilization=0.70) is False
+
+    release_event = asyncio.Event()
+    sink = _BlockingSink(release_event, sink_name="other_sink")
+    registry.register(sink)
+    try:
+        assert registry.can_accept_low_priority("redis_streams", max_utilization=0.70) is False
+        assert registry.can_accept_low_priority("other_sink", max_utilization=0.70) is True
+
+        registry.disable()
+
+        assert registry.can_accept_low_priority("other_sink", max_utilization=0.70) is False
+    finally:
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+
+@pytest.mark.asyncio
+async def test_backpressure_snapshot_includes_queue_and_partitioned_publish_stats() -> None:
+    """Backpressure snapshot should expose queue state and source/feed status counts."""
+    release_event = asyncio.Event()
+    registry = DataSinkRegistry(
+        queue_size=3,
+        worker_count=1,
+        producer_block_timeout_seconds=0.5,
+    )
+    sink = _BlockingSink(release_event, sink_name="redis_streams")
+    registry.register(sink)
+
+    await registry.publish_all(
+        "heber:events",
+        {"event_id": "evt-bars-1", "source": "poller", "feed": "bars"},
+        source="poller",
+    )
+    await registry.publish_all(
+        "heber:events",
+        {"event_id": "evt-bars-2", "source": "poller", "feed": "bars"},
+        source="poller",
+    )
+    registry.record_low_priority_shed(feed="bars", source="rest")
+
+    try:
+        snapshot = registry.get_backpressure_snapshot()
+
+        assert snapshot["queue_size"] == 3
+        assert snapshot["worker_count"] == 1
+        assert snapshot["producer_block_timeout_seconds"] == 0.5
+        assert snapshot["sinks"]["redis_streams"]["queue_depth"] >= 1
+        assert snapshot["sinks"]["redis_streams"]["queue_utilization"] > 0
+        assert snapshot["publish_stats"]["queued"] >= 2
+        assert snapshot["publish_stats"]["low_priority_shed"] == 1
+        assert snapshot["publish_stats"]["by_source_feed"]["poller:bars"]["queued"] == 2
+        assert snapshot["publish_stats"]["by_source_feed"]["rest:bars"]["low_priority_shed"] == 1
+    finally:
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+
 class TestBoundedQueueDispatch:
     """Tests that verify the bounded queue + worker pool dispatch path."""
 
@@ -498,6 +670,50 @@ class TestBoundedQueueDispatch:
 
         after = SINK_PRODUCER_TIMEOUT_DROPS.labels(sink="metric-emit")._value.get()
         assert after - before == 3
+
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+    @pytest.mark.asyncio
+    async def test_producer_timeout_drop_records_feed_source_stats_and_log_context(self, caplog) -> None:
+        """Producer timeout drops include event context and partitioned backpressure counters."""
+        release_event = asyncio.Event()
+        registry = DataSinkRegistry(
+            queue_size=1,
+            worker_count=1,
+            producer_block_timeout_seconds=0.01,
+        )
+        sink = _BlockingSink(release_event, sink_name="drop-context")
+        registry.register(sink)
+
+        dropped_payload = {
+            "event_id": "drop-ctx",
+            "provider": "unusual_whales",
+            "feed": "darkpool",
+            "instrument_key": "equity:SPY",
+            "source": "poller",
+        }
+
+        with (
+            patch.object(data_sink_module, "_PRODUCER_DROP_LOG_THROTTLE", LogThrottle(60.0)),
+            caplog.at_level("CRITICAL", logger="data-gateway"),
+        ):
+            await registry.publish_all("heber:events", {"event_id": "absorb-1", "feed": "darkpool"}, source="poller")
+            await registry.publish_all("heber:events", {"event_id": "absorb-2", "feed": "darkpool"}, source="poller")
+            await registry.publish_all("heber:events", dropped_payload, source="poller")
+
+        snapshot = registry.get_backpressure_snapshot()
+        partition = snapshot["publish_stats"]["by_source_feed"]["poller:darkpool"]
+        assert partition["queued"] == 2
+        assert partition["dropped_producer_timeout"] == 1
+
+        records = [json.loads(record.getMessage()) for record in caplog.records if record.getMessage().startswith("{")]
+        drop_logs = [record for record in records if record.get("message") == "data_sink_producer_timeout_drop"]
+        assert drop_logs
+        assert drop_logs[-1]["event_id"] == "drop-ctx"
+        assert drop_logs[-1]["provider"] == "unusual_whales"
+        assert drop_logs[-1]["feed"] == "darkpool"
+        assert drop_logs[-1]["instrument_key"] == "equity:SPY"
 
         release_event.set()
         await registry.drain_queues(timeout_seconds=2.0)

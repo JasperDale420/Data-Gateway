@@ -13,6 +13,7 @@ from gateway.api.deps import (
     get_connection_manager,
     get_provider_rate_limiter,
     get_registry,
+    get_sink_registry,
     require_api_key,
 )
 from gateway.core.auth import Client
@@ -739,6 +740,16 @@ async def get_status(
         force_stream_section_refresh=force_stream_section_refresh,
     )
 
+    data_sink_backpressure: dict[str, Any] = {}
+    sink_registry = get_sink_registry()
+    if sink_registry is not None:
+        get_backpressure_snapshot = getattr(sink_registry, "get_backpressure_snapshot", None)
+        if callable(get_backpressure_snapshot):
+            try:
+                data_sink_backpressure = get_backpressure_snapshot()
+            except Exception:
+                logger.exception("admin_data_sink_backpressure_snapshot_failed")
+
     data = {
         "providers": provider_status,
         "cache": cache_stats,
@@ -748,6 +759,7 @@ async def get_status(
         "provider_quote_batches": provider_quote_batches,
         "stream_sink_dispatch": stream_sink_dispatch,
         "stream_fanout": stream_fanout,
+        "data_sink_backpressure": data_sink_backpressure,
     }
     if include_stream_tuning_summary:
         data["stream_tuning_summary"] = _build_stream_tuning_summary(

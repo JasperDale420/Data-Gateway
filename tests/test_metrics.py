@@ -1,5 +1,7 @@
 """Tests for metrics helpers."""
 
+from pathlib import Path
+
 import gateway.core.metrics as metrics
 from gateway.api import metrics as metrics_api
 
@@ -80,6 +82,48 @@ def test_cache_error_counter_records_operation() -> None:
 
     after = metrics.CACHE_ERRORS.labels(cache_type="memory", operation="read")._value.get()
     assert after == before + 1
+
+
+def test_sink_producer_timeout_drop_counter_records_feed_and_source() -> None:
+    before = metrics.SINK_PRODUCER_TIMEOUT_DROPS_BY_FEED.labels(
+        sink="redis_streams",
+        source="poller",
+        feed="darkpool",
+    )._value.get()
+
+    metrics.record_sink_producer_timeout_drop("redis_streams", source="poller", feed="darkpool")
+
+    after = metrics.SINK_PRODUCER_TIMEOUT_DROPS_BY_FEED.labels(
+        sink="redis_streams",
+        source="poller",
+        feed="darkpool",
+    )._value.get()
+    assert after == before + 1
+
+
+def test_low_priority_rest_shed_counter_records_feed() -> None:
+    before = metrics.REST_LOW_PRIORITY_SHED.labels(feed="greek_exposure")._value.get()
+
+    metrics.record_low_priority_rest_shed(feed="greek_exposure")
+
+    after = metrics.REST_LOW_PRIORITY_SHED.labels(feed="greek_exposure")._value.get()
+    assert after == before + 1
+
+
+def test_sink_queue_utilization_gauge_records_sink() -> None:
+    metrics.set_sink_queue_utilization("redis_streams", 0.75)
+
+    assert metrics.SINK_QUEUE_UTILIZATION.labels(sink="redis_streams")._value.get() == 0.75
+
+
+def test_prometheus_alerts_include_task3_sink_diagnostics() -> None:
+    alerts = Path("config/prometheus_alerts.yml").read_text()
+
+    assert "SinkQueueUtilizationHigh" in alerts
+    assert "gateway_sink_queue_utilization" in alerts
+    assert "LowPriorityRestSinkShedding" in alerts
+    assert "gateway_rest_low_priority_shed_total" in alerts
+    assert "gateway_sink_producer_timeout_drops_total" in alerts
 
 
 async def test_metrics_endpoint_calls_throttled_updater(monkeypatch) -> None:

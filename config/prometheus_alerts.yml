@@ -108,6 +108,27 @@ groups:
           summary: "Sink {{ $labels.sink }} retry buffer is > 90% full"
           description: "Sink {{ $labels.sink }} buffer at {{ $value }} entries (cap 10000). Eviction will start at 100%; address the underlying sink failure now."
 
+      # Sink queue pressure warning before producer-timeout drops begin.
+      - alert: SinkQueueUtilizationHigh
+        expr: max(gateway_sink_queue_utilization) by (sink) > 0.70
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sink {{ $labels.sink }} queue utilization is above 70%"
+          description: "Sink {{ $labels.sink }} has sustained high dispatch utilization. REST low-priority publishing may shed and producer-timeout drops may follow if Redis workers cannot catch up."
+
+      # Low-priority REST sink shedding is intentional protection, but it is
+      # still a pressure signal that the live Heber stream is near saturation.
+      - alert: LowPriorityRestSinkShedding
+        expr: sum(increase(gateway_rest_low_priority_shed_total[5m])) by (feed) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low-priority REST sink publishing is being shed for {{ $labels.feed }}"
+          description: "The Gateway is skipping low-priority REST background publishes for feed {{ $labels.feed }} because the sink queue is under pressure. HTTP responses are still returned normally."
+
       # Sink producer-side queue-put timeout drops — emergency.
       # The bounded queue + worker pool absorbs steady-state bursts; a
       # producer drop means the queue is full AND workers can't drain it

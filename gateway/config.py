@@ -235,6 +235,20 @@ class Settings(BaseSettings):
     data_sink_queue_size: int = Field(default=16384, ge=64, le=65536)
     data_sink_worker_count: int = Field(default=16, ge=1, le=64)
     data_sink_producer_block_timeout_seconds: float = Field(default=0.1, ge=0.001, le=5.0)
+    rest_sink_excluded_feeds: str = Field(
+        default="greek_exposure,iv_rank,iv_term_structure,short_data,ftd,flow_alerts,darkpool",
+        description="Comma-separated feed names that REST envelope middleware must not publish into live Heber stream",
+    )
+    rest_sink_low_priority_max_queue_utilization: float = Field(
+        default=0.70,
+        ge=0.0,
+        le=1.0,
+        description="Shed low-priority REST sink publishing when sink queue utilization is at or above this threshold",
+    )
+
+    @property
+    def rest_sink_excluded_feed_set(self) -> set[str]:
+        return {item.strip() for item in self.rest_sink_excluded_feeds.split(",") if item.strip()}
 
     # Backfill concurrency (per-provider, split by feed weight)
     backfill_lightweight_concurrency: int = Field(default=5, ge=1)
@@ -254,6 +268,15 @@ class Settings(BaseSettings):
     uw_core_tickers: str = ""  # comma-separated override, empty = use defaults
     uw_dynamic_ticker_count: int = Field(default=20, ge=0)
     uw_eod_concurrency: int = Field(default=5, ge=1, le=20)
+    uw_eod_state_path: Path = Field(
+        default=Path("/app/logs/state/uw_eod_state.json"),
+        description="Persistent JSON state file used to prevent duplicate UW EOD runs across restarts",
+    )
+    uw_eod_claim_stale_after_seconds: int = Field(
+        default=7200,
+        ge=300,
+        description="Allow a UW EOD run to be retried when a running claim is older than this many seconds",
+    )
 
     # Alpaca option chain capture
     option_capture_enabled: bool = False

@@ -108,6 +108,15 @@ async def test_status_includes_data_sink_when_registry_configured(
         async def health_check_all(self) -> dict[str, bool]:
             return {"redis_streams": True, "heber": True}
 
+        def get_backpressure_snapshot(self) -> dict:
+            return {
+                "queue_size": 10,
+                "worker_count": 2,
+                "producer_block_timeout_seconds": 0.1,
+                "sinks": {"redis_streams": {"queue_depth": 3, "queue_utilization": 0.25}},
+                "publish_stats": {"queued": 4, "dropped_producer_timeout": 0, "by_source_feed": {}},
+            }
+
     monkeypatch.setattr(health_module, "get_sink_registry", lambda: _HealthySinkRegistry())
 
     response = await health_module.detailed_status(cache=cache, connections=connections)
@@ -115,6 +124,8 @@ async def test_status_includes_data_sink_when_registry_configured(
     assert "data_sink" in response["components"]
     assert response["components"]["data_sink"]["status"] == "ok"
     assert response["components"]["data_sink"]["sinks"] == {"redis_streams": "ok", "heber": "ok"}
+    assert response["components"]["data_sink"]["backpressure"]["queue_size"] == 10
+    assert response["components"]["data_sink"]["backpressure"]["sinks"]["redis_streams"]["queue_depth"] == 3
 
 
 @pytest.mark.asyncio
