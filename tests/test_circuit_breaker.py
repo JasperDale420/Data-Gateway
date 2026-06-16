@@ -162,6 +162,126 @@ class TestCircuitBreakerStates:
         assert breaker.state == CircuitState.OPEN
 
 
+class TestHalfOpenConcurrencyGuard:
+    """Tests that HALF_OPEN admits exactly one probe at a time."""
+
+    @pytest.mark.asyncio
+    async def test_half_open_rejects_concurrent_probes(self, breaker: CircuitBreaker) -> None:
+        """While a HALF_OPEN probe is in flight, additional callers must be
+        rejected with CircuitOpenError instead of executing in parallel.
+
+        Regression — codex caught: the `_half_open_in_progress` guard was only
+        consulted inside the `state == OPEN` branch. Once the first probe
+        flipped OPEN → HALF_OPEN, every subsequent caller saw `state ==
+        HALF_OPEN` and fell through `_check_state` without raising — so the
+        breaker amplified concurrent load by N against an upstream that was
+        only tentatively recovered.
+        """
+
+        async def failing_func() -> None:
+            raise ValueError("Upstream error")
+
+        # Open the circuit (failure_threshold=3 from the fixture).
+        for _ in range(3):
+            with pytest.raises(ValueError):
+                await breaker.call(failing_func)
+        assert breaker.state == CircuitState.OPEN
+
+        # Wait past the recovery window so the next call probes.
+        await asyncio.sleep(0.15)
+
+        probe_in_flight = asyncio.Event()
+        probe_release = asyncio.Event()
+        probe_started_count = 0
+
+        async def slow_probe() -> str:
+            nonlocal probe_started_count
+            probe_started_count += 1
+            probe_in_flight.set()
+            await probe_release.wait()
+            return "ok"
+
+        # First caller becomes the probe, flips OPEN → HALF_OPEN.
+        first = asyncio.create_task(breaker.call(slow_probe))
+        await asyncio.wait_for(probe_in_flight.wait(), timeout=1.0)
+        assert breaker.state == CircuitState.HALF_OPEN
+        assert probe_started_count == 1
+
+        # Second caller arrives WHILE the probe is in flight — must be
+        # rejected with CircuitOpenError, NOT executed in parallel.
+        with pytest.raises(CircuitOpenError):
+            await breaker.call(slow_probe)
+        assert probe_started_count == 1, "second probe must not have started"
+
+        # Third concurrent attempt: also rejected.
+        with pytest.raises(CircuitOpenError):
+            await breaker.call(slow_probe)
+        assert probe_started_count == 1
+
+        # Let the first probe finish; the breaker semantics from here on are
+        # already covered by other tests in this file.
+        probe_release.set()
+        result = await asyncio.wait_for(first, timeout=1.0)
+        assert result == "ok"
+
+
+class TestHalfOpenProbeCancellation:
+    """Tests that a cancelled HALF_OPEN probe releases the in-progress slot.
+
+    Regression — codex caught: the concurrent-probe guard reserves
+    `_half_open_in_progress = True` in `_check_state` and the success/failure
+    handlers release it.  But the in-flight `await func(...)` can be cancelled
+    by the caller (shutdown, asyncio.wait_for timeout, etc.), bypassing
+    `except Exception` because `CancelledError` is a BaseException.  Without
+    explicit handling the slot would stay reserved forever — every later
+    caller would hit `CircuitOpenError` until a manual reset.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancelled_half_open_probe_releases_slot(self, breaker: CircuitBreaker) -> None:
+        async def failing_func() -> None:
+            raise ValueError("Upstream error")
+
+        # Open the circuit.
+        for _ in range(3):
+            with pytest.raises(ValueError):
+                await breaker.call(failing_func)
+        assert breaker.state == CircuitState.OPEN
+
+        # Wait past recovery so the next call probes.
+        await asyncio.sleep(0.15)
+
+        probe_in_flight = asyncio.Event()
+
+        async def slow_probe() -> str:
+            probe_in_flight.set()
+            await asyncio.sleep(10.0)
+            return "should-never-return"
+
+        # Start the probe; it'll flip OPEN -> HALF_OPEN and reserve the slot.
+        probe = asyncio.create_task(breaker.call(slow_probe))
+        await asyncio.wait_for(probe_in_flight.wait(), timeout=1.0)
+        assert breaker.state == CircuitState.HALF_OPEN
+        assert breaker._half_open_in_progress is True
+
+        # Cancel the probe — without the fix, the slot would stay True
+        # forever.
+        probe.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(probe, timeout=1.0)
+
+        # The slot must have been released so a follow-up caller can probe.
+        assert breaker._half_open_in_progress is False
+
+        # And the next call must NOT hit "another probe is already running":
+        # it should be admitted as the new probe.
+        async def success_func() -> str:
+            return "ok"
+
+        result = await breaker.call(success_func)
+        assert result == "ok"
+
+
 class TestCircuitBreakerReset:
     """Tests for manual circuit reset."""
 
