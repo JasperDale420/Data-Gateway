@@ -69,14 +69,30 @@ class RequestDeduplicator:
                 is_new = True
 
         if not is_new:
-            return await future
+            # `asyncio.shield` so a cancelled follower does not poison the
+            # shared future for other followers.  Without shield, cancelling
+            # any follower task propagates the cancellation into `future`,
+            # marking it cancelled — every other follower would observe
+            # `CancelledError` even though the leader may still complete.
+            return await asyncio.shield(future)
 
         try:
             result = await fetcher()
             future.set_result(result)
             return result
+        except asyncio.CancelledError:
+            # Leader was cancelled mid-fetch. If we don't propagate cancellation
+            # into the shared future, every follower awaiting it will hang
+            # forever — CancelledError is a BaseException and bypasses the
+            # `except Exception` clause below.  Cancel the future so followers
+            # receive CancelledError, then re-raise so cancellation propagates
+            # to the leader's caller as well.
+            if not future.done():
+                future.cancel()
+            raise
         except Exception as e:
-            future.set_exception(e)
+            if not future.done():
+                future.set_exception(e)
             raise
         finally:
             async with key_lock:

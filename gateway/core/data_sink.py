@@ -478,6 +478,14 @@ class DataSinkRegistry:
                 retry_after=round(e.retry_after, 2),
             )
             record_sink_publish(sink=sink.name, topic=topic, success=False)
+            # PR #32 established `_safe_buffer_event` as the single buffer
+            # site for in-flight events. `publish_all` checks the circuit
+            # state BEFORE enqueue and routes to `buffer_event` if OPEN —
+            # but the breaker can trip AFTER enqueue and BEFORE this worker
+            # call. Without this branch the event is silently lost, which
+            # regressed PR #32's invariant. Use the same buffer routing as
+            # the generic-exception path below.
+            self._safe_buffer_event(sink, topic, data, reason="circuit_open_in_flight")
         except Exception as e:
             # Sinks that record their own metrics (e.g. RedisStreamsSink) already
             # log detailed errors internally.  Avoid duplicate ERROR+traceback spam
