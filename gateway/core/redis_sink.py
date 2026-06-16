@@ -546,9 +546,36 @@ class RedisStreamsSink(DataSink):
 
         Returns:
             Number of successfully published messages.
+
+        Notes:
+            The aggregate count cannot identify *which* messages succeeded
+            under partial-pipeline failure. New callers should use
+            :meth:`publish_batch_results`, which returns ``list[bool]``
+            aligned 1:1 with the input.
+        """
+        results = await self.publish_batch_results(messages)
+        return sum(1 for ok in results if ok)
+
+    async def publish_batch_results(
+        self,
+        messages: list[tuple[str, dict[str, Any] | str | bytes]],
+    ) -> list[bool]:
+        """Publish messages and return per-message success flags.
+
+        Each entry in the returned list is aligned with ``messages`` and is
+        ``True`` if the matching XADD pipeline reply was a non-exception
+        stream id, ``False`` otherwise. This lets callers tell exactly which
+        messages landed when a ``transaction=False`` pipeline fails at
+        arbitrary indices.
+
+        Args:
+            messages: List of (topic, data) tuples to publish.
+
+        Returns:
+            ``list[bool]`` of length ``len(messages)``.
         """
         if not messages:
-            return 0
+            return []
 
         await self._ensure_connected()
 
@@ -556,40 +583,45 @@ class RedisStreamsSink(DataSink):
 
         sem = asyncio.Semaphore(MAX_CONCURRENT_CHUNKS)
 
-        async def _process_chunk_with_retry(chunk: list) -> int:
+        async def _process_chunk_with_retry(chunk: list) -> list[bool]:
             async with sem:
-                published = await self._publish_chunk(chunk)
-                if published == 0 and len(chunk) > 0:
+                chunk_results = await self._publish_chunk(chunk)
+                if not any(chunk_results) and len(chunk) > 0:
                     # Retry once on total failure
                     await self._ensure_connected()
-                    published = await self._publish_chunk(chunk)
-                    if published > 0:
+                    chunk_results = await self._publish_chunk(chunk)
+                    if any(chunk_results):
                         logger.info(
                             "redis_sink_chunk_retry_success",
                             chunk_size=len(chunk),
-                            published=published,
+                            published=sum(1 for ok in chunk_results if ok),
                         )
-                return published
+                return chunk_results
 
-        results = await asyncio.gather(
+        chunk_outcomes = await asyncio.gather(
             *[_process_chunk_with_retry(chunk) for chunk in chunks],
             return_exceptions=True,
         )
 
-        total_published = 0
-        for i, result in enumerate(results):
-            if isinstance(result, BaseException):
+        results: list[bool] = []
+        for i, outcome in enumerate(chunk_outcomes):
+            # gather(return_exceptions=True) can yield CancelledError, a
+            # BaseException (not Exception); treat any BaseException as a
+            # failed chunk rather than trying to iterate it as list[bool].
+            if isinstance(outcome, BaseException):
                 logger.warning(
                     "redis_sink_chunk_exception",
                     chunk_index=i,
-                    error=str(result) or type(result).__name__,
+                    error=str(outcome) or type(outcome).__name__,
                 )
                 for topic, _ in chunks[i]:
                     record_sink_publish(sink=self.name, topic=topic, success=False)
+                results.extend([False] * len(chunks[i]))
             else:
-                total_published += result
+                # outcome is list[bool] aligned with chunks[i]
+                results.extend(outcome)
 
-        return total_published
+        return results
 
     async def publish_batch_indexed(
         self,
@@ -654,20 +686,20 @@ class RedisStreamsSink(DataSink):
     async def _publish_chunk(
         self,
         chunk: list[tuple[str, dict[str, Any] | str | bytes]],
-    ) -> int:
-        """Execute a single pipeline chunk. Returns number published."""
-        return len(await self._publish_chunk_indexed(chunk))
+    ) -> list[bool]:
+        """Execute a single pipeline chunk.
 
-    async def _publish_chunk_indexed(
-        self,
-        chunk: list[tuple[str, dict[str, Any] | str | bytes]],
-    ) -> set[int]:
-        """Execute a single pipeline chunk. Returns succeeded local indices."""
+        Returns:
+            ``list[bool]`` aligned with ``chunk``: ``True`` per message whose
+            XADD reply was not an exception. A pipeline-level failure (e.g.
+            connection reset before ``pipe.execute`` returns) marks all
+            messages in the chunk as failed.
+        """
         client = self._redis
         if client is None:
             for topic, _ in chunk:
                 record_sink_publish(sink=self.name, topic=topic, success=False)
-            return set()
+            return [False] * len(chunk)
 
         try:
             async with client.pipeline(transaction=False) as pipe:
@@ -689,7 +721,7 @@ class RedisStreamsSink(DataSink):
                 timeout = self._operation_timeout_seconds + (len(chunk) / 500) * 0.5
                 results = await asyncio.wait_for(pipe.execute(), timeout=timeout)
 
-            succeeded: set[int] = set()
+            outcomes: list[bool] = []
             for i, result in enumerate(results):
                 topic = chunk[i][0]
                 if isinstance(result, Exception):
@@ -699,16 +731,17 @@ class RedisStreamsSink(DataSink):
                         error=str(result),
                     )
                     record_sink_publish(sink=self.name, topic=topic, success=False)
+                    outcomes.append(False)
                 else:
-                    succeeded.add(i)
                     record_sink_publish(sink=self.name, topic=topic, success=True)
+                    outcomes.append(True)
 
             logger.debug(
                 "redis_sink_chunk_published",
                 chunk_size=len(chunk),
-                published=len(succeeded),
+                published=sum(outcomes),
             )
-            return succeeded
+            return outcomes
 
         except Exception as e:
             error_msg = str(e) if str(e) else type(e).__name__
@@ -724,7 +757,18 @@ class RedisStreamsSink(DataSink):
             )
             for topic, _ in chunk:
                 record_sink_publish(sink=self.name, topic=topic, success=False)
-            return set()
+            return [False] * len(chunk)
+
+    async def _publish_chunk_indexed(
+        self,
+        chunk: list[tuple[str, dict[str, Any] | str | bytes]],
+    ) -> set[int]:
+        """Execute a single pipeline chunk. Returns succeeded local indices.
+
+        Thin adapter over :meth:`_publish_chunk` so the indexed batch API
+        (flow fan-out parity) shares a single publish implementation.
+        """
+        return {i for i, ok in enumerate(await self._publish_chunk(chunk)) if ok}
 
     async def health_check(self) -> bool:
         """Check Redis connection health."""

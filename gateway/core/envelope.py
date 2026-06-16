@@ -9,7 +9,7 @@ Provides:
 
 import hashlib
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Any, NoReturn
 
@@ -328,6 +328,42 @@ def _raise_wrap_failure(
     raise EnvelopeWrapError(f"wrap_event failed for {provider}/{feed}/{symbol}: {error}") from error
 
 
+_DATE_ONLY_LENGTH = len("YYYY-MM-DD")
+
+
+def _parse_event_timestamp(value: Any) -> datetime | None:
+    """Parse a timestamp value from an event payload.
+
+    Extends ``timeutils.parse_timestamp`` with two cases the dedup layer
+    needs:
+
+    - A bare ``date`` object → midnight UTC for that day.
+    - An ISO ``YYYY-MM-DD`` string (no time component) → midnight UTC for
+      that day. Without this, ``datetime.fromisoformat("2026-05-15")``
+      returns a *naive* datetime that ``parse_timestamp`` promotes to
+      UTC -- which is fine, but the fall-through to ``datetime.now(UTC)``
+      would otherwise fire for any feed whose canonical timestamp is a
+      bare date in a field outside the standard list.
+
+    Returns ``None`` if the value can't be parsed.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, date):
+        return datetime.combine(value, time.min, tzinfo=UTC)
+    if isinstance(value, str):
+        parsed = parse_timestamp(value)
+        if parsed is not None:
+            return parsed
+        # ``parse_timestamp`` already handles the YYYY-MM-DD case via
+        # ``datetime.fromisoformat``; if it returned None the string is
+        # malformed and we should NOT silently fall through to now().
+        return None
+    return None
+
+
 def wrap_event(
     event: dict | BaseModel,
     provider: str,
@@ -335,6 +371,7 @@ def wrap_event(
     source: str = "websocket",
     stream_type: str | None = None,
     ts_ingest: datetime | None = None,
+    ts_event_override: datetime | None = None,
     instrument_type_override: str | None = None,
     instrument_key_override: str | None = None,
     symbol_override: str | None = None,
@@ -348,6 +385,14 @@ def wrap_event(
         source: Delivery method (websocket, rest)
         stream_type: Optional stream identifier for lineage
         ts_ingest: Gateway receive time (defaults to now)
+        ts_event_override: Explicit event timestamp. Use this for feeds
+            whose canonical timestamp is *not* one of the standard
+            field names (e.g. ``date``, ``transaction_date``,
+            ``filing_date``, ``period_end_date``) AND whose row is
+            otherwise undisambiguated by ``unique_fields``. Without this,
+            ``ts_event`` falls back to ``datetime.now(UTC)`` and the
+            computed ``event_id`` changes on every call -- defeating
+            Heber's three-layer dedup on retry/replay.
 
     Returns:
         EventEnvelope as dict for JSON serialization
@@ -374,12 +419,33 @@ def wrap_event(
     if not symbol and feed in {"market_tide", "sector_tide", "etf_tide", "market_tide_by_etf"}:
         symbol = payload.get("sector") or payload.get("etf") or "MARKET"
 
-    # Extract event timestamp
-    ts_event_raw = (
-        payload.get("timestamp") or payload.get("t") or payload.get("published_at") or payload.get("datetime")
-    )
-
-    ts_event = parse_timestamp(ts_event_raw) or datetime.now(UTC)
+    # Extract event timestamp. Field-name precedence (high → low):
+    # 1. Explicit ``ts_event_override`` from the caller
+    # 2. Time-of-day fields (timestamp / t / published_at / datetime)
+    # 3. Date-only fields (date / transaction_date / filing_date /
+    #    report_date / effective_date / period_end_date) -- a YYYY-MM-DD
+    #    string is promoted to midnight-UTC datetime so the event_id hash
+    #    is stable across retries and replays.
+    # 4. Fallback: ``datetime.now(UTC)`` -- the failure mode this fix
+    #    documents and most feeds should avoid.
+    if ts_event_override is not None:
+        ts_event = ts_event_override
+        if ts_event.tzinfo is None:
+            ts_event = ts_event.replace(tzinfo=UTC)
+    else:
+        ts_event_raw = (
+            payload.get("timestamp")
+            or payload.get("t")
+            or payload.get("published_at")
+            or payload.get("datetime")
+            or payload.get("date")
+            or payload.get("transaction_date")
+            or payload.get("filing_date")
+            or payload.get("report_date")
+            or payload.get("effective_date")
+            or payload.get("period_end_date")
+        )
+        ts_event = _parse_event_timestamp(ts_event_raw) or datetime.now(UTC)
 
     # Ingest time
     if ts_ingest is None:

@@ -548,12 +548,95 @@ class DataSinkRegistry:
             messages: List of (topic, data) tuples.
 
         Returns:
-            Total number of successfully published messages across all sinks.
+            Total number of successful sink publishes summed across all
+            sinks (legacy semantics): with N sinks and M messages where
+            every sink accepts every message, returns N*M.
+
+        Notes:
+            The integer return value cannot identify *which* messages
+            succeeded — under partial-batch failure (a Redis pipeline executed
+            with ``transaction=False`` can fail at arbitrary indices) callers
+            slicing the input as ``messages[:return_value]`` will mark the
+            wrong events as published. New code should use
+            :meth:`publish_all_batch_results`, which returns a parallel
+            ``list[bool]``.
         """
         if not self._enabled or not self._sinks or not messages:
             return 0
 
-        total_published = 0
+        # Re-implement the legacy sum-across-sinks count directly. Going via
+        # ``publish_all_batch_results`` would aggregate "any sink accepted"
+        # into a single bool per message and lose the cross-sink sum that
+        # existing callers (option_capture, backfill) rely on.
+        total = 0
+        for sink in self._sinks:
+            try:
+                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+                if breaker.state == CircuitState.OPEN:
+                    if hasattr(sink, "buffer_event"):
+                        for msg_topic, msg_data in messages:
+                            sink.buffer_event(msg_topic, msg_data)
+                    continue
+            except Exception:
+                pass
+            if hasattr(sink, "publish_batch_results"):
+                try:
+                    sink_results = await sink.publish_batch_results(messages)
+                except Exception:
+                    logger.exception(
+                        "data_sink_batch_publish_failed",
+                        sink=sink.name,
+                        count=len(messages),
+                    )
+                    sink_results = []
+                total += sum(1 for ok in sink_results if ok)
+            elif hasattr(sink, "publish_batch"):
+                try:
+                    total += await sink.publish_batch(messages)
+                except Exception:
+                    logger.exception(
+                        "data_sink_batch_publish_failed",
+                        sink=sink.name,
+                        count=len(messages),
+                    )
+            else:
+                for topic, data in messages:
+                    task = asyncio.create_task(self._safe_publish(sink, topic, data))
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                    total += 1  # Optimistic
+        return total
+
+    async def publish_all_batch_results(
+        self,
+        messages: list[tuple[str, dict[str, Any]]],
+    ) -> list[bool]:
+        """Batch-publish messages and return per-message success flags.
+
+        Returns a ``list[bool]`` aligned 1:1 with ``messages``: each entry is
+        ``True`` if *at least one* registered sink published that message
+        successfully, ``False`` otherwise. This is the safe primitive for
+        poller dedup state — callers can iterate ``zip(messages, results)``
+        and mark only successful events as seen, instead of slicing the input
+        by an aggregate count (which silently mis-marks events under partial
+        pipeline failure).
+
+        Args:
+            messages: List of (topic, data) tuples.
+
+        Returns:
+            ``list[bool]`` of length ``len(messages)``.
+        """
+        if not messages:
+            return []
+        if not self._enabled or not self._sinks:
+            return [False] * len(messages)
+
+        # Aggregate per-message success across all sinks. A message is
+        # "published" if any sink accepted it (matches semantics of the
+        # int-returning publish_all_batch sum below). With the standard
+        # single-sink configuration this is unambiguous.
+        any_success = [False] * len(messages)
 
         for sink in self._sinks:
             # Check circuit state before any publish attempt
@@ -578,25 +661,75 @@ class DataSinkRegistry:
             except Exception:
                 pass  # If breaker lookup fails, proceed with publish
 
-            if hasattr(sink, "publish_batch"):
+            if hasattr(sink, "publish_batch_results"):
+                # Preferred path: sink returns per-message booleans, so
+                # partial failure is observable.
                 try:
-                    count = await sink.publish_batch(messages)
-                    total_published += count
+                    sink_results = await sink.publish_batch_results(messages)
                 except Exception:
                     logger.exception(
                         "data_sink_batch_publish_failed",
                         sink=sink.name,
                         count=len(messages),
                     )
+                    sink_results = [False] * len(messages)
+                if len(sink_results) != len(messages):
+                    logger.error(
+                        "data_sink_batch_results_length_mismatch",
+                        sink=sink.name,
+                        expected=len(messages),
+                        actual=len(sink_results),
+                    )
+                    # Defensive: treat any missing entries as failure
+                    sink_results = list(sink_results) + [False] * (len(messages) - len(sink_results))
+                    sink_results = sink_results[: len(messages)]
+                for i, ok in enumerate(sink_results):
+                    if ok:
+                        any_success[i] = True
+            elif hasattr(sink, "publish_batch"):
+                # Legacy path: only an aggregate count is available.
+                # Approximating per-message success from a count is unsafe
+                # (this is the original bug), but the only safe fallback that
+                # preserves "no-event-lost" semantics is to mark every
+                # message as failed when count < len(messages), so callers
+                # can retry. When count == len(messages) all succeeded.
+                try:
+                    count = await sink.publish_batch(messages)
+                except Exception:
+                    logger.exception(
+                        "data_sink_batch_publish_failed",
+                        sink=sink.name,
+                        count=len(messages),
+                    )
+                    count = 0
+                if count == len(messages):
+                    for i in range(len(messages)):
+                        any_success[i] = True
+                elif count > 0:
+                    # Partial failure surfaced as an opaque count -- we
+                    # cannot tell which messages succeeded. Refuse to mark
+                    # any as succeeded so the caller retries instead of
+                    # mis-marking. This is safe for dedup: the next attempt
+                    # will produce the same event_id and the sink-side
+                    # dedup/idempotency layer will drop duplicates.
+                    logger.warning(
+                        "data_sink_batch_partial_failure_opaque",
+                        sink=sink.name,
+                        expected=len(messages),
+                        published=count,
+                    )
             else:
-                # Fallback: publish individually
-                for topic, data in messages:
+                # Fallback: publish individually. Each task is fire-and-forget
+                # (background); the legacy semantics were "optimistic" --
+                # preserve that for back-compat callers that explicitly
+                # request per-message results from a non-batch sink.
+                for i, (topic, data) in enumerate(messages):
                     task = asyncio.create_task(self._safe_publish(sink, topic, data))
                     self._background_tasks.add(task)
                     task.add_done_callback(self._background_tasks.discard)
-                    total_published += 1  # Optimistic; errors logged in _safe_publish
+                    any_success[i] = True
 
-        return total_published
+        return any_success
 
     async def publish_all_batch_indexed(
         self,

@@ -61,6 +61,7 @@ def mock_sink_registry():
     sink = AsyncMock()
     sink.publish_all = AsyncMock()
     sink.publish_all_batch = AsyncMock(return_value=2)
+    sink.publish_all_batch_results = AsyncMock(side_effect=lambda msgs: [True] * len(msgs))
     return sink
 
 
@@ -105,7 +106,7 @@ async def test_poll_publishes_envelopes_with_crypto_feed_names(mock_provider, mo
 
     # publish_all_batch should be called with messages tagged crypto_bars and crypto_trades.
     all_envelopes: list[dict[str, Any]] = []
-    for call in mock_sink_registry.publish_all_batch.call_args_list:
+    for call in mock_sink_registry.publish_all_batch_results.call_args_list:
         for _topic, env in call[0][0]:
             all_envelopes.append(env)
 
@@ -127,7 +128,7 @@ async def test_poll_does_not_require_market_hours(mock_provider, mock_sink_regis
 
     # Even with TradingCalendar saying market closed, crypto poll must run.
     await poller._poll_crypto(mock_sink_registry)
-    assert mock_sink_registry.publish_all_batch.called
+    assert mock_sink_registry.publish_all_batch_results.called
 
 
 @pytest.mark.asyncio

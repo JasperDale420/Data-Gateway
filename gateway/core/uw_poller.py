@@ -120,6 +120,13 @@ class UWPoller(DedupMixin, BasePoller):
             stale_after_seconds=settings.uw_eod_claim_stale_after_seconds,
         )
 
+        # EOD work is fanned out across hundreds of tickers × 8 feeds and can
+        # take many minutes. Awaiting it inline in ``_poll_loop`` starves the
+        # darkpool / extended-hours pollers that are explicitly meant to keep
+        # running during EOD. Spawning it as a background task lets the main
+        # loop continue to service all other intervals.
+        self._eod_task: asyncio.Task[None] | None = None
+
         # Optional flow fan-out tap. When set (see gateway.main), each flow
         # envelope that was successfully published to heber:events is also
         # handed to this coroutine for WS delivery. Default None ⇒ zero behavior
@@ -444,7 +451,25 @@ class UWPoller(DedupMixin, BasePoller):
         return True
 
     async def stop(self) -> None:
-        """Stop the background polling task and shut down provider."""
+        """Stop the background polling task and shut down provider.
+
+        Also cancels any in-flight EOD background task so shutdown doesn't
+        leave a long-running fan-out wedging the event loop. We give the
+        task a brief window to settle before forcing cancellation.
+        """
+        # Cancel the EOD task first so producers exit before the poll loop
+        # tears down its sink_registry reference.
+        eod_task = self._eod_task
+        self._eod_task = None
+        if eod_task is not None and not eod_task.done():
+            eod_task.cancel()
+            try:
+                await asyncio.wait_for(eod_task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+            except Exception as e:
+                logger.warning("uw_eod_task_stop_error", error=str(e))
+
         await super().stop()
         if self._provider:
             await self._provider.shutdown()
@@ -497,10 +522,37 @@ class UWPoller(DedupMixin, BasePoller):
                         await self._poll_sector_tides(sink_registry)
                         self._last_sector_tide_poll = datetime.now(UTC)
 
-                # EOD snapshot polling (once per trading day after market close)
-                if self.eod_enabled and self._should_poll_eod():
+                # EOD snapshot polling (once per trading day after market close).
+                # Spawn as a background task so the main loop can continue
+                # servicing darkpool / extended-hours / market-tide polls while
+                # the EOD fan-out (tickers × 8 feeds) is in flight. Without
+                # this, awaiting EOD inline starves all other pollers for the
+                # duration of the EOD run.
+                if self.eod_enabled and self._should_poll_eod() and (self._eod_task is None or self._eod_task.done()):
                     logger.info("uw_poller_starting_eod_snapshots")
-                    await self._poll_eod_snapshots(sink_registry)
+                    # Mark the date *before* spawning so a second tick within
+                    # the same minute doesn't double-schedule the EOD work
+                    # before the task gets a chance to run.
+                    self._last_eod_date = datetime.now(ET).strftime("%Y-%m-%d")
+                    self._eod_task = asyncio.create_task(
+                        self._run_eod_with_logging(sink_registry),
+                        name="uw_poller_eod",
+                    )
+
+                # Surface any exception from a finished EOD task so it lands
+                # in the error log instead of being silently swallowed.
+                if self._eod_task is not None and self._eod_task.done():
+                    try:
+                        exc = self._eod_task.exception()
+                    except (asyncio.CancelledError, asyncio.InvalidStateError):
+                        exc = None
+                    if exc is not None:
+                        logger.error(
+                            "uw_eod_task_error",
+                            error=str(exc),
+                            exc_info=(type(exc), exc, exc.__traceback__),
+                        )
+                    self._eod_task = None
 
                 # Periodic cache cleanup
                 self._cleanup_cache()
@@ -740,6 +792,21 @@ class UWPoller(DedupMixin, BasePoller):
         # Must be a trading day
         return self._calendar.is_trading_day(now_et.date())
 
+    async def _run_eod_with_logging(self, sink_registry) -> None:
+        """Wrapper around ``_poll_eod_snapshots`` for the EOD background task.
+
+        Logs success/error and clears the task reference so the next-day
+        scheduler can re-spawn cleanly. Cancellation (e.g. on shutdown)
+        propagates through.
+        """
+        try:
+            await self._poll_eod_snapshots(sink_registry)
+        except asyncio.CancelledError:
+            logger.info("uw_eod_task_cancelled", last_eod_date=self._last_eod_date)
+            raise
+        except Exception as e:
+            logger.error("uw_eod_task_error", error=str(e), exc_info=True)
+
     async def _poll_eod_snapshots(self, sink_registry) -> None:
         """Orchestrate all EOD per-ticker polls with bounded concurrency."""
         today_str = datetime.now(ET).strftime("%Y-%m-%d")
@@ -823,7 +890,10 @@ class UWPoller(DedupMixin, BasePoller):
             logger.error("uw_eod_insiders_error", error=str(e))
             totals["insider_trades"] = {"published": 0, "errors": 1}
 
-        # Mark today as polled
+        # Persist completion for crash recovery / multi-instance skip, and set
+        # the in-process guard. ``_last_eod_date`` is also set in ``_poll_loop``
+        # before this task is spawned (prevents a second tick double-scheduling);
+        # setting it again here is idempotent.
         self._eod_state.mark_completed(today_str, totals=totals)
         self._last_eod_date = today_str
 
@@ -947,7 +1017,18 @@ class UWPoller(DedupMixin, BasePoller):
         return published
 
     async def _poll_eod_option_volume(self, sink_registry, ticker: str) -> int:
-        """Poll historic option volume for a single ticker."""
+        """Poll historic option volume for a single ticker.
+
+        Each row carries an ``expiry`` field (volume bucketed per expiration),
+        but this is per-underlying analytics -- NOT per-option-contract data.
+        Without the equity overrides below, ``_infer_instrument_type`` would
+        see ``expiry`` in the payload and tag every row as
+        ``instrument_type=option`` with ``instrument_key=option:{ticker}``
+        (no OCC suffix), which Heber's writer-side
+        ``is_valid_instrument_key()`` rejects -- dropping 100% of rows on
+        Bronze→Silver normalization. See ``_poll_eod_iv_term_structure`` for
+        the canonical pattern.
+        """
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
         results = await self._provider.get_historic_option_volume(ticker)

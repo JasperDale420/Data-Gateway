@@ -47,6 +47,9 @@ def mock_sink_registry():
     sink = AsyncMock()
     sink.publish_all = AsyncMock()
     sink.publish_all_batch = AsyncMock(return_value=2)
+    # publish_all_batch_results returns per-message booleans; default to
+    # all-success matching the publish_all_batch=2 default above.
+    sink.publish_all_batch_results = AsyncMock(side_effect=lambda msgs: [True] * len(msgs))
     return sink
 
 
@@ -81,8 +84,8 @@ async def test_poll_trades_publishes_envelopes_with_feed_trades(mock_provider, m
 
     await poller._poll_trades(mock_sink_registry)
 
-    assert mock_sink_registry.publish_all_batch.called
-    args, _kwargs = mock_sink_registry.publish_all_batch.call_args
+    assert mock_sink_registry.publish_all_batch_results.called
+    args, _kwargs = mock_sink_registry.publish_all_batch_results.call_args
     messages = args[0]
     assert len(messages) == 2
     for topic, envelope in messages:
@@ -99,7 +102,7 @@ async def test_poll_trades_skips_when_no_trades_returned(mock_sink_registry, pol
     poller._provider = provider
 
     await poller._poll_trades(mock_sink_registry)
-    assert not mock_sink_registry.publish_all_batch.called
+    assert not mock_sink_registry.publish_all_batch_results.called
 
 
 @pytest.mark.asyncio
@@ -110,7 +113,7 @@ async def test_poll_trades_logs_and_swallows_provider_errors(mock_sink_registry,
 
     # Must NOT raise; the poll loop is required to keep running across transient errors.
     await poller._poll_trades(mock_sink_registry)
-    assert not mock_sink_registry.publish_all_batch.called
+    assert not mock_sink_registry.publish_all_batch_results.called
 
 
 @pytest.mark.asyncio
@@ -120,13 +123,13 @@ async def test_poll_trades_dedupe_drops_repeated_event_ids(mock_provider, mock_s
 
     # First call: nothing seen, both go through.
     await poller._poll_trades(mock_sink_registry)
-    first_call_msgs = mock_sink_registry.publish_all_batch.call_args_list[0][0][0]
+    first_call_msgs = mock_sink_registry.publish_all_batch_results.call_args_list[0][0][0]
     assert len(first_call_msgs) == 2
 
     # Second call with the SAME trades: in-memory dedupe should drop both as duplicates,
-    # so publish_all_batch is not called a second time.
+    # so publish_all_batch_results is not called a second time.
     await poller._poll_trades(mock_sink_registry)
-    assert mock_sink_registry.publish_all_batch.call_count == 1
+    assert mock_sink_registry.publish_all_batch_results.call_count == 1
 
 
 @pytest.mark.asyncio
