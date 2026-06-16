@@ -158,3 +158,16 @@ clients:
     providers:
     - alpaca
     rate_limit: 60
+- enabled: true
+  id: drogon
+  key_hash: sha256:6f4c8ec5a1a926e2b13fbe9cf8307dba9728a6c383453f042d37a48d8415e576  # pragma: allowlist secret
+  permissions:
+    feeds:
+    - bars
+    - quotes
+    - trades
+    max_symbols: 1100
+    providers:
+    - alpaca
+    rate_limit: 600
+  role: trader
