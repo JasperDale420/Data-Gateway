@@ -968,3 +968,52 @@ class TestPublishAllBatchIndexedCountOnlySink:
         # Indexed sink confirmed all 5; count-only partial confirms none →
         # intersection is empty.
         assert succeeded == set()
+
+
+class TestCircuitOpenInFlightBuffering:
+    """Events queued before the circuit opens must NOT be silently dropped.
+
+    Regression — codex caught: ``publish_all`` checks circuit state BEFORE
+    enqueue and routes to ``buffer_event`` if OPEN. But the breaker can
+    open AFTER enqueue and BEFORE the worker calls ``_safe_publish``. The
+    previous ``except CircuitOpenError`` branch logged + recorded the
+    failure metric but did NOT call ``sink.buffer_event``, regressing
+    PR #32's "single buffer site" invariant.
+    """
+
+    @pytest.mark.asyncio
+    async def test_safe_publish_buffers_on_circuit_open_error(self) -> None:
+        """When ``_safe_publish`` catches CircuitOpenError, the event must be
+        routed to ``sink.buffer_event`` — not silently dropped.
+
+        This is the direct unit test of the regression: the breaker can
+        flip OPEN between enqueue (where ``publish_all`` already buffered
+        when OPEN) and the worker's `_safe_publish` call. The previous
+        code logged the warning and returned, losing the event.
+        """
+        # Sink supports buffering.
+        sink = _BufferingSink(sink_name="circuit-mid-flight")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        # Fresh circuit registry. We force the breaker to OPEN with a
+        # far-future last_failure_time so even after recovery_timeout it
+        # stays OPEN, guaranteeing CircuitOpenError on call().
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:circuit-mid-flight")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = 9999999999.0  # far future
+
+        event = {"event_id": "open-mid-flight", "symbol": "NVDA"}
+
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            # Call _safe_publish directly so we exercise the worker-side
+            # path without depending on the dispatch-time check.
+            await registry._safe_publish(sink, "heber:events", event)
+
+        # The event must have landed in the sink's failed buffer.
+        assert sink.buffered == [("heber:events", event)], (
+            f"event should have been buffered when worker hit CircuitOpenError, "
+            f"got buffered={sink.buffered}, published={sink.published}"
+        )
+        assert sink.published == []
