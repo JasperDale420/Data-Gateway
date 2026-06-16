@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 import pandas as pd
+import pytest
 
 from gateway.providers.yfinance import YFinanceProvider
+from gateway.schemas import NormalizedBar
 
 
 def test_bars_from_history_df_uses_itertuples_and_builds_normalized_bars(
@@ -72,3 +75,97 @@ def test_major_holders_from_df_uses_itertuples(monkeypatch) -> None:
         "% of Shares Held by Institutions": "45.10%",
         "% of Shares Held by Insiders": "1.30%",
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# BLOCKER 5: canonical get_bars dispatcher
+# ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_bars_dispatches_to_get_history_with_translated_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`get_bars(..., "1Day", ...)` routes to `get_history(interval="1d")`."""
+    provider = YFinanceProvider()
+    captured: list[dict[str, Any]] = []
+
+    async def _fake_history(
+        symbol: str,
+        period: str = "1mo",
+        interval: str = "1d",
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[NormalizedBar]:
+        captured.append({"symbol": symbol, "interval": interval, "start": start, "end": end})
+        return [
+            NormalizedBar(
+                symbol=symbol.upper(),
+                timestamp=datetime(2026, 2, 3, tzinfo=UTC),
+                open=Decimal("100"),
+                high=Decimal("101"),
+                low=Decimal("99"),
+                close=Decimal("100.5"),
+                volume=Decimal("10"),
+                provider="yfinance",
+                timeframe=interval,
+            )
+        ]
+
+    monkeypatch.setattr(provider, "get_history", _fake_history)
+    bars = await provider.get_bars(
+        symbols=["aapl"],
+        timeframe="1Day",
+        start=datetime(2026, 2, 1, tzinfo=UTC),
+        end=datetime(2026, 2, 5, tzinfo=UTC),
+    )
+    assert len(bars) == 1
+    assert captured[0]["interval"] == "1d"
+    assert captured[0]["start"] == "2026-02-01"
+    assert captured[0]["end"] == "2026-02-05"
+
+
+@pytest.mark.asyncio
+async def test_get_bars_accepts_raw_yfinance_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Raw yfinance intervals like `1m` pass through unchanged."""
+    provider = YFinanceProvider()
+    captured: list[str] = []
+
+    async def _fake_history(symbol: str, **kw: Any) -> list[NormalizedBar]:
+        captured.append(kw["interval"])
+        return []
+
+    monkeypatch.setattr(provider, "get_history", _fake_history)
+    await provider.get_bars(["AAPL"], "1m", datetime(2026, 2, 1, tzinfo=UTC), datetime(2026, 2, 2, tzinfo=UTC))
+    assert captured == ["1m"]
+
+
+@pytest.mark.asyncio
+async def test_get_bars_fanout_across_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = YFinanceProvider()
+    seen: list[str] = []
+
+    async def _fake_history(symbol: str, **_kw: Any) -> list[NormalizedBar]:
+        seen.append(symbol.upper())
+        return [
+            NormalizedBar(
+                symbol=symbol.upper(),
+                timestamp=datetime(2026, 2, 3, tzinfo=UTC),
+                open=Decimal("1"),
+                high=Decimal("2"),
+                low=Decimal("1"),
+                close=Decimal("1"),
+                volume=Decimal("0"),
+                provider="yfinance",
+            )
+        ]
+
+    monkeypatch.setattr(provider, "get_history", _fake_history)
+    bars = await provider.get_bars(
+        symbols=["AAPL", "MSFT", "GOOG"],
+        timeframe="1Day",
+        start=datetime(2026, 1, 1, tzinfo=UTC),
+        end=datetime(2026, 12, 31, tzinfo=UTC),
+    )
+    assert len(bars) == 3
+    assert seen == ["AAPL", "MSFT", "GOOG"]

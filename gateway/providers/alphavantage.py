@@ -320,6 +320,61 @@ class AlphaVantageProvider(DataProvider):
     # Time Series / Historical Bars
     # ─────────────────────────────────────────────────────────────────
 
+    # Canonical NormalizedBar timeframe → (Alpha Vantage method,
+    # intraday_interval-or-None) routing for the generic dispatcher.
+    _CANONICAL_TIMEFRAME_ROUTES: dict[str, tuple[str, str | None]] = {
+        "1Min": ("get_intraday", "1min"),
+        "5Min": ("get_intraday", "5min"),
+        "15Min": ("get_intraday", "15min"),
+        "30Min": ("get_intraday", "30min"),
+        "1Hour": ("get_intraday", "60min"),
+        "1Day": ("get_daily", None),
+        "1Week": ("get_weekly", None),
+        "1Month": ("get_monthly", None),
+    }
+
+    async def get_bars(  # type: ignore[override]
+        self,
+        symbols: list[str],
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        **kwargs: Any,
+    ) -> list[NormalizedBar]:
+        """Canonical `DataProvider.get_bars` dispatcher.
+
+        Routes the canonical `(symbols, timeframe, start, end)` shape
+        into the existing per-timeframe Alpha Vantage methods
+        (`get_intraday`, `get_daily`, `get_weekly`, `get_monthly`), then
+        client-side filters by `[start, end]` because the Alpha Vantage
+        time-series endpoints return compact/full slices rather than a
+        windowed page. `kwargs` are forwarded verbatim so callers can
+        pass `outputsize="full"`, `adjusted=False`, etc.
+        """
+        route = self._CANONICAL_TIMEFRAME_ROUTES.get(timeframe)
+        if route is None:
+            raise ValueError(
+                f"alphavantage: unsupported timeframe {timeframe!r}; "
+                f"expected one of {sorted(self._CANONICAL_TIMEFRAME_ROUTES)}"
+            )
+        method_name, intraday_interval = route
+
+        # Normalize start/end to tz-aware so comparison against the
+        # provider's UTC-tagged bars works without surprises.
+        start_aware = start if start.tzinfo else start.replace(tzinfo=UTC)
+        end_aware = end if end.tzinfo else end.replace(tzinfo=UTC)
+
+        all_bars: list[NormalizedBar] = []
+        for symbol in symbols:
+            method = getattr(self, method_name)
+            if intraday_interval is not None:
+                bars = await method(symbol, interval=intraday_interval, **kwargs)
+            else:
+                bars = await method(symbol, **kwargs)
+            all_bars.extend(b for b in bars if start_aware <= b.timestamp <= end_aware)
+
+        return all_bars
+
     @http_retry
     async def get_intraday(
         self,

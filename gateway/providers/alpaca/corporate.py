@@ -1,6 +1,6 @@
 """Alpaca corporate actions mixin — corporate actions and parsing."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -9,6 +9,48 @@ import httpx
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED
+
+
+def _derive_ex_date(action: dict[str, Any], *fallback_fields: str, action_type: str) -> str:
+    """Resolve the schema-required `ex_date` from vendor payload.
+
+    `NormalizedCorporateAction.ex_date` is required by the shared schema,
+    but several Alpaca corporate-action branches (unit_splits, mergers,
+    redemptions, name_changes, worthless_removals) do not carry a
+    vendor-supplied `ex_date`. Without this helper those branches raise
+    ValidationError and the whole endpoint fails for the impacted page.
+
+    Resolution order:
+        1. `action["ex_date"]` if present (the canonical field)
+        2. each name in `fallback_fields` in order — designed per action
+           type to choose the most semantically correct vendor date
+        3. today's UTC date as a last resort, with a structured warning
+           so the synthesized ex_date is auditable downstream
+    """
+    primary = action.get("ex_date")
+    if primary:
+        return str(primary)
+
+    for field in fallback_fields:
+        value = action.get(field)
+        if value:
+            logger.info(
+                "alpaca_corporate_action_ex_date_inferred",
+                action_type=action_type,
+                source_field=field,
+                action_id=action.get("id"),
+            )
+            return str(value)
+
+    synth = datetime.now(UTC).strftime("%Y-%m-%d")
+    logger.warning(
+        "alpaca_corporate_action_ex_date_synthesized",
+        action_type=action_type,
+        action_id=action.get("id"),
+        synthesized_ex_date=synth,
+        available_keys=sorted(action.keys()),
+    )
+    return synth
 
 
 class AlpacaCorporateMixin:
@@ -89,7 +131,7 @@ class AlpacaCorporateMixin:
                     id=action.get("id"),
                     symbol=action.get("symbol", ""),
                     action_type="reverse_split",
-                    ex_date=action.get("ex_date"),
+                    ex_date=_derive_ex_date(action, "process_date", "payable_date", action_type="reverse_split"),
                     record_date=action.get("record_date"),
                     payable_date=action.get("payable_date"),
                     process_date=action.get("process_date"),
@@ -112,7 +154,7 @@ class AlpacaCorporateMixin:
                     id=action.get("id"),
                     symbol=action.get("symbol", ""),
                     action_type="forward_split",
-                    ex_date=action.get("ex_date"),
+                    ex_date=_derive_ex_date(action, "process_date", "payable_date", action_type="forward_split"),
                     record_date=action.get("record_date"),
                     payable_date=action.get("payable_date"),
                     process_date=action.get("process_date"),
@@ -125,13 +167,17 @@ class AlpacaCorporateMixin:
                 )
             )
 
-        # Unit splits
+        # Unit splits — vendor has no ex_date; the security trades under
+        # the new unit on `effective_date`, so that is the closest proxy.
         for action in ca_data.get("unit_splits", []):
             results.append(
                 NormalizedCorporateAction(
                     id=action.get("id"),
                     symbol=action.get("old_symbol", ""),
                     action_type="unit_split",
+                    ex_date=_derive_ex_date(
+                        action, "effective_date", "process_date", "payable_date", action_type="unit_split"
+                    ),
                     process_date=action.get("process_date"),
                     effective_date=action.get("effective_date"),
                     payable_date=action.get("payable_date"),
@@ -155,7 +201,9 @@ class AlpacaCorporateMixin:
                     id=action.get("id"),
                     symbol=action.get("symbol", ""),
                     action_type="cash_dividend",
-                    ex_date=action.get("ex_date"),
+                    ex_date=_derive_ex_date(
+                        action, "record_date", "payable_date", "process_date", action_type="cash_dividend"
+                    ),
                     record_date=action.get("record_date"),
                     payable_date=action.get("payable_date"),
                     process_date=action.get("process_date"),
@@ -174,7 +222,9 @@ class AlpacaCorporateMixin:
                     id=action.get("id"),
                     symbol=action.get("symbol", ""),
                     action_type="stock_dividend",
-                    ex_date=action.get("ex_date"),
+                    ex_date=_derive_ex_date(
+                        action, "record_date", "payable_date", "process_date", action_type="stock_dividend"
+                    ),
                     record_date=action.get("record_date"),
                     payable_date=action.get("payable_date"),
                     process_date=action.get("process_date"),
@@ -184,13 +234,17 @@ class AlpacaCorporateMixin:
                 )
             )
 
-        # Cash mergers
+        # Cash mergers — merger closes on `effective_date`, after which
+        # the acquiree no longer trades; use that as the ex_date proxy.
         for action in ca_data.get("cash_mergers", []):
             results.append(
                 NormalizedCorporateAction(
                     id=action.get("id"),
                     symbol=action.get("acquiree_symbol", ""),
                     action_type="cash_merger",
+                    ex_date=_derive_ex_date(
+                        action, "effective_date", "process_date", "payable_date", action_type="cash_merger"
+                    ),
                     process_date=action.get("process_date"),
                     effective_date=action.get("effective_date"),
                     payable_date=action.get("payable_date"),
@@ -203,13 +257,17 @@ class AlpacaCorporateMixin:
                 )
             )
 
-        # Stock mergers
+        # Stock mergers — same as cash mergers: `effective_date` is the
+        # merger close, which is the meaningful ex_date for the acquiree.
         for action in ca_data.get("stock_mergers", []):
             results.append(
                 NormalizedCorporateAction(
                     id=action.get("id"),
                     symbol=action.get("acquiree_symbol", ""),
                     action_type="stock_merger",
+                    ex_date=_derive_ex_date(
+                        action, "effective_date", "process_date", "payable_date", action_type="stock_merger"
+                    ),
                     process_date=action.get("process_date"),
                     effective_date=action.get("effective_date"),
                     payable_date=action.get("payable_date"),
@@ -223,13 +281,21 @@ class AlpacaCorporateMixin:
                 )
             )
 
-        # Stock and cash mergers
+        # Stock and cash mergers — same proxy choice as cash/stock
+        # mergers above: `effective_date` is the close.
         for action in ca_data.get("stock_and_cash_mergers", []):
             results.append(
                 NormalizedCorporateAction(
                     id=action.get("id"),
                     symbol=action.get("acquiree_symbol", ""),
                     action_type="stock_and_cash_merger",
+                    ex_date=_derive_ex_date(
+                        action,
+                        "effective_date",
+                        "process_date",
+                        "payable_date",
+                        action_type="stock_and_cash_merger",
+                    ),
                     process_date=action.get("process_date"),
                     effective_date=action.get("effective_date"),
                     payable_date=action.get("payable_date"),
@@ -244,13 +310,16 @@ class AlpacaCorporateMixin:
                 )
             )
 
-        # Redemptions
+        # Redemptions — `process_date` is when Alpaca recognizes the
+        # redemption; `payable_date` is when cash actually moves. Both
+        # are reasonable ex_date proxies in the absence of a vendor ex.
         for action in ca_data.get("redemptions", []):
             results.append(
                 NormalizedCorporateAction(
                     id=action.get("id"),
                     symbol=action.get("symbol", ""),
                     action_type="redemption",
+                    ex_date=_derive_ex_date(action, "process_date", "payable_date", action_type="redemption"),
                     process_date=action.get("process_date"),
                     payable_date=action.get("payable_date"),
                     amount=_dec(action.get("rate")),
@@ -266,7 +335,7 @@ class AlpacaCorporateMixin:
                     id=action.get("id"),
                     symbol=action.get("source_symbol", ""),
                     action_type="spin_off",
-                    ex_date=action.get("ex_date"),
+                    ex_date=_derive_ex_date(action, "process_date", "payable_date", action_type="spin_off"),
                     record_date=action.get("record_date"),
                     payable_date=action.get("payable_date"),
                     process_date=action.get("process_date"),
@@ -288,7 +357,7 @@ class AlpacaCorporateMixin:
                     id=action.get("id"),
                     symbol=action.get("source_symbol", ""),
                     action_type="rights_distribution",
-                    ex_date=action.get("ex_date"),
+                    ex_date=_derive_ex_date(action, "process_date", "payable_date", action_type="rights_distribution"),
                     record_date=action.get("record_date"),
                     payable_date=action.get("payable_date"),
                     process_date=action.get("process_date"),
@@ -302,13 +371,15 @@ class AlpacaCorporateMixin:
                 )
             )
 
-        # Name changes
+        # Name changes — vendor only emits `process_date`; that is when
+        # the new ticker becomes effective for trading.
         for action in ca_data.get("name_changes", []):
             results.append(
                 NormalizedCorporateAction(
                     id=action.get("id"),
                     symbol=action.get("new_symbol", action.get("old_symbol", "")),
                     action_type="name_change",
+                    ex_date=_derive_ex_date(action, "process_date", action_type="name_change"),
                     process_date=action.get("process_date"),
                     old_symbol=action.get("old_symbol"),
                     old_cusip=action.get("old_cusip"),
@@ -318,13 +389,15 @@ class AlpacaCorporateMixin:
                 )
             )
 
-        # Worthless removals
+        # Worthless removals — vendor only emits `process_date`; the
+        # security is removed and stops trading on that date.
         for action in ca_data.get("worthless_removals", []):
             results.append(
                 NormalizedCorporateAction(
                     id=action.get("id"),
                     symbol=action.get("symbol", ""),
                     action_type="worthless_removal",
+                    ex_date=_derive_ex_date(action, "process_date", action_type="worthless_removal"),
                     process_date=action.get("process_date"),
                     cusip=action.get("cusip"),
                     provider="alpaca",

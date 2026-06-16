@@ -157,6 +157,54 @@ class YFinanceProvider(DataProvider):
     # Historical Data
     # ─────────────────────────────────────────────────────────────────
 
+    # Canonical NormalizedBar timeframe → yfinance `interval` string.
+    # yfinance accepts e.g. `1m`, `5m`, `1h`, `1d`, `1wk`, `1mo`.
+    _CANONICAL_TIMEFRAME_MAP: dict[str, str] = {
+        "1Min": "1m",
+        "2Min": "2m",
+        "5Min": "5m",
+        "15Min": "15m",
+        "30Min": "30m",
+        "1Hour": "1h",
+        "1Day": "1d",
+        "1Week": "1wk",
+        "1Month": "1mo",
+    }
+
+    async def get_bars(  # type: ignore[override]
+        self,
+        symbols: list[str],
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        **kwargs: Any,
+    ) -> list[NormalizedBar]:
+        """Canonical `DataProvider.get_bars` dispatcher.
+
+        Translates `timeframe` to the yfinance `interval` argument and
+        delegates per-symbol to `get_history`, passing `start`/`end` as
+        ISO date strings (yfinance reads inclusive start, exclusive end).
+        Accepts either canonical NormalizedBar timeframes (`1Min`,
+        `5Min`, `1Day`, ...) or raw yfinance intervals (`1m`, `1d`).
+        """
+        # Accept either the canonical form or the raw yfinance interval.
+        yf_interval = self._CANONICAL_TIMEFRAME_MAP.get(timeframe, timeframe)
+
+        start_str = start.strftime("%Y-%m-%d") if isinstance(start, datetime) else start
+        end_str = end.strftime("%Y-%m-%d") if isinstance(end, datetime) else end
+
+        all_bars: list[NormalizedBar] = []
+        for symbol in symbols:
+            bars = await self.get_history(
+                symbol=symbol,
+                interval=yf_interval,
+                start=start_str,
+                end=end_str,
+                **kwargs,
+            )
+            all_bars.extend(bars)
+        return all_bars
+
     async def get_history(
         self,
         symbol: str,
