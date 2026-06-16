@@ -8,7 +8,7 @@ python-dotenv>=1.0.0
 pyyaml>=6.0
 
 # Data analysis and backtesting
-ta-lib>=0.4.28
+ta-lib>=0.6.8
 backtesting>=0.3.3
 scikit-learn>=1.3.0
 statsmodels>=0.14.0
