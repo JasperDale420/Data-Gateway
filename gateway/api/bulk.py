@@ -21,7 +21,6 @@ from gateway.core.bulk import (
 )
 from gateway.core.rate_limiter import EndpointRateLimitExceeded
 from gateway.core.registry import ProviderRegistry
-from gateway.schemas import SuccessResponse
 from gateway.types.provider_protocols import (
     SupportsAlpacaBars,
     SupportsAlpacaOptionsChain,
@@ -354,7 +353,7 @@ async def download_job_results(
 
 @router.get(
     "/jobs/{job_id}/results",
-    response_model=SuccessResponse,
+    # response_model removed 2026-05-21: was SuccessResponse, but handlers return non-canonical shapes that Pydantic strips
     summary="Get paged job results",
     description="Return paged records for a completed bulk job using offset/limit pagination.",
 )
@@ -404,7 +403,7 @@ async def get_job_results_page(
 
 @router.delete(
     "/jobs/{job_id}",
-    response_model=SuccessResponse,
+    # response_model removed 2026-05-21: was SuccessResponse, but handlers return non-canonical shapes that Pydantic strips
     summary="Cancel job",
     description="Cancel a pending or running bulk job.",
 )
@@ -437,7 +436,7 @@ async def cancel_job(
 
 @router.get(
     "/jobs",
-    response_model=SuccessResponse,
+    # response_model removed 2026-05-21: was SuccessResponse, but handlers return non-canonical shapes that Pydantic strips
     summary="List jobs",
     description="List all bulk jobs for the authenticated client.",
 )
