@@ -135,6 +135,32 @@ class InMemoryCache:
         self._stats.size = 0
         logger.info("cache_cleared")
 
+    def invalidate_matching(self, key_predicate) -> int:
+        """Delete every cache entry whose key matches a callable predicate.
+
+        Used by CacheMiddleware to invalidate per-client read caches on
+        mutating writes (POST/PATCH/DELETE on /orders, /positions, etc.).
+        Without this method a cached order list stayed stale for the full
+        TTL (default 300s) after a new order was placed — flagged as a
+        BLOCKER in the 2026-05-21 audit.
+
+        Returns the number of entries removed. O(n) over cache size; safe
+        on a TTLCache because we materialize the key list first (no
+        mutation during iteration).
+        """
+        removed = 0
+        for key in list(self._cache.keys()):
+            if key_predicate(key):
+                del self._cache[key]
+                removed += 1
+        for key in list(self._custom_cache.keys()):
+            if key_predicate(key):
+                del self._custom_cache[key]
+                removed += 1
+        if removed:
+            self._stats.size = len(self._cache) + len(self._custom_cache)
+        return removed
+
     def exists(self, key: str) -> bool:
         """Check if key exists in cache."""
         if key in self._cache:
@@ -565,6 +591,19 @@ class HybridCache:
     def clear(self) -> None:
         """Clear L1 cache only (L2 uses TTL for cleanup)."""
         self._l1.clear()
+
+    async def invalidate_matching(self, key_predicate) -> int:
+        """Invalidate entries in BOTH layers that match the predicate.
+
+        L1: O(n) iterate-and-delete. L2 (Redis): not currently implemented;
+        a future improvement is to use SCAN MATCH with a pattern derived
+        from the predicate signature. For now, callers that depend on L2
+        invalidation must call `clear()` or wait for TTL.
+        """
+        removed = self._l1.invalidate_matching(key_predicate)
+        # L2 (Redis) invalidate_matching not yet implemented — see note above.
+        # Returning L1-only count is honest about what was invalidated.
+        return removed
 
     @property
     def stats(self) -> dict:

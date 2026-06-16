@@ -137,10 +137,21 @@ async def readiness(
     # Cache + connection + eager-stream readiness gate request serving; sink failures are degraded.
     all_ok = checks["cache"] == "ok" and checks["connections"] == "ok" and streams_ok
 
-    return {
+    payload = {
         "status": "ready" if all_ok else "not_ready",
         "checks": checks,
     }
+    # Container orchestrators (k8s, ECS, docker compose healthchecks, load
+    # balancers) read the HTTP status code — not the body — to decide
+    # whether an instance is ready. A not-ready instance returning 200
+    # would be treated as ready and have traffic routed to it. Return 503
+    # on any failed check so the orchestrator routes around the unhealthy
+    # instance until readiness is restored. Body stays the same shape on
+    # both status codes so clients that DO read the body see the per-check
+    # breakdown consistently.
+    if not all_ok:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 @router.get("/status")

@@ -24,7 +24,6 @@ from gateway.core.replay import (
     ReplayState,
     get_replay_manager,
 )
-from gateway.schemas import SuccessResponse
 
 router = APIRouter(prefix="/api/v1/replay", tags=["Historical Replay"])
 
@@ -204,7 +203,7 @@ async def get_session_status(
 
 @router.post(
     "/sessions/{session_id}/control",
-    response_model=SuccessResponse,
+    # response_model removed 2026-05-21: was SuccessResponse, but handlers return non-canonical shapes that Pydantic strips
     summary="Control replay session",
     description="Control a replay session (pause, resume, seek, stop).",
 )
@@ -258,7 +257,7 @@ async def control_session(
 
 @router.delete(
     "/sessions/{session_id}",
-    response_model=SuccessResponse,
+    # response_model removed 2026-05-21: was SuccessResponse, but handlers return non-canonical shapes that Pydantic strips
     summary="Delete replay session",
     description="Delete a replay session and stop if running.",
 )
@@ -286,7 +285,7 @@ async def delete_session(
 
 @router.get(
     "/sessions",
-    response_model=SuccessResponse,
+    # response_model removed 2026-05-21: was SuccessResponse, but handlers return non-canonical shapes that Pydantic strips
     summary="List replay sessions",
     description="List all replay sessions.",
 )

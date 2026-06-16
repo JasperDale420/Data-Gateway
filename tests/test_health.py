@@ -154,6 +154,12 @@ async def test_status_data_sink_shows_degraded_when_unhealthy(
 async def test_readiness_marks_cache_as_warming_up_when_redis_is_loading(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Cache-warming readiness must return HTTP 503 (orchestrators read the
+    status code, not the body). The body still describes the failure shape."""
+    import json as _json
+
+    from fastapi.responses import JSONResponse as _JSONResponse
+
     cache = MagicMock()
     cache.set = AsyncMock(side_effect=RuntimeError("Redis is loading the dataset in memory"))
     cache.get = AsyncMock(return_value=None)
@@ -164,5 +170,13 @@ async def test_readiness_marks_cache_as_warming_up_when_redis_is_loading(
 
     response = await health_module.readiness(cache=cache, connections=connections)
 
-    assert response["status"] == "not_ready"
-    assert response["checks"]["cache"] == "warming_up"
+    # Not-ready must be a 503 JSONResponse so k8s/ALB/docker healthchecks
+    # route traffic away from the unhealthy instance.
+    assert isinstance(response, _JSONResponse), (
+        "readiness handler must return JSONResponse with status 503 when "
+        "not_ready so orchestrators see the right status code"
+    )
+    assert response.status_code == 503
+    body = _json.loads(response.body)
+    assert body["status"] == "not_ready"
+    assert body["checks"]["cache"] == "warming_up"

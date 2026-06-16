@@ -1,5 +1,6 @@
 """Response caching middleware."""
 
+import asyncio
 import time
 from dataclasses import dataclass
 
@@ -80,6 +81,33 @@ class CacheMiddleware:
 
     _HOP_BY_HOP = frozenset({b"content-length", b"set-cookie", b"connection", b"keep-alive"})
 
+    # Write-namespace → list of read-side path prefixes to invalidate on a
+    # successful 2xx write. Conservative — only mutating endpoints that have
+    # cacheable read counterparts. Matching is "request path starts with the
+    # write namespace" so /api/v1/alpaca/orders matches both POST /orders
+    # and PATCH /orders/{order_id} and DELETE /orders/{order_id}.
+    #
+    # Live-capital rationale: a POST /orders changes the result of subsequent
+    # GET /orders and GET /positions and GET /account (buying power). Without
+    # invalidation a cached read could show stale broker state for up to
+    # 300s — a real safety problem for retry/reconciliation logic.
+    _WRITE_INVALIDATION_NAMESPACES: dict[str, tuple[str, ...]] = {
+        "/api/v1/alpaca/orders": (
+            "/api/v1/alpaca/orders",
+            "/api/v1/alpaca/positions",
+            "/api/v1/alpaca/account",
+            "/api/v1/alpaca/portfolio",
+        ),
+        "/api/v1/alpaca/positions": (
+            "/api/v1/alpaca/positions",
+            "/api/v1/alpaca/orders",
+            "/api/v1/alpaca/account",
+            "/api/v1/alpaca/portfolio",
+        ),
+        "/api/v1/alpaca/watchlists": ("/api/v1/alpaca/watchlists",),
+        "/api/v1/alpaca/account": ("/api/v1/alpaca/account",),
+    }
+
     def __init__(
         self,
         app: ASGIApp,
@@ -92,6 +120,58 @@ class CacheMiddleware:
         self.max_body_bytes = max_body_bytes
         self._cache = None  # Lazy initialization
         self._cache_initialized = False
+
+    def _invalidation_prefixes_for_write(self, path: str) -> tuple[str, ...]:
+        """Return the read-side path prefixes that this write should invalidate,
+        or empty tuple if this write doesn't trigger any invalidation."""
+        for ns, prefixes in self._WRITE_INVALIDATION_NAMESPACES.items():
+            if path.startswith(ns):
+                return prefixes
+        return ()
+
+    async def _invalidate_for_write(self, scope: Scope, invalidate_prefixes: tuple[str, ...]) -> None:
+        """Invalidate cached GET entries for THIS client whose path starts with
+        any of ``invalidate_prefixes``.
+
+        Cache key format is ``METHOD:path:query:scope`` (see _cache_key).
+        We match on ``GET:{prefix}`` to scope to the read side, then on the
+        per-client suffix ``:{scope}`` so we don't blow away other clients'
+        caches. The middleware was added because cached /orders /positions
+        /account reads stayed stale for the full TTL after writes.
+        """
+        cache = self._get_cache()
+        if not hasattr(cache, "invalidate_matching"):
+            return  # not all cache backends support invalidation yet
+
+        # Build the client-scoped suffix the same way _cache_key does.
+        request = Request(scope)
+        is_public = self._is_public_path(scope["path"])
+        request.state.cache_public = is_public
+        if not is_public:
+            api_key = request.headers.get("X-Gateway-Key")
+            # Best-effort attach client from API key for scope derivation.
+            # If auth wasn't run yet for this write, fall back to api-key hash.
+            await self._ensure_authenticated(request, api_key)
+        scope_str = self._client_cache_scope(request)
+        suffix = f":{scope_str}"
+
+        prefixes_with_get = tuple(f"GET:{p}" for p in invalidate_prefixes)
+
+        def _predicate(key: str) -> bool:
+            return key.endswith(suffix) and key.startswith(prefixes_with_get)
+
+        if asyncio.iscoroutinefunction(cache.invalidate_matching):
+            removed = await cache.invalidate_matching(_predicate)
+        else:
+            removed = cache.invalidate_matching(_predicate)
+        if removed:
+            logger.info(
+                "cache_invalidated_on_write",
+                client_scope=scope_str,
+                write_path=scope["path"],
+                read_prefixes=list(invalidate_prefixes),
+                entries_removed=removed,
+            )
 
     def _get_cache(self):
         """Get cache instance (lazy initialization).
@@ -144,12 +224,42 @@ class CacheMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Only cache GET requests
+        path = scope["path"]
+
+        # Non-GET: pass through, AND invalidate cached GETs for this client's
+        # write namespace AFTER the upstream response. Without this, cached
+        # /orders, /positions, /account, /watchlists reads stayed stale for
+        # the full TTL after corresponding mutations — flagged as a BLOCKER
+        # in the 2026-05-21 audit (live-capital trading callers could see
+        # stale order state for up to 300s after placing/cancelling/replacing).
         if scope["method"] != "GET":
-            await self.app(scope, receive, send)
+            invalidate_prefixes = self._invalidation_prefixes_for_write(path)
+            if not invalidate_prefixes:
+                await self.app(scope, receive, send)
+                return
+
+            # Capture the response status so we only invalidate on success.
+            status_seen: dict[str, int] = {}
+
+            async def status_capturing_send(message: Message) -> None:
+                if message.get("type") == "http.response.start":
+                    status_seen["code"] = int(message.get("status", 0))
+                await send(message)
+
+            await self.app(scope, receive, status_capturing_send)
+
+            # 2xx writes invalidate; failed writes (4xx/5xx) leave the cache
+            # alone since the broker state didn't change.
+            code = status_seen.get("code", 0)
+            if 200 <= code < 300:
+                try:
+                    await self._invalidate_for_write(scope, invalidate_prefixes)
+                except Exception as e:
+                    # Invalidation failure must not break the response.
+                    # Log and move on; worst case is stale reads until TTL.
+                    logger.warning("cache_invalidate_failed", path=path, error=str(e))
             return
 
-        path = scope["path"]
         # Skip caching for dynamic endpoints
         if path.startswith("/api/v1/backfill"):
             await self.app(scope, receive, send)
