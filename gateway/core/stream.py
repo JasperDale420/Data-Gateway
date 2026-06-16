@@ -1245,7 +1245,7 @@ class StreamMultiplexer:
         # the bypass we just fixed. Defer the empty-clients check to AFTER
         # envelope+on_envelope dispatch (right before the fanout branch).
 
-        if data_type in _VALIDATABLE_FEEDS:
+        if data_type in _VALIDATABLE_FEEDS and (clients or self._on_envelope):
             validator = self._get_stream_validator()
             if data_type == "bars":
                 result = validator.validate_bar(

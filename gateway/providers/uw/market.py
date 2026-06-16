@@ -117,15 +117,22 @@ class UWMarketMixin:
                 client=self._client,
             )
 
+            # The volume-and-ratio endpoint returns rows under the 'si' key, not
+            # 'data'/'.data', so _extract_data alone returns [] on every call.
+            data_items = self._extract_data(response)
+            if not data_items and getattr(response, "additional_properties", None):
+                data_items = response.additional_properties.get("si") or []
+
             results = []
-            for item in self._extract_data(response):
+            for item in data_items:
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                short_ratio = get("short_volume_ratio") or get("short_ratio")
                 results.append(
                     NormalizedShortData(
                         symbol=symbol.upper(),
-                        date=str(get("date") or ""),
+                        date=str(get("market_date") or get("date") or ""),
                         short_interest=_safe_int(get("short_volume")),
-                        short_percent_float=(Decimal(str(get("short_ratio") or 0)) if get("short_ratio") else None),
+                        short_percent_float=(Decimal(str(short_ratio)) if short_ratio else None),
                         provider="unusual_whales",
                     )
                 )

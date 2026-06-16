@@ -27,6 +27,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from gateway.core.circuit_breaker import CircuitOpenError, CircuitState, get_circuit_breaker
+from gateway.core.log_throttle import LogThrottle
 from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_sink_producer_timeout_drop,
@@ -35,6 +36,11 @@ from gateway.core.metrics import (
     set_sink_queue_size,
     set_sink_worker_count,
 )
+
+# A saturated sink drops every overflowing event and pages on each one. Throttle
+# the CRITICAL page to one per minute per sink so the storm doesn't bury the
+# alert; every drop is still counted in the metric and publish stats.
+_PRODUCER_DROP_LOG_THROTTLE = LogThrottle(interval_seconds=60.0)
 
 
 class DataSink(ABC):
@@ -202,9 +208,12 @@ class DataSinkRegistry:
                 cache_key = f"dedup:publish:{event_id}"
                 try:
                     # Atomic set-if-not-exists: first caller wins, no TOCTOU race.
-                    # set_nx returns True if key was newly set, False if it existed.
+                    # set_nx returns True if newly set, False if it already exists,
+                    # None if the dedup backend was unavailable. Only False is a
+                    # confirmed duplicate — None must fail open and publish, never
+                    # be silently dropped.
                     is_new = await self._dedup_cache.set_nx(cache_key, "1", ttl=self.DEDUP_TTL_SECONDS)
-                    if not is_new:
+                    if is_new is False:
                         self._dedup_stats["deduplicated"] += 1
                         logger.debug(
                             "publish_deduplicated",
@@ -272,13 +281,16 @@ class DataSinkRegistry:
         except TimeoutError:
             self._publish_stats["dropped_producer_timeout"] += 1
             record_sink_producer_timeout_drop(sink.name)
-            logger.critical(
-                "data_sink_producer_timeout_drop",
-                sink=sink.name,
-                topic=topic,
-                queue_size=self._queue_size,
-                producer_block_timeout_seconds=self._producer_block_timeout_seconds,
-            )
+            allowed, suppressed = _PRODUCER_DROP_LOG_THROTTLE.should_emit(sink.name)
+            if allowed:
+                logger.critical(
+                    "data_sink_producer_timeout_drop",
+                    sink=sink.name,
+                    topic=topic,
+                    queue_size=self._queue_size,
+                    producer_block_timeout_seconds=self._producer_block_timeout_seconds,
+                    suppressed_since_last=suppressed,
+                )
             if not sink.record_publish_metrics:
                 record_sink_publish(sink=sink.name, topic=topic, success=False)
             return

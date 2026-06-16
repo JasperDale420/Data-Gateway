@@ -52,7 +52,12 @@ class AlpacaMarketMixin:
             logger.info("alpaca_bars_fetched", symbols=len(symbols), bars=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_bars_error", status=e.response.status_code, error=str(e))
+            status = e.response.status_code
+            # 4xx are client-caused (e.g. requesting an index symbol like SPX
+            # from /v2/stocks/bars → 400) and must not flood the ERROR log; only
+            # 5xx are genuine upstream failures. Mirrors api/alpaca/common.py.
+            log = logger.warning if status < 500 else logger.error
+            log("alpaca_bars_error", status=status, error=str(e))
             raise
 
         return results
@@ -79,9 +84,12 @@ class AlpacaMarketMixin:
                 results.append(self._normalize_quote(symbol, quote))
 
         except httpx.HTTPStatusError as e:
-            logger.error(
+            status = e.response.status_code
+            # 4xx are client-caused; only 5xx are genuine upstream failures.
+            log = logger.warning if status < 500 else logger.error
+            log(
                 "alpaca_quotes_error",
-                status=e.response.status_code,
+                status=status,
                 error=str(e),
             )
             raise

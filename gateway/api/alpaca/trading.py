@@ -400,6 +400,7 @@ async def create_order(
     take_profit_limit_price: float | None = None,
     stop_loss_stop_price: float | None = None,
     stop_loss_limit_price: float | None = None,
+    position_intent: str | None = None,
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
@@ -440,6 +441,17 @@ async def create_order(
             "client_order_id to idempotently re-attempt."
         ),
     }
+    order_log_context: dict[str, Any] = {
+        "client_id": client.id,
+        "symbol": symbol.upper(),
+        "side": side.lower(),
+        "order_type": order_type.lower(),
+        "time_in_force": time_in_force.lower(),
+        "order_class": order_class.lower() if order_class else None,
+        "qty_provided": qty is not None,
+        "notional_provided": notional is not None,
+        "client_order_id_source": "gateway" if gateway_generated else "caller",
+    }
 
     async def _call(provider: Any) -> Any:
         try:
@@ -460,6 +472,7 @@ async def create_order(
                     take_profit_limit_price=take_profit_limit_price,
                     stop_loss_stop_price=stop_loss_stop_price,
                     stop_loss_limit_price=stop_loss_limit_price,
+                    position_intent=position_intent,
                 ),
                 operation="create_order",
                 idempotency_context=idempotency_context,
@@ -471,6 +484,7 @@ async def create_order(
         data = await execute_alpaca_provider_call(
             registry=registry,
             provider_call=_call,
+            log_context=order_log_context,
         )
     except HTTPException as exc:
         # execute_alpaca_provider_call rewrites APIError/HTTPStatusError into
@@ -787,6 +801,17 @@ async def close_position(
       which the provider already translates into a clean 404.
     """
     canonical_symbol = symbol.upper()
+    if qty is not None and qty < 0:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "GW-E4006",
+                "message": f"close_position qty must be non-negative; got {qty}",
+                "symbol": canonical_symbol,
+                "qty": qty,
+            },
+        )
+
     idempotency_context: dict[str, Any] = {
         "symbol": canonical_symbol,
         "retry_with": "get_position",

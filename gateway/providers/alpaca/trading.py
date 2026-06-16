@@ -12,6 +12,7 @@ from alpaca.trading.enums import (
     AssetExchange,
     AssetStatus,
     OrderSide,
+    PositionIntent,
     QueryOrderStatus,
     TimeInForce,
 )
@@ -81,6 +82,7 @@ class AlpacaTradingMixin:
         take_profit_limit_price: float | None = None,
         stop_loss_stop_price: float | None = None,
         stop_loss_limit_price: float | None = None,
+        position_intent: str | None = None,
     ) -> dict[str, Any]:
         """Create a new order using SDK."""
         if not self._trading_client:
@@ -91,6 +93,18 @@ class AlpacaTradingMixin:
         if side_lower not in ("buy", "sell"):
             raise ValueError(f"Invalid order side: {side!r}. Must be 'buy' or 'sell'.")
         order_side = OrderSide.BUY if side_lower == "buy" else OrderSide.SELL
+
+        # Optional position_intent (buy_to_open / buy_to_close / sell_to_open /
+        # sell_to_close). Lets callers force reduce-only semantics so Alpaca
+        # never converts a close into an opening (e.g. naked short) position.
+        pi: PositionIntent | None = None
+        if position_intent is not None:
+            try:
+                pi = PositionIntent(position_intent.lower())
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid position_intent: {position_intent!r}. Must be one of {[e.value for e in PositionIntent]}."
+                ) from e
         tif_map = {
             "day": TimeInForce.DAY,
             "gtc": TimeInForce.GTC,
@@ -131,6 +145,7 @@ class AlpacaTradingMixin:
                     order_class=oc,
                     take_profit=tp_request,
                     stop_loss=sl_request,
+                    position_intent=pi,
                 )
             elif order_type.lower() == "limit":
                 request = LimitOrderRequest(
@@ -145,6 +160,7 @@ class AlpacaTradingMixin:
                     order_class=oc,
                     take_profit=tp_request,
                     stop_loss=sl_request,
+                    position_intent=pi,
                 )
             elif order_type.lower() == "stop":
                 request = StopOrderRequest(
@@ -156,6 +172,7 @@ class AlpacaTradingMixin:
                     stop_price=stop_price,
                     extended_hours=extended_hours,
                     client_order_id=client_order_id,
+                    position_intent=pi,
                 )
             elif order_type.lower() == "stop_limit":
                 request = StopLimitOrderRequest(
@@ -167,6 +184,7 @@ class AlpacaTradingMixin:
                     stop_price=stop_price,
                     extended_hours=extended_hours,
                     client_order_id=client_order_id,
+                    position_intent=pi,
                 )
             else:
                 logger.error("alpaca_order_unsupported_type", order_type=order_type, symbol=symbol)

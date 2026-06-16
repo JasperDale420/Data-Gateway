@@ -149,6 +149,46 @@ async def test_execute_alpaca_provider_call_logs_endpoint_on_unexpected_error(
 
 
 @pytest.mark.asyncio
+async def test_execute_alpaca_provider_call_includes_log_context_on_status_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import httpx
+
+    registry = _FakeRegistry({"alpaca": object()})
+
+    async def _fake_rate_limit(_provider_name: str, block: bool = False) -> None:
+        return None
+
+    async def _failing_call(_provider: Any) -> str:
+        request = httpx.Request("POST", "https://paper-api.alpaca.markets/v2/orders")
+        response = httpx.Response(status_code=403, request=request)
+        raise httpx.HTTPStatusError("Forbidden", request=request, response=response)
+
+    monkeypatch.setattr(common, "require_provider_rate_limit", _fake_rate_limit)
+
+    with caplog.at_level(logging.WARNING, logger="data-gateway"), pytest.raises(HTTPException):
+        await common.execute_alpaca_provider_call(
+            registry=cast(ProviderRegistry, registry),
+            provider_call=_failing_call,
+            log_context={
+                "client_id": "orion",
+                "symbol": "SPY",
+                "order_type": "market",
+            },
+        )
+
+    matches = [json.loads(rec.getMessage()) for rec in caplog.records if rec.getMessage().startswith("{")]
+    failures = [m for m in matches if m.get("message") == "provider_request_failed"]
+    assert failures, "expected a provider_request_failed log record"
+    failure = failures[-1]
+    assert failure["status_code"] == 403
+    assert failure["client_id"] == "orion"
+    assert failure["symbol"] == "SPY"
+    assert failure["order_type"] == "market"
+
+
+@pytest.mark.asyncio
 async def test_execute_alpaca_provider_call_passthrough_http_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

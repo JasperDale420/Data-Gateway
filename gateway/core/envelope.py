@@ -3,7 +3,7 @@
 Provides:
 - EventEnvelope: Pydantic model wrapping all events for downstream routing/storage
 - make_instrument_key: Canonical key generator for consistent instrument identification
-- compute_event_id: SHA256 idempotency hash for dedupe across reconnects/retries
+- compute_event_id: BLAKE2b idempotency hash for dedupe across reconnects/retries
 - wrap_event: Factory function to create envelopes from normalized events
 """
 
@@ -43,7 +43,7 @@ class EventEnvelope(BaseModel):
     """
 
     # Idempotency
-    event_id: str = Field(description="SHA256 idempotency hash (32 chars)")
+    event_id: str = Field(description="BLAKE2b idempotency hash (32 chars)")
 
     # Source identification
     provider: str = Field(description="Data provider: alpaca, unusual_whales, finnhub, etc")
@@ -348,8 +348,11 @@ def wrap_event(
     # Infer instrument type
     instrument_type = instrument_type_override or _infer_instrument_type(feed, symbol, payload)
 
-    # Generate instrument key
-    contract_symbol = payload.get("contract_symbol") or payload.get("contract")
+    # Generate instrument key. UW options-flow feeds carry the OCC contract in
+    # `option_chain` (not contract_symbol/contract); without it option keys
+    # degrade to the malformed `option:{symbol}` form, which Heber's writer-side
+    # validator rejects (regex requires `option:OCC:...`), dropping 100% of rows.
+    contract_symbol = payload.get("contract_symbol") or payload.get("contract") or payload.get("option_chain")
     instrument_key = instrument_key_override or make_instrument_key(symbol, instrument_type, contract_symbol)
 
     # Extract unique fields for event ID
@@ -518,12 +521,12 @@ def fast_wrap_streaming_event(
     # instrument_key - manual inline construction for speed
     # (Replicates make_instrument_key logic for common cases)
     if instrument_type == "option":
-        # Fast path for options (symbol is key if no contract specific)
-        # But we assume standard "option:SYMBOL" or "option:OCC:..." logic?
-        # make_instrument_key handles crypto normalization too.
-        # For speed, let's call make_instrument_key but optimize it later if needed.
-        # It's dominated by hashing anyway.
-        inst_key = make_instrument_key(symbol, instrument_type)
+        # OPRA option streams send the OCC contract as the symbol (e.g.
+        # "QQQ260609C00690000"). Pass it as the contract so make_instrument_key
+        # emits "option:OCC:{symbol}". Without contract_symbol it falls back to
+        # "option:{symbol}" (no OCC: infix), which Heber's writer-side validator
+        # rejects, DLQ-ing 100% of option quotes.
+        inst_key = make_instrument_key(symbol, instrument_type, contract_symbol=symbol)
     else:
         # Equity is just equity:SYMBOL
         inst_key = f"equity:{symbol}" if instrument_type == "equity" else make_instrument_key(symbol, instrument_type)

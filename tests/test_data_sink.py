@@ -8,12 +8,14 @@ from unittest.mock import patch
 
 import pytest
 
+import gateway.core.data_sink as data_sink_module
 from gateway.core.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerRegistry,
     CircuitState,
 )
 from gateway.core.data_sink import DataSink, DataSinkRegistry
+from gateway.core.log_throttle import LogThrottle
 
 # ── Mock Sinks ───────────────────────────────────────────────────────
 
@@ -142,6 +144,66 @@ class TestPublishAllCircuitCheck:
 
         # Should still publish despite breaker lookup failure
         assert len(sink.published) == 1
+
+
+class _FakeDedupCache:
+    """Dedup cache stand-in whose set_nx returns a fixed verdict."""
+
+    def __init__(self, result: bool | None) -> None:
+        self._result = result
+        self.calls: list[str] = []
+
+    async def set_nx(self, key: str, value: str, ttl: int | None = None) -> bool | None:
+        self.calls.append(key)
+        return self._result
+
+
+class TestPublishAllDedupFailOpen:
+    """Dedup must drop only confirmed duplicates, never on backend errors.
+
+    set_nx returns None when the dedup backend is unavailable. Treating that as a
+    duplicate silently loses the event (it never reaches Heber).
+    """
+
+    @pytest.mark.asyncio
+    async def test_publishes_when_dedup_backend_unavailable(self) -> None:
+        """set_nx -> None (backend error) must fail open and still publish."""
+        sink = _TrackingSink(sink_name="failopen")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+        registry.set_dedup_cache(_FakeDedupCache(result=None))
+
+        await registry.publish_all("heber:events", {"event_id": "e1", "symbol": "AAPL"})
+        await registry.drain_queues(timeout_seconds=2.0)
+
+        assert sink.published == [("heber:events", {"event_id": "e1", "symbol": "AAPL"})]
+
+    @pytest.mark.asyncio
+    async def test_skips_confirmed_duplicate(self) -> None:
+        """set_nx -> False (key already exists) is a real duplicate and is skipped."""
+        sink = _TrackingSink(sink_name="dupe")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+        registry.set_dedup_cache(_FakeDedupCache(result=False))
+
+        await registry.publish_all("heber:events", {"event_id": "e1"})
+        await registry.drain_queues(timeout_seconds=2.0)
+
+        assert sink.published == []
+        assert registry.get_dedup_stats()["deduplicated"] == 1
+
+    @pytest.mark.asyncio
+    async def test_publishes_new_event(self) -> None:
+        """set_nx -> True (newly set) publishes normally."""
+        sink = _TrackingSink(sink_name="newevent")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+        registry.set_dedup_cache(_FakeDedupCache(result=True))
+
+        await registry.publish_all("heber:events", {"event_id": "e1"})
+        await registry.drain_queues(timeout_seconds=2.0)
+
+        assert sink.published == [("heber:events", {"event_id": "e1"})]
 
 
 class TestPublishAllDisabledAndEmpty:
@@ -436,6 +498,38 @@ class TestBoundedQueueDispatch:
 
         after = SINK_PRODUCER_TIMEOUT_DROPS.labels(sink="metric-emit")._value.get()
         assert after - before == 3
+
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+    @pytest.mark.asyncio
+    async def test_producer_timeout_drop_logs_are_throttled(self, caplog) -> None:
+        """A storm of producer-timeout drops must page once per interval, not per drop.
+
+        Every drop still increments the metric/stat; only the CRITICAL log is throttled.
+        """
+        release_event = asyncio.Event()
+        registry = DataSinkRegistry(
+            queue_size=1,
+            worker_count=1,
+            producer_block_timeout_seconds=0.01,
+        )
+        sink = _BlockingSink(release_event, sink_name="drop-throttle")
+        registry.register(sink)
+
+        with (
+            patch.object(data_sink_module, "_PRODUCER_DROP_LOG_THROTTLE", LogThrottle(60.0)),
+            caplog.at_level("CRITICAL"),
+        ):
+            # queue(1) + worker(1) absorb 2; the rest drop after the block timeout.
+            for i in range(10):
+                await registry.publish_all("heber:events", {"event_id": f"e-{i}"})
+
+        drops = registry.get_publish_stats()["dropped_producer_timeout"]
+        logs = [r for r in caplog.records if "data_sink_producer_timeout_drop" in r.getMessage()]
+
+        assert drops >= 2, f"test needs multiple drops to prove throttling, got {drops}"
+        assert len(logs) == 1, f"expected 1 throttled CRITICAL log, got {len(logs)}"
 
         release_event.set()
         await registry.drain_queues(timeout_seconds=2.0)

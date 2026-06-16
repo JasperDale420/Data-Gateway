@@ -15,7 +15,6 @@ from pydantic import BaseModel
 from gateway.api.deps import require_api_key
 from gateway.config import get_settings
 from gateway.core.quality import QualityIssue, get_quality_analyzer
-from gateway.schemas import SuccessResponse
 
 router = APIRouter(
     prefix="/quality",
@@ -53,7 +52,7 @@ class QualitySummaryResponse(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@router.get("/symbol/{symbol}", response_model=SuccessResponse)
+@router.get("/symbol/{symbol}")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def get_symbol_quality(
     symbol: str,
     query_date: date = Query(None, alias="date", description="Date to analyze (YYYY-MM-DD)"),
@@ -122,7 +121,7 @@ async def get_symbol_quality(
     }
 
 
-@router.get("/summary", response_model=SuccessResponse)
+@router.get("/summary")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def get_quality_summary(
     query_date: date = Query(None, alias="date", description="Date to summarize (YYYY-MM-DD)"),
     symbols: str | None = Query(None, description="Comma-separated list of symbols"),
@@ -168,7 +167,7 @@ async def get_quality_summary(
     )
 
 
-@router.post("/analyze", response_model=SuccessResponse)
+@router.post("/analyze")  # response_model removed 2026-05-21 (was SuccessResponse, see audit)
 async def analyze_data(
     bars: list[dict] | None = None,
     quotes: list[dict] | None = None,
