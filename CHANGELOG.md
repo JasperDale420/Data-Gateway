@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Removed
 
 - **Root-level ad hoc probes removed after the Ponytail over-engineering audit**: deleted loose manual scripts (`test_bars.py`, `test_crypto_endpoint.py`, `test_crypto_error.py`, `verify_backfill.py`, `scripts/remediation_workflow.js`) that lived outside the maintained pytest/smoke-test paths.
+- **Unused core compatibility modules removed after the Ponytail over-engineering audit**: deleted the dead API-key balancer, standalone normalizer, and unused gateway error hierarchy (`gateway/core/balancer.py`, `gateway/core/normalizer.py`, `gateway/core/errors.py`) plus the balancer self-test. Live providers normalize in their own provider modules, request limiting is handled by the active rate-limiter stack, and no runtime code imported these modules.
 
 ### Security
 
