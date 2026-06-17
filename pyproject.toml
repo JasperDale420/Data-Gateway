@@ -123,7 +123,7 @@ disable_error_code = ["attr-defined", "call-arg", "arg-type"]
 
 # Core modules with pre-existing type issues
 [[tool.mypy.overrides]]
-module = ["gateway.core.labels", "gateway.core.symbology", "gateway.core.ring_buffer", "gateway.core.quality", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream"]
+module = ["gateway.core.labels", "gateway.core.symbology", "gateway.core.ring_buffer", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream"]
 disable_error_code = ["assignment", "union-attr", "var-annotated", "index", "operator", "return-value", "arg-type", "attr-defined", "call-overload", "dict-item"]
 
 # Provider modules with complex dynamic typing

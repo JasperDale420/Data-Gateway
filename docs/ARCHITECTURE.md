@@ -435,9 +435,7 @@ All Pydantic data models used for normalization, WebSocket messaging, and API re
 | `security.py` | 683 | DDoS protection, IP blocking, request validation |
 | `bulk.py` | 999 | Bulk data job orchestration |
 | `replay.py` | 587 | Historical data replay sessions |
-| `quality.py` | 490 | Data quality gates and monitoring |
 | `metrics.py` | 459 | Prometheus metrics collection |
-| `normalizer.py` | 349 | Data normalization (provider → standard format) |
 | `envelope.py` | 410 | Event envelope wrapping + idempotency hashing |
 | `symbology.py` | 421 | OCC ↔ human option symbol conversion |
 | `validator.py` | 400 | Input validation and sanitization |
@@ -471,5 +469,4 @@ All Pydantic data models used for normalization, WebSocket messaging, and API re
 | `calendar.py` | Trading calendar endpoints |
 | `symbology.py` | Symbol resolution endpoints |
 | `corporate.py` | Corporate actions endpoints |
-| `quality.py` | Data quality endpoints |
 | `deps.py` | FastAPI dependency injection |

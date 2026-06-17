@@ -73,7 +73,6 @@ from gateway.api import (
     legacy_symbology_router,
     market_router,
     news_router,
-    quality_router,
     replay_router,
     sec_router,
     symbology_router,
@@ -691,7 +690,6 @@ def create_app() -> FastAPI:
     app.include_router(adjustments_router)
     app.include_router(legacy_corporate_router)
     app.include_router(legacy_adjustments_router)
-    app.include_router(quality_router)
     app.include_router(catalog_router)
     app.include_router(backfill_router)
 

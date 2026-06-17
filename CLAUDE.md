@@ -72,7 +72,6 @@ gateway/
     circuit_breaker.py # Circuit breaker for sink failures
     rate_limiter.py    # Per-provider rate limiting
     validator.py       # Schema validation for streaming events
-    quality.py         # Data quality checks
     dedup.py           # Request deduplication
     shutdown.py        # ShutdownCoordinator (8-step graceful shutdown)
     uw_poller.py       # Background poller for UW flow/darkpool/market_tide (5min interval)
@@ -102,7 +101,6 @@ gateway/
     symbology.py       # /api/symbology/* (symbol resolution)
     corporate.py       # /api/corporate/* + /api/adjustments/*
     catalog.py         # /api/catalog/* (data catalog)
-    quality.py         # /api/quality/* (data quality metrics)
     metrics.py         # /metrics (Prometheus)
     middleware.py      # CORS, RateLimit, GlobalRateLimit, Cache, EventEnvelope, InputValidation, SecurityHeaders, RequestMetrics
     deps.py            # FastAPI dependency injection (registry, cache, auth, connections, sink)
