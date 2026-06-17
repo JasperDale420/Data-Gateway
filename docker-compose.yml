@@ -24,6 +24,9 @@ services:
       # buffer. Default in code is 100K; backfill jobs >300K records should
       # be split or temporarily raise this knob via env override.
       - GATEWAY_DATA_SINK_MAX_STREAM_LEN=300000
+      # Heber sink capacity for opening-bell and option-capture bursts.
+      - GATEWAY_DATA_SINK_WORKER_COUNT=32
+      - GATEWAY_DATA_SINK_REDIS_POOL_SIZE=64
       # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.)
       - GATEWAY_UW_EOD_ENABLED=true
       # Enable minute-level Alpaca option chain capture for Heber replay.

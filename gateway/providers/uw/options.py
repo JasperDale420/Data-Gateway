@@ -11,6 +11,15 @@ from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_float, _
 from .transient import is_transient_upstream_error
 
 
+def _parse_uw_timestamp(value: Any) -> datetime:
+    if not value:
+        return datetime.now(UTC)
+    timestamp = datetime.fromisoformat(str(value).replace("Z", TZ_UTC_SUFFIX))
+    if timestamp.tzinfo is None:
+        return timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC)
+
+
 class UWOptionsMixin:
     """Mixin providing options analytics, chains, contracts, greeks, and screener endpoints."""
 
@@ -36,11 +45,7 @@ class UWOptionsMixin:
             for item in self._extract_data(response):
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
                 timestamp_str = get("timestamp") or get("date")
-                timestamp = (
-                    datetime.fromisoformat(str(timestamp_str).replace("Z", TZ_UTC_SUFFIX))
-                    if timestamp_str
-                    else datetime.now(UTC)
-                )
+                timestamp = _parse_uw_timestamp(timestamp_str)
                 results.append(
                     NormalizedGreekExposure(
                         symbol=symbol.upper(),
@@ -228,11 +233,7 @@ class UWOptionsMixin:
             for item in self._extract_data(response):
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
                 timestamp_str = get("timestamp") or get("time")
-                timestamp = (
-                    datetime.fromisoformat(str(timestamp_str).replace("Z", TZ_UTC_SUFFIX))
-                    if timestamp_str
-                    else datetime.now(UTC)
-                )
+                timestamp = _parse_uw_timestamp(timestamp_str)
                 results.append(
                     NormalizedNetPremiumTick(
                         symbol=symbol.upper(),

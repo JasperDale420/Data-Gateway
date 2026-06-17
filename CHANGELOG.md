@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Heber watch Gateway authentication restored** (`config/clients.yaml`): aligned the `heber-watch` client hash with the key loaded by the running Heber watch service so its option quote polls authenticate instead of returning `401`.
+- **UW greek exposure date-only rows normalize to UTC** (`gateway/providers/uw/options.py`): date-only `date` values from Unusual Whales now become UTC-aware midnight timestamps before strict schema validation, preventing live `uw_greek_exposure_failed` errors.
+
+### Changed
+
+- **Gateway Redis sink capacity increased in Docker** (`docker-compose.yml`): the deployed container now runs 32 Heber sink workers with a 64-connection Redis pool so normal market-data bursts are less likely to fill the bounded sink queue and drop events.
+
 ### Removed
 
 - **Root-level ad hoc probes removed after the Ponytail over-engineering audit**: deleted loose manual scripts (`test_bars.py`, `test_crypto_endpoint.py`, `test_crypto_error.py`, `verify_backfill.py`, `scripts/remediation_workflow.js`) that lived outside the maintained pytest/smoke-test paths.
