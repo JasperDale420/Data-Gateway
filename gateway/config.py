@@ -63,7 +63,6 @@ class Settings(BaseSettings):
     stream_fanout_batch_size: int = Field(default=32, ge=1)
 
     # Rate Limiting
-    rate_limit_enabled: bool = True
     rate_limit_default: int = Field(default=600, ge=1)  # requests per minute
     behind_trusted_proxy: bool = False  # Only trust X-Forwarded-For when behind a known proxy
     # Comma-separated CIDRs for trusted intermediate proxies (e.g. "10.0.0.0/8,172.16.0.0/12").

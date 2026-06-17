@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - **Unused core compatibility modules removed after the Ponytail over-engineering audit**: deleted the dead API-key balancer, standalone normalizer, and unused gateway error hierarchy (`gateway/core/balancer.py`, `gateway/core/normalizer.py`, `gateway/core/errors.py`) plus the balancer self-test. Live providers normalize in their own provider modules, request limiting is handled by the active rate-limiter stack, and no runtime code imported these modules.
 - **Historical audit backlog pruned after the Ponytail over-engineering audit**: removed stale performance/technical-debt audit reports and old Redis resilience plans from `docs/audits/` and `docs/plans/`. Current operational release-readiness and live-smoke reports stay in place.
 - **Unused quality API slice removed after the Ponytail over-engineering audit**: deleted `/quality/*`, its standalone analyzer, and quality-only tests after a live cross-repo search found no consumers. Heber and Orion keep their own quality checks.
+- **Dead rate-limit knobs removed after the Ponytail over-engineering audit**: deleted the unused `rate_limit_enabled` setting and unused `max_connections_per_ip` middleware constructor argument. The active global and per-client rate-limit middleware remains mounted.
 
 ### Security
 

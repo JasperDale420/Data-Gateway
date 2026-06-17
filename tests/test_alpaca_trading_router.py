@@ -2508,9 +2508,7 @@ def _stub_trading_provider(test_registry) -> Any:
     # and verifies its client_order_id prefix. The granted authz client is
     # ``m04-granted-trader``, so return an order it owns or the pre-check 404s
     # before the operation under test runs.
-    provider.get_order = MagicMock(
-        return_value={"id": "ord-m04", "client_order_id": "c-m04-granted-trader-dg-stub"}
-    )
+    provider.get_order = MagicMock(return_value={"id": "ord-m04", "client_order_id": "c-m04-granted-trader-dg-stub"})
     return provider
 
 

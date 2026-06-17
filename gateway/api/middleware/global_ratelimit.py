@@ -1,4 +1,4 @@
-"""Global and per-IP rate limit middleware (PRD 7.5.1-2, 7.6.1)."""
+"""Global and per-IP rate limit middleware (PRD 7.5.1-2)."""
 
 import json
 import time
@@ -27,7 +27,6 @@ class GlobalRateLimitMiddleware:
     Implements:
     - PRD 7.5.1: Global limit 10,000 req/min
     - PRD 7.5.2: Per-IP limit 1,000 req/min
-    - PRD 7.6.1: Max 10 concurrent connections per IP
 
     Uses sliding window for rate limiting.
     """
@@ -39,7 +38,6 @@ class GlobalRateLimitMiddleware:
         app: ASGIApp,
         global_limit: int = 10000,
         per_ip_limit: int = 1000,
-        max_connections_per_ip: int = 10,
         window_seconds: int = 60,
         trust_proxy_headers: bool = False,
         trusted_proxy_cidrs: str = "",
@@ -47,7 +45,6 @@ class GlobalRateLimitMiddleware:
         self.app = app
         self.global_limit = global_limit
         self.per_ip_limit = per_ip_limit
-        self.max_connections_per_ip = max_connections_per_ip
         self.window_seconds = window_seconds
         self._trust_proxy_headers = trust_proxy_headers
 
