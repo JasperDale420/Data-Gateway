@@ -142,9 +142,14 @@ clients:
     - bars
     - quotes
     - trades
+    - flow_alerts
+    - greek_exposure
+    - market_tide
+    - options
     max_symbols: 500
     providers:
     - alpaca
+    - uw
     - yfinance
     rate_limit: 300
   role: trader

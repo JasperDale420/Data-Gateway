@@ -1,6 +1,9 @@
 """Tests for authentication."""
 
+from pathlib import Path
+
 import gateway.core.auth as auth_module
+from gateway.core.auth import ClientAuthenticator
 
 
 def test_authenticate_valid_key(test_authenticator, test_api_key):
@@ -32,6 +35,19 @@ def test_client_permissions(test_authenticator, test_api_key):
     assert "bars" in client.permissions.feeds
     assert client.permissions.max_symbols == 100
     assert client.permissions.rate_limit == 60
+
+
+def test_heber_watch_can_read_uw_enrichment_feeds():
+    """Heber watch must be allowed to read the UW endpoints it enriches from."""
+    authenticator = ClientAuthenticator(Path("config/clients.yaml"))
+
+    client = authenticator.get_client("heber-watch")
+
+    assert client is not None
+    assert "uw" in client.permissions.providers or "unusual_whales" in client.permissions.providers
+    assert "greek_exposure" in client.permissions.feeds
+    assert "market_tide" in client.permissions.feeds
+    assert "options" in client.permissions.feeds
 
 
 def test_get_client_by_id(test_authenticator):

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Heber watch UW enrichment permissions restored** (`config/clients.yaml`): the `heber-watch` client can now read the UW endpoints it uses for alert feature enrichment (`iv-rank`, `gex`, max pain, and market tide), preventing `403 Provider access denied: uw` responses that left Gold feature rows with null Greek/tide columns.
 - **Heber watch Gateway authentication restored** (`config/clients.yaml`): aligned the `heber-watch` client hash with the key loaded by the running Heber watch service so its option quote polls authenticate instead of returning `401`.
 - **UW greek exposure date-only rows normalize to UTC** (`gateway/providers/uw/options.py`): date-only `date` values from Unusual Whales now become UTC-aware midnight timestamps before strict schema validation, preventing live `uw_greek_exposure_failed` errors.
 
