@@ -211,6 +211,10 @@ def _create_data_sink_dedup_cache(settings):
         redis_url=settings.data_sink_redis_url,
         default_ttl=86400,  # 24h TTL for dedup keys
         max_connections=settings.data_sink_redis_pool_size,
+        # Tie the dedup pool to the sink worker count so a saturated dedup pool
+        # can never starve the workers (the "Too many connections" flood) — the
+        # REST/poller dict path runs set_nx inline per published event.
+        worker_count=settings.data_sink_worker_count,
         operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
     )
 
@@ -311,6 +315,9 @@ async def lifespan(app: FastAPI):
             max_len=settings.data_sink_max_stream_len,
             operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
             pool_size=settings.data_sink_redis_pool_size,
+            # Tie the XADD pool to the worker count so a worker_count set above
+            # pool_size can't serialize the workers on connection acquisition.
+            worker_count=settings.data_sink_worker_count,
         )
         sink_registry.register(redis_sink)
 

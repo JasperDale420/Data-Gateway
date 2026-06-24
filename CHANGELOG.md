@@ -9,10 +9,12 @@ All notable changes to this project will be documented in this file.
 - **Heber watch UW enrichment permissions restored** (`config/clients.yaml`): the `heber-watch` client can now read the UW endpoints it uses for alert feature enrichment (`iv-rank`, `gex`, max pain, and market tide), preventing `403 Provider access denied: uw` responses that left Gold feature rows with null Greek/tide columns.
 - **Heber watch Gateway authentication restored** (`config/clients.yaml`): aligned the `heber-watch` client hash with the key loaded by the running Heber watch service so its option quote polls authenticate instead of returning `401`.
 - **UW greek exposure date-only rows normalize to UTC** (`gateway/providers/uw/options.py`): date-only `date` values from Unusual Whales now become UTC-aware midnight timestamps before strict schema validation, preventing live `uw_greek_exposure_failed` errors.
+- **Benign order-cancel races no longer logged as errors** (`gateway/providers/alpaca/trading.py`): a cancel that loses the race with the order's own terminal transition (Alpaca 422, code 42210000 "order is already in … state") is now logged at INFO (`alpaca_order_cancel_noop`) instead of ERROR. The cancel still re-raises so callers learn the true order state (e.g. a fill); this removes ~1,300 non-actionable ERROR lines per trading day from the error log. Matching requires both the terminal code and the "already in … state" message, so unrelated reuses of the code still surface as ERROR.
 
 ### Changed
 
 - **Gateway Redis sink capacity increased in Docker** (`docker-compose.yml`): the deployed container now runs 32 Heber sink workers with a 64-connection Redis pool so normal market-data bursts are less likely to fill the bounded sink queue and drop events.
+- **Gateway sink drain capacity raised and Redis pools tied to worker count** (`gateway/config.py`, `gateway/main.py`): the default `data_sink_worker_count` is raised 16 → 24 (still within the 32-connection pool) to widen Heber sink drain throughput and reduce producer-timeout event drops during bursts. Both the dedup cache and the XADD sink now size their Redis pools to the worker count, so raising the worker count can never leave workers serializing on connection acquisition ("Too many connections").
 
 ### Removed
 

@@ -232,7 +232,12 @@ class Settings(BaseSettings):
     #   receive loop. A drop is a true emergency (queue is full AND
     #   workers can't drain in 100ms).
     data_sink_queue_size: int = Field(default=16384, ge=64, le=65536)
-    data_sink_worker_count: int = Field(default=16, ge=1, le=64)
+    # Raised 16 → 24 (still < pool_size 32, leaving headroom for reconnect /
+    # health-check churn) to widen drain throughput against the Redis sink and
+    # reduce producer-timeout drops during opening-bell bursts. This is a
+    # throughput lever, not a fix for event-loop starvation — if drops persist
+    # the bottleneck is loop saturation, which needs profiling, not more workers.
+    data_sink_worker_count: int = Field(default=24, ge=1, le=64)
     data_sink_producer_block_timeout_seconds: float = Field(default=0.1, ge=0.001, le=5.0)
     rest_sink_excluded_feeds: str = Field(
         default="greek_exposure,iv_rank,iv_term_structure,short_data,ftd,flow_alerts,darkpool",
