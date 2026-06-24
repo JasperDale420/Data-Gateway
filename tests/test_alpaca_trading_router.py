@@ -2712,24 +2712,31 @@ def test_authz_trader_without_trading_capability_can_create_order_with_cap(
     assert response.json()["data"]["id"] == "ord-m04"
 
 
-def test_real_config_grants_trading_capability_to_kairos_cerberus_3roses() -> None:
-    """The live clients.yaml must grant ``trading: true`` to exactly the three
-    order-placing systems (kairos, cerberus, 3roses) and withhold it from the
-    read-only trader clients (orion, atlas, orbit)."""
+def test_real_config_grants_trading_capability_to_order_placing_clients() -> None:
+    """The live clients.yaml must grant ``trading: true`` to exactly the
+    order-placing systems that route orders through the gateway
+    (kairos, cerberus, 3roses, orion) and withhold it from EVERY other client.
+
+    orion was granted the capability (commit 709fe35) because it places orders
+    through the gateway. drogon trades direct-to-Alpaca, not via the gateway,
+    so it stays withheld here. This asserts the FULL parsed client map, so any
+    future client that gains trading must be added to ``trading_granted``
+    consciously — otherwise this test fails, which is the intended tripwire."""
     from gateway.core.auth import ClientAuthenticator
 
     config_path = Path(__file__).resolve().parents[1] / "config" / "clients.yaml"
     auth = ClientAuthenticator(config_path)
 
-    for client_id in ("kairos", "cerberus", "3roses"):
-        c = auth.get_client(client_id)
-        assert c is not None, client_id
-        assert c.permissions.trading is True, f"{client_id} should have trading capability"
+    trading_granted = {"kairos", "cerberus", "3roses", "orion"}
 
-    for client_id in ("orion", "atlas", "orbit"):
+    actual: dict[str, bool] = {}
+    for client_id in auth.list_client_ids():
         c = auth.get_client(client_id)
         assert c is not None, client_id
-        assert c.permissions.trading is False, f"{client_id} should NOT have trading capability"
+        actual[client_id] = c.permissions.trading
+
+    expected = {client_id: (client_id in trading_granted) for client_id in actual}
+    assert actual == expected, f"trading capability drift vs config: {actual}"
 
 
 def test_real_config_restricts_plaintext_to_powerless_test_client() -> None:
