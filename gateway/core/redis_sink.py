@@ -864,26 +864,3 @@ class RedisStreamsSink(DataSink):
         if client is not None:
             await self._close_stale_client(client)
             logger.info("redis_sink_closed")
-
-
-class LogSink(DataSink):
-    """Simple logging sink for development/debugging.
-
-    Logs all published messages at DEBUG level.
-    """
-
-    @property
-    def name(self) -> str:
-        return "log"
-
-    async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
-        """Log the message."""
-        if isinstance(data, dict):
-            keys = list(data.keys())
-        else:
-            keys = ["<serialized>"]
-        logger.debug("data_sink_log", topic=topic, data_keys=keys)
-        return True
-
-    async def health_check(self) -> bool:
-        return True

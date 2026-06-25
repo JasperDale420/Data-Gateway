@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     )
 
     # Application
-    app_name: str = "Data Gateway"
     debug: bool = False
     log_level: str = "INFO"
     allow_stub_data: bool = False
@@ -56,9 +55,6 @@ class Settings(BaseSettings):
     # auth + first-bar drain). Verified safe with the Algo Trader Plus plan
     # (multi-connection); on a Basic plan, set this to "" to keep all streams lazy.
     stream_eager_connect_types: str = "stocks"
-    stream_reconnect_max_retries: int = Field(default=10, ge=1)
-    stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
-    stream_reconnect_max_delay: float = Field(default=16.0, ge=1.0)
     stream_fanout_max_inflight: int = Field(default=100, ge=1)
     stream_fanout_batch_size: int = Field(default=32, ge=1)
 
@@ -158,10 +154,6 @@ class Settings(BaseSettings):
     # Alpaca (loaded from env, not prefixed)
     alpaca_api_key: str = Field(default="", alias="APCA_API_KEY_ID")
     alpaca_secret_key: str = Field(default="", alias="APCA_API_SECRET_KEY")
-    alpaca_base_url: str = Field(default="https://paper-api.alpaca.markets", alias="APCA_API_BASE_URL")
-
-    # Unusual Whales
-    uw_api_key: str = Field(default="", alias="UNUSUAL_WHALES_API_KEY")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Phase 2: Backend Engineering Limits (PRD 6.2, 6.3, 6.5)
@@ -169,13 +161,7 @@ class Settings(BaseSettings):
 
     # Connection Limits (6.3.3-5)
     ws_idle_timeout: int = Field(default=300, ge=60)  # 5 min idle timeout
-    ws_max_duration: int = Field(default=86400, ge=3600)  # 24h max connection
     ws_max_clients: int = Field(default=1000, ge=10)  # Max concurrent clients
-
-    # Memory Limits (6.2.1-4)
-    memory_target_mb: int = Field(default=512, ge=256)  # 512MB target
-    memory_hard_limit_mb: int = Field(default=1024, ge=512)  # 1GB hard limit
-    gc_threshold_pct: int = Field(default=80, ge=50, le=95)  # GC at 80%
 
     # Graceful Shutdown (6.5.3-4)
     shutdown_drain_seconds: int = Field(default=30, ge=5, le=60)  # 30s drain
