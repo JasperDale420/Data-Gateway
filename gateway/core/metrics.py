@@ -183,6 +183,21 @@ CIRCUIT_BREAKER_STATE = Gauge(
     ["name"],
 )
 
+# Per-feed poller publish accounting. FEED_PUBLISHED counts events that actually
+# reached the Heber sink (post-dedup), so a feed silently going to zero during
+# market hours — e.g. darkpool prints overflowing the 200-record fetch window —
+# is visible per feed instead of hidden behind a 100%-deduped log line.
+FEED_PUBLISHED = Counter(
+    "gateway_feed_published_total",
+    "Events published to the Heber sink per feed (poller path, post-dedup)",
+    ["feed"],
+)
+POLLER_DUPLICATES = Counter(
+    "gateway_poller_duplicates_total",
+    "Poller events suppressed by dedup per feed",
+    ["feed"],
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data Sink & Envelope Metrics
 # ─────────────────────────────────────────────────────────────────────────────
@@ -803,6 +818,18 @@ def set_circuit_breaker_state(name: str, state: Any) -> None:
     """Export a circuit breaker's state as a numeric gauge (0/1/2)."""
     value = _CIRCUIT_STATE_VALUE.get(getattr(state, "value", str(state)), 0)
     CIRCUIT_BREAKER_STATE.labels(name=name).set(value)
+
+
+def record_feed_published(feed: str, count: int) -> None:
+    """Count events published to the Heber sink for a feed (post-dedup)."""
+    if count:
+        FEED_PUBLISHED.labels(feed=feed).inc(count)
+
+
+def record_poller_duplicates(feed: str, count: int) -> None:
+    """Count poller events suppressed by dedup for a feed."""
+    if count:
+        POLLER_DUPLICATES.labels(feed=feed).inc(count)
 
 
 def record_message_dropped(reason: str, feed: str = "unknown") -> None:

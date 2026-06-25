@@ -777,3 +777,24 @@ def test_envelope_build_skip_is_metered(monkeypatch) -> None:
 
     assert len(envelopes) == 1  # the bad record was skipped, the good one kept
     assert calls == [("envelope_build_skipped", "darkpool")]
+
+
+@pytest.mark.asyncio
+async def test_publish_envelopes_records_per_feed_published() -> None:
+    """The per-feed published counter increments so a feed silently going to zero
+    during market hours (e.g. darkpool window overflow) is visible per feed."""
+    from gateway.core.metrics import FEED_PUBLISHED
+
+    poller = UWPoller()
+    envelopes = [{"event_id": f"dp-feedmetric-{i}", "feed": "darkpool", "payload": {}} for i in range(3)]
+    before = FEED_PUBLISHED.labels(feed="darkpool")._value.get()
+
+    published, _ = await poller._publish_envelopes(
+        sink_registry=_FakeSinkRegistry(),
+        envelopes=envelopes,
+        dedupe_prefix="uw:dp",
+        missing_event_log="x",
+    )
+
+    assert published == 3
+    assert FEED_PUBLISHED.labels(feed="darkpool")._value.get() == before + 3

@@ -21,7 +21,7 @@ from gateway.core.base_poller import BasePoller, DedupMixin
 from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
-from gateway.core.metrics import record_message_dropped
+from gateway.core.metrics import record_feed_published, record_message_dropped, record_poller_duplicates
 from gateway.core.ticker_universe import TickerUniverse
 from gateway.core.uw_eod_state import UwEodStateStore
 
@@ -337,6 +337,9 @@ class UWPoller(DedupMixin, BasePoller):
             if redis_items and self._redis_dedupe is not None:
                 await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
 
+        feed = envelopes[0].get("feed", "unknown")
+        record_feed_published(feed, published)
+        record_poller_duplicates(feed, duplicates)
         return published, duplicates
 
     def _should_poll_tide(self) -> bool:
