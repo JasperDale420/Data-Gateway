@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Pinned `compute_event_id` parity guard** (`tests/test_envelope.py`): a test that hard-pins the gateway's local `compute_event_id` output and asserts it is sensitive to Decimal precision. `empire-schemas` ships a divergent duplicate that stringifies Decimals as `str(float(d))` ("150.5") instead of `str(d)` ("150.50"); the gateway uses only its local copy today, but a future "dedupe the duplication" refactor swapping to the shared impl would silently change every event_id and reset Heber's dedup bloom filter. This guard makes that swap fail loudly.
 - **Event-loop stall watchdog** (`gateway/core/loop_watchdog.py`, `gateway/main.py`, `gateway/config.py`): an off-loop watcher thread watches an asyncio heartbeat and, when the single event loop is blocked longer than `GATEWAY_LOOP_WATCHDOG_STALL_THRESHOLD_SECONDS` (default 5s), dumps every thread's stack (`faulthandler`) plus GC counts — capturing the exact synchronous frame behind the otherwise-silent multi-second `on_message_slow` stalls and WS `heartbeat_timeout_disconnect` storms. One dump per stall, with a recovery line recording the total stalled time. Enabled by default; toggle via `GATEWAY_LOOP_WATCHDOG_ENABLED`.
 
 ### Fixed
