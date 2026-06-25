@@ -275,3 +275,25 @@ def test_excluded_feed_skip_logs_reason_for_uw_rest_feed(monkeypatch, caplog):
     assert skip_logs[-1]["path"] == "/api/v1/uw/gex/SPY"
     assert skip_logs[-1]["feed"] == "greek_exposure"
     assert skip_logs[-1]["reason"] == "excluded_feed"
+
+
+def test_gex_by_strike_uses_equity_key_not_malformed_option():
+    """GEX by-strike/by-expiry rows carry strike/expiry but are per-underlying
+    analytics — they must get equity:{SYM}, not a malformed option:{SYM} key that
+    Heber rejects (which silently dropped every by-strike/by-expiry row)."""
+    middleware = EventEnvelopeMiddleware(app=lambda scope, receive, send: None)
+    items = [
+        {
+            "symbol": "AAPL",
+            "strike": 200,
+            "expiry": "2026-01-17",
+            "call_gamma": 1.5,
+            "timestamp": "2026-06-25T15:00:00Z",
+        }
+    ]
+    envs = middleware._wrap_list_payload(
+        provider="unusual_whales", feed="greek_exposure", items=items, path="/api/v1/uw/gex/AAPL/strike"
+    )
+    assert len(envs) == 1
+    assert envs[0]["instrument_type"] == "equity"
+    assert envs[0]["instrument_key"] == "equity:AAPL"

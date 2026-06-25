@@ -595,6 +595,15 @@ class EventEnvelopeMiddleware:
 
         return []
 
+    @staticmethod
+    def _uw_symbol_from_path(path: str) -> str | None:
+        """Extract the ticker from a /api/v1/uw/{feed}/{SYMBOL}[/...] path."""
+        parts = path.strip("/").split("/")
+        # ["api", "v1", "uw", "<feed>", "<SYMBOL>", ...]
+        if len(parts) >= 5 and parts[2] == "uw":
+            return parts[4].upper()
+        return None
+
     def _wrap_list_payload(
         self,
         *,
@@ -603,6 +612,20 @@ class EventEnvelopeMiddleware:
         items: list,
         path: str,
     ) -> list[dict]:
+        # Greek-exposure (incl. /strike and /expiry sub-routes) is per-UNDERLYING
+        # analytics whose rows carry strike/expiry. Without an override those rows
+        # are misinferred as option contracts → malformed option:{SYMBOL} keys
+        # that Heber rejects, silently dropping every by-strike/by-expiry row.
+        # Force the equity key, mirroring the poller's iv_term_structure handling.
+        overrides: dict = {}
+        if feed == "greek_exposure":
+            sym = self._uw_symbol_from_path(path)
+            if sym:
+                overrides = {
+                    "instrument_type_override": "equity",
+                    "instrument_key_override": f"equity:{sym}",
+                    "symbol_override": sym,
+                }
         envelopes: list[dict] = []
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
@@ -620,6 +643,7 @@ class EventEnvelopeMiddleware:
                         provider=provider,
                         feed=feed,
                         source="rest",
+                        **overrides,
                     )
                 )
             except Exception as exc:
