@@ -705,6 +705,20 @@ class BackfillEngine:
                 exc_info=True,
             )
 
+    @staticmethod
+    def _wrap_items(items: list[dict[str, Any]], provider: str, feed: str) -> list[tuple[str, dict[str, Any]]]:
+        """Sort items by timestamp and wrap each in an envelope.
+
+        Pure/synchronous so it can run via ``asyncio.to_thread`` off the loop.
+        Sorting groups events by date for downstream partition locality — Heber
+        partitions Silver by date, so this means fewer, larger partition flushes.
+        """
+        items.sort(key=lambda x: x.get("timestamp") or x.get("t") or "")
+        return [
+            (HEBER_EVENTS_TOPIC, wrap_event(event=item, provider=provider, feed=feed, source="backfill"))
+            for item in items
+        ]
+
     async def _publish_items(
         self,
         items: list[dict[str, Any]],
@@ -717,20 +731,10 @@ class BackfillEngine:
             logger.warning("backfill_publish_skipped", reason="no sink registry", job_id=job_id)
             return 0
 
-        # Sort by timestamp for downstream partition locality — Heber's consumer
-        # partitions Silver by date, so grouping events by date in the stream
-        # means fewer, larger partition flushes instead of many tiny files.
-        items.sort(key=lambda x: x.get("timestamp") or x.get("t") or "")
-
-        messages: list[tuple[str, dict[str, Any]]] = []
-        for item in items:
-            envelope = wrap_event(
-                event=item,
-                provider=provider,
-                feed=feed,
-                source="backfill",
-            )
-            messages.append((HEBER_EVENTS_TOPIC, envelope))
+        # Sort + wrap up to a full chunk of records (model-free wrap + BLAKE2b)
+        # off the event loop — on a large backfill chunk this blocks the loop the
+        # same way the UW darkpool build did. The publish stays async on-loop.
+        messages = await asyncio.to_thread(self._wrap_items, items, provider, feed)
 
         # Prefer the per-message results API: publish_all_batch returns only an
         # aggregate count, which under a partial Redis pipeline failure can't
