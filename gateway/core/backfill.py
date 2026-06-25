@@ -676,6 +676,15 @@ class BackfillEngine:
                 feed=job.request.feed,
                 job_id=job.job_id,
             )
+            # Surface a sink shortfall in the job result so a partial publish is
+            # a detectable, re-runnable gap rather than a silent undercount.
+            if published < len(items):
+                shortfall = (
+                    f"{sym} chunk {chunk_start.date()}-{chunk_end.date()}: "
+                    f"sink published {published}/{len(items)} (partial failure)"
+                )
+                sp.errors.append(shortfall)
+                job.errors.append(shortfall)
             sp.records_published += published
             job.records_published += published
             sp.chunks_complete += 1
@@ -723,8 +732,27 @@ class BackfillEngine:
             )
             messages.append((HEBER_EVENTS_TOPIC, envelope))
 
-        if hasattr(self._sink_registry, "publish_all_batch"):
-            return await self._sink_registry.publish_all_batch(messages)
+        # Prefer the per-message results API: publish_all_batch returns only an
+        # aggregate count, which under a partial Redis pipeline failure can't
+        # tell which events landed — so the chunk was marked complete with an
+        # undercount and the missing rows became an undetectable hole in Heber.
+        if hasattr(self._sink_registry, "publish_all_batch_results"):
+            results = await self._sink_registry.publish_all_batch_results(messages)
+            published = sum(1 for ok in results if ok)
+            if published < len(messages):
+                logger.warning(
+                    "backfill_publish_partial",
+                    job_id=job_id,
+                    provider=provider,
+                    feed=feed,
+                    attempted=len(messages),
+                    published=published,
+                    failed=len(messages) - published,
+                    hint="events that did not confirm are not retried by backfill; "
+                    "re-run this chunk to fill the gap (unless the sink was circuit-open, "
+                    "in which case buffered events drain on reconnect)",
+                )
+            return published
 
         # Fallback: individual publishes for registries without batch support
         published = 0

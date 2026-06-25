@@ -136,6 +136,7 @@ def _make_engine() -> BackfillEngine:
     sink_registry = MagicMock()
     sink_registry.publish_all = AsyncMock()
     sink_registry.publish_all_batch = AsyncMock(return_value=1)
+    sink_registry.publish_all_batch_results = AsyncMock(side_effect=lambda messages: [True] * len(messages))
     engine.configure(provider_registry=provider_registry, sink_registry=sink_registry)
     return engine
 
@@ -371,7 +372,7 @@ async def test_job_executes_and_publishes() -> None:
         assert job.status == BackfillStatus.COMPLETED
         assert job.records_published == 1
         assert job.symbols_progress["AAPL"].status == "complete"
-        engine._sink_registry.publish_all_batch.assert_called()
+        engine._sink_registry.publish_all_batch_results.assert_called()
 
 
 @pytest.mark.asyncio
@@ -639,6 +640,7 @@ async def test_concurrent_symbol_processing() -> None:
     sink_registry = MagicMock()
     sink_registry.publish_all = AsyncMock()
     sink_registry.publish_all_batch = AsyncMock(return_value=1)
+    sink_registry.publish_all_batch_results = AsyncMock(side_effect=lambda messages: [True] * len(messages))
     engine.configure(provider_registry=provider_registry, sink_registry=sink_registry)
 
     # Track concurrent execution
@@ -720,3 +722,23 @@ def test_backfill_api_flush(client, test_api_key) -> None:
     data = response.json()
     assert data["success"] is True
     assert data["meta"]["purged"] == 5
+
+
+@pytest.mark.asyncio
+async def test_publish_items_reports_partial_sink_failure() -> None:
+    """A partial sink publish returns the true landed count, not the input size.
+
+    Guards the fix where backfill used the aggregate publish_all_batch count and
+    marked a chunk complete with an undercount, leaving an undetectable Heber gap.
+    """
+    engine = _make_engine()
+    engine._sink_registry.publish_all_batch_results = AsyncMock(return_value=[True, False, True])
+    items = [
+        {"symbol": "AAPL", "timestamp": "2025-01-01T00:00:00Z"},
+        {"symbol": "AAPL", "timestamp": "2025-01-01T00:01:00Z"},
+        {"symbol": "AAPL", "timestamp": "2025-01-01T00:02:00Z"},
+    ]
+    with patch("gateway.core.backfill.wrap_event", return_value={"event_id": "x", "payload": {}}):
+        published = await engine._publish_items(items=items, provider="alpaca", feed="bars", job_id="job1")
+
+    assert published == 2
