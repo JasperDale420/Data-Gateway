@@ -8,7 +8,12 @@ services:
       - "8080:8080"
     environment:
       - GATEWAY_DEBUG=true
-      - GATEWAY_LOG_LEVEL=DEBUG
+      # Log level is controlled by EMPIRE_LOG_LEVEL (empire_core.logger), NOT
+      # GATEWAY_LOG_LEVEL — the latter was a dead env var the runtime never read,
+      # so the gateway ran at INFO despite the old "DEBUG" line. Kept explicit at
+      # INFO: DEBUG floods this high-throughput service; the key failure signals
+      # (drops, loop stalls, breaker state) are Prometheus metrics now, not logs.
+      - EMPIRE_LOG_LEVEL=INFO
       - GATEWAY_STREAM_OPTIONS_FEED=opra
       # Override Redis URLs for container networking (redis = service name)
       - GATEWAY_CACHE_REDIS_URL=redis://redis:6379/0

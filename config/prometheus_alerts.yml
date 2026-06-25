@@ -40,15 +40,41 @@ groups:
           summary: "High error rate detected"
           description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes (threshold: 5%)."
 
-      # 11.2.4: MemoryPressure alert
+      # 11.2.4: MemoryPressure alert. Was keyed on gateway_memory_pressure,
+      # which no longer exists (the always-zero gauge was removed), so it never
+      # fired — a memory leak toward OOM produced no page until the process
+      # crashed. Re-keyed on the real process-memory-percent gauge.
       - alert: MemoryPressure
-        expr: gateway_memory_pressure > 80
+        expr: gateway_process_memory_percent > 80
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "Gateway memory pressure high"
-          description: "Memory usage is at {{ $value }}% of target. Consider scaling or investigating memory leaks."
+          description: "Process memory is at {{ $value }}% of system memory. Investigate leaks (seq-tracker / sink buffer) or scale."
+
+      # Event-loop stalls — the class that silently delays WS heartbeats and the
+      # Heber sink drain. Any stall in a 5m window pages.
+      - alert: EventLoopStalls
+        expr: increase(gateway_event_loop_stalls_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway event loop stalled"
+          description: "{{ $value }} event-loop stall(s) in the last 5m — CPU-bound work is blocking the loop; check loop_watchdog stack dumps."
+
+      # The Redis-sink circuit breaker tripping OPEN is the leading edge of Heber
+      # data loss (the 2026-05-05 outage class). Page within 30s, before the
+      # failed-event buffer starts evicting.
+      - alert: SinkCircuitBreakerOpen
+        expr: gateway_circuit_breaker_state{name="data_sink:redis_streams"} == 2
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Heber sink circuit breaker OPEN"
+          description: "The data_sink:redis_streams breaker is OPEN — events are buffered, not delivered to Heber. Check Redis health."
 
       # Provider health degradation
       - alert: ProviderUnhealthy
