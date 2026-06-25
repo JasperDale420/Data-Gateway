@@ -648,8 +648,13 @@ class UWPoller(DedupMixin, BasePoller):
             # Take last 5 to cover the 5-minute polling gap (market tide).
             effective = records[-5:] if slice_recent and len(records) > 5 else records
 
-            envelopes, out_of_order = self._build_feed_envelopes(
-                effective, feed=feed, out_of_order_log=out_of_order_log
+            # Build envelopes off the event loop: model_dump + wrap_event +
+            # BLAKE2b over up to 200 records per cycle blocked the loop ~5s
+            # (runtime-observed loop-stall on darkpool), starving WS heartbeats
+            # and the sink drain. Mirrors option_capture/bulk offload. The fn is
+            # pure (no shared-state mutation), so a thread is safe.
+            envelopes, out_of_order = await asyncio.to_thread(
+                self._build_feed_envelopes, effective, feed=feed, out_of_order_log=out_of_order_log
             )
             published, duplicates = await self._publish_envelopes(
                 sink_registry=sink_registry,
@@ -736,7 +741,8 @@ class UWPoller(DedupMixin, BasePoller):
 
                 # Take last 5 records for each sector
                 recent_tides = tides[-5:] if len(tides) > 5 else tides
-                sector_envelopes, sector_out_of_order = self._build_feed_envelopes(
+                sector_envelopes, sector_out_of_order = await asyncio.to_thread(
+                    self._build_feed_envelopes,
                     recent_tides,
                     feed="sector_tide",
                     out_of_order_log="uw_sector_tide_out_of_order_ts",
