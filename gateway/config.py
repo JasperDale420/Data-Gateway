@@ -155,6 +155,12 @@ class Settings(BaseSettings):
     alpaca_api_key: str = Field(default="", alias="APCA_API_KEY_ID")
     alpaca_secret_key: str = Field(default="", alias="APCA_API_SECRET_KEY")
 
+    # Live-trading opt-in. Paper is the fail-safe default: live trading (real
+    # capital on the shared account) requires BOTH this flag AND the recognized
+    # live APCA_API_BASE_URL, so a missing/empty/typo'd URL can never silently
+    # route orders to real money. (GATEWAY_ prefix → GATEWAY_ALLOW_LIVE_TRADING.)
+    allow_live_trading: bool = False
+
     # ─────────────────────────────────────────────────────────────────────────
     # Phase 2: Backend Engineering Limits (PRD 6.2, 6.3, 6.5)
     # ─────────────────────────────────────────────────────────────────────────

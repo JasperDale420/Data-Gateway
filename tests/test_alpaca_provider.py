@@ -512,3 +512,25 @@ async def test_initialize_allows_explicit_option_feed_override(monkeypatch: pyte
     assert provider._options_feed == "indicative"
 
     await provider.shutdown()
+
+
+import pytest
+
+from gateway.providers.alpaca._base import LIVE_TRADING_BASE_URL, AlpacaBaseMixin
+
+
+@pytest.mark.parametrize(
+    "url, allow_live, expect_paper",
+    [
+        ("", True, True),  # empty even WITH the flag -> paper (fail-safe)
+        ("", False, True),  # empty, no flag -> paper
+        ("not-a-url", True, True),  # typo -> paper
+        ("https://paper-api.alpaca.markets", True, True),  # paper url -> paper
+        (LIVE_TRADING_BASE_URL, False, True),  # live url but NO opt-in -> paper
+        (LIVE_TRADING_BASE_URL, True, False),  # the ONLY live case
+        (f"  {LIVE_TRADING_BASE_URL}  ", True, False),  # whitespace tolerated
+    ],
+)
+def test_resolve_paper_mode_fails_safe(url, allow_live, expect_paper):
+    """Paper is the fail-safe default; live requires opt-in AND the exact live URL."""
+    assert AlpacaBaseMixin._resolve_paper_mode(url, allow_live=allow_live) is expect_paper

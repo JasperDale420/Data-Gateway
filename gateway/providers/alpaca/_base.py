@@ -19,6 +19,7 @@ from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 DATA_BASE_URL = "https://data.alpaca.markets"
 STREAM_URL = "wss://stream.data.alpaca.markets/v2"
 TRADING_BASE_URL = "https://paper-api.alpaca.markets"  # Paper by default; set APCA_API_BASE_URL for live
+LIVE_TRADING_BASE_URL = "https://api.alpaca.markets"  # Real capital — requires explicit opt-in
 
 # Error message constants
 ERR_PROVIDER_NOT_INITIALIZED = "Provider not initialized"
@@ -45,6 +46,16 @@ def _install_session_default_timeout(session: Session, timeout_seconds: float) -
 
 class AlpacaBaseMixin(DataProvider):
     """Core Alpaca mixin: init, lifecycle, normalizers, subscribe/unsubscribe."""
+
+    @staticmethod
+    def _resolve_paper_mode(configured_url: str, *, allow_live: bool) -> bool:
+        """Return True (paper) unless live is BOTH opted-in and explicitly targeted.
+
+        Fail-safe: a missing, empty, or typo'd ``APCA_API_BASE_URL`` returns
+        paper. Live requires ``allow_live`` (GATEWAY_ALLOW_LIVE_TRADING) AND the
+        configured URL to exactly match the recognized live endpoint.
+        """
+        return not (allow_live and configured_url.strip() == LIVE_TRADING_BASE_URL)
 
     def __init__(self):
         self._api_key: str = ""
@@ -127,9 +138,23 @@ class AlpacaBaseMixin(DataProvider):
 
         # Create SDK TradingClient for Trading API
         # Detect paper trading from env
-        trading_url = os.environ.get("APCA_API_BASE_URL", TRADING_BASE_URL)
-        self._trading_base_url = trading_url
-        self._paper = "paper" in trading_url.lower()
+        # Paper trading is the FAIL-SAFE default. Going live requires BOTH an
+        # explicit opt-in (GATEWAY_ALLOW_LIVE_TRADING=true) AND the recognized
+        # live URL, so a missing/empty/typo'd APCA_API_BASE_URL can never
+        # silently route the shared account to real capital (CLAUDE.md: paper
+        # must be the default). The substring `"paper" in url` test it replaces
+        # failed OPEN — an empty value yielded paper=False → live.
+        self._paper = self._resolve_paper_mode(
+            os.environ.get("APCA_API_BASE_URL", ""),
+            allow_live=get_settings().allow_live_trading,
+        )
+        self._trading_base_url = TRADING_BASE_URL if self._paper else LIVE_TRADING_BASE_URL
+        if not self._paper:
+            logger.warning(
+                "alpaca_live_trading_enabled",
+                url=self._trading_base_url,
+                msg="LIVE trading active — real capital at risk on the shared account",
+            )
 
         if self._api_key and self._secret_key:
             self._trading_client = TradingClient(
