@@ -524,3 +524,31 @@ class TestIsSymbolKeyedDict:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_darkpool_distinct_trades_get_distinct_event_ids():
+    """200 darkpool prints with distinct tracking_ids → 200 distinct event_ids.
+
+    Guards FEED_UNIQUE_FIELDS['darkpool']: if tracking_id were dropped from the
+    dedup key, distinct prints differing only by tracking_id would collide and be
+    silently deduped — exactly the latent darkpool silent-loss the runtime hinted
+    at (published:0 / duplicates:200 every cycle). A true duplicate still collapses.
+    """
+    base = {
+        "symbol": "MSFT",
+        "price": 300,
+        "size": 100,
+        "notional": 30000,
+        "timestamp": "2026-06-25T15:00:00Z",
+    }
+    ids = set()
+    for i in range(200):
+        env = wrap_event(
+            event={**base, "tracking_id": f"d{i}"}, provider="unusual_whales", feed="darkpool", source="rest"
+        )
+        ids.add(env["event_id"])
+    assert len(ids) == 200  # every distinct print kept
+
+    e1 = wrap_event(event={**base, "tracking_id": "dup"}, provider="unusual_whales", feed="darkpool", source="rest")
+    e2 = wrap_event(event={**base, "tracking_id": "dup"}, provider="unusual_whales", feed="darkpool", source="rest")
+    assert e1["event_id"] == e2["event_id"]  # true duplicate collapses to one id
