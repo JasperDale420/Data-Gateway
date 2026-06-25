@@ -127,3 +127,12 @@ def test_reload_keeps_previous_clients_on_bad_config(tmp_path):
     # The previously-loaded client must still authenticate (maps rolled back).
     assert auth.authenticate("gw_live_key_123") is not None
     assert auth.get_client("kairos") is not None
+
+
+def test_prefix_colliding_client_ids_rejected(tmp_path):
+    """A client id that is a hyphen-prefix of another must fail loud at load —
+    otherwise c-{id}- order-ownership markers cross-wire the two clients."""
+    config = tmp_path / "clients.yaml"
+    config.write_text("clients:\n  - id: heber\n    key: k1\n  - id: heber-watch\n    key: k2\n")
+    with pytest.raises(InvalidClientIdError, match="ownership prefix"):
+        ClientAuthenticator(config)

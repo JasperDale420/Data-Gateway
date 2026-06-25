@@ -126,6 +126,21 @@ class ClientAuthenticator:
                     key_hash = key_hash[7:]
                 self._hashed_keys[key_hash] = client_id
 
+        # Order-ownership safety: the ``c-{id}-`` marker uniquely identifies an
+        # order's owner ONLY if no client id is a hyphen-prefix of another —
+        # e.g. ``heber`` + ``heber-watch`` means ``c-heber-`` prefixes
+        # ``c-heber-watch-...``, so ``heber`` could cancel/replace
+        # ``heber-watch``'s orders. Fail loud at startup rather than silently
+        # cross-wire two trading clients' order isolation.
+        ids = list(self._clients.keys())
+        for a in ids:
+            for b in ids:
+                if a != b and b.startswith(a + "-"):
+                    raise InvalidClientIdError(
+                        f"client id {a!r} is an order-ownership prefix of {b!r} "
+                        f"(c-{a}- prefixes c-{b}-) — rename one to keep per-client order isolation safe."
+                    )
+
         logger.info(
             "clients_loaded",
             count=len(self._clients),
