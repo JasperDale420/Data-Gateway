@@ -1481,6 +1481,14 @@ async def close_position(
             },
         )
 
+    logger.info(
+        "alpaca_close_position",
+        client_id=client.id,
+        symbol=canonical_symbol,
+        qty=qty,
+        percentage=percentage,
+    )
+
     idempotency_context: dict[str, Any] = {
         "symbol": canonical_symbol,
         "retry_with": "get_position",
@@ -1523,11 +1531,19 @@ async def close_position(
 
 @router.delete("/positions", response_model=SuccessResponse)
 async def close_all_positions(
-    cancel_orders: bool = Query(default=True, description="Cancel open orders first"),
+    cancel_orders: bool = Query(
+        default=False, description="Also cancel ALL open orders first (account-wide, off by default)"
+    ),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
-    """Close all open positions."""
+    """Close all open positions on the SHARED account (super_admin only)."""
+    logger.warning(
+        "alpaca_close_all_positions",
+        client_id=client.id,
+        cancel_orders=cancel_orders,
+        msg="account-wide flatten of the shared Alpaca account",
+    )
     data = await _execute_trading_call(
         registry=registry,
         provider_fn=lambda provider: provider.close_all_positions(cancel_orders),

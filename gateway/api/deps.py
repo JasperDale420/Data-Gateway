@@ -114,6 +114,8 @@ def require_api_key(
     _enforce_trading_role(request.url.path, client)
     # Enforce the fine-grained `trading` capability on order-/position-mutating routes
     _enforce_trading_capability(request.method, request.url.path, client)
+    # Account-wide actions (flatten ALL positions / account config) require super_admin
+    _enforce_account_wide_admin(request.method, request.url.path, client)
 
     # Enforce provider permissions based on path
     provider = _extract_provider_from_path(request.url.path)
@@ -186,6 +188,29 @@ def _enforce_trading_capability(method: str, path: str, client: Client) -> None:
                     "message": "Trading capability required",
                 },
             )
+
+
+def _enforce_account_wide_admin(method: str, path: str, client: Client) -> None:
+    """Require super_admin for account-WIDE live-trading actions.
+
+    Flattening ALL positions (``DELETE /positions``) or changing account
+    configuration affects EVERY client's book on the shared Alpaca account, so
+    the fine-grained ``trading`` capability is not enough. Per-symbol close
+    (``DELETE /positions/{symbol}``) stays at the trading gate — that is how the
+    trading systems flatten only their own positions.
+    """
+    normalized = path.rstrip("/")
+    account_wide = (method == "DELETE" and normalized == "/api/v1/alpaca/positions") or (
+        method in ("PATCH", "PUT", "POST") and normalized == "/api/v1/alpaca/account/configurations"
+    )
+    if account_wide and client.role != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "GW-E2010",
+                "message": "Account-wide trading action requires super_admin (affects the shared account)",
+            },
+        )
 
 
 def _extract_provider_from_path(path: str) -> str | None:

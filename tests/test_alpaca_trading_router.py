@@ -3678,3 +3678,28 @@ async def test_get_order_with_legacy_unprefixed_client_order_id_returns_404(
     # stance — see PR body for the rationale.
     assert exc.value.status_code == 404
     assert exc.value.detail["code"] == "GW-E4404"
+
+
+def test_account_wide_actions_require_super_admin() -> None:
+    """Account-wide flatten / config require super_admin; per-symbol close stays at trader."""
+    from gateway.api.deps import _enforce_account_wide_admin
+    from gateway.core.auth import Client, ClientPermissions
+
+    trader = Client(id="kairos", permissions=ClientPermissions(trading=True), role="trader")
+    super_admin = Client(id="ops", permissions=ClientPermissions(trading=True), role="super_admin")
+
+    # Trader is BLOCKED from account-wide actions.
+    for method, path in [
+        ("DELETE", "/api/v1/alpaca/positions"),  # close_all_positions
+        ("PATCH", "/api/v1/alpaca/account/configurations"),
+    ]:
+        with pytest.raises(HTTPException) as exc:
+            _enforce_account_wide_admin(method, path, trader)
+        assert exc.value.status_code == 403
+
+    # Trader CAN still close its own single position (not account-wide).
+    _enforce_account_wide_admin("DELETE", "/api/v1/alpaca/positions/AAPL", trader)
+
+    # super_admin passes the account-wide gate.
+    _enforce_account_wide_admin("DELETE", "/api/v1/alpaca/positions", super_admin)
+    _enforce_account_wide_admin("PATCH", "/api/v1/alpaca/account/configurations", super_admin)
