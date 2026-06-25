@@ -43,6 +43,11 @@ def _is_occ_option_symbol(symbol: str) -> bool:
 
 DEFAULT_FANOUT_MAX_INFLIGHT = 100
 DEFAULT_FANOUT_BATCH_SIZE = 32
+
+# How often the multiplexer supervisor checks for upstreams that went dormant
+# while clients are still subscribed, and revives them. ponytail: a constant,
+# not a config knob — no deployment needs to tune the revival cadence.
+STREAM_SUPERVISOR_INTERVAL_SECONDS = 20.0
 # Warn when a single on_message call holds the receive loop this long;
 # long handlers fill Alpaca's outbound buffer and can trigger their
 # slow-client (407) disconnect path, surfacing on our side as code 1006.
@@ -919,6 +924,7 @@ class StreamMultiplexer:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self._supervisor_task: asyncio.Task | None = None
         self._fanout_semaphore = asyncio.Semaphore(self._fanout_max_inflight)
         self._validator: Any | None = None
         self._seq_tracker = SequenceTracker()
@@ -978,6 +984,55 @@ class StreamMultiplexer:
         else:
             logger.info("lazy_connect_enabled", message="Streams will connect on first subscription")
 
+        # Supervisor (all modes): revive any upstream that goes dormant while
+        # clients are still subscribed. Without it, a stream that exhausts its
+        # reconnect budget stays dead — delivering nothing to clients or the
+        # Heber sink — until a *new* subscribe, which long-lived bots never send.
+        self._supervisor_task = asyncio.create_task(self._supervise_connections(), name="stream_supervisor")
+
+    async def _supervise_connections(self) -> None:
+        """Periodically revive upstreams that went dormant with live subscribers.
+
+        An ``UpstreamConnection`` that exhausts its reconnect budget (or hits a
+        non-recoverable error such as "connection limit exceeded") sets
+        ``_running = False`` and returns, expecting a *future* ``client_subscribe``
+        to restart it. Long-lived trading bots subscribe once and never
+        re-subscribe, so without this loop a dormant stream delivers zero ticks
+        to clients AND zero events to the Heber sink until the process is
+        restarted — the top production page risk. The 20s cadence plus each
+        connection's own backoff keeps a persistently-failing upstream on a slow
+        retry cycle rather than a tight loop.
+        """
+        while self._running:
+            try:
+                await asyncio.sleep(STREAM_SUPERVISOR_INTERVAL_SECONDS)
+                await self._supervise_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("stream_supervisor_error")
+
+    async def _supervise_once(self) -> None:
+        """One supervisor pass: revive dormant upstreams that still have subs."""
+        for stream_type, conn in self._connections.items():
+            # Connected or actively (re)connecting → it's handling itself. Only
+            # a stream that gave up (``_running == False``) and is not connected
+            # is truly dormant.
+            if conn._running or conn.is_connected:
+                continue
+            bars, quotes, trades, news = conn._subscriptions.get_all_subscriptions()
+            if not (bars or quotes or trades or news):
+                continue  # dormant but nobody is subscribed — leave it lazy
+            logger.warning(
+                "stream_supervisor_reviving_dormant",
+                stream=stream_type.value,
+                bars=len(bars),
+                quotes=len(quotes),
+                trades=len(trades),
+                news=len(news),
+            )
+            await self._ensure_connected(stream_type)
+
     def _stream_type_in_eager_set(self, stream_type: AlpacaStreamType) -> bool:
         """Match stream type against eager_connect_types config (case-insensitive).
 
@@ -1011,6 +1066,15 @@ class StreamMultiplexer:
         """
         self._running = False
         logger.info("multiplexer_stopping", connections=len(self._connections))
+
+        # Stop the supervisor first so it can't revive a connection mid-shutdown.
+        if self._supervisor_task is not None and not self._supervisor_task.done():
+            self._supervisor_task.cancel()
+            try:
+                await asyncio.wait_for(self._supervisor_task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                logger.debug("stream_supervisor_cancelled")
+        self._supervisor_task = None
 
         # Stop all connections concurrently with timeout
         stop_tasks = [conn.stop() for conn in self._connections.values()]

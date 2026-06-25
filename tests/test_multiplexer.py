@@ -1233,3 +1233,58 @@ async def test_on_envelope_cancellation_propagates(
             AlpacaStreamType.STOCKS_SIP,
             {"T": "b", "S": "AAPL", "t": "2026-05-21T13:30:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1},
         )
+
+
+@pytest.mark.asyncio
+async def test_supervisor_revives_only_dormant_subscribed_streams(monkeypatch) -> None:
+    """The supervisor revives a dormant stream that still has subscribers, and
+    leaves connected, reconnecting, and unsubscribed streams untouched.
+
+    Regression guard for the top page risk: a stream that exhausts its
+    reconnect budget set ``_running = False`` and went silent until a *new*
+    subscribe that long-lived bots never send.
+    """
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    mux = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+
+    revived: list[str] = []
+
+    async def _fake_ensure(stream_type) -> bool:
+        revived.append(stream_type.value)
+        return True
+
+    monkeypatch.setattr(mux, "_ensure_connected", _fake_ensure)
+
+    def _conn(*, running: bool, connected: bool, subs):
+        return SimpleNamespace(
+            _running=running,
+            is_connected=connected,
+            _subscriptions=SimpleNamespace(get_all_subscriptions=lambda subs=subs: subs),
+        )
+
+    one_sub = ({"AAPL"}, set(), set(), set())
+    no_sub = (set(), set(), set(), set())
+    # Enum members are hashable and carry .value (which the supervisor logs).
+    mux._connections = cast(
+        Any,
+        {
+            AlpacaStreamType.STOCKS_SIP: _conn(
+                running=False, connected=False, subs=one_sub
+            ),  # dormant + subbed → revive
+            AlpacaStreamType.OPTIONS: _conn(running=False, connected=False, subs=no_sub),  # dormant, no subs → skip
+            AlpacaStreamType.CRYPTO: _conn(running=False, connected=True, subs=one_sub),  # connected → skip
+            AlpacaStreamType.NEWS: _conn(running=True, connected=False, subs=one_sub),  # reconnecting → skip
+        },
+    )
+
+    await mux._supervise_once()
+
+    assert revived == [AlpacaStreamType.STOCKS_SIP.value]
