@@ -816,3 +816,25 @@ def test_dedup_cache_has_hard_size_cap() -> None:
     assert len(mixin._seen_ids) == 5  # capped
     assert mixin._is_duplicate("id19")  # most-recent kept
     assert not mixin._is_duplicate("id0")  # oldest evicted
+
+
+@pytest.mark.asyncio
+async def test_eod_cancel_releases_running_claim(tmp_path) -> None:
+    """A shutdown that cancels EOD mid-run must release the persistent 'running'
+    claim so the next startup re-runs today's EOD (not deferred until stale)."""
+    poller = UWPoller()
+    poller._eod_state = UwEodStateStore(tmp_path / "eod.json", stale_after_seconds=3600)
+    today = uw_poller_module.datetime.now(uw_poller_module.ET).strftime("%Y-%m-%d")
+
+    assert poller._eod_state.claim(today) is True
+    assert poller._eod_state.should_defer(today) is True  # running blocks re-run
+
+    async def _cancelled(_sink) -> None:
+        raise asyncio.CancelledError()
+
+    poller._poll_eod_snapshots = _cancelled  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await poller._run_eod_with_logging(sink_registry=None, previous_eod_date=None)
+
+    assert poller._eod_state.should_defer(today) is False  # claim released → retry allowed

@@ -822,6 +822,13 @@ class UWPoller(DedupMixin, BasePoller):
             await self._poll_eod_snapshots(sink_registry)
         except asyncio.CancelledError:
             logger.info("uw_eod_task_cancelled", last_eod_date=self._last_eod_date)
+            # Shutdown cancelled EOD mid-run: release the persistent 'running'
+            # claim (release() preserves a 'completed' claim) and roll the
+            # in-memory guard back, so the next startup re-runs today's EOD
+            # instead of deferring it until the 2h stale window.
+            today_str = datetime.now(ET).strftime("%Y-%m-%d")
+            self._last_eod_date = previous_eod_date
+            self._eod_state.release(today_str)
             raise
         except Exception as e:
             logger.error("uw_eod_task_error", error=str(e), exc_info=True)
