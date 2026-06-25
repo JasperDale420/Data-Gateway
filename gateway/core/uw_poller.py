@@ -921,6 +921,33 @@ class UWPoller(DedupMixin, BasePoller):
 
         logger.info("uw_eod_completed", totals=totals)
 
+    @staticmethod
+    def _wrap_eod_results(
+        results: list[Any],
+        *,
+        feed: str,
+        use_model_dump: bool = True,
+        **overrides: Any,
+    ) -> list[dict[str, Any]]:
+        """Wrap a list of EOD records into envelopes off the event loop.
+
+        Pure/synchronous so the per-ticker EOD fan-out can offload it via
+        ``asyncio.to_thread`` — building envelopes (model_dump + BLAKE2b) for the
+        higher-row feeds (greek_exposure especially) across the whole ticker
+        universe otherwise runs on the loop, observed as a multi-second stall
+        during the 16:30 EOD run.
+        """
+        return [
+            wrap_event(
+                event=item.model_dump() if use_model_dump else item,
+                provider="unusual_whales",
+                feed=feed,
+                source="rest",
+                **overrides,
+            )
+            for item in results
+        ]
+
     async def _poll_eod_greek_exposure(self, sink_registry, ticker: str) -> int:
         """Poll Greek exposure for a single ticker."""
         if self._provider is None:
@@ -929,15 +956,7 @@ class UWPoller(DedupMixin, BasePoller):
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="greek_exposure",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="greek_exposure")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -993,18 +1012,14 @@ class UWPoller(DedupMixin, BasePoller):
 
         symbol = ticker.upper()
         instrument_key = f"equity:{symbol}"
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="iv_term_structure",
-                source="rest",
-                instrument_type_override="equity",
-                instrument_key_override=instrument_key,
-                symbol_override=symbol,
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(
+            self._wrap_eod_results,
+            results,
+            feed="iv_term_structure",
+            instrument_type_override="equity",
+            instrument_key_override=instrument_key,
+            symbol_override=symbol,
+        )
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1022,15 +1037,7 @@ class UWPoller(DedupMixin, BasePoller):
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="oi_change",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="oi_change")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1063,18 +1070,15 @@ class UWPoller(DedupMixin, BasePoller):
 
         symbol = ticker.upper()
         instrument_key = f"equity:{symbol}"
-        envelopes = [
-            wrap_event(
-                event=item,
-                provider="unusual_whales",
-                feed="historic_option_volume",
-                source="rest",
-                instrument_type_override="equity",
-                instrument_key_override=instrument_key,
-                symbol_override=symbol,
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(
+            self._wrap_eod_results,
+            results,
+            feed="historic_option_volume",
+            use_model_dump=False,
+            instrument_type_override="equity",
+            instrument_key_override=instrument_key,
+            symbol_override=symbol,
+        )
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1092,15 +1096,7 @@ class UWPoller(DedupMixin, BasePoller):
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="short_interest",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="short_interest")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1118,15 +1114,7 @@ class UWPoller(DedupMixin, BasePoller):
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="short_volume",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="short_volume")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1144,15 +1132,7 @@ class UWPoller(DedupMixin, BasePoller):
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="ftds",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="ftds")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1219,15 +1199,9 @@ class UWPoller(DedupMixin, BasePoller):
 
         self._stamp_filing_ts_event(results, "filed_at_date", "transaction_date")
 
-        envelopes = [
-            wrap_event(
-                event=item,
-                provider="unusual_whales",
-                feed="congress_trades",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(
+            self._wrap_eod_results, results, feed="congress_trades", use_model_dump=False
+        )
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1250,15 +1224,9 @@ class UWPoller(DedupMixin, BasePoller):
 
         self._stamp_filing_ts_event(results, "filing_date", "transaction_date")
 
-        envelopes = [
-            wrap_event(
-                event=item,
-                provider="unusual_whales",
-                feed="insider_trades",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(
+            self._wrap_eod_results, results, feed="insider_trades", use_model_dump=False
+        )
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
