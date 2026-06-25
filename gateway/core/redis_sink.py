@@ -400,9 +400,11 @@ class RedisStreamsSink(DataSink):
                 )
                 re_buffer.extend(chunk)
 
-        # Re-buffer events that failed during drain
-        for item in re_buffer:
-            self._failed_buffer.append(item)
+        # Re-buffer events that failed during drain through the accounted path
+        # so a maxlen eviction here is counted + logged (the eviction alert),
+        # not silently dropped by a raw deque.append past capacity.
+        for topic, payload in re_buffer:
+            self._buffer_failed_event(topic, payload)
 
         self._buffer_stats["drained"] += drained
         set_sink_buffer_size(self.name, len(self._failed_buffer))
