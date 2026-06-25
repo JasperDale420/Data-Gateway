@@ -358,12 +358,17 @@ async def lifespan(app: FastAPI):
         logger.info("sighup_received", action="reloading_config")
         # Clear settings cache to reload on next access
         get_settings.cache_clear()
-        # Reload client authenticator
+        # Reload client authenticator. reload() is atomic — on a bad config it
+        # rolls back to the last-good clients and raises. Catch here so a SIGHUP
+        # against a broken clients.yaml can't propagate out of the signal
+        # handler; the gateway keeps serving the previous config instead.
         from gateway.api.deps import get_authenticator
 
-        auth = get_authenticator()
-        auth.reload()
-        logger.info("config_reloaded")
+        try:
+            get_authenticator().reload()
+            logger.info("config_reloaded")
+        except Exception:
+            logger.error("config_reload_failed_kept_previous", exc_info=True)
 
     # Register SIGHUP handler (Unix only)
     try:

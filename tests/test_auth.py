@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+import pytest
+
 import gateway.core.auth as auth_module
-from gateway.core.auth import ClientAuthenticator
+from gateway.core.auth import ClientAuthenticator, InvalidClientIdError
 
 
 def test_authenticate_valid_key(test_authenticator, test_api_key):
@@ -102,3 +104,26 @@ def test_authenticate_valid_key_logs_debug_not_info(test_authenticator, test_api
     assert client is not None
     assert fake_logger.debug_calls == 2
     assert fake_logger.info_calls == 0
+
+
+def test_reload_keeps_previous_clients_on_bad_config(tmp_path):
+    """A malformed clients.yaml on SIGHUP reload must not wipe live client maps.
+
+    Regression guard: reload() used to clear the maps before re-parsing, so a
+    single bad edit + SIGHUP 401-locked every trading client until restart.
+    """
+    config = tmp_path / "clients.yaml"
+    config.write_text(
+        "clients:\n  - id: kairos\n    key: gw_live_key_123\n    role: trader\n    permissions:\n      trading: true\n"
+    )
+    auth = ClientAuthenticator(config)
+    assert auth.authenticate("gw_live_key_123") is not None
+
+    # Corrupt the config with an invalid client id and reload.
+    config.write_text("clients:\n  - id: 'bad id with spaces'\n    key: gw_other\n")
+    with pytest.raises(InvalidClientIdError):
+        auth.reload()
+
+    # The previously-loaded client must still authenticate (maps rolled back).
+    assert auth.authenticate("gw_live_key_123") is not None
+    assert auth.get_client("kairos") is not None

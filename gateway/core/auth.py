@@ -229,12 +229,28 @@ class ClientAuthenticator:
         return list(self._clients.keys())
 
     def reload(self) -> None:
-        """Reload clients from configuration."""
-        self._clients.clear()
-        self._plaintext_keys.clear()
-        self._hashed_keys.clear()
-        self._load_clients()
-        logger.info("clients_reloaded")
+        """Reload clients from configuration atomically.
+
+        Builds the client maps into fresh dicts and swaps them in only on a
+        fully successful load. A malformed config (bad YAML, invalid client id,
+        unreadable file) leaves the previously-loaded clients serving rather
+        than clearing every key and 401-locking all trading clients until the
+        process is restarted. The prior approach cleared the maps *before*
+        re-parsing, so a single bad edit + SIGHUP locked out every client.
+        """
+        previous = (self._clients, self._plaintext_keys, self._hashed_keys)
+        self._clients = {}
+        self._plaintext_keys = {}
+        self._hashed_keys = {}
+        try:
+            self._load_clients()
+        except Exception:
+            # Roll back to the last-good maps so a bad config can't lock out
+            # live trading clients. Re-raise so the SIGHUP handler logs it.
+            self._clients, self._plaintext_keys, self._hashed_keys = previous
+            logger.error("clients_reload_failed_kept_previous", exc_info=True)
+            raise
+        logger.info("clients_reloaded", count=len(self._clients))
 
     @staticmethod
     def hash_key(key: str) -> str:
