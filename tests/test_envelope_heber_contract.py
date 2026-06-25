@@ -202,3 +202,45 @@ def test_negative_control_option_key_without_occ_fails() -> None:
     assert not HEBER_KEY_PATTERNS["option"].match(bug_key)
     # And the correctly-formed key it should have been MUST pass.
     assert HEBER_KEY_PATTERNS["option"].match("option:OCC:QQQ260609C00690000")
+
+
+@pytest.mark.parametrize(
+    "feed, base, field, val_a, val_b",
+    [
+        (
+            "insider_trades",
+            {"ticker": "AAPL", "owner_name": "Jane Doe", "transaction_date": "2026-06-25", "timestamp": _TS},
+            "id",
+            "txn-1",
+            "txn-2",
+        ),
+        (
+            "congress_trades",
+            {"ticker": "AAPL", "name": "Sen X", "transaction_date": "2026-06-25", "timestamp": _TS},
+            "txn_type",
+            "Purchase",
+            "Sale",
+        ),
+        (
+            "oi_change",
+            {"symbol": "AAPL", "date": "2026-06-25", "call_oi_change": 0, "timestamp": _TS},
+            "option_symbol",
+            "AAPL250117C00200000",
+            "AAPL250117P00200000",
+        ),
+    ],
+)
+def test_distinct_rows_get_distinct_event_ids(feed, base, field, val_a, val_b) -> None:
+    """Multi-row feeds must not collapse distinct same-day rows to one event_id.
+
+    Regression guard for the insider/congress/oi_change collision class (the
+    insider_trades 200→~2 Bronze loss): two rows differing only in the row's
+    discriminating field must get distinct event_ids; identical rows still
+    collapse (true duplicate).
+    """
+    a = wrap_event(event={**base, field: val_a}, provider="unusual_whales", feed=feed, source="rest")
+    b = wrap_event(event={**base, field: val_b}, provider="unusual_whales", feed=feed, source="rest")
+    assert a["event_id"] != b["event_id"]  # distinct rows → distinct ids
+
+    c = wrap_event(event={**base, field: val_a}, provider="unusual_whales", feed=feed, source="rest")
+    assert a["event_id"] == c["event_id"]  # true duplicate still collapses
