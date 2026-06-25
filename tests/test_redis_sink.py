@@ -261,6 +261,24 @@ def test_custom_pool_size() -> None:
     assert sink_min._pool_size == 1  # Clamped to min
 
 
+def test_failed_buffer_capacity_is_configurable() -> None:
+    """The retry buffer capacity is operator-tunable, and eviction is metered.
+
+    Guards the fix for the 10k fixed buffer that filled in under a second at
+    OPRA volume during a circuit-breaker-open window, silently evicting the
+    bulk of an outage.
+    """
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0", failed_buffer_capacity=3)
+    assert sink._failed_buffer.maxlen == 3
+
+    for i in range(5):
+        sink._buffer_failed_event("heber:events", f"e{i}".encode())
+
+    # Oldest evicted down to capacity; the overflow is counted (drives the alert).
+    assert len(sink._failed_buffer) == 3
+    assert sink._buffer_stats["evicted"] == 2
+
+
 def test_default_timeout() -> None:
     """Default timeout should be 5.0 seconds."""
     sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")

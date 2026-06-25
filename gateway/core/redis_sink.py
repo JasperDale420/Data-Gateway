@@ -74,6 +74,7 @@ class RedisStreamsSink(DataSink):
         operation_timeout_seconds: float = DEFAULT_OPERATION_TIMEOUT_SECONDS,
         pool_size: int = DEFAULT_POOL_SIZE,
         worker_count: int | None = None,
+        failed_buffer_capacity: int = FAILED_EVENT_BUFFER_CAPACITY,
     ) -> None:
         """Initialize Redis Streams sink.
 
@@ -87,6 +88,10 @@ class RedisStreamsSink(DataSink):
                 through this sink concurrently. When set, ``pool_size`` is
                 raised to at least this value so the pool can never be smaller
                 than the concurrency drawing from it.
+            failed_buffer_capacity: Max events held in the in-memory retry
+                buffer before the oldest are evicted (metered via
+                ``gateway_sink_buffer_evictions_total``). Size to ride out a
+                Redis blip at peak event rate; ~1 KB/event.
 
         Pool sizing vs. worker count:
             The data_sink registry runs ``worker_count`` coroutines that each
@@ -124,8 +129,11 @@ class RedisStreamsSink(DataSink):
         self._closed = False
 
         # Failed event buffer — holds (topic, payload_bytes) for events that
-        # exhausted all retries.  Drained automatically on reconnect.
-        self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=FAILED_EVENT_BUFFER_CAPACITY)
+        # exhausted all retries.  Drained automatically on reconnect. The
+        # capacity is operator-tunable (data_sink_failed_buffer_capacity): at
+        # OPRA quote volume the old fixed 10k filled in under a second during a
+        # circuit-breaker-open window, silently evicting the bulk of an outage.
+        self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=max(1, int(failed_buffer_capacity)))
         self._drain_lock = asyncio.Lock()
         # Hold a strong reference to the drain task so it cannot be GC'd
         # mid-flight while the buffer drain is in progress.

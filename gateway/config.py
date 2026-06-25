@@ -205,6 +205,16 @@ class Settings(BaseSettings):
     # default keeps headroom above the sink worker count for reconnect churn and
     # health checks during opening-bell bursts.
     data_sink_redis_pool_size: int = Field(default=32, ge=1, le=128)
+    # Failed-event retry buffer capacity. Events that exhaust all publish
+    # retries (Redis down / circuit open) are held in an in-memory deque and
+    # re-published on the next successful reconnect; the bounded deque silently
+    # evicts oldest events when full (metered via
+    # gateway_sink_buffer_evictions_total → SinkBufferEvictionsActive alert).
+    # At ~1 KB/event this caps memory at roughly capacity KB. The breaker's 15s
+    # open window at OPRA quote volume overran the prior fixed 10k in under a
+    # second, so the default is raised to 50k (~50 MB). OPRA-heavy deployments
+    # that still see evictions during a flap should raise it further.
+    data_sink_failed_buffer_capacity: int = Field(default=50_000, ge=1_000, le=1_000_000)
 
     # Bounded-queue + worker-pool dispatch parameters. Producers `put` into a
     # per-sink bounded asyncio.Queue with a short producer-block timeout; a

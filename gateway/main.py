@@ -327,6 +327,7 @@ async def lifespan(app: FastAPI):
             # Tie the XADD pool to the worker count so a worker_count set above
             # pool_size can't serialize the workers on connection acquisition.
             worker_count=settings.data_sink_worker_count,
+            failed_buffer_capacity=settings.data_sink_failed_buffer_capacity,
         )
         sink_registry.register(redis_sink)
 
