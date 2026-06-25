@@ -102,3 +102,6 @@ gateway_errors_*.log
 
 # Rotation handoff (contains live secrets)
 config/ROTATION_HANDOFF.md
+
+# Large generated reference data (regenerated from provider specs, not source)
+data_dictionary.yaml
