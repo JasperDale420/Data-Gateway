@@ -532,10 +532,13 @@ class UWPoller(DedupMixin, BasePoller):
                     logger.info("uw_poller_starting_eod_snapshots")
                     # Mark the date *before* spawning so a second tick within
                     # the same minute doesn't double-schedule the EOD work
-                    # before the task gets a chance to run.
+                    # before the task gets a chance to run. The prior value is
+                    # handed to the runner so it can roll the guard back on
+                    # failure and allow a same-day retry.
+                    previous_eod_date = self._last_eod_date
                     self._last_eod_date = datetime.now(ET).strftime("%Y-%m-%d")
                     self._eod_task = asyncio.create_task(
-                        self._run_eod_with_logging(sink_registry),
+                        self._run_eod_with_logging(sink_registry, previous_eod_date=previous_eod_date),
                         name="uw_poller_eod",
                     )
 
@@ -792,12 +795,15 @@ class UWPoller(DedupMixin, BasePoller):
         # Must be a trading day
         return self._calendar.is_trading_day(now_et.date())
 
-    async def _run_eod_with_logging(self, sink_registry) -> None:
+    async def _run_eod_with_logging(self, sink_registry, *, previous_eod_date: str | None = None) -> None:
         """Wrapper around ``_poll_eod_snapshots`` for the EOD background task.
 
         Logs success/error and clears the task reference so the next-day
         scheduler can re-spawn cleanly. Cancellation (e.g. on shutdown)
-        propagates through.
+        propagates through. On failure it rolls back the in-process date guard
+        and releases the persistent run claim so today's EOD can be retried on
+        the next poll tick (or after a restart) instead of being lost until the
+        stale window expires.
         """
         try:
             await self._poll_eod_snapshots(sink_registry)
@@ -806,6 +812,9 @@ class UWPoller(DedupMixin, BasePoller):
             raise
         except Exception as e:
             logger.error("uw_eod_task_error", error=str(e), exc_info=True)
+            today_str = datetime.now(ET).strftime("%Y-%m-%d")
+            self._last_eod_date = previous_eod_date
+            self._eod_state.release(today_str)
 
     async def _poll_eod_snapshots(self, sink_registry) -> None:
         """Orchestrate all EOD per-ticker polls with bounded concurrency."""

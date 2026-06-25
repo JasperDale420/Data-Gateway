@@ -67,6 +67,21 @@ class UwEodStateStore:
             )
             return True
 
+    def release(self, trading_date: str) -> None:
+        """Release a *running* claim for this trading date so it can be re-run.
+
+        Removes the persisted state only when it is the running claim for this
+        date — a completed state is preserved so a failure *after* completion
+        can't trigger a duplicate run. Called on EOD failure to allow a same-day
+        retry / restart instead of waiting out the stale window (2h by default).
+        """
+        with self._claim_lock() as acquired:
+            if not acquired:
+                return
+            state = self._read_state()
+            if state is not None and state.trading_date == trading_date and state.status == "running":
+                self._path.unlink(missing_ok=True)
+
     def mark_completed(self, trading_date: str, totals: dict) -> None:
         """Persist completion for the trading date, preserving the original start time."""
         with self._claim_lock() as _acquired:
