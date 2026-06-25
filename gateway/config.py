@@ -292,6 +292,12 @@ class Settings(BaseSettings):
     option_capture_ws_enabled: bool = True
     option_capture_ws_contract_limit_per_symbol: int = Field(default=40, ge=1)
 
+    # Event-loop stall watchdog (diagnostics): an off-loop thread stack-dumps the
+    # event loop when it is blocked longer than the threshold, capturing the
+    # synchronous frame behind multi-second on_message_slow stalls / heartbeat drops.
+    loop_watchdog_enabled: bool = True
+    loop_watchdog_stall_threshold_seconds: float = Field(default=5.0, ge=1.0)
+
     # Replay
     replay_messages_max_in_memory: int = Field(default=50_000, ge=100)
     replay_messages_spool_to_disk: bool = True

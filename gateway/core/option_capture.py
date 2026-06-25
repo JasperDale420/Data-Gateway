@@ -219,31 +219,20 @@ class OptionCaptureService:
                 if not contracts:
                     raise RuntimeError("empty_snapshot")
 
-                payload = self._build_snapshot_payload(symbol=symbol, contracts=contracts)
-                ws_contracts = self._select_ws_contract_symbols(
-                    contracts,
+                # CPU-bound chain processing (serialize ~thousands of contracts, sort,
+                # build snapshot/quality/trade envelopes) runs off the event loop so it
+                # cannot starve WS heartbeats and live message ingest during the crunch.
+                snapshot_envelope, ws_contracts, symbol_quality, trade_envelopes = await asyncio.to_thread(
+                    self._process_symbol_snapshot,
+                    symbol=symbol,
+                    contracts=contracts,
                     as_of_date=current_time.date(),
+                    ts_ingest=current_time,
                 )
-                envelopes.append(
-                    wrap_event(
-                        event=payload,
-                        provider="alpaca",
-                        feed="option_chain_snapshot",
-                        source="rest",
-                        ts_ingest=current_time,
-                        instrument_type_override="equity",
-                        instrument_key_override=f"equity:{symbol}",
-                        symbol_override=symbol,
-                    )
-                )
-                if self.publish_per_contract_trades:
-                    envelopes.extend(self._build_per_contract_trade_envelopes(payload, current_time))
+                envelopes.append(snapshot_envelope)
+                if trade_envelopes:
+                    envelopes.extend(trade_envelopes)
                 self._symbol_contracts[symbol] = ws_contracts
-                symbol_quality = self._build_symbol_quality_snapshot(
-                    payload=payload,
-                    ws_tracked_contracts=len(ws_contracts),
-                    as_of=current_time,
-                )
                 self._symbol_capture_quality[symbol] = symbol_quality
                 record_option_capture_symbol_metrics(
                     symbol=symbol,
@@ -394,7 +383,49 @@ class OptionCaptureService:
             self._ws_event_counts["contracts_removed"] += len(to_remove)
             record_option_capture_ws_update(removed=len(to_remove))
 
-    def _build_snapshot_payload(self, *, symbol: str, contracts: list[Any]) -> dict[str, Any]:
+    def _process_symbol_snapshot(
+        self,
+        *,
+        symbol: str,
+        contracts: list[Any],
+        as_of_date: date,
+        ts_ingest: datetime,
+    ) -> tuple[dict[str, Any], set[str], dict[str, Any], list[dict[str, Any]]]:
+        """CPU-bound per-symbol snapshot processing — safe to run via ``asyncio.to_thread``.
+
+        Serializes the option chain ONCE (previously serialized twice — once for the
+        snapshot payload and once for WS-contract selection), then builds the snapshot
+        envelope, selects the WS-tracked contracts, computes the quality snapshot, and
+        builds per-contract trade envelopes. Pure over already-fetched contract data and
+        touches no event-loop-bound state, so running it off the loop keeps WS heartbeats
+        and live message ingest flowing during the multi-thousand-contract crunch.
+
+        Returns ``(snapshot_envelope, ws_contracts, symbol_quality, trade_envelopes)``.
+        """
+        serialized_chain = [self._serialize_contract(contract) for contract in contracts]
+        payload = self._build_snapshot_payload(symbol=symbol, serialized_chain=serialized_chain)
+        ws_contracts = self._select_ws_contract_symbols(serialized_chain, as_of_date=as_of_date)
+        snapshot_envelope = wrap_event(
+            event=payload,
+            provider="alpaca",
+            feed="option_chain_snapshot",
+            source="rest",
+            ts_ingest=ts_ingest,
+            instrument_type_override="equity",
+            instrument_key_override=f"equity:{symbol}",
+            symbol_override=symbol,
+        )
+        trade_envelopes = (
+            self._build_per_contract_trade_envelopes(payload, ts_ingest) if self.publish_per_contract_trades else []
+        )
+        symbol_quality = self._build_symbol_quality_snapshot(
+            payload=payload,
+            ws_tracked_contracts=len(ws_contracts),
+            as_of=ts_ingest,
+        )
+        return snapshot_envelope, ws_contracts, symbol_quality, trade_envelopes
+
+    def _build_snapshot_payload(self, *, symbol: str, serialized_chain: list[dict[str, Any]]) -> dict[str, Any]:
         serialized_contracts: list[dict[str, Any]] = []
         expiries: list[date] = []
         timestamps: list[datetime] = []
@@ -404,8 +435,7 @@ class OptionCaptureService:
         put_open_interest: list[float] = []
         atm_candidates: list[tuple[float, float]] = []
 
-        for contract in sorted(contracts, key=lambda item: self._contract_symbol(item)):
-            serialized = self._serialize_contract(contract)
+        for serialized in sorted(serialized_chain, key=lambda item: self._contract_symbol(item)):
             serialized_contracts.append(serialized)
 
             expiry = _parse_date(serialized.get("expiration"))
@@ -447,13 +477,10 @@ class OptionCaptureService:
             "atm_iv": float(atm_iv) if atm_iv is not None else None,
         }
 
-    def _select_ws_contract_symbols(self, contracts: list[Any], *, as_of_date: date) -> set[str]:
-        ranked_contracts: list[dict[str, Any]] = []
-        for contract in contracts:
-            symbol = self._contract_symbol(contract)
-            if not symbol:
-                continue
-            ranked_contracts.append(self._serialize_contract(contract))
+    def _select_ws_contract_symbols(self, serialized_chain: list[dict[str, Any]], *, as_of_date: date) -> set[str]:
+        ranked_contracts: list[dict[str, Any]] = [
+            serialized for serialized in serialized_chain if self._contract_symbol(serialized)
+        ]
 
         atm_strike = self._estimate_atm_strike(ranked_contracts)
         ranked_contracts.sort(

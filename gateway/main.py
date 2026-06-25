@@ -257,6 +257,15 @@ async def lifespan(app: FastAPI):
 
     uptime_task = asyncio.create_task(_uptime_loop())
 
+    loop_watchdog = None
+    if settings.loop_watchdog_enabled:
+        from gateway.core.loop_watchdog import LoopStallWatchdog
+
+        loop_watchdog = LoopStallWatchdog(
+            stall_threshold_seconds=settings.loop_watchdog_stall_threshold_seconds,
+        )
+        await loop_watchdog.start()
+
     # Initialize provider registry. In production (debug=False) we enforce
     # `required: true` providers — gateway refuses to boot if a critical
     # provider fails to initialize, instead of silently degrading. Local dev
@@ -613,6 +622,9 @@ async def lifespan(app: FastAPI):
     # the bounded queue and tear down workers without losing tail events.
     if sink_registry:
         await sink_registry.close_all()
+
+    if loop_watchdog is not None:
+        await loop_watchdog.stop()
 
     uptime_task.cancel()
     with suppress(asyncio.CancelledError):

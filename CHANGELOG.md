@@ -4,12 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Event-loop stall watchdog** (`gateway/core/loop_watchdog.py`, `gateway/main.py`, `gateway/config.py`): an off-loop watcher thread watches an asyncio heartbeat and, when the single event loop is blocked longer than `GATEWAY_LOOP_WATCHDOG_STALL_THRESHOLD_SECONDS` (default 5s), dumps every thread's stack (`faulthandler`) plus GC counts — capturing the exact synchronous frame behind the otherwise-silent multi-second `on_message_slow` stalls and WS `heartbeat_timeout_disconnect` storms. One dump per stall, with a recovery line recording the total stalled time. Enabled by default; toggle via `GATEWAY_LOOP_WATCHDOG_ENABLED`.
+
 ### Fixed
 
 - **Heber watch UW enrichment permissions restored** (`config/clients.yaml`): the `heber-watch` client can now read the UW endpoints it uses for alert feature enrichment (`iv-rank`, `gex`, max pain, and market tide), preventing `403 Provider access denied: uw` responses that left Gold feature rows with null Greek/tide columns.
 - **Heber watch Gateway authentication restored** (`config/clients.yaml`): aligned the `heber-watch` client hash with the key loaded by the running Heber watch service so its option quote polls authenticate instead of returning `401`.
 - **UW greek exposure date-only rows normalize to UTC** (`gateway/providers/uw/options.py`): date-only `date` values from Unusual Whales now become UTC-aware midnight timestamps before strict schema validation, preventing live `uw_greek_exposure_failed` errors.
 - **Benign order-cancel races no longer logged as errors** (`gateway/providers/alpaca/trading.py`): a cancel that loses the race with the order's own terminal transition (Alpaca 422, code 42210000 "order is already in … state") is now logged at INFO (`alpaca_order_cancel_noop`) instead of ERROR. The cancel still re-raises so callers learn the true order state (e.g. a fill); this removes ~1,300 non-actionable ERROR lines per trading day from the error log. Matching requires both the terminal code and the "already in … state" message, so unrelated reuses of the code still surface as ERROR.
+- **Option-chain snapshot processing no longer stalls the event loop** (`gateway/core/option_capture.py`): each capture cycle synchronously serialized (Pydantic `model_dump`), sorted, and ranked the full SPY/QQQ/IWM option chains (~13k+ contracts each) directly on the event loop, contributing to multi-second freezes that starve WS heartbeats and the Heber sink drain. The per-symbol crunch now runs via `asyncio.to_thread`, and the chain is serialized once instead of twice (the snapshot payload and WS-contract selection share a single serialization pass). All events stay fully awaited — no fan-out or dispatch change.
+- **Bulk option-chain filtering no longer stalls the event loop** (`gateway/core/bulk.py`): `_filter_option_contracts` ran per-contract `model_dump` + filtering synchronously on the loop for bulk options jobs; it now runs via `asyncio.to_thread`, mirroring the existing backfill normalization offload.
 
 ### Changed
 
