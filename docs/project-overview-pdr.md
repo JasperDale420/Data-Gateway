@@ -1,0 +1,159 @@
+# Data-Gateway — Project Overview & Design Rationale
+
+**Status:** Active
+**Owner:** Empire Trading
+**Port:** 8080
+**Language:** Python 3.12 + FastAPI
+**Position in monorepo:** Edge — sits between external data providers and every downstream Empire system.
+
+---
+
+## 1. Purpose
+
+Data-Gateway is the **single ingress point** for all external market data and trading APIs used by Empire. Every other trading or analytics system in the monorepo (Heber, Cerberus, Kairos, Orion, 3Roses, Orbit, WhaleHunter, Athena, EmpireUI) talks to providers *through* this gateway rather than directly. It exists to enforce one place where:
+
+- **Authentication and quotas** are managed (one set of provider keys, one per-client API key model)
+- **Schemas are normalized** (raw provider payloads become `NormalizedBar` / `NormalizedQuote` / `NormalizedTrade` / `EventEnvelope`)
+- **Rate limits, circuit breakers, and caching** live (so 8 downstream services don't all hammer Alpaca individually)
+- **Real-time streams are multiplexed** (one Alpaca WebSocket connection per stream type, fanned out to N downstream clients)
+- **Events flow to Heber** as `EventEnvelope` messages on the `heber:events` Redis Stream
+
+If a service in Empire needs market data, it goes through Data-Gateway — no direct provider calls allowed downstream.
+
+---
+
+## 2. Problem It Solves
+
+Before Data-Gateway, each trading system spoke directly to providers, which produced:
+
+- **Quota waste** — multiple services polling the same Alpaca endpoints
+- **Schema drift** — every consumer parsing `t`/`o`/`h`/`l`/`c`/`v` Alpaca shorthand its own way
+- **No central audit** — credential rotation required touching 8+ repos
+- **WebSocket fan-out duplication** — Alpaca limits one stream connection per account; multiple consumers couldn't all subscribe to SIP at the same time
+- **Inconsistent timestamps and instrument keys** — `AAPL` vs `equity:AAPL` vs `NASDAQ:AAPL` across systems
+
+Data-Gateway centralizes all of the above behind a stable REST + WebSocket contract.
+
+---
+
+## 3. Scope
+
+### In Scope
+- REST proxy for: Alpaca, Unusual Whales, Finnhub, Alpha Vantage, yfinance, SEC EDGAR, NewsAPI
+- WebSocket multiplexing of Alpaca SIP / OPRA / Crypto / News streams
+- Normalization to canonical `EventEnvelope` schemas
+- Publishing every event to Redis Streams (`heber:events`) for Heber ingestion
+- Per-client authentication, rate limiting, permission enforcement
+- Background pollers (UW flow / darkpool / market tide / EOD per-ticker)
+- Bulk historical jobs (`/api/v1/bulk/*`) and replay sessions (`/api/v1/replay/*`)
+- Idempotent order writes for Alpaca trading (`dg-<uuid>` auto-minted `client_order_id`)
+- Health, readiness, Prometheus metrics, structured audit logging
+
+### Out of Scope
+- Storage / persistence (Heber owns the lakehouse)
+- Strategy logic (Cerberus, 3Roses, Kairos, etc.)
+- ML training (Atlasv2, TradingBrain)
+- LLM-driven analytics (Athena, ResearchArm)
+- Order routing logic beyond Alpaca pass-through (downstream systems own risk and position sizing)
+
+---
+
+## 4. Design Rationale
+
+### 4.1  Why a single gateway, not per-provider sidecars?
+
+A shared cache, shared rate limiter, and a shared circuit-breaker view across providers means a single misbehaving consumer can't degrade other consumers' access. Operationally, one process to monitor and one config to rotate.
+
+### 4.2  Why FastAPI + Pydantic?
+
+- Async-first I/O matches the workload (lots of concurrent upstream HTTP and WebSocket)
+- Pydantic validation enforces normalized schemas at the boundary
+- Auto-generated OpenAPI docs at `/docs` for downstream service discovery
+- Aligned with the rest of the Empire Python stack (Heber, Athena, Cerberus, …)
+
+### 4.3  Why Redis Streams (`heber:events`) as the egress?
+
+- **Decoupling** — Heber consumes independently; if Heber is down, the gateway keeps serving REST/WS and buffers failed sink writes in a bounded deque.
+- **Replay** — `XRANGE` lets Heber re-read missed events on restart.
+- **Dedup** — `event_id` is a BLAKE2b hash of `(provider, feed, instrument, ts_event, feed-specific-unique-fields)`. Heber's writer rejects duplicates by `event_id`.
+- **Backpressure** — a bounded per-sink dispatch queue + worker pool propagates Redis slowdowns back to producers rather than silently dropping.
+
+See [system-architecture.md](system-architecture.md#data-sink-heber-integration) for the full failure model.
+
+### 4.4  Why one upstream WebSocket per stream type?
+
+Alpaca's data plans limit one concurrent stream connection per account. The `StreamMultiplexer` (`gateway/core/stream.py`) opens one upstream per stream type (stocks_sip, options_opra, crypto, news), aggregates the union of all downstream client subscriptions, and reference-counts symbols so an upstream `unsubscribe` only happens when the last interested client goes away. Without this, every downstream service competing for the same SIP stream would either get refused or thrash the connection.
+
+### 4.5  Why per-client cache scoping?
+
+Cache keys include the `X-Gateway-Key` client id, preventing one client's authorized response from leaking to another client whose permissions exclude that data. The L1 (in-memory `cachetools.TTLCache`) and optional L2 (Redis) both honor this scoping.
+
+### 4.6  Why bounded queue + worker pool for the sink (not a Semaphore)?
+
+The previous design used an `asyncio.Semaphore` and silently dropped events whose `schedule()` call exceeded an in-flight cap. Under opening-bell load, tens of thousands of events were lost per minute with no operator signal. The current design (`gateway/core/data_sink.py`) puts a bounded `asyncio.Queue` per sink, drained by a worker pool. Producers block (briefly) on `Queue.put` when full, surfacing backpressure as latency rather than data loss. A drop only happens when the producer-block timeout expires *and* the queue is still full — alerted by `gateway_sink_producer_timeout_drops_total` and a CRITICAL log line.
+
+### 4.7  Why idempotent Alpaca order writes?
+
+A `504 Gateway Timeout` on the gateway side does not tell the client whether Alpaca accepted the order. Auto-minting a `dg-<uuid>` `client_order_id` (when the caller doesn't supply one) lets the client safely retry — Alpaca rejects a duplicate `client_order_id` instead of double-placing.
+
+### 4.8  Per-circuit severity convention
+
+Sink circuits (`data_sink:*`) open at `WARNING` (controlled degradation; failed-event buffer holds the work). Upstream provider circuits open at `ERROR` (genuine upstream failure). 4xx upstream errors log at `WARNING` (caller-caused, not retried); 5xx log at `ERROR` (upstream failure, retried). This split keeps the WARNING+ errors log usable — a single misconfigured client cannot bury genuine upstream incidents.
+
+---
+
+## 5. Key Concepts
+
+| Concept | Definition |
+|---------|------------|
+| **EventEnvelope** | Canonical wrapper for every outbound event: `event_id`, `provider`, `feed`, `source`, `instrument_type`, `instrument_key`, `ts_event`, `ts_ingest`, `schema_version`, `payload`. See `gateway/core/envelope.py`. |
+| **Instrument key** | `equity:AAPL`, `option:OCC:AAPL250117C00200000`, `crypto:BTC-USD`, `forex:EUR-USD`. Canonical across all Empire systems. |
+| **Feed** | Logical data type (`stock_bars`, `option_quotes`, `flow_alerts`, `darkpool`, `news`, …). Maps to `FEED_UNIQUE_FIELDS` for event-id hashing. |
+| **Source** | `rest`, `stream`, or `poller`. Recorded in the envelope so Heber knows the path. |
+| **Stream multiplexer** | One upstream WS per Alpaca stream type, N downstream clients per upstream. |
+| **Data sink** | Bounded-queue + worker pool dispatcher that publishes envelopes to Redis Streams. |
+| **Bulk job** | Async historical fetch with status / download / delete endpoints. |
+| **Replay session** | Time-bounded historical replay over WebSocket (for backtest harnesses). |
+
+---
+
+## 6. Non-Goals
+
+- **Not a strategy framework** — does not place trades autonomously, does not compute signals.
+- **Not a database** — stores nothing durable; Redis is used for caching, dedup, the sink stream, and the failed-event buffer only.
+- **Not a write path to anything except Alpaca** — UW, Finnhub, Alpha Vantage, yfinance, SEC, News are read-only.
+- **Not a generic API gateway** — its concerns are market-data-specific (instrument keys, normalization, OPRA/SIP).
+
+---
+
+## 7. Success Criteria
+
+| Metric | Target |
+|--------|--------|
+| `/health/ready` returns `ready` within 5s of startup | Always |
+| WebSocket event publish-to-Heber lag (P99) | < 250 ms |
+| REST cache hit rate on hot endpoints | > 70% |
+| Sink producer-timeout drops | 0 (alert on any non-zero rate) |
+| Sink failed-event buffer evictions | 0 (alert on any non-zero rate) |
+| Upstream provider circuit-open events per day | Tracked, < 5 under normal conditions |
+| Idempotent retry on `504` Alpaca writes never double-places | Always |
+
+Perf baselines and budgets live in `config/perf_baseline.json` and `config/perf_budgets.json`; the CI perf gate (`scripts/perf_gate.py`) enforces budgets on every PR.
+
+---
+
+## 8. Related Documents
+
+- [system-architecture.md](system-architecture.md) — subsystem diagrams, data pipeline, sink resilience model
+- [codebase-summary.md](codebase-summary.md) — package layout, module-by-module purpose, key dependencies
+- [api-reference.md](api-reference.md) — REST + WebSocket catalog (links to `API_REFERENCE.md` and `PROVIDER_ENDPOINT_CONTRACT.md`)
+- [configuration-guide.md](configuration-guide.md) — every env var, every `config/*.yaml`
+- [deployment-guide.md](deployment-guide.md) — Docker, CI, perf gate
+- [testing-guide.md](testing-guide.md) — pytest layout, markers, fixtures, smoke harness
+- [code-standards.md](code-standards.md) — ruff/mypy config, conventions, gotchas
+- [ARCHITECTURE.md](ARCHITECTURE.md) — deeper architecture (kept for historical continuity)
+- [RUNBOOK.md](RUNBOOK.md) — operational procedures, troubleshooting
+- [AUDIT_LOGGING.md](AUDIT_LOGGING.md) — security audit event taxonomy
+- [CONSUMER_GUIDE.md](CONSUMER_GUIDE.md) — task-oriented integration guide for downstream Empire services
+- `../PRD.md` — the long-form product requirements doc
+- `../PROVIDER_ENDPOINT_CONTRACT.md` — generated catalog of every live route

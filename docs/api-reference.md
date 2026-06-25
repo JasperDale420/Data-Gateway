@@ -1,0 +1,261 @@
+# Data-Gateway — API Reference (Index)
+
+Quick index of every API surface. The canonical, deep reference is [API_REFERENCE.md](API_REFERENCE.md); the auto-generated route catalog is [`../PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md); the task-oriented integration guide for downstream Empire services is [CONSUMER_GUIDE.md](CONSUMER_GUIDE.md).
+
+---
+
+## 1. Base & Auth
+
+- **Base URL:** `http://localhost:8080`
+- **Auth header:** `X-Gateway-Key: <gw_...>` (managed via `config/clients.yaml`)
+- **Public (no auth):** `GET /health`, `GET /health/ready`, `GET /health/status`
+- **OpenAPI:** `GET /docs` (when `GATEWAY_DEBUG=true`), `GET /openapi.json`
+- **Standard response shape:**
+  ```json
+  {"success": true, "data": {...}, "meta": {"provider": "...", "cached": false}}
+  ```
+- **Standard error shape:**
+  ```json
+  {"success": false, "error": {"code": "GW-E1011", "message": "...", "details": {...}}}
+  ```
+
+---
+
+## 2. Runtime Discovery (`/catalog/*`)
+
+Use these at runtime to learn the live surface — they reflect the actual loaded providers and feeds.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /catalog/` | Full API summary |
+| `GET /catalog/streams` | WebSocket streams and channels |
+| `GET /catalog/providers` | REST providers + their endpoints |
+| `GET /catalog/feeds` | Feed types available for subscription |
+
+---
+
+## 3. REST — Per-Provider Mount Points
+
+| Prefix | Provider | Route count* | Quirks |
+|--------|----------|--------------|--------|
+| `/api/v1/alpaca/*` | Alpaca Markets | (live) | Stocks, options (OPRA), crypto, forex, news, corporate, **trading writes**. Trading writes prefix `client_order_id` with `c-{client_id}-` for per-client order isolation in the shared Alpaca account. If the caller provides no `client_order_id`, one is auto-minted. Idempotent on 504 retry. Mutating endpoints (POST/PATCH/DELETE orders, DELETE positions) require both `role: trader` AND `permissions.trading: true` in `clients.yaml`. |
+| `/api/v1/uw/*` | Unusual Whales | 126 | Flow, darkpool, greeks, institutions, congress, insider, screeners, options analytics, market/sector tide, seasonality. Rate-limited per UW plan. |
+| `/api/v1/finnhub/*` | Finnhub | 45 | Quotes (30s cache), fundamentals, news, ETFs, crypto, forex, earnings, analysis. |
+| `/api/v1/alphavantage/*` | Alpha Vantage | 30 | Time series (intraday/daily/weekly/monthly), quotes, treasury yields. **Strict 5 req/min on free tier** — rate-limited at the gateway. |
+| `/api/v1/yf/*` | yfinance | 16 | History, info, options chains/expirations. No upstream key required, but Yahoo can rate-limit by IP — gateway caches aggressively (5min `info`, longer for history). |
+| `/api/v1/sec/*` | SEC EDGAR | 10 | Filings, 13F, insider Form 4. SEC requires a meaningful `SEC_USER_AGENT` (set in env). |
+| `/api/v1/news/*` | NewsAPI.org + aggregator | varies | Optional — empty results if `NEWS_API_KEY` not set. |
+
+\* Live counts are regenerated into [`../PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md) by `scripts/generate_provider_contract.py`.
+
+### Per-provider notes
+
+#### Alpaca
+- All routes mount under `ALPACA_ROUTER_PREFIX = /api/v1/alpaca` (`gateway/api/alpaca/common.py`).
+- 4xx errors logged at `warning`, 5xx at `error` (`execute_alpaca_provider_call`). 4xx is not retried.
+- Trading writes (`POST /api/v1/alpaca/orders`, etc.) prefix `client_order_id` with `c-{client_id}-` for per-client order isolation. If the caller provides no `client_order_id`, one is auto-minted. Idempotent on 504 retry. Mutating endpoints (POST/PATCH/DELETE orders, DELETE positions) require both `role: trader` AND `permissions.trading: true` in `clients.yaml`.
+- Stream endpoints map to upstream Alpaca SIP (stocks), OPRA (options), Crypto, News.
+
+#### Unusual Whales
+- Per-feed cadence drives the background poller (see [system-architecture.md §8](system-architecture.md#8-background-pollers)).
+- Cache TTLs are short for flow/darkpool (~30s); EOD analytics are cached for the trading day.
+- Some endpoints accept `*` for "all symbols" and stream the full tape.
+
+#### Finnhub
+- Quote endpoint cached 30s.
+- Fundamentals / company-profile cached daily.
+- Forex pairs follow Finnhub's `OANDA:EUR_USD` symbol convention internally; gateway accepts both `EURUSD` and `EUR-USD`.
+
+#### Alpha Vantage
+- Free tier is 5 req/min — gateway enforces this via `core/rate_limiter.py` even with caching, because every distinct symbol+function counts.
+- `daily` / `weekly` / `monthly` return adjusted series by default.
+- Treasury yields (`/treasury`) feed the background `treasury_poller` and `EventEnvelope` payloads with maturity normalized to `2y`, `10y`, etc.
+
+#### yfinance
+- No API key. Subject to silent Yahoo rate-limiting (5min `info` cache mitigates).
+- Options chain requires fetching expirations first (`/options-expirations`).
+- History accepts standard period strings (`1d`, `5d`, `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`, `10y`, `ytd`, `max`).
+
+#### SEC EDGAR
+- Public, no key — but **must** send a meaningful `SEC_USER_AGENT` (SEC blocks generic UAs).
+- Endpoint set: filings list, 13F holdings, Form 4 insider trades.
+- Cache TTLs are long (24h+) — filings change infrequently.
+
+---
+
+## 4. Trading Calendar & Symbology
+
+| Prefix | Purpose |
+|--------|---------|
+| `/api/v1/calendar/*` | Trading days, market hours, holidays (NYSE/XNYS via `exchange-calendars`) |
+| `/api/v1/symbology/*` | OCC ↔ human option symbol conversion (e.g. `AAPL250117C00200000` ↔ `AAPL 2025-01-17 $200 Call`) |
+| `/api/v1/corporate/*` | Splits, dividends, spinoffs |
+| `/api/v1/adjustments/*` | Adjustment factors (price/volume back-adjust) |
+
+---
+
+## 5. Bulk Jobs (`/api/v1/bulk/*`)
+
+Async historical batch retrieval.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/bulk/bars` | Historical bars across many symbols |
+| `POST` | `/api/v1/bulk/options/chains` | Bulk option chains |
+| `POST` | `/api/v1/bulk/adjustment-factors` | Bulk adjustment factors |
+| `GET` | `/api/v1/bulk/jobs` | List your jobs |
+| `GET` | `/api/v1/bulk/jobs/{job_id}` | Job status |
+| `GET` | `/api/v1/bulk/jobs/{job_id}/download?format=jsonl\|json` | Download results |
+| `DELETE` | `/api/v1/bulk/jobs/{job_id}` | Cancel / cleanup |
+
+Notes:
+- **Bulk options** uses Alpaca options snapshots; supports `expiration_range = {min_dte, max_dte}` and `moneyness_range = {min_delta, max_delta}`.
+- **Bulk adjustment factors** is currently stubbed unless `GATEWAY_ALLOW_STUB_DATA=true`.
+- **Bulk bars** uses Alpaca historical bars when Alpaca is configured.
+- Jobs are scoped to the client that created them.
+
+---
+
+## 6. Backfill (`/api/v1/backfill/*`)
+
+Long-running historical fetches that publish through the data sink (Heber consumes from `heber:events`). Chunked by date, per-provider rate-limited.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/backfill` | Submit a backfill job |
+| `GET` | `/api/v1/backfill/{job_id}` | Status |
+| `DELETE` | `/api/v1/backfill/{job_id}` | Cancel |
+
+---
+
+## 7. Replay (`/api/v1/replay/*`)
+
+Historical event replay over WebSocket — used by backtest harnesses.
+
+- Replay WS connections require `X-Gateway-Key` in the handshake.
+- Sessions are scoped to the owning client.
+- Time-bounded; supports speed multipliers.
+
+---
+
+## 8. WebSocket (`ws://host:8080/ws`)
+
+### Handshake
+```json
+{"action": "auth", "key": "gw_..."}
+```
+Server replies with `AuthResult`. 10-second auth timeout (`GATEWAY_AUTH_TIMEOUT_SECONDS`).
+
+### Subscribe
+```json
+{"action": "subscribe", "feeds": ["stock_bars"], "symbols": ["AAPL", "MSFT"]}
+```
+Wildcards:
+```json
+{"action": "subscribe", "feeds": ["news"], "symbols": ["*"]}
+```
+
+### Feeds
+
+| Feed | Description | Upstream |
+|------|-------------|----------|
+| `stock_bars` | Stock minute bars | Alpaca SIP |
+| `stock_quotes` | Stock NBBO quotes | Alpaca SIP |
+| `stock_trades` | Stock trade executions | Alpaca SIP |
+| `stock_dailyBars` | Stock daily bars (updated each minute) | Alpaca SIP |
+| `stock_updatedBars` | Stock updated bars for late trades | Alpaca SIP |
+| `stock_lulds` | LULD price bands | Alpaca SIP |
+| `stock_statuses` | Trading halt / resume | Alpaca SIP |
+| `stock_imbalances` | Auction imbalance | Alpaca SIP |
+| `option_bars` | Options minute bars | Alpaca OPRA |
+| `option_quotes` | Options quotes | Alpaca OPRA |
+| `option_trades` | Options trade executions | Alpaca OPRA |
+| `crypto_bars` | Crypto minute bars | Alpaca Crypto |
+| `crypto_quotes` | Crypto quotes | Alpaca Crypto |
+| `crypto_trades` | Crypto trade executions | Alpaca Crypto |
+| `crypto_dailyBars` / `crypto_updatedBars` | Crypto bars | Alpaca Crypto |
+| `crypto_orderbooks` | Crypto Level 2 | Alpaca Crypto |
+| `news` | Real-time news | Alpaca News |
+
+**UW Flow Fanout.** When `GATEWAY_WS_FLOW_FANOUT_ENABLED=true` (default), clients subscribing to `provider: "uw", feeds: ["flow_alerts"]` receive real-time UW flow events pushed immediately after successful Redis sink publication. Use an empty `symbols` list for the full tape (firehose). This path is independent of the Alpaca multiplexer.
+
+### Symbol formats
+| Stream | Format | Example |
+|--------|--------|---------|
+| Stocks | Ticker | `AAPL`, `MSFT`, `SPY` |
+| Options | OCC | `AAPL240119C00190000` |
+| Crypto | Pair | `BTC/USD`, `ETH/USD` |
+| News | Ticker or `*` | `AAPL`, `*` |
+
+### Permissions
+- Provider access: `permissions.providers` in `config/clients.yaml`
+- Feed access: `permissions.feeds`
+- Subscription cap: `permissions.max_symbols` / `ws_subscriptions_max`
+
+Legacy payloads using `feed` (singular) are accepted in addition to `feeds`.
+
+---
+
+## 9. Admin (`/api/v1/admin/*`)
+
+Requires role `admin` or `super_admin`.
+
+- Provider status, error buffer, recent audit events, config inspect.
+- All admin actions are recorded by `AuditLogger`. See [AUDIT_LOGGING.md](AUDIT_LOGGING.md).
+- Hot-reload via `kill -HUP <pid>` refreshes `clients.yaml` without restart. Changes are reflected immediately in auth and rate-limit enforcement.
+
+---
+
+## 10. Health & Metrics
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | Liveness — `{"status":"ok"}` |
+| `GET /health/ready` | Readiness — `{"status":"ready","checks":{...}}`. Returns 503 during graceful shutdown. |
+| `GET /health/status` | Detailed status |
+| `GET /metrics` | Prometheus scrape |
+
+---
+
+## 11. Legacy Aliases (Deprecated)
+
+Forwarded to the canonical `/api/v1/*` paths; do not use in new code:
+
+- `/symbology/*` → `/api/v1/symbology/*`
+- `/corporate-actions/*` → `/api/v1/corporate/*`
+- `/adjustment-factors/*` → `/api/v1/adjustments/*`
+
+---
+
+## 12. Caching Behavior
+
+| Endpoint class | Default TTL | Notes |
+|----------------|-------------|-------|
+| Real-time quote | 30s | Per-provider override |
+| Snapshot | 30s | |
+| Minute bars (recent) | 60s | |
+| Daily / weekly / monthly bars | 1h+ | Re-fetched intraday only on new bar close |
+| Company profile / fundamentals | 24h | |
+| SEC filings | 24h+ | |
+| Options chain | 30-60s | |
+| Calendar / holidays | 24h | |
+
+All cache keys are **per-client scoped** to prevent cross-client leakage.
+
+---
+
+## 13. Stub Data Policy
+
+`GATEWAY_ALLOW_STUB_DATA` (default `false`). When false, endpoints with no real data loader return `501 Not Implemented` rather than fake data. Enable only for fixture generation / local dev.
+
+---
+
+## 14. Related Documents
+
+- [API_REFERENCE.md](API_REFERENCE.md) — full deep reference (kept as the canonical source for endpoint payload shapes)
+- [`../PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md) — auto-generated route catalog
+- [CONSUMER_GUIDE.md](CONSUMER_GUIDE.md) — task-oriented integration guide for Empire consumers
+- [system-architecture.md](system-architecture.md) — request lifecycle and middleware order
+- [configuration-guide.md](configuration-guide.md) — client / permission config
+- [AUDIT_LOGGING.md](AUDIT_LOGGING.md) — audit events for auth/admin actions
+- [RUNBOOK.md](RUNBOOK.md) — operations and troubleshooting

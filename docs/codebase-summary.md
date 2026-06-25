@@ -1,0 +1,298 @@
+# Data-Gateway — Codebase Summary
+
+A module-by-module tour of the repo. For the *why* behind the design see [project-overview-pdr.md](project-overview-pdr.md); for diagrams see [system-architecture.md](system-architecture.md).
+
+---
+
+## 1. Top-Level Layout
+
+```
+Data-Gateway/
+├── gateway/              # Application source (the only package shipped)
+│   ├── main.py           # FastAPI app factory, lifespan, stream→sink wiring
+│   ├── config.py         # Pydantic Settings (GATEWAY_* prefix)
+│   ├── cli.py            # Key-management CLI (generate-key, add-client, …)
+│   ├── api/              # FastAPI routers (one per provider/concern)
+│   ├── core/             # Infrastructure: cache, sink, multiplexer, auth, …
+│   ├── providers/        # Provider adapters (Alpaca, UW, Finnhub, …)
+│   ├── schemas/          # Pydantic models (normalized data + WS protocol)
+│   └── types/            # Typed Protocol classes for provider subsets
+├── config/
+│   ├── providers.yaml    # Provider module/class/priority/capabilities
+│   ├── clients.yaml      # API key definitions per client
+│   ├── perf_baseline.json / perf_budgets.json
+│   └── prometheus_alerts.yml
+├── tests/                # pytest suite (markers: unit, integration, e2e, perf, slow)
+├── scripts/              # perf gate, smoke harness, contract generator, …
+├── docs/                 # this directory
+├── docker-compose.yml    # gateway + redis
+├── Dockerfile            # Python 3.12 slim, non-root user, monorepo build ctx
+├── Makefile              # setup / test / lint / format / typecheck / run
+├── pyproject.toml        # deps, ruff, mypy, pytest config
+└── .env.example          # commented env template
+```
+
+---
+
+## 2. `gateway/main.py` — Entry Point
+
+- Builds the FastAPI app, registers all routers from `gateway/api/`
+- Runs the **lifespan**:
+  1. Initialize `ProviderRegistry` (loads `config/providers.yaml`)
+  2. Initialize cache (`InMemoryCache` + optional `RedisCache`)
+  3. Initialize `ClientAuthenticator` (loads `config/clients.yaml`, registers `SIGHUP` reload)
+  4. Initialize `DataSinkRegistry` + `RedisStreamsSink` if `GATEWAY_DATA_SINK_ENABLED`
+  5. Start `StreamMultiplexer` with `on_envelope=_on_stream_envelope` (the single sink dispatch path)
+  6. Start background pollers (UW, treasury, quotes, trades, crypto, news) if enabled, and the UW flow-fanout WebSocket service
+  7. Start `OptionCaptureService` if enabled
+  8. Start `BackfillEngine`
+- **Middleware order** (first added = outermost): CORS → GlobalRateLimit → RateLimit → Cache → EventEnvelope → InputValidation → RequestMetrics → SecurityHeaders
+- **Graceful shutdown** delegates to `ShutdownCoordinator` (8 steps; see `gateway/core/shutdown.py`)
+
+---
+
+## 3. `gateway/api/` — FastAPI Routers
+
+| Module / Package | Mount prefix | Purpose |
+|------------------|--------------|---------|
+| `websocket.py` | `/ws` | WS endpoint: auth, subscribe, unsubscribe, heartbeat |
+| `health.py` | `/health` | Liveness, readiness, status (public) |
+| `admin.py` | `/api/v1/admin` | Provider status, error buffer, config inspect (role: admin) |
+| `catalog.py` | `/catalog` | Runtime API discovery (streams, providers, feeds) |
+| `market.py` | `/api/v1/market` | Market-wide aggregations |
+| `news.py` | `/api/v1/news` | Aggregated news across providers |
+| `calendar.py` | `/api/v1/calendar` | Trading calendar, market hours, sessions |
+| `symbology.py` | `/api/v1/symbology` | OCC ↔ human option symbol conversion |
+| `corporate.py` | `/api/v1/corporate` + `/api/v1/adjustments` | Splits, dividends, adjustment factors |
+| `quality.py` | `/api/v1/quality` | Data-quality gauges |
+| `bulk.py` | `/api/v1/bulk` | Async historical batch jobs |
+| `backfill.py` | `/api/v1/backfill` | Long-running backfill jobs |
+| `replay.py` | `/api/v1/replay` | Historical replay WebSocket sessions |
+| `metrics.py` | `/metrics` | Prometheus scrape endpoint |
+| `middleware.py` | — | All middleware classes (CORS, RateLimit, Cache, Envelope, …) |
+| `errors.py` | — | Structured exception handlers (returns `{success, error: {code, message, details}}`) |
+| `deps.py` | — | FastAPI dependency injection (registry, cache, auth, audit, sink) |
+| `alpaca/` | `/api/v1/alpaca` | Stocks, options, crypto, forex, news, corporate, trading. Trading writes prefix `client_order_id` with `c-{client_id}-` for order isolation across shared Alpaca account. Mutating endpoints require `trading: true` capability. |
+| `uw/` | `/api/v1/uw` | Flow, darkpool, institutional, earnings, market, options, screeners |
+| `finnhub/` | `/api/v1/finnhub` | Quotes, fundamentals, news, ETFs, crypto, forex |
+| `alphavantage/` | `/api/v1/alphavantage` | Time series, quotes, treasury yields |
+| `yf.py` | `/api/v1/yf` | yfinance bars, info, options |
+| `sec.py` | `/api/v1/sec` | SEC EDGAR filings, 13F, insiders |
+
+**Pattern.** Each provider router uses a shared helper (e.g. `gateway/api/alpaca/common.py::execute_alpaca_provider_call`) that handles HTTP-status logging (4xx → warning, 5xx → error), envelope wrapping, and consistent error contracts.
+
+---
+
+## 4. `gateway/core/` — Infrastructure
+
+Roughly grouped by concern.
+
+### 4.1  Provider plumbing
+| Module | Purpose |
+|--------|---------|
+| `provider.py` | `DataProvider` ABC + `ProviderCapabilities` dataclass |
+| `registry.py` | `ProviderRegistry` — dynamic load from `providers.yaml`, priority routing, fallback |
+| `http_client.py` | Shared `httpx` client factory (timeouts, retries via `tenacity`) |
+| `connections.py` | `ConnectionManager` — downstream WebSocket client tracking |
+
+### 4.2  Data pipeline
+| Module | Purpose |
+|--------|---------|
+| `normalizer.py` | Provider-format → `NormalizedBar`/`Quote`/`Trade` |
+| `envelope.py` | `EventEnvelope`, `wrap_event()`, `fast_wrap_streaming_event()`, `compute_event_id()`, `FEED_UNIQUE_FIELDS` |
+| `dedup.py` | Redis-backed `set_nx` dedup (24h TTL) on `event_id` |
+| `validator.py` | Schema validation for streaming events |
+| `quality.py` | Data-quality gates (stale ticks, missing fields) |
+| `symbology.py` | OCC ↔ human option symbol conversion |
+| `corporate_actions.py` / `adjustments.py` | Splits, dividends, adjustment factors |
+
+### 4.3  Streaming & polling
+| Module | Purpose |
+|--------|---------|
+| `stream.py` | `StreamMultiplexer` — single upstream WS per stream type, fanout, reference counting |
+| `uw_poller.py` | UW real-time (flow, darkpool, market_tide, sector_tide) + EOD per-ticker polls |
+| `quotes_poller.py` | Per-symbol quote polling |
+| `crypto_poller.py` | Crypto bar polling |
+| `treasury_poller.py` | Alpha Vantage treasury yields |
+| `news_poller.py` | News-feed polling |
+| `trades_poller.py` | Per-symbol trade polling |
+| `flow_fanout.py` (handled inline in `main.py`) | WS fan-out of UW flow events to downstream clients |
+| `option_capture.py` | Alpaca option chain snapshot service |
+| `base_poller.py` | Shared poller base class |
+| `ticker_universe.py` | Core (~30) + dynamic (default 20) ticker management |
+| `backfill.py` | `BackfillEngine` — chunked historical fetch, rate-limited, sink-published |
+
+### 4.4  Sinks & egress
+| Module | Purpose |
+|--------|---------|
+| `data_sink.py` | `DataSink` ABC + `DataSinkRegistry` (bounded per-sink queue + worker pool, circuit, dedup) |
+| `redis_sink.py` | `RedisStreamsSink` — Redis Streams publish, pool, failed-event buffer (`deque(maxlen=10_000)`) |
+
+### 4.5  Cross-cutting
+| Module | Purpose |
+|--------|---------|
+| `cache.py` | `HybridCache` (L1 `cachetools.TTLCache`, optional L2 Redis), per-client scoping |
+| `circuit_breaker.py` | 3-state breaker; per-circuit thresholds and severity |
+| `rate_limiter.py` | Token-bucket per provider |
+| `auth.py` | `ClientAuthenticator` — `X-Gateway-Key` validation, role/permission checks, SIGHUP reload |
+| `security.py` | DDoS protection, IP blocking, security headers |
+| `audit.py` | `AuditLogger` — structured security events + in-memory ring buffer |
+| `metrics.py` | Prometheus metric definitions |
+| `log_throttle.py` | Coalesces noisy repeated logs |
+| `logger.py` | Thin shim over `empire_core.logger` (`setup_logging("data-gateway")`) |
+| `shutdown.py` | `ShutdownCoordinator` (8-step graceful drain) |
+| `balancer.py` | `KeyLoadBalancer` — experimental round-robin across multiple Alpaca API keys |
+| `globals.py` | Process-wide singletons (sparingly used) |
+| `timeutils.py` | Timezone helpers (UTC + ET) |
+| `execution.py` | Order-execution helpers for the Alpaca trading router |
+| `bulk.py` | `BulkJobManager` — async job lifecycle |
+| `replay.py` | `ReplaySessionManager` — historical replay sessions |
+| `calendar.py` | NYSE/XNYS trading calendar (via `exchange-calendars`) |
+| `errors.py` | `GatewayError` base + concrete error classes |
+
+---
+
+## 5. `gateway/providers/` — Provider Adapters
+
+Each provider implements `DataProvider` ABC.
+
+| Module / Package | Provider | Notes |
+|------------------|----------|-------|
+| `alpaca/` | Alpaca Markets | Stocks, options (OPRA), crypto, forex, news, trading. Split into `market.py`, `trading.py`, etc. |
+| `uw/` | Unusual Whales | Flow, darkpool, institutional, earnings, market, options, screeners |
+| `finnhub.py` | Finnhub | Quotes, fundamentals, news, ETFs, crypto, forex |
+| `alphavantage.py` | Alpha Vantage | Time series, quotes, treasury yields |
+| `yfinance.py` | yfinance | Historical bars (no key required) |
+| `sec.py` | SEC EDGAR | Filings, 13F, insiders (no key required) |
+| `news.py` | NewsAPI.org | News aggregation |
+
+Providers are loaded at startup from `config/providers.yaml`; each entry specifies `module`, `class`, `priority`, `capabilities`.
+
+---
+
+## 6. `gateway/schemas/` — Pydantic Models
+
+Defines every payload shape. Highlights:
+
+| File | Models |
+|------|--------|
+| `market_data.py` | `NormalizedBar`, `NormalizedQuote`, `NormalizedTrade`, `StockSnapshot` |
+| `flow.py` | Options-flow events |
+| `options.py` | Option chain, greeks, `NormalizedOptionContract` |
+| `corporate.py` | Splits, dividends |
+| `fundamentals.py` | Company fundamentals |
+| `institutional.py` | 13F holdings |
+| `news.py` | News articles |
+| `responses.py` | `SuccessResponse`, error envelopes |
+| `base.py` | WS protocol messages (`AuthMessage`, `SubscribeMessage`, `UnsubscribeMessage`, …) |
+
+All prices/sizes use `Decimal`. All timestamps are timezone-aware `datetime` (UTC unless market-hours-specific).
+
+---
+
+## 7. `tests/` — Test Suite
+
+```
+tests/
+├── conftest.py             # Shared fixtures (TestClient, mocked providers, test API key)
+├── fixtures/               # Static JSON fixtures (provider responses)
+├── generate_fixtures.py    # Tool to refresh fixtures from live providers
+├── smoke/                  # End-to-end smoke tests (run against live providers in CI)
+├── perf/                   # Benchmark tests (marker: `perf`, excluded by default)
+└── test_*.py               # ~120 unit / integration tests grouped by router or core module
+```
+
+Markers: `unit`, `integration`, `e2e`, `slow`, `perf`. See [testing-guide.md](testing-guide.md).
+
+---
+
+## 8. `scripts/` — Developer Tools
+
+| Script | Purpose |
+|--------|---------|
+| `perf_gate.py` | CI perf-budget enforcement |
+| `perf_baseline_manager.py` | Manage perf baselines |
+| `perf_promote_active_configs.py` | Promote new perf budgets |
+| `perf_release_readiness.py` | Release-readiness perf check |
+| `merge_static_budgets.py` | Merge static + measured budgets |
+| `live_provider_smoke.py` | Run live smoke tests against real providers |
+| `stress_test.py` | Load testing harness |
+| `stream_tuning_report.py` | Analyze streaming-config tuning runs |
+| `generate_provider_contract.py` | Regenerate `PROVIDER_ENDPOINT_CONTRACT.md` from live routes |
+| `com.empire.data-gateway.plist` | macOS launchd template for local dev |
+
+---
+
+## 9. `config/` — YAML Configuration
+
+| File | Purpose |
+|------|---------|
+| `providers.yaml` | Provider load order + capabilities. Source of truth for routing priority. |
+| `clients.yaml` | API key per client (`cerberus`, `3roses`, `orion`, `atlas`, `orbit`, `test`, …) with role + permissions. |
+| `perf_baseline.json` | Captured baseline metrics. |
+| `perf_budgets.json` | Enforced budgets used by `scripts/perf_gate.py`. |
+| `prometheus_alerts.yml` | Prometheus alerting rules. |
+
+Both YAMLs are symlinked from the repo root (`./clients.yaml`, `./providers.yaml`) for tooling convenience.
+
+---
+
+## 10. Key Dependencies
+
+### Runtime (pinned in `pyproject.toml`)
+| Package | Why |
+|---------|-----|
+| `fastapi[standard]>=0.115` | HTTP + WebSocket app framework |
+| `uvicorn>=0.32` | ASGI server |
+| `websockets>=13` | Upstream WS client (Alpaca) |
+| `pydantic>=2.5` + `pydantic-settings>=2.0` | Data validation, env-driven config |
+| `httpx>=0.27` | Async HTTP client (all providers except yfinance/Alpaca SDK) |
+| `redis>=5.0` | Cache, dedup, data sink, ring buffer |
+| `structlog>=24.1` | Structured logging (paired with `empire-core`) |
+| `prometheus-client>=0.20` | Metrics |
+| `cachetools>=5.3` | `TTLCache` for L1 cache |
+| `alpaca-py>=0.34` | Official Alpaca SDK |
+| `yfinance>=0.2` | yfinance scraper |
+| `msgpack>=1.0` | Binary protocol for Alpaca OPRA options stream |
+| `orjson>=3.9` | Fast JSON serialization |
+| `tenacity>=8.0` | Retry policies |
+| `exchange-calendars>=4.13.1` | NYSE/XNYS calendar — `>=4.13.1` matches Orion; lower versions silently produce wrong answers in 2027 |
+| `pandas>=2.0` | Required by `exchange-calendars`; calendar.py uses `pd.Timestamp` directly |
+
+### Local-only (`[project.optional-dependencies].local`)
+| Package | Source | Why local |
+|---------|--------|-----------|
+| `empire-core` | `../empire-core` (editable) | Shared logger / errors / http_client |
+| `empire-schemas` | `../empire-schemas` (editable) | Shared `EventEnvelope`, normalized schemas |
+| `unusualwhales-python-client` | `../unusualwhales_python_client-5.1` (editable) | Vendored UW SDK; not on PyPI |
+
+> **Important:** `uv sync` *without* `--extra local` removes the three local packages and the gateway fails to import. Always `uv sync --extra local --extra dev` (or `make setup`). The Dockerfile installs them from copied sources because the build context is the monorepo root.
+
+### Dev
+`pytest`, `pytest-asyncio`, `pytest-cov`, `pytest-timeout`, `ruff`, `pyright`, `mypy`, `pre-commit`, `bandit[toml]`.
+
+---
+
+## 11. Where to start when reading the code
+
+1. `gateway/main.py` — see how lifespan wires everything
+2. `gateway/core/envelope.py` — the canonical event format
+3. `gateway/core/stream.py` — the multiplexer (most non-trivial concurrency in the repo)
+4. `gateway/core/data_sink.py` + `gateway/core/redis_sink.py` — the egress path and its failure model
+5. `gateway/api/websocket.py` — downstream WS contract (auth → subscribe → events)
+6. `gateway/providers/alpaca/market.py` — the most-exercised provider; idiomatic adapter
+7. `gateway/api/alpaca/common.py` — `execute_alpaca_provider_call` is the shared HTTP-status / error pattern used by every Alpaca router
+
+---
+
+## 12. Cross-Doc Links
+
+- [project-overview-pdr.md](project-overview-pdr.md) — purpose, scope, rationale
+- [system-architecture.md](system-architecture.md) — Mermaid diagrams of every subsystem
+- [api-reference.md](api-reference.md) — endpoint catalog
+- [configuration-guide.md](configuration-guide.md) — every env var, every YAML
+- [testing-guide.md](testing-guide.md) — pytest, fixtures, smoke
+- [deployment-guide.md](deployment-guide.md) — Docker, CI, perf gate
+- [code-standards.md](code-standards.md) — ruff/mypy/conventions
+- [CONSUMER_GUIDE.md](CONSUMER_GUIDE.md) — task-oriented guide for downstream consumers
+- [ARCHITECTURE.md](ARCHITECTURE.md) / [RUNBOOK.md](RUNBOOK.md) / [AUDIT_LOGGING.md](AUDIT_LOGGING.md) — pre-existing deep-dives
