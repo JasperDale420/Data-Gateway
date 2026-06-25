@@ -389,3 +389,20 @@ def test_provider_health_check_snapshot_includes_calibration_guidance() -> None:
     assert derived["health_level"] in {"warning", "critical"}
     assert derived["latency_level"] in {"warning", "critical"}
     assert any("provider" in hint.lower() for hint in derived["recommendations"])
+
+
+def test_event_loop_stall_metrics_increment() -> None:
+    """The loop-stall watchdog feeds a counter so recurring stalls are alertable."""
+    from gateway.core.metrics import (
+        EVENT_LOOP_STALL_SECONDS,
+        EVENT_LOOP_STALLS,
+        record_event_loop_stall,
+        record_event_loop_stall_recovered,
+    )
+
+    n0 = EVENT_LOOP_STALLS._value.get()
+    s0 = EVENT_LOOP_STALL_SECONDS._value.get()
+    record_event_loop_stall()
+    record_event_loop_stall_recovered(3.5)
+    assert EVENT_LOOP_STALLS._value.get() == n0 + 1
+    assert EVENT_LOOP_STALL_SECONDS._value.get() == s0 + 3.5

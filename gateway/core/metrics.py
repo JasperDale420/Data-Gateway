@@ -154,6 +154,27 @@ PROCESS_MEMORY_PERCENT = Gauge(
     "Process memory usage as percentage of total system memory",
 )
 
+# Event-loop stall metrics — the watchdog already logs each stall; these make a
+# RECURRING stall (the class that silently delays WS heartbeats + the sink drain)
+# visible on a dashboard and alertable.
+EVENT_LOOP_STALLS = Counter(
+    "gateway_event_loop_stalls_total",
+    "Event-loop stalls detected by the watchdog (loop blocked beyond threshold)",
+)
+EVENT_LOOP_STALL_SECONDS = Counter(
+    "gateway_event_loop_stall_seconds_total",
+    "Total seconds the event loop was stalled, summed across stalls",
+)
+
+# Circuit-breaker state (0=closed, 1=half_open, 2=open). A sink breaker tripping
+# OPEN is the leading edge of Heber data loss; exporting it makes the trip
+# alertable BEFORE the failed-event buffer starts evicting (a lagging signal).
+CIRCUIT_BREAKER_STATE = Gauge(
+    "gateway_circuit_breaker_state",
+    "Circuit breaker state (0=closed, 1=half_open, 2=open)",
+    ["name"],
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data Sink & Envelope Metrics
 # ─────────────────────────────────────────────────────────────────────────────
@@ -748,6 +769,25 @@ def record_error(error_type: str) -> None:
 def record_message_delivered(feed: str) -> None:
     """Record successful message delivery."""
     MESSAGE_DELIVERED.labels(feed=feed).inc()
+
+
+_CIRCUIT_STATE_VALUE = {"closed": 0, "half_open": 1, "open": 2}
+
+
+def record_event_loop_stall() -> None:
+    """Count one detected event-loop stall (called from the watchdog thread)."""
+    EVENT_LOOP_STALLS.inc()
+
+
+def record_event_loop_stall_recovered(total_stalled_seconds: float) -> None:
+    """Add the stalled duration once the loop recovers."""
+    EVENT_LOOP_STALL_SECONDS.inc(max(0.0, total_stalled_seconds))
+
+
+def set_circuit_breaker_state(name: str, state: Any) -> None:
+    """Export a circuit breaker's state as a numeric gauge (0/1/2)."""
+    value = _CIRCUIT_STATE_VALUE.get(getattr(state, "value", str(state)), 0)
+    CIRCUIT_BREAKER_STATE.labels(name=name).set(value)
 
 
 def record_message_dropped(reason: str, feed: str = "unknown") -> None:

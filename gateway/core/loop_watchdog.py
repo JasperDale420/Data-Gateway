@@ -27,6 +27,7 @@ import time
 from collections.abc import Callable
 
 from gateway.core.logger import logger
+from gateway.core.metrics import record_event_loop_stall, record_event_loop_stall_recovered
 
 
 class LoopStallWatchdog:
@@ -136,10 +137,12 @@ class LoopStallWatchdog:
             gc_counts=gc.get_count(),
             stacks=stacks,
         )
+        record_event_loop_stall()
 
     @staticmethod
     def _default_on_recover(total_stalled_seconds: float) -> None:
         logger.warning("event_loop_stall_recovered", total_stalled_seconds=round(total_stalled_seconds, 2))
+        record_event_loop_stall_recovered(total_stalled_seconds)
 
 
 if __name__ == "__main__":
