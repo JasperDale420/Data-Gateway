@@ -1288,3 +1288,44 @@ async def test_supervisor_revives_only_dormant_subscribed_streams(monkeypatch) -
     await mux._supervise_once()
 
     assert revived == [AlpacaStreamType.STOCKS_SIP.value]
+
+
+def test_sequence_tracker_evicts_at_cap() -> None:
+    """SequenceTracker caps tracked keys so OPRA contracts can't leak forever."""
+    from gateway.core.stream import SequenceTracker
+
+    tracker = SequenceTracker()
+    tracker._MAX_COUNTERS = 3  # shrink for the test
+
+    for i in range(5):
+        tracker.next_seq(f"OCC{i}", "quotes")
+
+    assert len(tracker._counters) == 3  # oldest LRU keys evicted
+    # An evicted contract harmlessly restarts its sequence at 1 (no data loss).
+    assert tracker.next_seq("OCC0", "quotes") == 1
+
+
+@pytest.mark.asyncio
+async def test_track_task_auto_discards_on_completion() -> None:
+    """Completed stream tasks are removed from _tasks (no multi-day task leak)."""
+
+    async def _on_data(_c: str, _d: str, _m: dict) -> None:
+        return
+
+    mux = StreamMultiplexer(
+        api_key="k",  # pragma: allowlist secret
+        api_secret="s",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+
+    async def _quick() -> None:
+        return None
+
+    task = asyncio.create_task(_quick())
+    mux._track_task(task)
+    assert task in mux._tasks
+
+    await task
+    await asyncio.sleep(0)  # let the done-callback run
+    assert task not in mux._tasks

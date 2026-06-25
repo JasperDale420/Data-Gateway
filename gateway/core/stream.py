@@ -7,6 +7,7 @@ crypto, news) and fans out received data to subscribed downstream clients.
 import asyncio
 import json
 import random
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -89,14 +90,24 @@ class SequenceTracker:
     iteration. No lock is needed.
     """
 
+    # ponytail: LRU cap on tracked (symbol, feed) keys. With OPRA options
+    # streaming, one key per OCC contract accumulates forever (reset() is never
+    # called in-process), a slow RSS leak toward an OOM restart. Evicting a
+    # stale contract harmlessly restarts its sequence at 1 (looks like a gap,
+    # no data loss). Upgrade to per-feed caps if one feed needs >50k live keys.
+    _MAX_COUNTERS = 50_000
+
     def __init__(self) -> None:
-        self._counters: dict[tuple[str, str], int] = {}
+        self._counters: OrderedDict[tuple[str, str], int] = OrderedDict()
 
     def next_seq(self, symbol: str, feed: str) -> int:
         """Return the next sequence number for (symbol, feed)."""
         key = (symbol, feed)
         seq = self._counters.get(key, 0) + 1
         self._counters[key] = seq
+        self._counters.move_to_end(key)
+        if len(self._counters) > self._MAX_COUNTERS:
+            self._counters.popitem(last=False)  # evict least-recently-used contract
         return seq
 
     def reset(self) -> None:
@@ -924,11 +935,24 @@ class StreamMultiplexer:
         }
 
         self._running = False
-        self._tasks: list[asyncio.Task] = []
+        # A set (not a list) with a done-callback discard so completed tasks —
+        # e.g. a stream that went dormant and returned, then was revived with a
+        # fresh start() task — don't accumulate forever over a multi-day run.
+        self._tasks: set[asyncio.Task] = set()
         self._supervisor_task: asyncio.Task | None = None
         self._fanout_semaphore = asyncio.Semaphore(self._fanout_max_inflight)
         self._validator: Any | None = None
         self._seq_tracker = SequenceTracker()
+
+    def _track_task(self, task: asyncio.Task) -> None:
+        """Track a stream task and auto-remove it on completion.
+
+        A dormant stream's start() task returns when it gives up; reviving the
+        stream schedules a new one. Without the discard callback the completed
+        task stays referenced forever — a slow leak over many reconnect cycles.
+        """
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def _get_stream_validator(self) -> Any:
         """Lazily resolve and cache the shared market-data validator."""
@@ -965,7 +989,7 @@ class StreamMultiplexer:
             for stream_type, conn in self._connections.items():
                 conn._running = True
                 task = asyncio.create_task(conn.start())
-                self._tasks.append(task)
+                self._track_task(task)
                 logger.info("stream_started", stream=stream_type.value)
         elif self._eager_connect_types:
             # Selective eager: start only the named stream types, leave rest lazy.
@@ -978,7 +1002,7 @@ class StreamMultiplexer:
                 if self._stream_type_in_eager_set(stream_type):
                     conn._running = True
                     task = asyncio.create_task(conn.start())
-                    self._tasks.append(task)
+                    self._track_task(task)
                     logger.info("stream_started_eager", stream=stream_type.value)
                 else:
                     logger.info("stream_lazy", stream=stream_type.value)
@@ -1092,8 +1116,10 @@ class StreamMultiplexer:
                     action="forcing_task_cancellation",
                 )
 
-        # Cancel stream tasks
-        for task in self._tasks:
+        # Cancel stream tasks. Snapshot the set first: each await lets the
+        # done-callback discard a finishing task, which would mutate the set
+        # mid-iteration.
+        for task in list(self._tasks):
             if not task.done():
                 task.cancel()
                 try:
@@ -1144,7 +1170,7 @@ class StreamMultiplexer:
                 conn._connected_event.clear()
                 conn._running = True
                 task = asyncio.create_task(conn.start())
-                self._tasks.append(task)
+                self._track_task(task)
 
         # Wait for connection to establish with generous timeout (outside lock
         # so other waiters aren't serialised behind this one).
