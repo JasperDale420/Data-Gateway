@@ -121,6 +121,13 @@ class DedupMixin:
     _cache_ttl_seconds: int
     _poller_name: str  # provided by BasePoller
 
+    # ponytail: hard LRU cap on the in-process dedup cache. TTL cleanup only runs
+    # once per poll cycle, so between sweeps a high-volume burst (×24h TTL) could
+    # grow this to hundreds of thousands of entries. Evicting an old id just means
+    # a rare re-fetch re-publishes once, which Heber dedups anyway. Raise if a
+    # single poller legitimately needs >200k unique ids within its TTL window.
+    _MAX_SEEN_IDS = 200_000
+
     def _init_dedup(self, cache_ttl_seconds: int) -> None:
         self._seen_ids: OrderedDict[str, datetime] = OrderedDict()
         self._cache_ttl_seconds = cache_ttl_seconds
@@ -131,6 +138,8 @@ class DedupMixin:
     def _mark_seen(self, event_id: str) -> None:
         self._seen_ids[event_id] = datetime.now(UTC)
         self._seen_ids.move_to_end(event_id)
+        if len(self._seen_ids) > self._MAX_SEEN_IDS:
+            self._seen_ids.popitem(last=False)  # evict least-recently-seen id
 
     def _cleanup_cache(self) -> None:
         """Remove expired entries via O(1) FIFO pops."""

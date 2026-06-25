@@ -786,6 +786,7 @@ async def test_publish_envelopes_records_per_feed_published() -> None:
     from gateway.core.metrics import FEED_PUBLISHED
 
     poller = UWPoller()
+    poller._redis_dedupe = None  # isolate from real Redis dedup state (deterministic)
     envelopes = [{"event_id": f"dp-feedmetric-{i}", "feed": "darkpool", "payload": {}} for i in range(3)]
     before = FEED_PUBLISHED.labels(feed="darkpool")._value.get()
 
@@ -798,3 +799,20 @@ async def test_publish_envelopes_records_per_feed_published() -> None:
 
     assert published == 3
     assert FEED_PUBLISHED.labels(feed="darkpool")._value.get() == before + 3
+
+
+def test_dedup_cache_has_hard_size_cap() -> None:
+    """The in-process dedup cache is LRU-capped so a burst can't grow it unbounded
+    between TTL cleanups (an evicted id just re-publishes once; Heber dedups it)."""
+    from gateway.core.base_poller import DedupMixin
+
+    mixin = DedupMixin()
+    mixin._init_dedup(cache_ttl_seconds=3600)
+    mixin._MAX_SEEN_IDS = 5  # shrink for the test
+
+    for i in range(20):
+        mixin._mark_seen(f"id{i}")
+
+    assert len(mixin._seen_ids) == 5  # capped
+    assert mixin._is_duplicate("id19")  # most-recent kept
+    assert not mixin._is_duplicate("id0")  # oldest evicted
