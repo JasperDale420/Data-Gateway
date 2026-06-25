@@ -312,7 +312,7 @@ def _raise_wrap_failure(
         error=str(error),
         exc_info=True,
     )
-    record_message_dropped(reason="envelope_wrap_error")
+    record_message_dropped(reason="envelope_wrap_error", feed=feed)
 
     try:
         from gateway.config import get_settings

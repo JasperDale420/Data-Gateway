@@ -752,3 +752,28 @@ async def test_eod_per_ticker_fetch_retries_transient_error() -> None:
 
     assert calls["n"] == 2  # retried once after the 503
     assert published == 1
+
+
+def test_envelope_build_skip_is_metered(monkeypatch) -> None:
+    """A record that fails to wrap is skipped AND metered, so steady partial UW
+    loss from schema drift surfaces on the dropped-message alert, not just logs.
+    """
+    poller = UWPoller()
+    calls: list[tuple[str, str]] = []
+
+    def _fake_wrap(*, event, provider, feed, source):
+        if event.get("bad"):
+            raise ValueError("schema drift")
+        return {"ts_event": "2026-06-25T00:00:00Z", "payload": event}
+
+    monkeypatch.setattr("gateway.core.uw_poller.wrap_event", _fake_wrap)
+    monkeypatch.setattr(
+        "gateway.core.uw_poller.record_message_dropped",
+        lambda reason, feed="unknown": calls.append((reason, feed)),
+    )
+
+    records = [{"bad": True}, {"bad": False}]
+    envelopes, _ = poller._build_feed_envelopes(records, feed="darkpool", out_of_order_log="x", use_model_dump=False)
+
+    assert len(envelopes) == 1  # the bad record was skipped, the good one kept
+    assert calls == [("envelope_build_skipped", "darkpool")]

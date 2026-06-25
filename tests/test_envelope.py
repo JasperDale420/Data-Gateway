@@ -394,7 +394,7 @@ class TestWrapEventFailure:
             pytest.raises(EnvelopeWrapError),
         ):
             wrap_event(self._failing_bar(), provider="alpaca", feed="bars", source="websocket")
-        counter.assert_called_once_with(reason="envelope_wrap_error")
+        counter.assert_called_once_with(reason="envelope_wrap_error", feed="bars")
 
     def test_failure_never_returns_unknown_key(self):
         """The fallback never silently ships an unknown:/malformed instrument key."""
@@ -436,7 +436,7 @@ class TestWrapEventFailure:
         ):
             wrap_event(payload, provider="unusual_whales", feed="flow_alerts", source="rest")
 
-        counter.assert_called_once_with(reason="envelope_wrap_error")
+        counter.assert_called_once_with(reason="envelope_wrap_error", feed="flow_alerts")
 
 
 class TestEventEnvelopeModel:

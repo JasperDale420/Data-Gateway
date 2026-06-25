@@ -22,6 +22,7 @@ from websockets.asyncio.client import ClientConnection
 from gateway.core.envelope import fast_wrap_streaming_event
 from gateway.core.logger import logger
 from gateway.core.metrics import (
+    record_message_dropped,
     record_stream_fanout_batch_size,
     record_stream_fanout_dispatch_event,
     set_stream_fanout_limits_metrics,
@@ -1351,6 +1352,10 @@ class StreamMultiplexer:
                     data_type=data_type,
                     symbol=message.get("S"),
                 )
+                # Meter the drop so a systematic Alpaca-format change that trips
+                # the validator for a whole feed surfaces on the dropped-message
+                # alert instead of vanishing into INFO logs.
+                record_message_dropped(reason="stream_validation_failed", feed=data_type)
                 return
 
         # Use fast-path wrapper for streaming

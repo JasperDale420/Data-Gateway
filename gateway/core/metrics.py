@@ -387,7 +387,7 @@ MESSAGE_DELIVERED = Counter(
 MESSAGE_DROPPED = Counter(
     "gateway_messages_dropped_total",
     "Total messages dropped due to errors",
-    ["reason"],  # client_disconnected, buffer_full, timeout
+    ["reason", "feed"],  # reason: validation_failed, wrap_error, buffer_full, ...; feed: bars/darkpool/...
 )
 
 # Alpha Vantage route/cache metrics
@@ -750,9 +750,14 @@ def record_message_delivered(feed: str) -> None:
     MESSAGE_DELIVERED.labels(feed=feed).inc()
 
 
-def record_message_dropped(reason: str) -> None:
-    """Record dropped message."""
-    MESSAGE_DROPPED.labels(reason=reason).inc()
+def record_message_dropped(reason: str, feed: str = "unknown") -> None:
+    """Record dropped message, partitioned by reason and feed.
+
+    The ``feed`` label turns "drops are spiking" into "feed X is vanishing",
+    so a systematic validation/wrap failure that silently removes a whole feed
+    from Heber is visible per-feed instead of only in logs.
+    """
+    MESSAGE_DROPPED.labels(reason=reason, feed=feed).inc()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

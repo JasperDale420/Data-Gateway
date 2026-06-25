@@ -21,6 +21,7 @@ from gateway.core.base_poller import BasePoller, DedupMixin
 from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
+from gateway.core.metrics import record_message_dropped
 from gateway.core.ticker_universe import TickerUniverse
 from gateway.core.uw_eod_state import UwEodStateStore
 
@@ -599,6 +600,9 @@ class UWPoller(DedupMixin, BasePoller):
                     record_index=idx,
                     error=str(exc),
                 )
+                # Meter the skip so steady partial loss from UW schema drift
+                # surfaces on the dropped-message alert, not just in logs.
+                record_message_dropped(reason="envelope_build_skipped", feed=feed)
                 continue
 
             ts_event = self._parse_ts(envelope.get("ts_event"))
