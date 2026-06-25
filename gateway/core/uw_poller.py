@@ -912,7 +912,7 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll Greek exposure for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_greek_exposure(ticker)
+        results = await self._fetch_with_retry("greek_exposure", lambda: self._provider.get_greek_exposure(ticker))
         if not results:
             return 0
 
@@ -938,7 +938,7 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll IV rank for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        result = await self._provider.get_iv_rank(ticker)
+        result = await self._fetch_with_retry("iv_rank", lambda: self._provider.get_iv_rank(ticker))
         if not result:
             return 0
 
@@ -972,7 +972,9 @@ class UWPoller(DedupMixin, BasePoller):
         """
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_iv_term_structure(ticker)
+        results = await self._fetch_with_retry(
+            "iv_term_structure", lambda: self._provider.get_iv_term_structure(ticker)
+        )
         if not results:
             return 0
 
@@ -1003,7 +1005,7 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll OI change for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_oi_change(ticker)
+        results = await self._fetch_with_retry("oi_change", lambda: self._provider.get_oi_change(ticker))
         if not results:
             return 0
 
@@ -1040,7 +1042,9 @@ class UWPoller(DedupMixin, BasePoller):
         """
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_historic_option_volume(ticker)
+        results = await self._fetch_with_retry(
+            "historic_option_volume", lambda: self._provider.get_historic_option_volume(ticker)
+        )
         if not results:
             return 0
 
@@ -1071,7 +1075,7 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll short interest for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_short_interest(ticker)
+        results = await self._fetch_with_retry("short_interest", lambda: self._provider.get_short_interest(ticker))
         if not results:
             return 0
 
@@ -1097,7 +1101,7 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll short volume for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_short_volume(ticker)
+        results = await self._fetch_with_retry("short_volume", lambda: self._provider.get_short_volume(ticker))
         if not results:
             return 0
 
@@ -1123,7 +1127,7 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll FTDs for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_ftds(ticker)
+        results = await self._fetch_with_retry("ftds", lambda: self._provider.get_ftds(ticker))
         if not results:
             return 0
 
@@ -1145,7 +1149,7 @@ class UWPoller(DedupMixin, BasePoller):
         )
         return published
 
-    async def _fetch_with_retry(self, fetch_label: str, fetch):
+    async def _fetch_with_retry(self, fetch_label: str, fetch) -> Any:
         """Run an EOD fetch with bounded retry on transient upstream errors.
 
         UW occasionally answers EOD market-wide endpoints with a single 5xx

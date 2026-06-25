@@ -710,3 +710,45 @@ async def test_flow_publish_forwards_flow_tap(monkeypatch: pytest.MonkeyPatch) -
 
     await poller._poll_flow_alerts(sink_registry=_FakeSinkRegistry(), limit=1)
     assert captured["on_published"] is _tap
+
+
+@pytest.mark.asyncio
+async def test_eod_per_ticker_fetch_retries_transient_error() -> None:
+    """A transient 5xx on a per-ticker EOD fetch (greek_exposure) is retried.
+
+    Guards the fix that routed the 8 per-ticker EOD feeds through
+    _fetch_with_retry, closing scattered per-ticker daily holes in Heber Gold.
+    """
+    import httpx
+
+    poller = UWPoller()
+
+    async def _publish(**kwargs):
+        return len(kwargs["envelopes"]), 0
+
+    poller._publish_envelopes = _publish  # type: ignore[method-assign]
+
+    calls = {"n": 0}
+
+    def _make_503() -> httpx.HTTPStatusError:
+        request = httpx.Request("GET", "https://api.unusualwhales.com/api/stock/AAPL/greek-exposure")
+        response = httpx.Response(503, request=request)
+        return httpx.HTTPStatusError("503", request=request, response=response)
+
+    class _Row:
+        def model_dump(self) -> dict:
+            return {"ticker": "AAPL", "call_gex": 1.0}
+
+    class _FlakyProvider:
+        async def get_greek_exposure(self, ticker: str):  # noqa: ARG002
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _make_503()
+            return [_Row()]
+
+    poller._provider = _FlakyProvider()
+
+    published = await poller._poll_eod_greek_exposure(sink_registry=_FakeSinkRegistry(), ticker="AAPL")
+
+    assert calls["n"] == 2  # retried once after the 503
+    assert published == 1
