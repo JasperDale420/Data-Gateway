@@ -406,3 +406,19 @@ def test_event_loop_stall_metrics_increment() -> None:
     record_event_loop_stall_recovered(3.5)
     assert EVENT_LOOP_STALLS._value.get() == n0 + 1
     assert EVENT_LOOP_STALL_SECONDS._value.get() == s0 + 3.5
+
+
+def test_path_normalization_collapses_symbol_shapes() -> None:
+    """Crypto pairs / dotted tickers must collapse to {symbol} (cardinality leak)."""
+    from gateway.core.metrics import _looks_like_symbol, _normalize_path
+
+    # Symbol-shaped segments collapse...
+    for sym in ["AAPL", "SPY", "BTC-USD", "EUR-USD", "BRK.B"]:
+        assert _looks_like_symbol(sym), sym
+    # ...lowercase route names do not.
+    for route in ["bars", "quotes", "health", "ready", "api", "v1", "alpaca"]:
+        assert not _looks_like_symbol(route), route
+
+    assert _normalize_path("/api/v1/alpaca/crypto/BTC-USD/bars") == "/api/v1/alpaca/crypto/{symbol}/bars"
+    assert _normalize_path("/api/v1/stocks/BRK.B/snapshot") == "/api/v1/stocks/{symbol}/snapshot"
+    assert _normalize_path("/health/ready") == "/health/ready"

@@ -1,10 +1,18 @@
 """Prometheus metrics for gateway observability."""
 
+import re
 import time
 from copy import deepcopy
 from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram, Info
+
+# Path-segment shapes that are per-instrument and must be collapsed to {symbol}
+# so they don't explode the per-path metric label cardinality: plain tickers
+# (AAPL), crypto/forex pairs (BTC-USD, EUR/USD), dotted classes (BRK.B), and
+# OCC-ish alphanumerics. Requires an uppercase lead so lowercase route names
+# (bars, quotes, health) are never collapsed.
+_SYMBOL_SEGMENT_RE = re.compile(r"^[A-Z][A-Z0-9]*([-./][A-Z0-9]+)*$")
 
 _PATH_NORMALIZATION_CACHE_MAX = 4096
 _PATH_NORMALIZATION_CACHE_PRUNE_TARGET = _PATH_NORMALIZATION_CACHE_MAX // 4
@@ -712,8 +720,15 @@ def _prune_path_normalization_cache() -> None:
 
 
 def _looks_like_symbol(s: str) -> bool:
-    """Check if string looks like a stock symbol."""
-    return len(s) <= 5 and s.isupper() and s.isalpha()
+    """Check if a path segment looks like a ticker / pair / contract symbol.
+
+    Broadened beyond plain alpha tickers to also catch crypto/forex pairs
+    (``BTC-USD``), dotted share classes (``BRK.B``), and OCC-style alphanumerics
+    that the previous ``isalpha()`` check let through — each of which otherwise
+    became its own permanent per-path metric series (cardinality leak). The
+    uppercase-lead requirement keeps lowercase route names from being collapsed.
+    """
+    return 1 <= len(s) <= 25 and bool(_SYMBOL_SEGMENT_RE.match(s))
 
 
 def _looks_like_id(s: str) -> bool:
