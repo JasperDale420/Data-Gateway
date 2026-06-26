@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 
 from gateway.core.logger import logger
 from gateway.schemas import NormalizedIVRank
@@ -332,7 +333,7 @@ class UWOptionsMixin:
             try:
                 response = await self._call_sync(
                     http_client.get,
-                    f"/api/stock/{symbol.upper()}/iv-rank",
+                    f"/api/stock/{quote(symbol.upper(), safe='')}/iv-rank",
                     params=params,
                 )
                 response.raise_for_status()
@@ -348,7 +349,7 @@ class UWOptionsMixin:
                     )
                     response = await self._call_sync(
                         http_client.get,
-                        f"/api/stock/{symbol.upper()}/iv-rank",
+                        f"/api/stock/{quote(symbol.upper(), safe='')}/iv-rank",
                     )
                     response.raise_for_status()
                     payload = response.json()

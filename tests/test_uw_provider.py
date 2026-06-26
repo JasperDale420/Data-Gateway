@@ -553,3 +553,42 @@ async def test_get_short_volume_reads_si_key(monkeypatch):
     assert result[0].date == "2026-06-08"
     assert result[0].short_interest == 1234567
     assert str(result[0].short_percent_float) == "0.42"
+
+
+@pytest.mark.asyncio
+async def test_iv_rank_path_encodes_symbol_against_ssrf(monkeypatch):
+    """A symbol with path separators must be URL-encoded into the UW path so it
+    can't inject extra segments and reach a different upstream endpoint."""
+    import contextlib
+
+    provider = UnusualWhalesProvider()
+
+    class _Http:
+        def get(self, *a, **k):
+            return None
+
+    class _Client:
+        def get_httpx_client(self):
+            return _Http()
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {}
+
+    provider._client = _Client()
+    captured: dict[str, str] = {}
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        captured["path"] = args[0]
+        return _Resp()
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    with contextlib.suppress(Exception):
+        await provider.get_iv_rank("AAPL/../market")
+
+    assert captured["path"] == "/api/stock/AAPL%2F..%2FMARKET/iv-rank"
+    assert "/../" not in captured["path"]  # no path traversal survives

@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from gateway.schemas import (
@@ -664,7 +665,7 @@ class UWFlowMixin:
 
             response = await self._call_sync(
                 http_client.get,
-                f"/api/market/{sector}/sector-tide",
+                f"/api/market/{quote(sector, safe='')}/sector-tide",
                 params=params,
             )
             response.raise_for_status()
@@ -799,7 +800,7 @@ class UWFlowMixin:
 
             response = await self._call_sync(
                 http_client.get,
-                f"/api/etf/{symbol.upper()}/tide",
+                f"/api/etf/{quote(symbol.upper(), safe='')}/tide",
                 params=params,
             )
             response.raise_for_status()
