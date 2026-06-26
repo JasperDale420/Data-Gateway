@@ -16,12 +16,14 @@ test: setup
 test-all: setup
 	uv run pytest --tb=short -q
 
-## Install the local git hooks. REQUIRED: this repo is private on the free
+## Install the local git hooks (commit-stage lint/secrets + the pre-push gate),
+## both via the pre-commit framework. REQUIRED: this repo is private on the free
 ## GitHub plan, so branch protection / required status checks are unavailable —
-## the pre-push hook is the only mechanical gate before code reaches the remote.
+## the pre-push gate is the only mechanical check before code reaches the remote.
 install-hooks:
-	git config core.hooksPath .githooks
-	@echo "pre-push hook active (.githooks/pre-push)"
+	pre-commit install
+	pre-commit install --hook-type pre-push
+	@echo "commit + pre-push hooks installed"
 
 ## Lint with ruff.
 lint:

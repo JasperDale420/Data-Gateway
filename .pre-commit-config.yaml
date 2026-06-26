@@ -62,3 +62,20 @@ repos:
         args: [--maxkb=1000]
       - id: check-merge-conflict
       - id: debug-statements
+
+  # ---------------------------------------------------------------------------
+  # Pre-push gate (runs only on `git push`, via the pre-push stage).
+  # The repo is private on the free GitHub plan, so there is no server-side
+  # branch protection — this is the only mechanical gate before code reaches
+  # the remote. Activate with `make install-hooks`.
+  # ---------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: pre-push-gate
+        name: Lint + fast tests (pre-push)
+        entry: .githooks/pre-push
+        language: script
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+        verbose: true

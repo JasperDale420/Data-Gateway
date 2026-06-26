@@ -7,7 +7,8 @@
 # CI essentials (lint + the capital/wire-contract-guarding tests) so a red tree
 # is caught before it reaches the remote, where live trading capital is exposed.
 #
-# Activate once with:  make install-hooks   (sets core.hooksPath=.githooks)
+# Run by the pre-commit framework's pre-push stage (see .pre-commit-config.yaml).
+# Activate once with:  make install-hooks
 # Bypass in a pinch with:  git push --no-verify
 set -e
 
