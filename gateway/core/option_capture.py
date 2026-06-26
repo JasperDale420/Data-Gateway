@@ -646,7 +646,11 @@ class OptionCaptureService:
             payload = {
                 "symbol": occ_symbol,
                 "price": last_price,
-                "size": contract.get("last_trade_size") or contract.get("volume") or 0,
+                # Actual last-trade size only. Falling back to whole-day `volume`
+                # minted one "trade" of size = full-day volume when
+                # last_trade_size was missing, double-counting flow and
+                # corrupting VWAP. Unknown size → 0 (zero-weight), never volume.
+                "size": contract.get("last_trade_size") or 0,
                 "timestamp": contract.get("timestamp"),
             }
             envelopes.append(
