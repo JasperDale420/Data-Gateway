@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+# Local enforcement gate.
+#
+# This repo is private on the free GitHub plan, so server-side branch
+# protection / required status checks are unavailable — a passing CI run is
+# only advisory and nothing mechanically blocks a push. This hook mirrors the
+# CI essentials (lint + the capital/wire-contract-guarding tests) so a red tree
+# is caught before it reaches the remote, where live trading capital is exposed.
+#
+# Activate once with:  make install-hooks   (sets core.hooksPath=.githooks)
+# Bypass in a pinch with:  git push --no-verify
+set -e
+
+echo "[pre-push] ruff check…"
+ruff check .
+
+echo "[pre-push] ruff format check…"
+ruff format --check .
+
+echo "[pre-push] fast tests (auth, smoke, wire contract, money path)…"
+uv run pytest -q --timeout=60 \
+  tests/test_auth.py \
+  tests/smoke/test_smoke.py \
+  tests/test_api_integration.py \
+  tests/test_websocket.py \
+  tests/test_envelope_heber_contract.py \
+  tests/test_alpaca_trading_router.py \
+  tests/test_alpaca_trading_provider_methods.py
+
+echo "[pre-push] OK"

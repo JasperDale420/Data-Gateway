@@ -37,10 +37,20 @@ jobs:
           # gateway imports resolve before [dev] extras are processed.
           pip install ci/empire_core/ ci/empire_schemas/ ci/unusualwhales_sdk/
           pip install -e ".[dev]"
-          pip install pre-commit bandit
+          pip install pre-commit "bandit[toml]"
 
       - name: Run pre-commit hooks
         run: pre-commit run --all-files
+
+      - name: Security scan (bandit)
+        run: bandit -c pyproject.toml -r gateway/
+
+      - name: Type check (mypy)
+        # Advisory for now — the codebase has pre-existing type errors (see the
+        # per-module suppressions in [tool.mypy]). Surfaces regressions in PRs
+        # without blocking; flip continue-on-error off once typing is clean.
+        run: mypy gateway/
+        continue-on-error: true
 
       - name: Verify provider endpoint contract is up-to-date
         run: python scripts/generate_provider_contract.py --check
@@ -103,22 +113,29 @@ jobs:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
     needs: lint-and-test
-    # Only run when SONAR_TOKEN is configured; skip gracefully on forks or
-    # repos where the secret has not been added yet.
-    if: secrets.SONAR_TOKEN != '' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-
+    # The `secrets` context is NOT permitted in a job-level `if:` (only
+    # github/needs/vars/inputs are). Using `if: secrets.SONAR_TOKEN != ''` here
+    # silently invalidated the ENTIRE workflow — it failed at validation in 0s
+    # on every run for months, so none of lint-and-test's checks ran either.
+    # Expose the secret as a job env and gate each step on env.SONAR_TOKEN
+    # instead (forks have no secret access, so this also skips fork PRs).
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
       - name: Checkout repository
+        if: env.SONAR_TOKEN != ''
         uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Full history for SonarCloud analysis
 
       - name: Download coverage artifact
+        if: env.SONAR_TOKEN != ''
         uses: actions/download-artifact@v8
         with:
           name: coverage-report
 
       - name: SonarCloud Scan
+        if: env.SONAR_TOKEN != ''
         uses: SonarSource/sonarcloud-github-action@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

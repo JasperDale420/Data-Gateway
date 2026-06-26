@@ -86,6 +86,7 @@ from gateway.api.errors import gateway_http_exception_handler
 from gateway.api.metrics import router as metrics_router
 from gateway.api.middleware import (
     CacheMiddleware,
+    CorrelationIdMiddleware,
     EventEnvelopeMiddleware,
     GlobalRateLimitMiddleware,
     InputValidationMiddleware,
@@ -95,6 +96,7 @@ from gateway.api.middleware import (
 )
 from gateway.config import get_settings
 from gateway.core.globals import set_flow_fanout, set_multiplexer, set_registry
+from gateway.core.log_throttle import LogThrottle
 from gateway.core.logger import logger
 from gateway.core.metrics import (
     init_metrics,
@@ -107,6 +109,12 @@ from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import StreamMultiplexer
 
 attach_error_buffer_handler()
+
+# A single broken downstream client would otherwise emit one ERROR per streamed
+# event in the fallback fanout path. Throttle to one line per client per
+# interval (suppressed count still reported) so one bad client can't flood the
+# error log — the per-event fanout flood class behind past incidents.
+_STREAM_SEND_ERROR_LOG_THROTTLE = LogThrottle(interval_seconds=10.0)
 
 
 async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> None:
@@ -149,12 +157,15 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
                 }
             )
         except Exception as e:
-            logger.error(
-                "stream_send_error",
-                client_id=client_id,
-                event_id=envelope.get("event_id", "unknown"),
-                error=str(e),
-            )
+            allowed, suppressed = _STREAM_SEND_ERROR_LOG_THROTTLE.should_emit(client_id)
+            if allowed:
+                logger.error(
+                    "stream_send_error",
+                    client_id=client_id,
+                    event_id=envelope.get("event_id", "unknown"),
+                    error=str(e),
+                    suppressed_since_last=suppressed,
+                )
 
 
 async def _on_stream_envelope(envelope: dict) -> None:
@@ -692,6 +703,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Correlation/trace-id is OUTERMOST (added last) so the per-request trace_id
+    # is bound into the log context before any other middleware runs — every log
+    # line for the request, including rate-limit rejections, then carries it.
+    app.add_middleware(CorrelationIdMiddleware)
 
     # Routers
     app.include_router(health_router)

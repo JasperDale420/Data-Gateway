@@ -500,13 +500,20 @@ class AlpacaTradingMixin:
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
         try:
-            # This endpoint is not in alpaca-py SDK, use REST directly
+            # This endpoint is not in alpaca-py SDK, use REST directly.
+            # An explicit timeout is REQUIRED here: httpx.post defaults to no
+            # timeout, so a hung trading endpoint would block the calling thread
+            # forever (the same leak the SDK-session timeout in _base guards
+            # against, on the one path that bypasses the SDK).
+            from gateway.config import get_settings
+
             response = httpx.post(
                 f"{self._trading_base_url}/v2/positions/{symbol_or_contract_id}/do-not-exercise",
                 headers={
                     "APCA-API-KEY-ID": self._api_key,
                     "APCA-API-SECRET-KEY": self._secret_key,
                 },
+                timeout=get_settings().alpaca_trading_http_timeout_seconds,
             )
             response.raise_for_status()
             data = response.json() if response.content else {"status": "do_not_exercise"}

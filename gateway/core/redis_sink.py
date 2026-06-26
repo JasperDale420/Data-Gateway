@@ -15,6 +15,7 @@ from typing import Any
 import orjson
 
 from gateway.core.data_sink import DataSink
+from gateway.core.log_throttle import LogThrottle
 from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_sink_buffer_eviction,
@@ -42,6 +43,13 @@ PUBLISH_RETRY_BACKOFF_BASE = 0.1  # seconds — doubles each attempt (0.1, 0.2, 
 # This is a transient state during Redis startup/restart and warrants a
 # longer pause before retrying.
 REDIS_LOADING_BACKOFF_SECONDS = 2.0
+
+# A Redis outage fails every item in every chunk, and these warnings fire once
+# per failed item (per-batch) in the publish hot path — historically a flood
+# source. Collapse repeats to one line per key per interval; the suppressed
+# count is still reported so the signal survives. Reconnect itself is already
+# rate-limited via _reconnect_cooldown_until.
+_BATCH_ERROR_LOG_THROTTLE = LogThrottle(interval_seconds=10.0)
 
 # Substrings in error messages indicating Redis is still loading its dataset.
 _REDIS_LOADING_INDICATORS = frozenset(
@@ -735,11 +743,14 @@ class RedisStreamsSink(DataSink):
             for i, result in enumerate(results):
                 topic = chunk[i][0]
                 if isinstance(result, Exception):
-                    logger.warning(
-                        "redis_sink_batch_item_error",
-                        topic=topic,
-                        error=str(result),
-                    )
+                    allowed, suppressed = _BATCH_ERROR_LOG_THROTTLE.should_emit(f"item:{topic}")
+                    if allowed:
+                        logger.warning(
+                            "redis_sink_batch_item_error",
+                            topic=topic,
+                            error=str(result),
+                            suppressed_since_last=suppressed,
+                        )
                     record_sink_publish(sink=self.name, topic=topic, success=False)
                     outcomes.append(False)
                 else:
@@ -760,11 +771,14 @@ class RedisStreamsSink(DataSink):
                 error=e,
                 failed_client=client,
             )
-            logger.warning(
-                "redis_sink_batch_error",
-                count=len(chunk),
-                error=error_msg,
-            )
+            allowed, suppressed = _BATCH_ERROR_LOG_THROTTLE.should_emit("batch")
+            if allowed:
+                logger.warning(
+                    "redis_sink_batch_error",
+                    count=len(chunk),
+                    error=error_msg,
+                    suppressed_since_last=suppressed,
+                )
             for topic, _ in chunk:
                 record_sink_publish(sink=self.name, topic=topic, success=False)
             return [False] * len(chunk)
