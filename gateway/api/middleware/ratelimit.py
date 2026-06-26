@@ -154,9 +154,17 @@ class RateLimitMiddleware:
             client = request.state.client
             return client.id, client.permissions.rate_limit
 
-        # Check X-Gateway-Key header for identification
+        # Check X-Gateway-Key header for identification. This middleware runs
+        # BEFORE the auth dependency sets request.state.client, so resolve the
+        # client here to honor its per-client rate_limit (e.g. 3roses=6000)
+        # instead of always falling back to the default.
         api_key = request.headers.get("X-Gateway-Key", "")
         if api_key:
+            from gateway.api.deps import get_authenticator
+
+            client = get_authenticator().client_for_key(api_key)
+            if client is not None:
+                return client.id, client.permissions.rate_limit
             return f"key:{api_key[:16]}", self.default_limit
 
         # Fall back to IP

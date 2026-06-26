@@ -136,3 +136,19 @@ def test_prefix_colliding_client_ids_rejected(tmp_path):
     config.write_text("clients:\n  - id: heber\n    key: k1\n  - id: heber-watch\n    key: k2\n")
     with pytest.raises(InvalidClientIdError, match="ownership prefix"):
         ClientAuthenticator(config)
+
+
+def test_client_for_key_resolves_custom_rate_limit_without_logging(tmp_path):
+    """The rate-limit middleware resolves a client's custom rate_limit via a
+    quiet key lookup (it runs before auth sets request.state.client)."""
+    config = tmp_path / "clients.yaml"
+    config.write_text("clients:\n  - id: fast\n    key: gw_fast_key\n    permissions:\n      rate_limit: 6000\n")
+    auth = ClientAuthenticator(config)
+
+    client = auth.client_for_key("gw_fast_key")
+    assert client is not None
+    assert client.id == "fast"
+    assert client.permissions.rate_limit == 6000  # custom limit, not the default
+
+    assert auth.client_for_key("wrong_key") is None
+    assert auth.client_for_key("") is None

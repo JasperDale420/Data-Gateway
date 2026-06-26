@@ -233,6 +233,28 @@ class ClientAuthenticator:
         """Get client by ID."""
         return self._clients.get(client_id)
 
+    def client_for_key(self, api_key: str) -> Client | None:
+        """Resolve an enabled client by API key WITHOUT audit logging.
+
+        Used by the rate-limit middleware (which runs before the auth
+        dependency) to honor a client's per-client rate_limit. Mirrors
+        ``authenticate``'s key matching but emits no audit events, so it can
+        run on every request without doubling the audit trail.
+        """
+        if not api_key:
+            return None
+        client_id = self._plaintext_keys.get(api_key)
+        if not client_id:
+            key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            for stored_hash, stored_client_id in self._hashed_keys.items():
+                if hmac.compare_digest(key_hash, stored_hash):
+                    client_id = stored_client_id
+                    break
+        if not client_id:
+            return None
+        client = self._clients.get(client_id)
+        return client if client and client.enabled else None
+
     def list_client_ids(self) -> list[str]:
         """Return the list of all configured client ids.
 
