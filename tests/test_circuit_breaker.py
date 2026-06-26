@@ -391,3 +391,21 @@ class TestGlobalRegistry:
         """get_circuit_breaker should return a breaker."""
         breaker = await get_circuit_breaker("global_test")
         assert breaker.name == "global_test"
+
+
+def test_circuit_breaker_exports_state_gauge() -> None:
+    """Breaker state is exported as a gauge so a sink trip is alertable before
+    the failed-event buffer starts evicting (a lagging signal)."""
+    from gateway.core.circuit_breaker import CircuitBreaker, CircuitState
+    from gateway.core.metrics import CIRCUIT_BREAKER_STATE
+
+    cb = CircuitBreaker(name="test_gauge_breaker")
+    gauge = CIRCUIT_BREAKER_STATE.labels(name="test_gauge_breaker")
+
+    assert gauge._value.get() == 0  # closed at init (__post_init__ baseline)
+    cb._set_state(CircuitState.OPEN)
+    assert gauge._value.get() == 2
+    cb._set_state(CircuitState.HALF_OPEN)
+    assert gauge._value.get() == 1
+    cb._set_state(CircuitState.CLOSED)
+    assert gauge._value.get() == 0

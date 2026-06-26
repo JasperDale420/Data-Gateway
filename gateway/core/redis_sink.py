@@ -15,6 +15,7 @@ from typing import Any
 import orjson
 
 from gateway.core.data_sink import DataSink
+from gateway.core.log_throttle import LogThrottle
 from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_sink_buffer_eviction,
@@ -42,6 +43,13 @@ PUBLISH_RETRY_BACKOFF_BASE = 0.1  # seconds — doubles each attempt (0.1, 0.2, 
 # This is a transient state during Redis startup/restart and warrants a
 # longer pause before retrying.
 REDIS_LOADING_BACKOFF_SECONDS = 2.0
+
+# A Redis outage fails every item in every chunk, and these warnings fire once
+# per failed item (per-batch) in the publish hot path — historically a flood
+# source. Collapse repeats to one line per key per interval; the suppressed
+# count is still reported so the signal survives. Reconnect itself is already
+# rate-limited via _reconnect_cooldown_until.
+_BATCH_ERROR_LOG_THROTTLE = LogThrottle(interval_seconds=10.0)
 
 # Substrings in error messages indicating Redis is still loading its dataset.
 _REDIS_LOADING_INDICATORS = frozenset(
@@ -74,6 +82,7 @@ class RedisStreamsSink(DataSink):
         operation_timeout_seconds: float = DEFAULT_OPERATION_TIMEOUT_SECONDS,
         pool_size: int = DEFAULT_POOL_SIZE,
         worker_count: int | None = None,
+        failed_buffer_capacity: int = FAILED_EVENT_BUFFER_CAPACITY,
     ) -> None:
         """Initialize Redis Streams sink.
 
@@ -87,6 +96,10 @@ class RedisStreamsSink(DataSink):
                 through this sink concurrently. When set, ``pool_size`` is
                 raised to at least this value so the pool can never be smaller
                 than the concurrency drawing from it.
+            failed_buffer_capacity: Max events held in the in-memory retry
+                buffer before the oldest are evicted (metered via
+                ``gateway_sink_buffer_evictions_total``). Size to ride out a
+                Redis blip at peak event rate; ~1 KB/event.
 
         Pool sizing vs. worker count:
             The data_sink registry runs ``worker_count`` coroutines that each
@@ -124,8 +137,11 @@ class RedisStreamsSink(DataSink):
         self._closed = False
 
         # Failed event buffer — holds (topic, payload_bytes) for events that
-        # exhausted all retries.  Drained automatically on reconnect.
-        self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=FAILED_EVENT_BUFFER_CAPACITY)
+        # exhausted all retries.  Drained automatically on reconnect. The
+        # capacity is operator-tunable (data_sink_failed_buffer_capacity): at
+        # OPRA quote volume the old fixed 10k filled in under a second during a
+        # circuit-breaker-open window, silently evicting the bulk of an outage.
+        self._failed_buffer: deque[tuple[str, bytes]] = deque(maxlen=max(1, int(failed_buffer_capacity)))
         self._drain_lock = asyncio.Lock()
         # Hold a strong reference to the drain task so it cannot be GC'd
         # mid-flight while the buffer drain is in progress.
@@ -392,9 +408,11 @@ class RedisStreamsSink(DataSink):
                 )
                 re_buffer.extend(chunk)
 
-        # Re-buffer events that failed during drain
-        for item in re_buffer:
-            self._failed_buffer.append(item)
+        # Re-buffer events that failed during drain through the accounted path
+        # so a maxlen eviction here is counted + logged (the eviction alert),
+        # not silently dropped by a raw deque.append past capacity.
+        for topic, payload in re_buffer:
+            self._buffer_failed_event(topic, payload)
 
         self._buffer_stats["drained"] += drained
         set_sink_buffer_size(self.name, len(self._failed_buffer))
@@ -725,11 +743,14 @@ class RedisStreamsSink(DataSink):
             for i, result in enumerate(results):
                 topic = chunk[i][0]
                 if isinstance(result, Exception):
-                    logger.warning(
-                        "redis_sink_batch_item_error",
-                        topic=topic,
-                        error=str(result),
-                    )
+                    allowed, suppressed = _BATCH_ERROR_LOG_THROTTLE.should_emit(f"item:{topic}")
+                    if allowed:
+                        logger.warning(
+                            "redis_sink_batch_item_error",
+                            topic=topic,
+                            error=str(result),
+                            suppressed_since_last=suppressed,
+                        )
                     record_sink_publish(sink=self.name, topic=topic, success=False)
                     outcomes.append(False)
                 else:
@@ -750,11 +771,14 @@ class RedisStreamsSink(DataSink):
                 error=e,
                 failed_client=client,
             )
-            logger.warning(
-                "redis_sink_batch_error",
-                count=len(chunk),
-                error=error_msg,
-            )
+            allowed, suppressed = _BATCH_ERROR_LOG_THROTTLE.should_emit("batch")
+            if allowed:
+                logger.warning(
+                    "redis_sink_batch_error",
+                    count=len(chunk),
+                    error=error_msg,
+                    suppressed_since_last=suppressed,
+                )
             for topic, _ in chunk:
                 record_sink_publish(sink=self.name, topic=topic, success=False)
             return [False] * len(chunk)
@@ -856,26 +880,3 @@ class RedisStreamsSink(DataSink):
         if client is not None:
             await self._close_stale_client(client)
             logger.info("redis_sink_closed")
-
-
-class LogSink(DataSink):
-    """Simple logging sink for development/debugging.
-
-    Logs all published messages at DEBUG level.
-    """
-
-    @property
-    def name(self) -> str:
-        return "log"
-
-    async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
-        """Log the message."""
-        if isinstance(data, dict):
-            keys = list(data.keys())
-        else:
-            keys = ["<serialized>"]
-        logger.debug("data_sink_log", topic=topic, data_keys=keys)
-        return True
-
-    async def health_check(self) -> bool:
-        return True

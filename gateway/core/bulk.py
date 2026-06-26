@@ -849,7 +849,11 @@ class BulkJobManager:
                     contracts = None
 
                 if contracts:
-                    filtered = self._filter_option_contracts(
+                    # Per-contract model_dump + filter over a full option chain runs off
+                    # the event loop (mirrors backfill normalization) so a large bulk job
+                    # cannot stall live WS ingest and the Heber sink drain.
+                    filtered = await asyncio.to_thread(
+                        self._filter_option_contracts,
                         contracts,
                         expiration_gte=expiration_gte_date,
                         expiration_lte=expiration_lte_date,

@@ -6,6 +6,7 @@ the module was split into a package.
 """
 
 from gateway.api.middleware.cache import CacheEntry, CacheMiddleware
+from gateway.api.middleware.correlation import CorrelationIdMiddleware
 from gateway.api.middleware.envelope import (
     CANONICAL_ROUTE_FEEDS,
     FEED_MAPPING,
@@ -29,6 +30,7 @@ __all__ = [
     "SKIP_PATHS",
     "CacheEntry",
     "CacheMiddleware",
+    "CorrelationIdMiddleware",
     "EventEnvelopeMiddleware",
     "GlobalRateLimitMiddleware",
     "IPConnectionTracker",

@@ -1,4 +1,4 @@
-"""Global and per-IP rate limit middleware (PRD 7.5.1-2, 7.6.1)."""
+"""Global and per-IP rate limit middleware (PRD 7.5.1-2)."""
 
 import json
 import time
@@ -21,13 +21,25 @@ class IPConnectionTracker:
     last_seen: float = field(default_factory=time.time)
 
 
+_global_ratelimiter: "GlobalRateLimitMiddleware | None" = None
+
+
+def get_global_ratelimiter() -> "GlobalRateLimitMiddleware | None":
+    """Return the installed global rate-limit middleware instance, if any.
+
+    ``app.add_middleware`` does not expose the instance, so the middleware
+    registers itself here on construction. Admin blocklist endpoints use this
+    to manage the ENFORCED blocklist rather than a separate dead dict.
+    """
+    return _global_ratelimiter
+
+
 class GlobalRateLimitMiddleware:
     """Global and per-IP rate limiting.
 
     Implements:
     - PRD 7.5.1: Global limit 10,000 req/min
     - PRD 7.5.2: Per-IP limit 1,000 req/min
-    - PRD 7.6.1: Max 10 concurrent connections per IP
 
     Uses sliding window for rate limiting.
     """
@@ -39,7 +51,6 @@ class GlobalRateLimitMiddleware:
         app: ASGIApp,
         global_limit: int = 10000,
         per_ip_limit: int = 1000,
-        max_connections_per_ip: int = 10,
         window_seconds: int = 60,
         trust_proxy_headers: bool = False,
         trusted_proxy_cidrs: str = "",
@@ -47,7 +58,6 @@ class GlobalRateLimitMiddleware:
         self.app = app
         self.global_limit = global_limit
         self.per_ip_limit = per_ip_limit
-        self.max_connections_per_ip = max_connections_per_ip
         self.window_seconds = window_seconds
         self._trust_proxy_headers = trust_proxy_headers
 
@@ -79,6 +89,11 @@ class GlobalRateLimitMiddleware:
         self._blocked_ips: set[str] = set()
         self._last_prune = time.time()
         self._prune_interval = 60.0
+
+        # Register as the process-wide instance so admin blocklist endpoints can
+        # manage the enforced blocklist (last one installed wins).
+        global _global_ratelimiter
+        _global_ratelimiter = self
 
     def _get_client_ip(self, scope: Scope) -> str:
         """Extract client IP from ASGI scope.

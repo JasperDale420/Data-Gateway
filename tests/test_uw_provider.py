@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -80,6 +81,32 @@ async def test_call_sync_uses_semaphore_and_records_metrics(monkeypatch):
 class _FakeResponse:
     def __init__(self, data):
         self.additional_properties = {"data": data}
+
+
+@pytest.mark.asyncio
+async def test_get_greek_exposure_date_only_timestamp_is_utc(monkeypatch):
+    """UW greek exposure rows can carry date-only values; normalize them to UTC midnight."""
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        return _FakeResponse(
+            [
+                {
+                    "date": "2025-06-18",
+                    "call_gamma": "1.25",
+                    "put_gamma": "-0.75",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    rows = await provider.get_greek_exposure("spy")
+
+    assert len(rows) == 1
+    assert rows[0].timestamp == datetime(2025, 6, 18, tzinfo=UTC)
+    assert rows[0].symbol == "SPY"
 
 
 @pytest.mark.asyncio
@@ -526,3 +553,42 @@ async def test_get_short_volume_reads_si_key(monkeypatch):
     assert result[0].date == "2026-06-08"
     assert result[0].short_interest == 1234567
     assert str(result[0].short_percent_float) == "0.42"
+
+
+@pytest.mark.asyncio
+async def test_iv_rank_path_encodes_symbol_against_ssrf(monkeypatch):
+    """A symbol with path separators must be URL-encoded into the UW path so it
+    can't inject extra segments and reach a different upstream endpoint."""
+    import contextlib
+
+    provider = UnusualWhalesProvider()
+
+    class _Http:
+        def get(self, *a, **k):
+            return None
+
+    class _Client:
+        def get_httpx_client(self):
+            return _Http()
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {}
+
+    provider._client = _Client()
+    captured: dict[str, str] = {}
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        captured["path"] = args[0]
+        return _Resp()
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    with contextlib.suppress(Exception):
+        await provider.get_iv_rank("AAPL/../market")
+
+    assert captured["path"] == "/api/stock/AAPL%2F..%2FMARKET/iv-rank"
+    assert "/../" not in captured["path"]  # no path traversal survives

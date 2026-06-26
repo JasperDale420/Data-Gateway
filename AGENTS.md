@@ -87,7 +87,7 @@ The base loop wakes every 15 seconds and checks which pollers are due. Market-aw
 - Type checking: mypy + pyright (basic mode), both configured in `pyproject.toml`
 - Async throughout (FastAPI + async providers)
 - structlog via `empire_core.logger` — import from `gateway/core/logger.py`, never reconfigure structlog directly
-- Security: bandit + detect-secrets via pre-commit
+- Security: detect-secrets via pre-commit; bandit runs as a CI step (`bandit -c pyproject.toml -r gateway/`)
 - Vertical-slice feature changes should include tests first, then implementation.
 
 ## Adding a New Provider

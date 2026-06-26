@@ -40,6 +40,15 @@ from gateway.providers.alpaca._base import ERR_TRADING_CLIENT_NOT_INITIALIZED
 # 40410000 — position does not exist (already closed/expired/never existed)
 _POSITION_NOT_FOUND_CODES = {40410000}
 
+# Alpaca error codes for a cancel that lost a benign race with the order's own
+# terminal transition — the order already reached a terminal state (filled,
+# canceled, expired, rejected) before the cancel landed. Expected during active
+# trading, NOT an error. We still re-raise so the caller learns the true state
+# (e.g. a fill), but logging these at ERROR floods the error log with thousands
+# of non-actionable lines.
+# 42210000 — "order is already in \"{state}\" state"
+_BENIGN_CANCEL_RACE_CODES = {42210000}
+
 
 class AlpacaTradingMixin:
     """Trading/account/order management methods."""
@@ -51,6 +60,19 @@ class AlpacaTradingMixin:
             return exc.code
         except Exception:
             return None
+
+    @staticmethod
+    def _is_benign_cancel_race(exc: APIError) -> bool:
+        """True only when a cancel lost a benign race with the order's own
+        terminal transition (already filled/canceled/expired/rejected).
+
+        Requires BOTH the terminal error code AND the "already in ... state"
+        message signature — Alpaca reuses 42210000 for other rejections, so a
+        code-only match could hide an actionable cancel failure at INFO.
+        """
+        if AlpacaTradingMixin._extract_alpaca_error_code(exc) not in _BENIGN_CANCEL_RACE_CODES:
+            return False
+        return "already in" in str(exc).lower()
 
     def get_account(self) -> dict[str, Any]:
         """Get account information."""
@@ -281,7 +303,13 @@ class AlpacaTradingMixin:
             logger.info("alpaca_order_cancelled", order_id=order_id)
             return True
         except APIError as e:
-            logger.error("alpaca_order_cancel_error", order_id=order_id, error=str(e))
+            if self._is_benign_cancel_race(e):
+                # Cancel raced the order's terminal transition (already
+                # filled/canceled). Expected — log at INFO, still re-raise so
+                # the caller sees the real 422 and learns the order's true state.
+                logger.info("alpaca_order_cancel_noop", order_id=order_id, error=str(e))
+            else:
+                logger.error("alpaca_order_cancel_error", order_id=order_id, error=str(e))
             raise
 
     def cancel_all_orders(self) -> list[dict[str, Any]]:
@@ -472,13 +500,20 @@ class AlpacaTradingMixin:
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
         try:
-            # This endpoint is not in alpaca-py SDK, use REST directly
+            # This endpoint is not in alpaca-py SDK, use REST directly.
+            # An explicit timeout is REQUIRED here: httpx.post defaults to no
+            # timeout, so a hung trading endpoint would block the calling thread
+            # forever (the same leak the SDK-session timeout in _base guards
+            # against, on the one path that bypasses the SDK).
+            from gateway.config import get_settings
+
             response = httpx.post(
                 f"{self._trading_base_url}/v2/positions/{symbol_or_contract_id}/do-not-exercise",
                 headers={
                     "APCA-API-KEY-ID": self._api_key,
                     "APCA-API-SECRET-KEY": self._secret_key,
                 },
+                timeout=get_settings().alpaca_trading_http_timeout_seconds,
             )
             response.raise_for_status()
             data = response.json() if response.content else {"status": "do_not_exercise"}

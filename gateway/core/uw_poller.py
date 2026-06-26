@@ -21,6 +21,7 @@ from gateway.core.base_poller import BasePoller, DedupMixin
 from gateway.core.cache import RedisCache
 from gateway.core.calendar import TradingCalendar
 from gateway.core.envelope import wrap_event
+from gateway.core.metrics import record_feed_published, record_message_dropped, record_poller_duplicates
 from gateway.core.ticker_universe import TickerUniverse
 from gateway.core.uw_eod_state import UwEodStateStore
 
@@ -336,6 +337,9 @@ class UWPoller(DedupMixin, BasePoller):
             if redis_items and self._redis_dedupe is not None:
                 await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
 
+        feed = envelopes[0].get("feed", "unknown")
+        record_feed_published(feed, published)
+        record_poller_duplicates(feed, duplicates)
         return published, duplicates
 
     def _should_poll_tide(self) -> bool:
@@ -532,10 +536,13 @@ class UWPoller(DedupMixin, BasePoller):
                     logger.info("uw_poller_starting_eod_snapshots")
                     # Mark the date *before* spawning so a second tick within
                     # the same minute doesn't double-schedule the EOD work
-                    # before the task gets a chance to run.
+                    # before the task gets a chance to run. The prior value is
+                    # handed to the runner so it can roll the guard back on
+                    # failure and allow a same-day retry.
+                    previous_eod_date = self._last_eod_date
                     self._last_eod_date = datetime.now(ET).strftime("%Y-%m-%d")
                     self._eod_task = asyncio.create_task(
-                        self._run_eod_with_logging(sink_registry),
+                        self._run_eod_with_logging(sink_registry, previous_eod_date=previous_eod_date),
                         name="uw_poller_eod",
                     )
 
@@ -596,6 +603,9 @@ class UWPoller(DedupMixin, BasePoller):
                     record_index=idx,
                     error=str(exc),
                 )
+                # Meter the skip so steady partial loss from UW schema drift
+                # surfaces on the dropped-message alert, not just in logs.
+                record_message_dropped(reason="envelope_build_skipped", feed=feed)
                 continue
 
             ts_event = self._parse_ts(envelope.get("ts_event"))
@@ -645,8 +655,13 @@ class UWPoller(DedupMixin, BasePoller):
             # Take last 5 to cover the 5-minute polling gap (market tide).
             effective = records[-5:] if slice_recent and len(records) > 5 else records
 
-            envelopes, out_of_order = self._build_feed_envelopes(
-                effective, feed=feed, out_of_order_log=out_of_order_log
+            # Build envelopes off the event loop: model_dump + wrap_event +
+            # BLAKE2b over up to 200 records per cycle blocked the loop ~5s
+            # (runtime-observed loop-stall on darkpool), starving WS heartbeats
+            # and the sink drain. Mirrors option_capture/bulk offload. The fn is
+            # pure (no shared-state mutation), so a thread is safe.
+            envelopes, out_of_order = await asyncio.to_thread(
+                self._build_feed_envelopes, effective, feed=feed, out_of_order_log=out_of_order_log
             )
             published, duplicates = await self._publish_envelopes(
                 sink_registry=sink_registry,
@@ -733,7 +748,8 @@ class UWPoller(DedupMixin, BasePoller):
 
                 # Take last 5 records for each sector
                 recent_tides = tides[-5:] if len(tides) > 5 else tides
-                sector_envelopes, sector_out_of_order = self._build_feed_envelopes(
+                sector_envelopes, sector_out_of_order = await asyncio.to_thread(
+                    self._build_feed_envelopes,
                     recent_tides,
                     feed="sector_tide",
                     out_of_order_log="uw_sector_tide_out_of_order_ts",
@@ -792,20 +808,33 @@ class UWPoller(DedupMixin, BasePoller):
         # Must be a trading day
         return self._calendar.is_trading_day(now_et.date())
 
-    async def _run_eod_with_logging(self, sink_registry) -> None:
+    async def _run_eod_with_logging(self, sink_registry, *, previous_eod_date: str | None = None) -> None:
         """Wrapper around ``_poll_eod_snapshots`` for the EOD background task.
 
         Logs success/error and clears the task reference so the next-day
         scheduler can re-spawn cleanly. Cancellation (e.g. on shutdown)
-        propagates through.
+        propagates through. On failure it rolls back the in-process date guard
+        and releases the persistent run claim so today's EOD can be retried on
+        the next poll tick (or after a restart) instead of being lost until the
+        stale window expires.
         """
         try:
             await self._poll_eod_snapshots(sink_registry)
         except asyncio.CancelledError:
             logger.info("uw_eod_task_cancelled", last_eod_date=self._last_eod_date)
+            # Shutdown cancelled EOD mid-run: release the persistent 'running'
+            # claim (release() preserves a 'completed' claim) and roll the
+            # in-memory guard back, so the next startup re-runs today's EOD
+            # instead of deferring it until the 2h stale window.
+            today_str = datetime.now(ET).strftime("%Y-%m-%d")
+            self._last_eod_date = previous_eod_date
+            self._eod_state.release(today_str)
             raise
         except Exception as e:
             logger.error("uw_eod_task_error", error=str(e), exc_info=True)
+            today_str = datetime.now(ET).strftime("%Y-%m-%d")
+            self._last_eod_date = previous_eod_date
+            self._eod_state.release(today_str)
 
     async def _poll_eod_snapshots(self, sink_registry) -> None:
         """Orchestrate all EOD per-ticker polls with bounded concurrency."""
@@ -899,23 +928,42 @@ class UWPoller(DedupMixin, BasePoller):
 
         logger.info("uw_eod_completed", totals=totals)
 
+    @staticmethod
+    def _wrap_eod_results(
+        results: list[Any],
+        *,
+        feed: str,
+        use_model_dump: bool = True,
+        **overrides: Any,
+    ) -> list[dict[str, Any]]:
+        """Wrap a list of EOD records into envelopes off the event loop.
+
+        Pure/synchronous so the per-ticker EOD fan-out can offload it via
+        ``asyncio.to_thread`` — building envelopes (model_dump + BLAKE2b) for the
+        higher-row feeds (greek_exposure especially) across the whole ticker
+        universe otherwise runs on the loop, observed as a multi-second stall
+        during the 16:30 EOD run.
+        """
+        return [
+            wrap_event(
+                event=item.model_dump() if use_model_dump else item,
+                provider="unusual_whales",
+                feed=feed,
+                source="rest",
+                **overrides,
+            )
+            for item in results
+        ]
+
     async def _poll_eod_greek_exposure(self, sink_registry, ticker: str) -> int:
         """Poll Greek exposure for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_greek_exposure(ticker)
+        results = await self._fetch_with_retry("greek_exposure", lambda: self._provider.get_greek_exposure(ticker))
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="greek_exposure",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="greek_exposure")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -929,7 +977,7 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll IV rank for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        result = await self._provider.get_iv_rank(ticker)
+        result = await self._fetch_with_retry("iv_rank", lambda: self._provider.get_iv_rank(ticker))
         if not result:
             return 0
 
@@ -963,24 +1011,22 @@ class UWPoller(DedupMixin, BasePoller):
         """
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_iv_term_structure(ticker)
+        results = await self._fetch_with_retry(
+            "iv_term_structure", lambda: self._provider.get_iv_term_structure(ticker)
+        )
         if not results:
             return 0
 
         symbol = ticker.upper()
         instrument_key = f"equity:{symbol}"
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="iv_term_structure",
-                source="rest",
-                instrument_type_override="equity",
-                instrument_key_override=instrument_key,
-                symbol_override=symbol,
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(
+            self._wrap_eod_results,
+            results,
+            feed="iv_term_structure",
+            instrument_type_override="equity",
+            instrument_key_override=instrument_key,
+            symbol_override=symbol,
+        )
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -994,19 +1040,11 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll OI change for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_oi_change(ticker)
+        results = await self._fetch_with_retry("oi_change", lambda: self._provider.get_oi_change(ticker))
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="oi_change",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="oi_change")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1031,24 +1069,23 @@ class UWPoller(DedupMixin, BasePoller):
         """
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_historic_option_volume(ticker)
+        results = await self._fetch_with_retry(
+            "historic_option_volume", lambda: self._provider.get_historic_option_volume(ticker)
+        )
         if not results:
             return 0
 
         symbol = ticker.upper()
         instrument_key = f"equity:{symbol}"
-        envelopes = [
-            wrap_event(
-                event=item,
-                provider="unusual_whales",
-                feed="historic_option_volume",
-                source="rest",
-                instrument_type_override="equity",
-                instrument_key_override=instrument_key,
-                symbol_override=symbol,
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(
+            self._wrap_eod_results,
+            results,
+            feed="historic_option_volume",
+            use_model_dump=False,
+            instrument_type_override="equity",
+            instrument_key_override=instrument_key,
+            symbol_override=symbol,
+        )
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1062,19 +1099,11 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll short interest for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_short_interest(ticker)
+        results = await self._fetch_with_retry("short_interest", lambda: self._provider.get_short_interest(ticker))
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="short_interest",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="short_interest")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1088,19 +1117,11 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll short volume for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_short_volume(ticker)
+        results = await self._fetch_with_retry("short_volume", lambda: self._provider.get_short_volume(ticker))
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="short_volume",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="short_volume")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1114,19 +1135,11 @@ class UWPoller(DedupMixin, BasePoller):
         """Poll FTDs for a single ticker."""
         if self._provider is None:
             raise RuntimeError("UW provider not initialized")
-        results = await self._provider.get_ftds(ticker)
+        results = await self._fetch_with_retry("ftds", lambda: self._provider.get_ftds(ticker))
         if not results:
             return 0
 
-        envelopes = [
-            wrap_event(
-                event=item.model_dump(),
-                provider="unusual_whales",
-                feed="ftds",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(self._wrap_eod_results, results, feed="ftds")
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1136,7 +1149,7 @@ class UWPoller(DedupMixin, BasePoller):
         )
         return published
 
-    async def _fetch_with_retry(self, fetch_label: str, fetch):
+    async def _fetch_with_retry(self, fetch_label: str, fetch) -> Any:
         """Run an EOD fetch with bounded retry on transient upstream errors.
 
         UW occasionally answers EOD market-wide endpoints with a single 5xx
@@ -1193,15 +1206,9 @@ class UWPoller(DedupMixin, BasePoller):
 
         self._stamp_filing_ts_event(results, "filed_at_date", "transaction_date")
 
-        envelopes = [
-            wrap_event(
-                event=item,
-                provider="unusual_whales",
-                feed="congress_trades",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(
+            self._wrap_eod_results, results, feed="congress_trades", use_model_dump=False
+        )
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,
@@ -1224,15 +1231,9 @@ class UWPoller(DedupMixin, BasePoller):
 
         self._stamp_filing_ts_event(results, "filing_date", "transaction_date")
 
-        envelopes = [
-            wrap_event(
-                event=item,
-                provider="unusual_whales",
-                feed="insider_trades",
-                source="rest",
-            )
-            for item in results
-        ]
+        envelopes = await asyncio.to_thread(
+            self._wrap_eod_results, results, feed="insider_trades", use_model_dump=False
+        )
 
         published, _ = await self._publish_envelopes(
             sink_registry=sink_registry,

@@ -1,10 +1,18 @@
 """Prometheus metrics for gateway observability."""
 
+import re
 import time
 from copy import deepcopy
 from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram, Info
+
+# Path-segment shapes that are per-instrument and must be collapsed to {symbol}
+# so they don't explode the per-path metric label cardinality: plain tickers
+# (AAPL), crypto/forex pairs (BTC-USD, EUR/USD), dotted classes (BRK.B), and
+# OCC-ish alphanumerics. Requires an uppercase lead so lowercase route names
+# (bars, quotes, health) are never collapsed.
+_SYMBOL_SEGMENT_RE = re.compile(r"^[A-Z][A-Z0-9]*([-./][A-Z0-9]+)*$")
 
 _PATH_NORMALIZATION_CACHE_MAX = 4096
 _PATH_NORMALIZATION_CACHE_PRUNE_TARGET = _PATH_NORMALIZATION_CACHE_MAX // 4
@@ -152,6 +160,42 @@ PROCESS_MEMORY_BYTES = Gauge(
 PROCESS_MEMORY_PERCENT = Gauge(
     "gateway_process_memory_percent",
     "Process memory usage as percentage of total system memory",
+)
+
+# Event-loop stall metrics — the watchdog already logs each stall; these make a
+# RECURRING stall (the class that silently delays WS heartbeats + the sink drain)
+# visible on a dashboard and alertable.
+EVENT_LOOP_STALLS = Counter(
+    "gateway_event_loop_stalls_total",
+    "Event-loop stalls detected by the watchdog (loop blocked beyond threshold)",
+)
+EVENT_LOOP_STALL_SECONDS = Counter(
+    "gateway_event_loop_stall_seconds_total",
+    "Total seconds the event loop was stalled, summed across stalls",
+)
+
+# Circuit-breaker state (0=closed, 1=half_open, 2=open). A sink breaker tripping
+# OPEN is the leading edge of Heber data loss; exporting it makes the trip
+# alertable BEFORE the failed-event buffer starts evicting (a lagging signal).
+CIRCUIT_BREAKER_STATE = Gauge(
+    "gateway_circuit_breaker_state",
+    "Circuit breaker state (0=closed, 1=half_open, 2=open)",
+    ["name"],
+)
+
+# Per-feed poller publish accounting. FEED_PUBLISHED counts events that actually
+# reached the Heber sink (post-dedup), so a feed silently going to zero during
+# market hours — e.g. darkpool prints overflowing the 200-record fetch window —
+# is visible per feed instead of hidden behind a 100%-deduped log line.
+FEED_PUBLISHED = Counter(
+    "gateway_feed_published_total",
+    "Events published to the Heber sink per feed (poller path, post-dedup)",
+    ["feed"],
+)
+POLLER_DUPLICATES = Counter(
+    "gateway_poller_duplicates_total",
+    "Poller events suppressed by dedup per feed",
+    ["feed"],
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -387,7 +431,7 @@ MESSAGE_DELIVERED = Counter(
 MESSAGE_DROPPED = Counter(
     "gateway_messages_dropped_total",
     "Total messages dropped due to errors",
-    ["reason"],  # client_disconnected, buffer_full, timeout
+    ["reason", "feed"],  # reason: validation_failed, wrap_error, buffer_full, ...; feed: bars/darkpool/...
 )
 
 # Alpha Vantage route/cache metrics
@@ -408,12 +452,6 @@ ALPHAVANTAGE_PAYLOAD_BYTES = Histogram(
     "Alpha Vantage cached payload size in bytes",
     ["endpoint", "cache_mode"],
     buckets=(256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216),
-)
-
-# Memory pressure metric (for 11.2.4 alerting)
-MEMORY_PRESSURE = Gauge(
-    "gateway_memory_pressure",
-    "Memory pressure indicator (0-100, percentage of target)",
 )
 
 
@@ -697,8 +735,15 @@ def _prune_path_normalization_cache() -> None:
 
 
 def _looks_like_symbol(s: str) -> bool:
-    """Check if string looks like a stock symbol."""
-    return len(s) <= 5 and s.isupper() and s.isalpha()
+    """Check if a path segment looks like a ticker / pair / contract symbol.
+
+    Broadened beyond plain alpha tickers to also catch crypto/forex pairs
+    (``BTC-USD``), dotted share classes (``BRK.B``), and OCC-style alphanumerics
+    that the previous ``isalpha()`` check let through — each of which otherwise
+    became its own permanent per-path metric series (cardinality leak). The
+    uppercase-lead requirement keeps lowercase route names from being collapsed.
+    """
+    return 1 <= len(s) <= 25 and bool(_SYMBOL_SEGMENT_RE.match(s))
 
 
 def _looks_like_id(s: str) -> bool:
@@ -756,16 +801,45 @@ def record_message_delivered(feed: str) -> None:
     MESSAGE_DELIVERED.labels(feed=feed).inc()
 
 
-def record_message_dropped(reason: str) -> None:
-    """Record dropped message."""
-    MESSAGE_DROPPED.labels(reason=reason).inc()
+_CIRCUIT_STATE_VALUE = {"closed": 0, "half_open": 1, "open": 2}
 
 
-def update_memory_pressure(current_mb: float, target_mb: float) -> None:
-    """Update memory pressure indicator."""
-    if target_mb > 0:
-        pressure = (current_mb / target_mb) * 100
-        MEMORY_PRESSURE.set(min(pressure, 100))
+def record_event_loop_stall() -> None:
+    """Count one detected event-loop stall (called from the watchdog thread)."""
+    EVENT_LOOP_STALLS.inc()
+
+
+def record_event_loop_stall_recovered(total_stalled_seconds: float) -> None:
+    """Add the stalled duration once the loop recovers."""
+    EVENT_LOOP_STALL_SECONDS.inc(max(0.0, total_stalled_seconds))
+
+
+def set_circuit_breaker_state(name: str, state: Any) -> None:
+    """Export a circuit breaker's state as a numeric gauge (0/1/2)."""
+    value = _CIRCUIT_STATE_VALUE.get(getattr(state, "value", str(state)), 0)
+    CIRCUIT_BREAKER_STATE.labels(name=name).set(value)
+
+
+def record_feed_published(feed: str, count: int) -> None:
+    """Count events published to the Heber sink for a feed (post-dedup)."""
+    if count:
+        FEED_PUBLISHED.labels(feed=feed).inc(count)
+
+
+def record_poller_duplicates(feed: str, count: int) -> None:
+    """Count poller events suppressed by dedup for a feed."""
+    if count:
+        POLLER_DUPLICATES.labels(feed=feed).inc(count)
+
+
+def record_message_dropped(reason: str, feed: str = "unknown") -> None:
+    """Record dropped message, partitioned by reason and feed.
+
+    The ``feed`` label turns "drops are spiking" into "feed X is vanishing",
+    so a systematic validation/wrap failure that silently removes a whole feed
+    from Heber is visible per-feed instead of only in logs.
+    """
+    MESSAGE_DROPPED.labels(reason=reason, feed=feed).inc()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -136,15 +136,20 @@ clients:
   role: trader
 - enabled: true
   id: heber-watch
-  key_hash: sha256:6e9a33c16ff0190a2e60a640b85bee30cb4fed9cccb80a711237eb4587428cb6  # pragma: allowlist secret
+  key_hash: sha256:5d386ceee561e31034090faae284437b7ebc9af67511af17d6a30d7ab34618c4  # pragma: allowlist secret
   permissions:
     feeds:
     - bars
     - quotes
     - trades
+    - flow_alerts
+    - greek_exposure
+    - market_tide
+    - options
     max_symbols: 500
     providers:
     - alpaca
+    - uw
     - yfinance
     rate_limit: 300
   role: trader

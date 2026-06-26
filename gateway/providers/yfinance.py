@@ -218,10 +218,15 @@ class YFinanceProvider(DataProvider):
 
         def _fetch():
             ticker = yf.Ticker(symbol.upper())
+            # auto_adjust=False keeps Close split-adjusted but NOT
+            # dividend-adjusted, matching Alpaca's adjustment="split" basis. With
+            # the yfinance default (auto_adjust=True) Close is split+dividend
+            # adjusted, so an Alpaca→yfinance failover silently switched the
+            # price basis and introduced a discontinuity at the boundary.
             if start and end:
-                df = ticker.history(start=start, end=end, interval=interval)
+                df = ticker.history(start=start, end=end, interval=interval, auto_adjust=False)
             else:
-                df = ticker.history(period=period, interval=interval)
+                df = ticker.history(period=period, interval=interval, auto_adjust=False)
             return df
 
         df = await asyncio.to_thread(_fetch)

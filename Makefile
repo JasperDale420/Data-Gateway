@@ -1,4 +1,4 @@
-.PHONY: setup test lint format typecheck run deploy clean
+.PHONY: setup test test-all lint format typecheck run deploy clean install-hooks
 
 ## Local development setup — installs runtime + local SDK + dev tools.
 ## Bare `uv sync` will NOT work because empire-core, empire-schemas, and
@@ -6,13 +6,24 @@
 setup:
 	uv sync --extra local --extra dev
 
-## Run unit tests (fast, no network).
+## Run the test suite (everything except perf benchmarks and the real-Redis
+## integration tests). The `unit` marker was only ever applied to one file, so
+## the old `-m unit` target ran ~4 tests — this runs the real suite instead.
 test: setup
-	uv run pytest -m unit --tb=short -q
+	uv run pytest -m "not perf and not integration" --tb=short -q
 
 ## Run all tests (includes integration / perf).
 test-all: setup
 	uv run pytest --tb=short -q
+
+## Install the local git hooks (commit-stage lint/secrets + the pre-push gate),
+## both via the pre-commit framework. REQUIRED: this repo is private on the free
+## GitHub plan, so branch protection / required status checks are unavailable —
+## the pre-push gate is the only mechanical check before code reaches the remote.
+install-hooks:
+	pre-commit install
+	pre-commit install --hook-type pre-push
+	@echo "commit + pre-push hooks installed"
 
 ## Lint with ruff.
 lint:

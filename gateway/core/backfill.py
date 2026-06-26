@@ -47,6 +47,13 @@ ALPACA_CRYPTO_FEEDS = frozenset({"crypto_bars", "crypto_trades"})
 # Auto-expire completed/failed/cancelled jobs after this duration (seconds)
 JOB_EXPIRY_SECONDS = 3600
 
+# Per-underlying UW analytics feeds whose rows carry an ``expiry`` field. Without
+# an equity override, ``_infer_instrument_type`` sees ``expiry`` and tags every
+# row as ``instrument_type=option`` with a malformed ``option:{symbol}`` key (no
+# OCC suffix), which ``wrap_event`` rejects -- failing the whole chunk. The EOD
+# poller applies the same override; see ``_poll_eod_iv_term_structure``.
+UW_EQUITY_ANALYTICS_FEEDS = frozenset({"iv_term_structure", "historic_option_volume"})
+
 
 class BackfillStatus(str, Enum):
     """Lifecycle states for a backfill job."""
@@ -222,6 +229,30 @@ async def _uw_greeks(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> l
     return await p.get_greek_exposure(sym, date_str=s.strftime("%Y-%m-%d"))
 
 
+async def _uw_oi_change(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Daily EOD feed, one snapshot per trading day. Fetch the chunk's start date.
+    return await p.get_oi_change(sym, date_str=s.strftime("%Y-%m-%d"))
+
+
+async def _uw_iv_rank(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Daily EOD as-of value. ``get_iv_rank`` returns a single model (or None); wrap
+    # it in a list so the publish path handles it like every other fetcher.
+    result = await p.get_iv_rank(sym, date_str=s.strftime("%Y-%m-%d"))
+    return [result] if result else []
+
+
+async def _uw_iv_term_structure(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Per-underlying analytics: one row per expiry of the SAME ticker. The provider
+    # method is snapshot-only (no date param), so a backfill returns the current
+    # term structure regardless of [start, end] — see module note in CHANGELOG.
+    return await p.get_iv_term_structure(sym)
+
+
+async def _uw_historic_option_volume(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Daily EOD feed, volume/premium bucketed per expiry. Fetch the chunk's start date.
+    return await p.get_historic_option_volume(sym, date_str=s.strftime("%Y-%m-%d"))
+
+
 async def _uw_earnings(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
     return await p.get_earnings(sym)
 
@@ -262,6 +293,10 @@ BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     ("unusual_whales", "insider_trades"): _uw_insiders,
     ("unusual_whales", "institutions"): _uw_institutions,
     ("unusual_whales", "greek_exposure"): _uw_greeks,
+    ("unusual_whales", "oi_change"): _uw_oi_change,
+    ("unusual_whales", "iv_rank"): _uw_iv_rank,
+    ("unusual_whales", "iv_term_structure"): _uw_iv_term_structure,
+    ("unusual_whales", "historic_option_volume"): _uw_historic_option_volume,
     ("unusual_whales", "earnings"): _uw_earnings,
     ("unusual_whales", "market_tide"): _uw_market_tide,
     ("unusual_whales", "sector_tide"): _uw_sector_tide,
@@ -676,6 +711,15 @@ class BackfillEngine:
                 feed=job.request.feed,
                 job_id=job.job_id,
             )
+            # Surface a sink shortfall in the job result so a partial publish is
+            # a detectable, re-runnable gap rather than a silent undercount.
+            if published < len(items):
+                shortfall = (
+                    f"{sym} chunk {chunk_start.date()}-{chunk_end.date()}: "
+                    f"sink published {published}/{len(items)} (partial failure)"
+                )
+                sp.errors.append(shortfall)
+                job.errors.append(shortfall)
             sp.records_published += published
             job.records_published += published
             sp.chunks_complete += 1
@@ -696,6 +740,49 @@ class BackfillEngine:
                 exc_info=True,
             )
 
+    @staticmethod
+    def _equity_overrides(item: dict[str, Any], provider: str, feed: str) -> dict[str, Any]:
+        """Force the equity instrument key for per-underlying analytics feeds.
+
+        ``iv_term_structure`` / ``historic_option_volume`` rows carry an
+        ``expiry`` field, so ``_infer_instrument_type`` would otherwise tag them
+        as option contracts with a malformed ``option:{symbol}`` key and fail the
+        chunk. Mirrors the EOD poller's per-feed override.
+        """
+        if provider != "unusual_whales" or feed not in UW_EQUITY_ANALYTICS_FEEDS:
+            return {}
+        symbol = str(item.get("symbol") or item.get("ticker") or "").upper()
+        if not symbol:
+            return {}
+        return {
+            "instrument_type_override": "equity",
+            "instrument_key_override": f"equity:{symbol}",
+            "symbol_override": symbol,
+        }
+
+    @staticmethod
+    def _wrap_items(items: list[dict[str, Any]], provider: str, feed: str) -> list[tuple[str, dict[str, Any]]]:
+        """Sort items by timestamp and wrap each in an envelope.
+
+        Pure/synchronous so it can run via ``asyncio.to_thread`` off the loop.
+        Sorting groups events by date for downstream partition locality — Heber
+        partitions Silver by date, so this means fewer, larger partition flushes.
+        """
+        items.sort(key=lambda x: x.get("timestamp") or x.get("t") or "")
+        return [
+            (
+                HEBER_EVENTS_TOPIC,
+                wrap_event(
+                    event=item,
+                    provider=provider,
+                    feed=feed,
+                    source="backfill",
+                    **BackfillEngine._equity_overrides(item, provider, feed),
+                ),
+            )
+            for item in items
+        ]
+
     async def _publish_items(
         self,
         items: list[dict[str, Any]],
@@ -708,23 +795,32 @@ class BackfillEngine:
             logger.warning("backfill_publish_skipped", reason="no sink registry", job_id=job_id)
             return 0
 
-        # Sort by timestamp for downstream partition locality — Heber's consumer
-        # partitions Silver by date, so grouping events by date in the stream
-        # means fewer, larger partition flushes instead of many tiny files.
-        items.sort(key=lambda x: x.get("timestamp") or x.get("t") or "")
+        # Sort + wrap up to a full chunk of records (model-free wrap + BLAKE2b)
+        # off the event loop — on a large backfill chunk this blocks the loop the
+        # same way the UW darkpool build did. The publish stays async on-loop.
+        messages = await asyncio.to_thread(self._wrap_items, items, provider, feed)
 
-        messages: list[tuple[str, dict[str, Any]]] = []
-        for item in items:
-            envelope = wrap_event(
-                event=item,
-                provider=provider,
-                feed=feed,
-                source="backfill",
-            )
-            messages.append((HEBER_EVENTS_TOPIC, envelope))
-
-        if hasattr(self._sink_registry, "publish_all_batch"):
-            return await self._sink_registry.publish_all_batch(messages)
+        # Prefer the per-message results API: publish_all_batch returns only an
+        # aggregate count, which under a partial Redis pipeline failure can't
+        # tell which events landed — so the chunk was marked complete with an
+        # undercount and the missing rows became an undetectable hole in Heber.
+        if hasattr(self._sink_registry, "publish_all_batch_results"):
+            results = await self._sink_registry.publish_all_batch_results(messages)
+            published = sum(1 for ok in results if ok)
+            if published < len(messages):
+                logger.warning(
+                    "backfill_publish_partial",
+                    job_id=job_id,
+                    provider=provider,
+                    feed=feed,
+                    attempted=len(messages),
+                    published=published,
+                    failed=len(messages) - published,
+                    hint="events that did not confirm are not retried by backfill; "
+                    "re-run this chunk to fill the gap (unless the sink was circuit-open, "
+                    "in which case buffered events drain on reconnect)",
+                )
+            return published
 
         # Fallback: individual publishes for registries without batch support
         published = 0

@@ -97,15 +97,16 @@ def cmd_rotate_key(args):
     for client in config.get("clients", []):
         if client.get("id") == args.client_id:
             new_key = generate_key()
-            old_hash = client.get("key_hash")
 
             client["key_hash"] = hash_key(new_key)
 
-            # Keep old key hash for deprecation period
-            if "old_key_hashes" not in client:
-                client["old_key_hashes"] = []
-            if old_hash:
-                client["old_key_hashes"].append(old_hash)
+            # ponytail: rotation is a hard cutover (the old key dies immediately,
+            # fail-closed). The previous `old_key_hashes` grace-period write was
+            # dead — auth.py never read it — and could not be safely honored
+            # without an expiry timestamp (an indefinitely-valid old key is a
+            # security hole). A real grace period needs a deliberate
+            # expiring-key design; until then, don't accumulate dead hashes.
+            client.pop("old_key_hashes", None)
 
             save_clients(args.config, config)
 

@@ -389,3 +389,36 @@ def test_provider_health_check_snapshot_includes_calibration_guidance() -> None:
     assert derived["health_level"] in {"warning", "critical"}
     assert derived["latency_level"] in {"warning", "critical"}
     assert any("provider" in hint.lower() for hint in derived["recommendations"])
+
+
+def test_event_loop_stall_metrics_increment() -> None:
+    """The loop-stall watchdog feeds a counter so recurring stalls are alertable."""
+    from gateway.core.metrics import (
+        EVENT_LOOP_STALL_SECONDS,
+        EVENT_LOOP_STALLS,
+        record_event_loop_stall,
+        record_event_loop_stall_recovered,
+    )
+
+    n0 = EVENT_LOOP_STALLS._value.get()
+    s0 = EVENT_LOOP_STALL_SECONDS._value.get()
+    record_event_loop_stall()
+    record_event_loop_stall_recovered(3.5)
+    assert EVENT_LOOP_STALLS._value.get() == n0 + 1
+    assert EVENT_LOOP_STALL_SECONDS._value.get() == s0 + 3.5
+
+
+def test_path_normalization_collapses_symbol_shapes() -> None:
+    """Crypto pairs / dotted tickers must collapse to {symbol} (cardinality leak)."""
+    from gateway.core.metrics import _looks_like_symbol, _normalize_path
+
+    # Symbol-shaped segments collapse...
+    for sym in ["AAPL", "SPY", "BTC-USD", "EUR-USD", "BRK.B"]:
+        assert _looks_like_symbol(sym), sym
+    # ...lowercase route names do not.
+    for route in ["bars", "quotes", "health", "ready", "api", "v1", "alpaca"]:
+        assert not _looks_like_symbol(route), route
+
+    assert _normalize_path("/api/v1/alpaca/crypto/BTC-USD/bars") == "/api/v1/alpaca/crypto/{symbol}/bars"
+    assert _normalize_path("/api/v1/stocks/BRK.B/snapshot") == "/api/v1/stocks/{symbol}/snapshot"
+    assert _normalize_path("/health/ready") == "/health/ready"

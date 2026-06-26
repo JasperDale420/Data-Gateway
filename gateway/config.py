@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     )
 
     # Application
-    app_name: str = "Data Gateway"
     debug: bool = False
     log_level: str = "INFO"
     allow_stub_data: bool = False
@@ -56,14 +55,10 @@ class Settings(BaseSettings):
     # auth + first-bar drain). Verified safe with the Algo Trader Plus plan
     # (multi-connection); on a Basic plan, set this to "" to keep all streams lazy.
     stream_eager_connect_types: str = "stocks"
-    stream_reconnect_max_retries: int = Field(default=10, ge=1)
-    stream_reconnect_base_delay: float = Field(default=1.0, ge=0.1)
-    stream_reconnect_max_delay: float = Field(default=16.0, ge=1.0)
     stream_fanout_max_inflight: int = Field(default=100, ge=1)
     stream_fanout_batch_size: int = Field(default=32, ge=1)
 
     # Rate Limiting
-    rate_limit_enabled: bool = True
     rate_limit_default: int = Field(default=600, ge=1)  # requests per minute
     behind_trusted_proxy: bool = False  # Only trust X-Forwarded-For when behind a known proxy
     # Comma-separated CIDRs for trusted intermediate proxies (e.g. "10.0.0.0/8,172.16.0.0/12").
@@ -159,10 +154,12 @@ class Settings(BaseSettings):
     # Alpaca (loaded from env, not prefixed)
     alpaca_api_key: str = Field(default="", alias="APCA_API_KEY_ID")
     alpaca_secret_key: str = Field(default="", alias="APCA_API_SECRET_KEY")
-    alpaca_base_url: str = Field(default="https://paper-api.alpaca.markets", alias="APCA_API_BASE_URL")
 
-    # Unusual Whales
-    uw_api_key: str = Field(default="", alias="UNUSUAL_WHALES_API_KEY")
+    # Live-trading opt-in. Paper is the fail-safe default: live trading (real
+    # capital on the shared account) requires BOTH this flag AND the recognized
+    # live APCA_API_BASE_URL, so a missing/empty/typo'd URL can never silently
+    # route orders to real money. (GATEWAY_ prefix → GATEWAY_ALLOW_LIVE_TRADING.)
+    allow_live_trading: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # Phase 2: Backend Engineering Limits (PRD 6.2, 6.3, 6.5)
@@ -170,13 +167,7 @@ class Settings(BaseSettings):
 
     # Connection Limits (6.3.3-5)
     ws_idle_timeout: int = Field(default=300, ge=60)  # 5 min idle timeout
-    ws_max_duration: int = Field(default=86400, ge=3600)  # 24h max connection
     ws_max_clients: int = Field(default=1000, ge=10)  # Max concurrent clients
-
-    # Memory Limits (6.2.1-4)
-    memory_target_mb: int = Field(default=512, ge=256)  # 512MB target
-    memory_hard_limit_mb: int = Field(default=1024, ge=512)  # 1GB hard limit
-    gc_threshold_pct: int = Field(default=80, ge=50, le=95)  # GC at 80%
 
     # Graceful Shutdown (6.5.3-4)
     shutdown_drain_seconds: int = Field(default=30, ge=5, le=60)  # 30s drain
@@ -206,6 +197,16 @@ class Settings(BaseSettings):
     # default keeps headroom above the sink worker count for reconnect churn and
     # health checks during opening-bell bursts.
     data_sink_redis_pool_size: int = Field(default=32, ge=1, le=128)
+    # Failed-event retry buffer capacity. Events that exhaust all publish
+    # retries (Redis down / circuit open) are held in an in-memory deque and
+    # re-published on the next successful reconnect; the bounded deque silently
+    # evicts oldest events when full (metered via
+    # gateway_sink_buffer_evictions_total → SinkBufferEvictionsActive alert).
+    # At ~1 KB/event this caps memory at roughly capacity KB. The breaker's 15s
+    # open window at OPRA quote volume overran the prior fixed 10k in under a
+    # second, so the default is raised to 50k (~50 MB). OPRA-heavy deployments
+    # that still see evictions during a flap should raise it further.
+    data_sink_failed_buffer_capacity: int = Field(default=50_000, ge=1_000, le=1_000_000)
 
     # Bounded-queue + worker-pool dispatch parameters. Producers `put` into a
     # per-sink bounded asyncio.Queue with a short producer-block timeout; a
@@ -233,7 +234,12 @@ class Settings(BaseSettings):
     #   receive loop. A drop is a true emergency (queue is full AND
     #   workers can't drain in 100ms).
     data_sink_queue_size: int = Field(default=16384, ge=64, le=65536)
-    data_sink_worker_count: int = Field(default=16, ge=1, le=64)
+    # Raised 16 → 24 (still < pool_size 32, leaving headroom for reconnect /
+    # health-check churn) to widen drain throughput against the Redis sink and
+    # reduce producer-timeout drops during opening-bell bursts. This is a
+    # throughput lever, not a fix for event-loop starvation — if drops persist
+    # the bottleneck is loop saturation, which needs profiling, not more workers.
+    data_sink_worker_count: int = Field(default=24, ge=1, le=64)
     data_sink_producer_block_timeout_seconds: float = Field(default=0.1, ge=0.001, le=5.0)
     rest_sink_excluded_feeds: str = Field(
         default="greek_exposure,iv_rank,iv_term_structure,short_data,ftd,flow_alerts,darkpool",
@@ -287,6 +293,12 @@ class Settings(BaseSettings):
     option_capture_symbol_timeout_overrides: str = ""  # comma-separated SYMBOL:SECONDS pairs, e.g. "SPY:45,QQQ:45"
     option_capture_ws_enabled: bool = True
     option_capture_ws_contract_limit_per_symbol: int = Field(default=40, ge=1)
+
+    # Event-loop stall watchdog (diagnostics): an off-loop thread stack-dumps the
+    # event loop when it is blocked longer than the threshold, capturing the
+    # synchronous frame behind multi-second on_message_slow stalls / heartbeat drops.
+    loop_watchdog_enabled: bool = True
+    loop_watchdog_stall_threshold_seconds: float = Field(default=5.0, ge=1.0)
 
     # Replay
     replay_messages_max_in_memory: int = Field(default=50_000, ge=100)

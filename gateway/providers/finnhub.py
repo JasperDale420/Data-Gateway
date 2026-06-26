@@ -12,6 +12,7 @@ from gateway.core.http_client import create_async_http_client, http_retry
 from gateway.core.logger import logger
 from gateway.core.metrics import httpx_event_hooks, record_provider_quote_batch_size
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
+from gateway.providers._errors import log_provider_http_error
 from gateway.schemas import NormalizedBar, NormalizedQuote
 
 
@@ -145,7 +146,7 @@ class FinnhubProvider(DataProvider):
                 provider="finnhub",
             )
         except Exception as e:
-            logger.error("finnhub_quote_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_quote_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -287,7 +288,7 @@ class FinnhubProvider(DataProvider):
                 logger.info("finnhub_bars_fetched", symbol=symbol, count=len(bars))
 
             except Exception as e:
-                logger.error("finnhub_bars_failed", symbol=symbol, error=str(e))
+                log_provider_http_error("finnhub_bars_failed", e, symbol=symbol)
                 # Continue to next symbol
                 continue
 
@@ -329,7 +330,7 @@ class FinnhubProvider(DataProvider):
                 "phone": data.get("phone"),
             }
         except Exception as e:
-            logger.error("finnhub_profile_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_profile_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -361,7 +362,7 @@ class FinnhubProvider(DataProvider):
                 "price_to_sales": metrics.get("psTTM"),
             }
         except Exception as e:
-            logger.error("finnhub_financials_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_financials_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -417,7 +418,7 @@ class FinnhubProvider(DataProvider):
             return articles
 
         except Exception as e:
-            logger.error("finnhub_news_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_news_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -457,7 +458,7 @@ class FinnhubProvider(DataProvider):
             return articles
 
         except Exception as e:
-            logger.error("finnhub_market_news_failed", category=category, error=str(e))
+            log_provider_http_error("finnhub_market_news_failed", e, category=category)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -510,7 +511,7 @@ class FinnhubProvider(DataProvider):
             return earnings
 
         except Exception as e:
-            logger.error("finnhub_earnings_calendar_failed", error=str(e))
+            log_provider_http_error("finnhub_earnings_calendar_failed", e)
             raise
 
     @http_retry
@@ -541,7 +542,7 @@ class FinnhubProvider(DataProvider):
             ]
 
         except Exception as e:
-            logger.error("finnhub_recommendations_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_recommendations_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -574,7 +575,7 @@ class FinnhubProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("finnhub_eps_estimates_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_eps_estimates_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -598,7 +599,7 @@ class FinnhubProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("finnhub_revenue_estimates_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_revenue_estimates_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -622,7 +623,7 @@ class FinnhubProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("finnhub_ebit_estimates_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_ebit_estimates_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -646,7 +647,7 @@ class FinnhubProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("finnhub_ebitda_estimates_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_ebitda_estimates_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -673,7 +674,7 @@ class FinnhubProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("finnhub_price_target_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_price_target_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -695,7 +696,7 @@ class FinnhubProvider(DataProvider):
             return response.json()  # Returns list of peer symbols
 
         except Exception as e:
-            logger.error("finnhub_peers_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_peers_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -719,7 +720,7 @@ class FinnhubProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("finnhub_metrics_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_metrics_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -749,7 +750,7 @@ class FinnhubProvider(DataProvider):
             ]
 
         except Exception as e:
-            logger.error("finnhub_executives_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_executives_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -772,7 +773,7 @@ class FinnhubProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("finnhub_ownership_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_ownership_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -795,7 +796,7 @@ class FinnhubProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("finnhub_fund_ownership_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_fund_ownership_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -834,7 +835,7 @@ class FinnhubProvider(DataProvider):
             ]
 
         except Exception as e:
-            logger.error("finnhub_insider_transactions_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_insider_transactions_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -861,7 +862,7 @@ class FinnhubProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("finnhub_insider_sentiment_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_insider_sentiment_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -879,7 +880,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_upgrade_downgrade_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_upgrade_downgrade_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -897,7 +898,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_social_sentiment_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_social_sentiment_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -919,7 +920,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_etf_profile_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_etf_profile_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -937,7 +938,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_etf_holdings_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_etf_holdings_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -955,7 +956,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_etf_sector_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_etf_sector_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -973,7 +974,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_etf_country_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_etf_country_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -995,7 +996,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_index_constituents_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_index_constituents_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -1013,7 +1014,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_index_historical_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_index_historical_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -1035,7 +1036,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_support_resistance_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_support_resistance_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -1053,7 +1054,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_pattern_recognition_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_pattern_recognition_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -1075,7 +1076,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_forex_rates_failed", base=base, error=str(e))
+            log_provider_http_error("finnhub_forex_rates_failed", e, base=base)
             raise
 
     @http_retry
@@ -1090,7 +1091,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_forex_exchanges_failed", error=str(e))
+            log_provider_http_error("finnhub_forex_exchanges_failed", e)
             raise
 
     @http_retry
@@ -1108,7 +1109,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_forex_symbols_failed", exchange=exchange, error=str(e))
+            log_provider_http_error("finnhub_forex_symbols_failed", e, exchange=exchange)
             raise
 
     @http_retry
@@ -1142,7 +1143,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_forex_candles_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_forex_candles_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -1161,7 +1162,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_crypto_exchanges_failed", error=str(e))
+            log_provider_http_error("finnhub_crypto_exchanges_failed", e)
             raise
 
     @http_retry
@@ -1179,7 +1180,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_crypto_symbols_failed", exchange=exchange, error=str(e))
+            log_provider_http_error("finnhub_crypto_symbols_failed", e, exchange=exchange)
             raise
 
     @http_retry
@@ -1213,7 +1214,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_crypto_candles_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_crypto_candles_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -1231,7 +1232,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_crypto_profile_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_crypto_profile_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -1253,7 +1254,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_mf_profile_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_mf_profile_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -1271,7 +1272,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_mf_holdings_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_mf_holdings_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -1289,7 +1290,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_mf_sector_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_mf_sector_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -1308,7 +1309,7 @@ class FinnhubProvider(DataProvider):
             return response.json()
 
         except Exception as e:
-            logger.error("finnhub_fda_calendar_failed", error=str(e))
+            log_provider_http_error("finnhub_fda_calendar_failed", e)
             raise
 
     @http_retry
@@ -1333,7 +1334,7 @@ class FinnhubProvider(DataProvider):
             return response.json().get("data", [])
 
         except Exception as e:
-            logger.error("finnhub_congress_trading_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_congress_trading_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -1356,7 +1357,7 @@ class FinnhubProvider(DataProvider):
             return response.json().get("data", [])
 
         except Exception as e:
-            logger.error("finnhub_lobbying_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_lobbying_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -1379,5 +1380,5 @@ class FinnhubProvider(DataProvider):
             return response.json().get("data", [])
 
         except Exception as e:
-            logger.error("finnhub_usa_spending_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("finnhub_usa_spending_failed", e, symbol=symbol)
             raise

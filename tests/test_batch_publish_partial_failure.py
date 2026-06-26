@@ -287,9 +287,7 @@ async def test_uw_poller_only_marks_successful_entries() -> None:
     # UW poller uses the indexed batch API (it threads the exact succeeded
     # indices into the flow WS fan-out for push/poll event-id parity); mirror
     # ``_results`` as the set of succeeded local indices.
-    sink.publish_all_batch_indexed = AsyncMock(
-        side_effect=lambda msgs: {i for i in range(len(msgs)) if i != 2}
-    )
+    sink.publish_all_batch_indexed = AsyncMock(side_effect=lambda msgs: {i for i in range(len(msgs)) if i != 2})
 
     poller = UWPoller()
     poller._redis_dedupe = None

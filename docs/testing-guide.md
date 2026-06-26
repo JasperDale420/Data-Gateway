@@ -1,0 +1,251 @@
+# Data-Gateway — Testing Guide
+
+How to run, organize, and write tests for Data-Gateway. For perf-gate / CI specifics see [deployment-guide.md](deployment-guide.md).
+
+---
+
+## 1. Quick Start
+
+```bash
+# First time / after lock-file changes
+make setup                      # uv sync --extra local --extra dev
+
+# Unit tests only (fast, no I/O, no network)
+make test                       # uv run pytest -m unit --tb=short -q
+
+# Everything except perf (the default)
+uv run pytest
+
+# Single file
+uv run pytest tests/test_envelope.py
+
+# Single test by name
+uv run pytest -k "test_event_id_dedup"
+
+# Performance benchmarks (excluded by default)
+uv run pytest -m perf
+
+# Coverage
+uv run pytest --cov=gateway --cov-report=term-missing
+```
+
+> **Always** use `make setup` (or `uv sync --extra local --extra dev`) — a bare `uv sync` uninstalls `empire-core`, `empire-schemas`, and the vendored UW SDK, and the gateway will fail to import.
+
+---
+
+## 2. Test Layout
+
+```
+tests/
+├── conftest.py                 # Shared fixtures (TestClient, mocked providers, test API key)
+├── fixtures/                   # Static JSON fixtures of provider responses
+├── generate_fixtures.py        # Refresh fixtures from live providers
+├── smoke/                      # Live-provider smoke tests (gated, manual / nightly CI)
+├── perf/                       # Benchmark tests, marker `perf`, excluded by default
+└── test_*.py                   # ~120 unit + integration tests, grouped by router or core module
+```
+
+Test file naming convention:
+- `test_<provider>_<concern>_router.py` — router-level tests (`test_alpaca_stock_router.py`, `test_finnhub_news_router.py`, …)
+- `test_<provider>_provider.py` — provider adapter tests
+- `test_<core_module>.py` — core infrastructure tests (`test_envelope.py`, `test_circuit_breaker.py`, `test_cache.py`, …)
+
+---
+
+## 3. Markers
+
+Declared in `pyproject.toml`:
+
+| Marker | Definition | When to use |
+|--------|------------|-------------|
+| `unit` | Fast, isolated, no I/O or network | Default for pure-function and mocked tests |
+| `integration` | Real DB / file I/O / component interactions | When the test touches more than one core module |
+| `e2e` | Full system flow | Smoke flows that exercise startup → request → sink → shutdown |
+| `slow` | Tests > 1s | Long-running tests excluded by default |
+| `perf` | Benchmark / performance tests | Excluded by default via `addopts = "-m 'not perf'"` |
+
+Apply with `@pytest.mark.<marker>` or via the `pytestmark = pytest.mark.<marker>` module-level convention.
+
+---
+
+## 4. pytest Configuration
+
+From `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-v --tb=short -m 'not perf'"
+```
+
+- `asyncio_mode = "auto"` — write `async def test_*` without `@pytest.mark.asyncio`.
+- `asyncio_default_fixture_loop_scope = "function"` — each test gets its own event loop (prevents fixture bleed).
+- `addopts` excludes `perf` by default and uses short tracebacks.
+
+---
+
+## 5. Fixtures
+
+The canonical fixtures live in `tests/conftest.py`. Highlights:
+
+- **`client`** — FastAPI `TestClient(app)` with mocked provider registry.
+- **`async_client`** — `httpx.AsyncClient` against the same app.
+- **`test_api_key`** — the `test` client key from `config/clients.yaml`. Pre-built `auth_headers` fixture wraps it as `{"X-Gateway-Key": ...}`.
+- **Provider mocks** — `MockAlpacaProvider`, etc., implementing `DataProvider`. Returns deterministic fixture data from `tests/fixtures/`.
+- **`redis_mock`** — `fakeredis` instance for cache / dedup / sink tests.
+
+```python
+async def test_alpaca_bars_returns_envelope(client, auth_headers):
+    resp = client.get(
+        "/api/v1/alpaca/stocks/AAPL/bars?start=2026-01-01&end=2026-01-02",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["data"]["envelope"]["instrument_key"] == "equity:AAPL"
+```
+
+---
+
+## 6. Smoke Tests (Live Providers)
+
+`tests/smoke/` exercises real providers. **Not** run by default — they need real API keys and provider availability.
+
+```bash
+# Local (requires .env populated with real keys)
+uv run pytest tests/smoke -v
+
+# Via the dedicated harness with structured output
+python scripts/live_provider_smoke.py
+```
+
+`scripts/live_provider_smoke.py` produces a structured report consumed by the CI workflow in `.github/workflows/release-readiness.yml`. Historical reports are checked into `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md`.
+
+---
+
+## 7. Performance Tests
+
+`tests/perf/` contains benchmark tests (marker: `perf`).
+
+```bash
+uv run pytest -m perf
+```
+
+CI runs them via `scripts/perf_gate.py` (`.github/workflows/perf-guardrail.yml`):
+
+```bash
+python scripts/perf_gate.py \
+  --budgets-file config/perf_budgets.json \
+  --baseline-file config/perf_baseline.json \
+  --junit-xml perf-junit.xml \
+  --log-file perf-output.txt \
+  --summary-file perf-summary.json
+```
+
+- **Budgets** live in `config/perf_budgets.json`.
+- **Baselines** live in `config/perf_baseline.json` — managed via `scripts/perf_baseline_manager.py`.
+- **Promotion** of new baselines: `scripts/perf_promote_active_configs.py`.
+- **Release readiness**: `scripts/perf_release_readiness.py` + `docs/audits/PERF_RELEASE_READINESS.md`.
+
+---
+
+## 8. Fixture Generation
+
+`tests/generate_fixtures.py` re-pulls live provider responses and writes them to `tests/fixtures/`. Run only when:
+
+- a provider changes its response schema
+- you're adding a new feed or endpoint
+- a fixture has gone stale (e.g. references a delisted symbol)
+
+```bash
+uv run python tests/generate_fixtures.py --provider alpaca --endpoint bars
+```
+
+Commit the regenerated fixtures alongside the code change that motivated them.
+
+---
+
+## 9. Coverage
+
+```bash
+uv run pytest --cov=gateway --cov-report=term-missing
+```
+
+Coverage config (`pyproject.toml [tool.coverage.*]`):
+- `branch = true`
+- `source = ["gateway"]`
+- omits: `tests/*`, `scripts/*`, `*/__init__.py`
+- excludes lines like `if __name__ == .__main__.:`, `raise NotImplementedError`, `if TYPE_CHECKING:`
+
+There is no enforced coverage threshold — coverage is a directional signal, not a gate.
+
+---
+
+## 10. Pre-Commit
+
+`.pre-commit-config.yaml` runs on every commit:
+
+```bash
+pre-commit install                 # first time
+pre-commit run --all-files         # ad-hoc
+```
+
+Hooks include `ruff`, `ruff-format`, `detect-secrets`, plus a check that `PROVIDER_ENDPOINT_CONTRACT.md` is in sync with the live routes (`scripts/generate_provider_contract.py --check`).
+
+---
+
+## 11. Common Patterns
+
+### Mocking an outbound HTTP call
+Use `httpx.MockTransport` or `respx`:
+```python
+from httpx import MockTransport, Response
+
+async def test_with_mocked_finnhub(client, auth_headers, monkeypatch):
+    def handler(request):
+        return Response(200, json={"c": 150.25, "h": 151.0, "l": 149.5, ...})
+
+    transport = MockTransport(handler)
+    # inject via the http_client factory
+```
+
+### Asserting an `EventEnvelope` was sunk
+Use the `mock_sink` fixture (records every `publish_all` call):
+```python
+async def test_stream_event_reaches_sink(client, mock_sink):
+    # ... trigger a stream event ...
+    assert len(mock_sink.published) == 1
+    env = mock_sink.published[0]
+    assert env.provider == "alpaca"
+    assert env.feed == "stock_bars"
+    assert env.instrument_key == "equity:AAPL"
+```
+
+### Testing the circuit breaker
+Force the breaker open by calling `cb.record_failure()` repeatedly, then assert the next call short-circuits without invoking the underlying.
+
+---
+
+## 12. Troubleshooting
+
+| Symptom | Cause / Fix |
+|---------|-------------|
+| `ImportError: empire_core` | Ran `uv sync` without `--extra local`. Re-run `make setup`. |
+| `RuntimeError: This event loop is already running` | A sync fixture is awaiting an async resource. Mark the fixture `async` or use `asyncio_default_fixture_loop_scope`. |
+| Test hangs on shutdown | A background task wasn't tracked; `ShutdownCoordinator` is waiting. Add the task to the coordinator's set. |
+| `401 Unauthorized` in tests | Missing `auth_headers` fixture. The `test` client must be enabled in `config/clients.yaml`. |
+| Flaky timing-based test | Use `freezegun` or `asyncio` virtual time (`pytest-aiohttp` patterns). |
+
+---
+
+## 13. Related Documents
+
+- [project-overview-pdr.md](project-overview-pdr.md)
+- [codebase-summary.md](codebase-summary.md)
+- [code-standards.md](code-standards.md) — coding conventions and gotchas
+- [deployment-guide.md](deployment-guide.md) — CI workflows and perf gate
+- `../TESTING.md` — short historical testing note (kept for reference)
+- `../scripts/live_provider_smoke.py` — live-provider smoke harness

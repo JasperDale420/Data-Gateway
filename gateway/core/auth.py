@@ -126,6 +126,21 @@ class ClientAuthenticator:
                     key_hash = key_hash[7:]
                 self._hashed_keys[key_hash] = client_id
 
+        # Order-ownership safety: the ``c-{id}-`` marker uniquely identifies an
+        # order's owner ONLY if no client id is a hyphen-prefix of another —
+        # e.g. ``heber`` + ``heber-watch`` means ``c-heber-`` prefixes
+        # ``c-heber-watch-...``, so ``heber`` could cancel/replace
+        # ``heber-watch``'s orders. Fail loud at startup rather than silently
+        # cross-wire two trading clients' order isolation.
+        ids = list(self._clients.keys())
+        for a in ids:
+            for b in ids:
+                if a != b and b.startswith(a + "-"):
+                    raise InvalidClientIdError(
+                        f"client id {a!r} is an order-ownership prefix of {b!r} "
+                        f"(c-{a}- prefixes c-{b}-) — rename one to keep per-client order isolation safe."
+                    )
+
         logger.info(
             "clients_loaded",
             count=len(self._clients),
@@ -218,6 +233,28 @@ class ClientAuthenticator:
         """Get client by ID."""
         return self._clients.get(client_id)
 
+    def client_for_key(self, api_key: str) -> Client | None:
+        """Resolve an enabled client by API key WITHOUT audit logging.
+
+        Used by the rate-limit middleware (which runs before the auth
+        dependency) to honor a client's per-client rate_limit. Mirrors
+        ``authenticate``'s key matching but emits no audit events, so it can
+        run on every request without doubling the audit trail.
+        """
+        if not api_key:
+            return None
+        client_id = self._plaintext_keys.get(api_key)
+        if not client_id:
+            key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            for stored_hash, stored_client_id in self._hashed_keys.items():
+                if hmac.compare_digest(key_hash, stored_hash):
+                    client_id = stored_client_id
+                    break
+        if not client_id:
+            return None
+        client = self._clients.get(client_id)
+        return client if client and client.enabled else None
+
     def list_client_ids(self) -> list[str]:
         """Return the list of all configured client ids.
 
@@ -229,12 +266,28 @@ class ClientAuthenticator:
         return list(self._clients.keys())
 
     def reload(self) -> None:
-        """Reload clients from configuration."""
-        self._clients.clear()
-        self._plaintext_keys.clear()
-        self._hashed_keys.clear()
-        self._load_clients()
-        logger.info("clients_reloaded")
+        """Reload clients from configuration atomically.
+
+        Builds the client maps into fresh dicts and swaps them in only on a
+        fully successful load. A malformed config (bad YAML, invalid client id,
+        unreadable file) leaves the previously-loaded clients serving rather
+        than clearing every key and 401-locking all trading clients until the
+        process is restarted. The prior approach cleared the maps *before*
+        re-parsing, so a single bad edit + SIGHUP locked out every client.
+        """
+        previous = (self._clients, self._plaintext_keys, self._hashed_keys)
+        self._clients = {}
+        self._plaintext_keys = {}
+        self._hashed_keys = {}
+        try:
+            self._load_clients()
+        except Exception:
+            # Roll back to the last-good maps so a bad config can't lock out
+            # live trading clients. Re-raise so the SIGHUP handler logs it.
+            self._clients, self._plaintext_keys, self._hashed_keys = previous
+            logger.error("clients_reload_failed_kept_previous", exc_info=True)
+            raise
+        logger.info("clients_reloaded", count=len(self._clients))
 
     @staticmethod
     def hash_key(key: str) -> str:

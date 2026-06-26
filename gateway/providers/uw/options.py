@@ -3,12 +3,22 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 
 from gateway.core.logger import logger
 from gateway.schemas import NormalizedIVRank
 
 from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_float, _safe_int
 from .transient import is_transient_upstream_error
+
+
+def _parse_uw_timestamp(value: Any) -> datetime:
+    if not value:
+        return datetime.now(UTC)
+    timestamp = datetime.fromisoformat(str(value).replace("Z", TZ_UTC_SUFFIX))
+    if timestamp.tzinfo is None:
+        return timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC)
 
 
 class UWOptionsMixin:
@@ -36,11 +46,7 @@ class UWOptionsMixin:
             for item in self._extract_data(response):
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
                 timestamp_str = get("timestamp") or get("date")
-                timestamp = (
-                    datetime.fromisoformat(str(timestamp_str).replace("Z", TZ_UTC_SUFFIX))
-                    if timestamp_str
-                    else datetime.now(UTC)
-                )
+                timestamp = _parse_uw_timestamp(timestamp_str)
                 results.append(
                     NormalizedGreekExposure(
                         symbol=symbol.upper(),
@@ -228,11 +234,7 @@ class UWOptionsMixin:
             for item in self._extract_data(response):
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
                 timestamp_str = get("timestamp") or get("time")
-                timestamp = (
-                    datetime.fromisoformat(str(timestamp_str).replace("Z", TZ_UTC_SUFFIX))
-                    if timestamp_str
-                    else datetime.now(UTC)
-                )
+                timestamp = _parse_uw_timestamp(timestamp_str)
                 results.append(
                     NormalizedNetPremiumTick(
                         symbol=symbol.upper(),
@@ -331,7 +333,7 @@ class UWOptionsMixin:
             try:
                 response = await self._call_sync(
                     http_client.get,
-                    f"/api/stock/{symbol.upper()}/iv-rank",
+                    f"/api/stock/{quote(symbol.upper(), safe='')}/iv-rank",
                     params=params,
                 )
                 response.raise_for_status()
@@ -347,7 +349,7 @@ class UWOptionsMixin:
                     )
                     response = await self._call_sync(
                         http_client.get,
-                        f"/api/stock/{symbol.upper()}/iv-rank",
+                        f"/api/stock/{quote(symbol.upper(), safe='')}/iv-rank",
                     )
                     response.raise_for_status()
                     payload = response.json()

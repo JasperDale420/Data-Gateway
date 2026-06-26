@@ -68,3 +68,32 @@ def test_eod_state_invalid_json_is_treated_as_missing_and_logged(tmp_path, caplo
     assert warnings
 
     assert store.claim("2026-06-12") is True
+
+
+def test_eod_state_release_clears_running_claim_for_retry(tmp_path):
+    """Releasing a running claim lets the same day be re-run immediately."""
+    path = tmp_path / "uw_eod_state.json"
+    store = UwEodStateStore(path, stale_after_seconds=3600)
+
+    assert store.claim("2026-06-25") is True
+    assert store.should_defer("2026-06-25") is True  # running blocks re-run
+
+    store.release("2026-06-25")
+
+    assert store.should_defer("2026-06-25") is False  # released
+    # A fresh instance (restart) can also re-claim.
+    reloaded = UwEodStateStore(path, stale_after_seconds=3600)
+    assert reloaded.claim("2026-06-25") is True
+
+
+def test_eod_state_release_preserves_completed_state(tmp_path):
+    """Release must never clear a completed run (no duplicate same-day run)."""
+    path = tmp_path / "uw_eod_state.json"
+    store = UwEodStateStore(path, stale_after_seconds=3600)
+
+    store.claim("2026-06-25")
+    store.mark_completed("2026-06-25", totals={})
+
+    store.release("2026-06-25")  # must be a no-op on a completed run
+
+    assert store.should_skip("2026-06-25") is True

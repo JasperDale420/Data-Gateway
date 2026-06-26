@@ -17,6 +17,7 @@ from gateway.core.http_client import create_async_http_client, http_retry
 from gateway.core.logger import logger
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
+from gateway.providers._errors import log_provider_http_error
 from gateway.schemas import NormalizedBar, NormalizedQuote
 
 PROVIDER_NOT_INIT = "Provider not initialized"
@@ -296,7 +297,7 @@ class AlphaVantageProvider(DataProvider):
                 provider="alphavantage",
             )
         except Exception as e:
-            logger.error("alphavantage_quote_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("alphavantage_quote_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -437,7 +438,7 @@ class AlphaVantageProvider(DataProvider):
             return bars
 
         except Exception as e:
-            logger.error("alphavantage_intraday_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("alphavantage_intraday_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -500,7 +501,7 @@ class AlphaVantageProvider(DataProvider):
             if self._is_rate_limit_error(e):
                 logger.warning("alphavantage_daily_rate_limited", symbol=symbol, error=str(e))
             else:
-                logger.error("alphavantage_daily_failed", symbol=symbol, error=str(e))
+                log_provider_http_error("alphavantage_daily_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -554,7 +555,7 @@ class AlphaVantageProvider(DataProvider):
             if self._is_rate_limit_error(e):
                 logger.warning("alphavantage_weekly_rate_limited", symbol=symbol, error=str(e))
             else:
-                logger.error("alphavantage_weekly_failed", symbol=symbol, error=str(e))
+                log_provider_http_error("alphavantage_weekly_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -611,7 +612,7 @@ class AlphaVantageProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("alphavantage_overview_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("alphavantage_overview_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -634,7 +635,7 @@ class AlphaVantageProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("alphavantage_earnings_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("alphavantage_earnings_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -657,7 +658,7 @@ class AlphaVantageProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("alphavantage_income_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("alphavantage_income_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -680,7 +681,7 @@ class AlphaVantageProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("alphavantage_balance_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("alphavantage_balance_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -703,7 +704,7 @@ class AlphaVantageProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("alphavantage_cashflow_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("alphavantage_cashflow_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -765,7 +766,7 @@ class AlphaVantageProvider(DataProvider):
             if self._is_rate_limit_error(e):
                 logger.warning("alphavantage_monthly_rate_limited", symbol=symbol, error=str(e))
             else:
-                logger.error("alphavantage_monthly_failed", symbol=symbol, error=str(e))
+                log_provider_http_error("alphavantage_monthly_failed", e, symbol=symbol)
             raise
 
     async def search_symbols(self, keywords: str) -> list[dict[str, Any]]:
@@ -787,7 +788,7 @@ class AlphaVantageProvider(DataProvider):
             ]
 
         except Exception as e:
-            logger.error("alphavantage_search_failed", keywords=keywords, error=str(e))
+            log_provider_http_error("alphavantage_search_failed", e, keywords=keywords)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -851,7 +852,7 @@ class AlphaVantageProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("alphavantage_indicator_failed", symbol=symbol, indicator=indicator, error=str(e))
+            log_provider_http_error("alphavantage_indicator_failed", e, symbol=symbol, indicator=indicator)
             raise
 
     # Convenience methods for common indicators
@@ -982,7 +983,7 @@ class AlphaVantageProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("alphavantage_forex_rate_failed", error=str(e))
+            log_provider_http_error("alphavantage_forex_rate_failed", e)
             raise
 
     @http_retry
@@ -1011,7 +1012,7 @@ class AlphaVantageProvider(DataProvider):
             ]
 
         except Exception as e:
-            logger.error("alphavantage_forex_daily_failed", error=str(e))
+            log_provider_http_error("alphavantage_forex_daily_failed", e)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -1033,7 +1034,7 @@ class AlphaVantageProvider(DataProvider):
             return data.get("Crypto Rating (FCAS)", {})
 
         except Exception as e:
-            logger.error("alphavantage_crypto_rating_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("alphavantage_crypto_rating_failed", e, symbol=symbol)
             raise
 
     @http_retry
@@ -1063,7 +1064,7 @@ class AlphaVantageProvider(DataProvider):
             ]
 
         except Exception as e:
-            logger.error("alphavantage_crypto_daily_failed", symbol=symbol, error=str(e))
+            log_provider_http_error("alphavantage_crypto_daily_failed", e, symbol=symbol)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -1101,7 +1102,7 @@ class AlphaVantageProvider(DataProvider):
             }
 
         except Exception as e:
-            logger.error("alphavantage_economic_failed", indicator=indicator, error=str(e))
+            log_provider_http_error("alphavantage_economic_failed", e, indicator=indicator)
             raise
 
     # ─────────────────────────────────────────────────────────────────
@@ -1143,7 +1144,7 @@ class AlphaVantageProvider(DataProvider):
             return self._parse_csv_response(response.text)
 
         except Exception as e:
-            logger.error("alphavantage_earnings_calendar_failed", error=str(e))
+            log_provider_http_error("alphavantage_earnings_calendar_failed", e)
             raise
 
     @http_retry
@@ -1160,7 +1161,7 @@ class AlphaVantageProvider(DataProvider):
             return self._parse_csv_response(response.text)
 
         except Exception as e:
-            logger.error("alphavantage_ipo_calendar_failed", error=str(e))
+            log_provider_http_error("alphavantage_ipo_calendar_failed", e)
             raise
 
     @http_retry
@@ -1187,5 +1188,5 @@ class AlphaVantageProvider(DataProvider):
             return self._parse_csv_response(response.text)
 
         except Exception as e:
-            logger.error("alphavantage_listing_status_failed", state=state, error=str(e))
+            log_provider_http_error("alphavantage_listing_status_failed", e, state=state)
             raise

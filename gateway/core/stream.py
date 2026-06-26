@@ -7,6 +7,7 @@ crypto, news) and fans out received data to subscribed downstream clients.
 import asyncio
 import json
 import random
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -22,6 +23,7 @@ from websockets.asyncio.client import ClientConnection
 from gateway.core.envelope import fast_wrap_streaming_event
 from gateway.core.logger import logger
 from gateway.core.metrics import (
+    record_message_dropped,
     record_stream_fanout_batch_size,
     record_stream_fanout_dispatch_event,
     set_stream_fanout_limits_metrics,
@@ -43,6 +45,11 @@ def _is_occ_option_symbol(symbol: str) -> bool:
 
 DEFAULT_FANOUT_MAX_INFLIGHT = 100
 DEFAULT_FANOUT_BATCH_SIZE = 32
+
+# How often the multiplexer supervisor checks for upstreams that went dormant
+# while clients are still subscribed, and revives them. ponytail: a constant,
+# not a config knob — no deployment needs to tune the revival cadence.
+STREAM_SUPERVISOR_INTERVAL_SECONDS = 20.0
 # Warn when a single on_message call holds the receive loop this long;
 # long handlers fill Alpaca's outbound buffer and can trigger their
 # slow-client (407) disconnect path, surfacing on our side as code 1006.
@@ -83,14 +90,24 @@ class SequenceTracker:
     iteration. No lock is needed.
     """
 
+    # ponytail: LRU cap on tracked (symbol, feed) keys. With OPRA options
+    # streaming, one key per OCC contract accumulates forever (reset() is never
+    # called in-process), a slow RSS leak toward an OOM restart. Evicting a
+    # stale contract harmlessly restarts its sequence at 1 (looks like a gap,
+    # no data loss). Upgrade to per-feed caps if one feed needs >50k live keys.
+    _MAX_COUNTERS = 50_000
+
     def __init__(self) -> None:
-        self._counters: dict[tuple[str, str], int] = {}
+        self._counters: OrderedDict[tuple[str, str], int] = OrderedDict()
 
     def next_seq(self, symbol: str, feed: str) -> int:
         """Return the next sequence number for (symbol, feed)."""
         key = (symbol, feed)
         seq = self._counters.get(key, 0) + 1
         self._counters[key] = seq
+        self._counters.move_to_end(key)
+        if len(self._counters) > self._MAX_COUNTERS:
+            self._counters.popitem(last=False)  # evict least-recently-used contract
         return seq
 
     def reset(self) -> None:
@@ -918,10 +935,24 @@ class StreamMultiplexer:
         }
 
         self._running = False
-        self._tasks: list[asyncio.Task] = []
+        # A set (not a list) with a done-callback discard so completed tasks —
+        # e.g. a stream that went dormant and returned, then was revived with a
+        # fresh start() task — don't accumulate forever over a multi-day run.
+        self._tasks: set[asyncio.Task] = set()
+        self._supervisor_task: asyncio.Task | None = None
         self._fanout_semaphore = asyncio.Semaphore(self._fanout_max_inflight)
         self._validator: Any | None = None
         self._seq_tracker = SequenceTracker()
+
+    def _track_task(self, task: asyncio.Task) -> None:
+        """Track a stream task and auto-remove it on completion.
+
+        A dormant stream's start() task returns when it gives up; reviving the
+        stream schedules a new one. Without the discard callback the completed
+        task stays referenced forever — a slow leak over many reconnect cycles.
+        """
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def _get_stream_validator(self) -> Any:
         """Lazily resolve and cache the shared market-data validator."""
@@ -958,7 +989,7 @@ class StreamMultiplexer:
             for stream_type, conn in self._connections.items():
                 conn._running = True
                 task = asyncio.create_task(conn.start())
-                self._tasks.append(task)
+                self._track_task(task)
                 logger.info("stream_started", stream=stream_type.value)
         elif self._eager_connect_types:
             # Selective eager: start only the named stream types, leave rest lazy.
@@ -971,12 +1002,61 @@ class StreamMultiplexer:
                 if self._stream_type_in_eager_set(stream_type):
                     conn._running = True
                     task = asyncio.create_task(conn.start())
-                    self._tasks.append(task)
+                    self._track_task(task)
                     logger.info("stream_started_eager", stream=stream_type.value)
                 else:
                     logger.info("stream_lazy", stream=stream_type.value)
         else:
             logger.info("lazy_connect_enabled", message="Streams will connect on first subscription")
+
+        # Supervisor (all modes): revive any upstream that goes dormant while
+        # clients are still subscribed. Without it, a stream that exhausts its
+        # reconnect budget stays dead — delivering nothing to clients or the
+        # Heber sink — until a *new* subscribe, which long-lived bots never send.
+        self._supervisor_task = asyncio.create_task(self._supervise_connections(), name="stream_supervisor")
+
+    async def _supervise_connections(self) -> None:
+        """Periodically revive upstreams that went dormant with live subscribers.
+
+        An ``UpstreamConnection`` that exhausts its reconnect budget (or hits a
+        non-recoverable error such as "connection limit exceeded") sets
+        ``_running = False`` and returns, expecting a *future* ``client_subscribe``
+        to restart it. Long-lived trading bots subscribe once and never
+        re-subscribe, so without this loop a dormant stream delivers zero ticks
+        to clients AND zero events to the Heber sink until the process is
+        restarted — the top production page risk. The 20s cadence plus each
+        connection's own backoff keeps a persistently-failing upstream on a slow
+        retry cycle rather than a tight loop.
+        """
+        while self._running:
+            try:
+                await asyncio.sleep(STREAM_SUPERVISOR_INTERVAL_SECONDS)
+                await self._supervise_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("stream_supervisor_error")
+
+    async def _supervise_once(self) -> None:
+        """One supervisor pass: revive dormant upstreams that still have subs."""
+        for stream_type, conn in self._connections.items():
+            # Connected or actively (re)connecting → it's handling itself. Only
+            # a stream that gave up (``_running == False``) and is not connected
+            # is truly dormant.
+            if conn._running or conn.is_connected:
+                continue
+            bars, quotes, trades, news = conn._subscriptions.get_all_subscriptions()
+            if not (bars or quotes or trades or news):
+                continue  # dormant but nobody is subscribed — leave it lazy
+            logger.warning(
+                "stream_supervisor_reviving_dormant",
+                stream=stream_type.value,
+                bars=len(bars),
+                quotes=len(quotes),
+                trades=len(trades),
+                news=len(news),
+            )
+            await self._ensure_connected(stream_type)
 
     def _stream_type_in_eager_set(self, stream_type: AlpacaStreamType) -> bool:
         """Match stream type against eager_connect_types config (case-insensitive).
@@ -1012,6 +1092,15 @@ class StreamMultiplexer:
         self._running = False
         logger.info("multiplexer_stopping", connections=len(self._connections))
 
+        # Stop the supervisor first so it can't revive a connection mid-shutdown.
+        if self._supervisor_task is not None and not self._supervisor_task.done():
+            self._supervisor_task.cancel()
+            try:
+                await asyncio.wait_for(self._supervisor_task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                logger.debug("stream_supervisor_cancelled")
+        self._supervisor_task = None
+
         # Stop all connections concurrently with timeout
         stop_tasks = [conn.stop() for conn in self._connections.values()]
         if stop_tasks:
@@ -1027,8 +1116,10 @@ class StreamMultiplexer:
                     action="forcing_task_cancellation",
                 )
 
-        # Cancel stream tasks
-        for task in self._tasks:
+        # Cancel stream tasks. Snapshot the set first: each await lets the
+        # done-callback discard a finishing task, which would mutate the set
+        # mid-iteration.
+        for task in list(self._tasks):
             if not task.done():
                 task.cancel()
                 try:
@@ -1079,7 +1170,7 @@ class StreamMultiplexer:
                 conn._connected_event.clear()
                 conn._running = True
                 task = asyncio.create_task(conn.start())
-                self._tasks.append(task)
+                self._track_task(task)
 
         # Wait for connection to establish with generous timeout (outside lock
         # so other waiters aren't serialised behind this one).
@@ -1287,6 +1378,10 @@ class StreamMultiplexer:
                     data_type=data_type,
                     symbol=message.get("S"),
                 )
+                # Meter the drop so a systematic Alpaca-format change that trips
+                # the validator for a whole feed surfaces on the dropped-message
+                # alert instead of vanishing into INFO logs.
+                record_message_dropped(reason="stream_validation_failed", feed=data_type)
                 return
 
         # Use fast-path wrapper for streaming

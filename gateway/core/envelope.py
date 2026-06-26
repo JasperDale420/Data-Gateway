@@ -234,7 +234,9 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
     # EOD per-ticker UW feeds
     "greek_exposure": [("symbol", None, ""), ("call_gamma", None, 0)],
     "iv_rank": [("symbol", None, ""), ("iv_rank", None, 0)],
-    "oi_change": [("symbol", None, ""), ("date", None, ""), ("call_oi_change", None, 0)],
+    # option_symbol distinguishes per-contract rows that share call_oi_change
+    # (often 0) — without it most contracts collapsed to one event_id.
+    "oi_change": [("option_symbol", None, ""), ("symbol", None, ""), ("date", None, ""), ("call_oi_change", None, 0)],
     "historic_option_volume": [
         ("symbol", None, ""),
         ("date", None, ""),
@@ -243,15 +245,24 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
     "short_interest": [("symbol", None, ""), ("date", None, ""), ("short_interest", None, 0)],
     "short_volume": [("symbol", None, ""), ("date", None, ""), ("short_interest", None, 0)],
     "ftds": [("symbol", None, ""), ("date", None, ""), ("quantity", None, 0)],
+    # txn_type + amounts distinguish multiple same-day same-ticker trades by one
+    # politician (e.g. a buy and a sell, or different size buckets). Without them
+    # such distinct disclosures collapsed to a single event_id.
     "congress_trades": [
         ("ticker", None, ""),
         ("name", None, ""),
         ("transaction_date", None, ""),
+        ("txn_type", None, ""),
+        ("amounts", None, ""),
     ],
+    # id is UW's stable per-record identifier. Without it, multiple Form-4 lines
+    # from the same insider/ticker on the same day hashed identically — the root
+    # cause of the insider_trades 200→~2 Bronze collapse.
     "insider_trades": [
         ("ticker", None, ""),
         ("owner_name", None, ""),
         ("transaction_date", None, ""),
+        ("id", None, ""),
     ],
     "treasury_yields": [("date", None, ""), ("maturity", None, ""), ("yield_pct", None, 0)],
 }
@@ -312,7 +323,7 @@ def _raise_wrap_failure(
         error=str(error),
         exc_info=True,
     )
-    record_message_dropped(reason="envelope_wrap_error")
+    record_message_dropped(reason="envelope_wrap_error", feed=feed)
 
     try:
         from gateway.config import get_settings

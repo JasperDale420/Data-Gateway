@@ -1,0 +1,215 @@
+# Data-Gateway — Deployment Guide
+
+How to build, run, and ship Data-Gateway. For day-to-day ops (startup, troubleshooting, tuning) see [RUNBOOK.md](RUNBOOK.md); for env vars see [configuration-guide.md](configuration-guide.md).
+
+---
+
+## 1. Targets
+
+| Target | Purpose | Entry |
+|--------|---------|-------|
+| **Local bare-metal** | Active development | `make run` |
+| **Docker (compose)** | Local integration with Redis | `docker-compose up --build` |
+| **Docker (standalone)** | CI / staging / prod | `docker build -f Data-Gateway/Dockerfile -t data-gateway .` (from monorepo root) |
+
+---
+
+## 2. Local (bare-metal)
+
+```bash
+# First time
+make setup                   # uv sync --extra local --extra dev
+
+# Run with reload
+make run                     # uvicorn gateway.main:app --reload --port 8080
+
+# Or explicitly
+uv run uvicorn gateway.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+> **Always** use `make setup` (or `uv sync --extra local --extra dev`). A bare `uv sync` uninstalls `empire-core`, `empire-schemas`, and the vendored UW SDK and the gateway will fail to import.
+
+### Verify
+```bash
+curl http://localhost:8080/health           # → {"status":"ok"}
+curl http://localhost:8080/health/ready     # → {"status":"ready", "checks":{...}}
+```
+
+---
+
+## 3. Docker
+
+### Build context
+
+The Dockerfile lives at `Data-Gateway/Dockerfile`, but the **build context must be the monorepo root** because the image bundles sibling packages:
+
+- `empire-core/` → installed first
+- `empire-schemas/` → installed next
+- `Data-Gateway/vendor/unusualwhales_sdk/` → patched UW SDK
+
+```bash
+# From monorepo root
+docker build -f Data-Gateway/Dockerfile -t data-gateway .
+```
+
+### Compose (local integration)
+
+```bash
+docker-compose up --build           # foreground
+docker-compose up --build -d        # background
+docker-compose logs -f gateway      # tail
+```
+
+Services started:
+
+| Service   | Container             | Port  | Purpose                       |
+|-----------|-----------------------|-------|-------------------------------|
+| `gateway` | `data-gateway`        | 8080  | FastAPI application           |
+| `redis`   | `data-gateway-redis`  | 6379  | Cache + sink + dedup store    |
+
+### Runtime image notes
+- Base: `python:3.12-slim`
+- Non-root user `gateway` (`uid:gid` set up at build time)
+- Healthcheck: `python -c "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()"` (30s interval, 10s timeout)
+- WebSocket keepalive: `--ws-ping-interval 30 --ws-ping-timeout 90` — server-side timeouts relaxed so transient event-loop lag under burst load doesn't trigger mass client disconnects (clients use 30s/90s heartbeats; default uvicorn 20s/20s is too tight)
+- `uvloop` is uninstalled if pulled in transitively (incompatible with the container's I/O patterns)
+
+---
+
+## 4. CI Workflows
+
+In `.github/workflows/`:
+
+### `ci.yml` — main pipeline
+Runs on every PR + push to `main`:
+1. Checkout
+2. Set up Python 3.12 + uv
+3. `make setup`
+4. `ruff check .`
+5. `mypy .` (per-module override-relaxed)
+6. `pytest -m unit` then full suite (excluding `perf`)
+7. Coverage report
+8. SonarCloud analysis
+
+### `perf-guardrail.yml` — perf gate
+Runs `scripts/perf_gate.py` against `config/perf_budgets.json` and `config/perf_baseline.json`. Produces:
+- JUnit XML (`perf-junit.xml`)
+- Plain log (`perf-output.txt`)
+- Summary JSON (`perf-summary.json`)
+
+A regression beyond budget fails the build.
+
+### `release-readiness.yml` — pre-release checks
+Includes the live-provider smoke harness (`scripts/live_provider_smoke.py`) and writes/checks `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md`.
+
+---
+
+## 5. Configuration Management
+
+| Concern | Where |
+|---------|-------|
+| Env vars | `.env` (local), deployment secrets (staging/prod) |
+| Client API keys | `config/clients.yaml` (committed with placeholders; real values via secrets mount) |
+| Provider routing | `config/providers.yaml` |
+| Prometheus alerts | `config/prometheus_alerts.yml` |
+
+See [configuration-guide.md](configuration-guide.md) for the full env-var inventory.
+
+---
+
+## 6. Health & Readiness
+
+| Endpoint | Purpose | Used by |
+|----------|---------|---------|
+| `GET /health` | Liveness | Docker `HEALTHCHECK`, k8s liveness probe |
+| `GET /health/ready` | Readiness with per-component status | Load balancers, k8s readiness probe |
+| `GET /health/status` | Detailed status | Humans, dashboards |
+
+`/health/ready` returns `503` while the `ShutdownCoordinator` is draining (step 1 of graceful shutdown).
+
+---
+
+## 7. Observability Wiring
+
+| Channel | Endpoint / File | Consumer |
+|---------|-----------------|----------|
+| Metrics | `GET /metrics` | Prometheus scrape |
+| Alerts | `config/prometheus_alerts.yml` | Alertmanager |
+| Logs | `logs/data-gateway_*.log`, stdout JSON | log shipper (vector, fluentbit, …) |
+| Audit | `AuditLogger` → dedicated `audit` logger + in-memory ring buffer | SIEM / `/api/v1/admin/audit/recent` |
+| Catalog | `GET /catalog/*` | Downstream services for runtime discovery |
+
+Key alerts:
+- `SinkProducerTimeoutDrops` — sink dropped events
+- `SinkBufferEvictionsActive` — failed-event buffer evicting
+- Provider circuit-open
+- WebSocket disconnect spike
+- Cache hit-rate drop
+
+---
+
+## 8. Graceful Shutdown
+
+Sending `SIGTERM` triggers the 8-step `ShutdownCoordinator` (see [system-architecture.md §9](system-architecture.md#9-graceful-shutdown-8-steps)). Always allow `GATEWAY_SHUTDOWN_DRAIN_SECONDS + 30s` before forcibly killing the container.
+
+```yaml
+# k8s example
+terminationGracePeriodSeconds: 90  # 30s drain + 60s budget for steps 4-7
+```
+
+---
+
+## 9. Rollout Procedure
+
+1. **Local verify**: `make test`, `make lint`, `make typecheck`. Run `pytest -m perf` if touching hot paths.
+2. **Open PR**: CI runs `ci.yml` + `perf-guardrail.yml`. Both must pass.
+3. **Live smoke** (manual or scheduled): `python scripts/live_provider_smoke.py` against real keys; update `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md`.
+4. **Tag**: bump `CHANGELOG.md` (move `[Unreleased]` to a dated section).
+5. **Build & push** image: `docker build -f Data-Gateway/Dockerfile -t <registry>/data-gateway:<tag> .` from monorepo root, then `docker push`.
+6. **Deploy** (per environment). Watch `/health/ready` and `gateway_sink_*` metrics.
+7. **Post-deploy** smoke: `curl /catalog/streams` against the new instance with a valid key; subscribe to a single feed via WS and assert events flow within 30s.
+
+---
+
+## 10. Rollback
+
+- **Image rollback** — redeploy previous image tag.
+- **Config rollback** — `config/clients.yaml` accepts SIGHUP reload; reverting and `kill -HUP` returns to the previous client/permission state without a process restart.
+- **Sink dependency rollback** — disable the sink with `GATEWAY_DATA_SINK_ENABLED=false` and a restart; gateway continues serving REST/WS without publishing to Heber.
+
+---
+
+## 11. Common Deployment Pitfalls
+
+| Pitfall | Fix |
+|---------|-----|
+| `ImportError: empire_core` in container | Dockerfile must be built from monorepo root, not `Data-Gateway/`. |
+| Gateway starts but `/health/ready` stuck | Inspect `checks` JSON — usually a missing provider key or unreachable Redis. |
+| WebSocket clients mass-disconnect under load | Confirm uvicorn flags `--ws-ping-interval 30 --ws-ping-timeout 90`. The Dockerfile sets these; bare-metal runs need to add them. |
+| Heber sees no events post-deploy | Confirm `GATEWAY_DATA_SINK_ENABLED=true` and `GATEWAY_DATA_SINK_REDIS_URL` set. Check `gateway_sink_queue_size` is non-zero on traffic. |
+| Perf gate fails on PR | Run `python scripts/perf_gate.py ...` locally to see which metric regressed; either fix or rebaseline via `scripts/perf_baseline_manager.py` with rationale in the PR. |
+| `unusualwhales-python-client` missing in container | Ensure `Data-Gateway/vendor/unusualwhales_sdk/` is committed and present at build time. |
+
+---
+
+## 12. macOS launchd (local dev)
+
+`scripts/com.empire.data-gateway.plist` is a launchd template for keeping the gateway running locally. Copy to `~/Library/LaunchAgents/`, edit paths, then:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.empire.data-gateway.plist
+launchctl start com.empire.data-gateway
+```
+
+---
+
+## 13. Related Documents
+
+- [project-overview-pdr.md](project-overview-pdr.md)
+- [system-architecture.md](system-architecture.md)
+- [configuration-guide.md](configuration-guide.md)
+- [RUNBOOK.md](RUNBOOK.md) — operations and troubleshooting
+- [testing-guide.md](testing-guide.md) — pytest + perf gate
+- `docs/audits/PERF_RELEASE_READINESS.md` — perf promotion process
+- `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md` — latest live-provider smoke results
+- `../Dockerfile`, `../docker-compose.yml`, `../Makefile`

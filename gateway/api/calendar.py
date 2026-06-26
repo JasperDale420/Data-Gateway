@@ -276,8 +276,19 @@ async def get_trading_days(
                 holidays=[h.to_dict() for h in holidays],
                 early_closes=[e.to_dict() for e in early_closes],
             )
-        except Exception:
-            pass
+        except Exception as e:
+            # The live Alpaca calendar is authoritative (incl. early closes).
+            # Falling back to the hardcoded static calendar silently would serve
+            # trading clients a less-accurate calendar (e.g. wrong early-close
+            # days) with zero observability. Log the degradation before falling
+            # through.
+            logger.warning(
+                "calendar_alpaca_fallback",
+                start=start_date.isoformat(),
+                end=end_date.isoformat(),
+                error=str(e),
+                exc_info=True,
+            )
 
     trading_days, holidays, early_closes = calendar.get_trading_days(start_date, end_date)
     return TradingDaysResponse(

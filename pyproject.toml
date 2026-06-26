@@ -123,7 +123,7 @@ disable_error_code = ["attr-defined", "call-arg", "arg-type"]
 
 # Core modules with pre-existing type issues
 [[tool.mypy.overrides]]
-module = ["gateway.core.labels", "gateway.core.symbology", "gateway.core.ring_buffer", "gateway.core.quality", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream"]
+module = ["gateway.core.labels", "gateway.core.symbology", "gateway.core.ring_buffer", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream"]
 disable_error_code = ["assignment", "union-attr", "var-annotated", "index", "operator", "return-value", "arg-type", "attr-defined", "call-overload", "dict-item"]
 
 # Provider modules with complex dynamic typing
@@ -145,7 +145,10 @@ disable_error_code = ["var-annotated"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "-v --tb=short -m 'not perf'"
+# --timeout=60 fails any single test that hangs (e.g. a broken production-timeout
+# patch) instead of stalling the whole CI job; it is per-test, so it never trips
+# the ~3s perf benchmarks.
+addopts = "-v --tb=short -m 'not perf' --timeout=60"
 markers = [
     "perf: benchmark/performance tests excluded from default pytest runs",
     "unit: fast, isolated, no I/O or network",
@@ -161,9 +164,10 @@ omit = ["tests/*", "scripts/*", "*/__init__.py"]
 
 [tool.coverage.report]
 show_missing = true
-# Coverage floor set ~5 points below the measured total (48% as of 2026-06-10)
-# so CI stays green while preventing regressions. Raise as coverage improves.
-fail_under = 43
+# Coverage floor tracks measured coverage minus a small margin (~3 points below
+# the 60.8% measured 2026-06-26) so a real regression trips CI without day-to-day
+# flakiness. Ratchet up as coverage improves.
+fail_under = 58
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

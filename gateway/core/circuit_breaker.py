@@ -12,6 +12,7 @@ from enum import Enum
 from typing import Any, TypeVar
 
 from gateway.core.logger import logger
+from gateway.core.metrics import set_circuit_breaker_state
 
 T = TypeVar("T")
 
@@ -125,6 +126,20 @@ class CircuitBreaker:
     # Guards against multiple concurrent HALF_OPEN probes
     _half_open_in_progress: bool = field(default=False)
 
+    def __post_init__(self) -> None:
+        # Publish the initial (closed) state so the gauge has a baseline series.
+        set_circuit_breaker_state(self.name, self.state)
+
+    def _set_state(self, new_state: CircuitState) -> None:
+        """Transition state and export it as a gauge.
+
+        A sink breaker tripping OPEN is the leading edge of Heber data loss;
+        exporting the state makes the trip alertable before the failed-event
+        buffer starts evicting (which is a lagging signal).
+        """
+        self.state = new_state
+        set_circuit_breaker_state(self.name, new_state)
+
     async def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> T:
         """Execute a function through the circuit breaker.
 
@@ -193,7 +208,7 @@ class CircuitBreaker:
                     retry_after = self.config.recovery_timeout
                     raise CircuitOpenError(self.name, retry_after)
                 # Transition to half-open
-                self.state = CircuitState.HALF_OPEN
+                self._set_state(CircuitState.HALF_OPEN)
                 self.success_count = 0
                 self._half_open_in_progress = True
                 logger.info(
@@ -233,7 +248,7 @@ class CircuitBreaker:
                 # next SEQUENTIAL probe to proceed once this one finishes.
                 self._half_open_in_progress = False
                 if self.success_count >= self.config.success_threshold:
-                    self.state = CircuitState.CLOSED
+                    self._set_state(CircuitState.CLOSED)
                     logger.info(
                         "circuit_closed",
                         circuit=self.name,
@@ -252,7 +267,7 @@ class CircuitBreaker:
 
             if self.state == CircuitState.HALF_OPEN:
                 # Any failure in half-open reopens the circuit
-                self.state = CircuitState.OPEN
+                self._set_state(CircuitState.OPEN)
                 self._half_open_in_progress = False
                 logger.warning(
                     "circuit_reopened",
@@ -261,7 +276,7 @@ class CircuitBreaker:
                     code="GW-W1011",
                 )
             elif self.failure_count >= self.config.failure_threshold:
-                self.state = CircuitState.OPEN
+                self._set_state(CircuitState.OPEN)
                 # Data sink circuits use WARNING because the sink layer has its
                 # own retry/buffer logic — opening the circuit is controlled
                 # degradation, not an unrecoverable error.  Other upstream
@@ -287,7 +302,7 @@ class CircuitBreaker:
         """Manually reset the circuit breaker to closed state."""
         async with self._lock:
             prev_state = self.state
-            self.state = CircuitState.CLOSED
+            self._set_state(CircuitState.CLOSED)
             self.failure_count = 0
             self.success_count = 0
             self.last_failure_time = None

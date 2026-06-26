@@ -10,7 +10,10 @@
 
 [project]
 name = "unusualwhales-python-client"
-version = "5.1.0"
+# Bump on any stub change: CI caches pip's wheel store (cache: "pip"), so a
+# same-version rebuild reuses the stale wheel and silently drops new stub modules
+# (e.g. api/insider.py). A new version forces a fresh build.
+version = "5.1.2"
 requires-python = ">=3.10"
 dependencies = []
 

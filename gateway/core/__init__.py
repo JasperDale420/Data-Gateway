@@ -1,7 +1,6 @@
 """Core gateway components."""
 
 from gateway.core.auth import Client, ClientAuthenticator
-from gateway.core.balancer import KeyLoadBalancer, alpaca_key_balancer
 from gateway.core.cache import HybridCache, InMemoryCache, RedisCache
 from gateway.core.circuit_breaker import (
     CircuitBreaker,
@@ -43,8 +42,6 @@ __all__ = [
     "ProviderCapabilities",
     "HealthStatus",
     "ProviderRegistry",
-    "KeyLoadBalancer",
-    "alpaca_key_balancer",
     "RequestDeduplicator",
     "get_deduplicator",
     "DataValidator",

@@ -89,6 +89,32 @@ class TestComputeEventId:
         assert id1 == id2
         assert len(id1) == 32  # SHA256 truncated to 32 chars
 
+    def test_event_id_is_pinned_and_decimal_precision_sensitive(self):
+        """Pin the gateway's local compute_event_id against silent divergence.
+
+        empire-schemas ships a *divergent* duplicate compute_event_id that
+        stringifies Decimals as ``str(float(d))`` ("150.5") instead of this
+        module's ``str(d)`` ("150.50"). The gateway uses ONLY this local copy
+        today, so the duplication is inert — but any future "dedupe the
+        duplication" refactor that swaps to the shared impl would silently
+        change EVERY event_id and reset Heber's dedup bloom filter, flooding
+        duplicate Bronze rows. This pin (and the precision check below) makes
+        that swap fail loudly here instead. See project_gateway_frozen_contracts.
+        """
+        ts = datetime(2026, 6, 25, 14, 30, 0, tzinfo=UTC)
+        fields = [Decimal("150.50"), Decimal("150.60"), 100, 200]
+
+        pinned = compute_event_id("alpaca", "quotes", "equity:AAPL", ts, fields)
+        assert pinned == "1f2499f93a1c902305db9d07fcd9244a"  # pragma: allowlist secret
+
+        # The float-rounded form (str(150.5)) must NOT collide with the
+        # Decimal form (str(Decimal("150.50"))="150.50") — proves the hash is
+        # sensitive to the exact divergence the empire-schemas copy introduces.
+        float_form = compute_event_id(
+            "alpaca", "quotes", "equity:AAPL", ts, [float(f) if isinstance(f, Decimal) else f for f in fields]
+        )
+        assert pinned != float_form
+
     def test_different_timestamps_different_ids(self):
         """Different timestamps produce different event IDs."""
         ts1 = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
@@ -368,7 +394,7 @@ class TestWrapEventFailure:
             pytest.raises(EnvelopeWrapError),
         ):
             wrap_event(self._failing_bar(), provider="alpaca", feed="bars", source="websocket")
-        counter.assert_called_once_with(reason="envelope_wrap_error")
+        counter.assert_called_once_with(reason="envelope_wrap_error", feed="bars")
 
     def test_failure_never_returns_unknown_key(self):
         """The fallback never silently ships an unknown:/malformed instrument key."""
@@ -410,7 +436,7 @@ class TestWrapEventFailure:
         ):
             wrap_event(payload, provider="unusual_whales", feed="flow_alerts", source="rest")
 
-        counter.assert_called_once_with(reason="envelope_wrap_error")
+        counter.assert_called_once_with(reason="envelope_wrap_error", feed="flow_alerts")
 
 
 class TestEventEnvelopeModel:
@@ -498,3 +524,31 @@ class TestIsSymbolKeyedDict:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_darkpool_distinct_trades_get_distinct_event_ids():
+    """200 darkpool prints with distinct tracking_ids → 200 distinct event_ids.
+
+    Guards FEED_UNIQUE_FIELDS['darkpool']: if tracking_id were dropped from the
+    dedup key, distinct prints differing only by tracking_id would collide and be
+    silently deduped — exactly the latent darkpool silent-loss the runtime hinted
+    at (published:0 / duplicates:200 every cycle). A true duplicate still collapses.
+    """
+    base = {
+        "symbol": "MSFT",
+        "price": 300,
+        "size": 100,
+        "notional": 30000,
+        "timestamp": "2026-06-25T15:00:00Z",
+    }
+    ids = set()
+    for i in range(200):
+        env = wrap_event(
+            event={**base, "tracking_id": f"d{i}"}, provider="unusual_whales", feed="darkpool", source="rest"
+        )
+        ids.add(env["event_id"])
+    assert len(ids) == 200  # every distinct print kept
+
+    e1 = wrap_event(event={**base, "tracking_id": "dup"}, provider="unusual_whales", feed="darkpool", source="rest")
+    e2 = wrap_event(event={**base, "tracking_id": "dup"}, provider="unusual_whales", feed="darkpool", source="rest")
+    assert e1["event_id"] == e2["event_id"]  # true duplicate collapses to one id

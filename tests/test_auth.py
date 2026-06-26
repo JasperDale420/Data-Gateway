@@ -1,6 +1,11 @@
 """Tests for authentication."""
 
+from pathlib import Path
+
+import pytest
+
 import gateway.core.auth as auth_module
+from gateway.core.auth import ClientAuthenticator, InvalidClientIdError
 
 
 def test_authenticate_valid_key(test_authenticator, test_api_key):
@@ -32,6 +37,19 @@ def test_client_permissions(test_authenticator, test_api_key):
     assert "bars" in client.permissions.feeds
     assert client.permissions.max_symbols == 100
     assert client.permissions.rate_limit == 60
+
+
+def test_heber_watch_can_read_uw_enrichment_feeds():
+    """Heber watch must be allowed to read the UW endpoints it enriches from."""
+    authenticator = ClientAuthenticator(Path("config/clients.yaml"))
+
+    client = authenticator.get_client("heber-watch")
+
+    assert client is not None
+    assert "uw" in client.permissions.providers or "unusual_whales" in client.permissions.providers
+    assert "greek_exposure" in client.permissions.feeds
+    assert "market_tide" in client.permissions.feeds
+    assert "options" in client.permissions.feeds
 
 
 def test_get_client_by_id(test_authenticator):
@@ -86,3 +104,51 @@ def test_authenticate_valid_key_logs_debug_not_info(test_authenticator, test_api
     assert client is not None
     assert fake_logger.debug_calls == 2
     assert fake_logger.info_calls == 0
+
+
+def test_reload_keeps_previous_clients_on_bad_config(tmp_path):
+    """A malformed clients.yaml on SIGHUP reload must not wipe live client maps.
+
+    Regression guard: reload() used to clear the maps before re-parsing, so a
+    single bad edit + SIGHUP 401-locked every trading client until restart.
+    """
+    config = tmp_path / "clients.yaml"
+    config.write_text(
+        "clients:\n  - id: kairos\n    key: gw_live_key_123\n    role: trader\n    permissions:\n      trading: true\n"
+    )
+    auth = ClientAuthenticator(config)
+    assert auth.authenticate("gw_live_key_123") is not None
+
+    # Corrupt the config with an invalid client id and reload.
+    config.write_text("clients:\n  - id: 'bad id with spaces'\n    key: gw_other\n")
+    with pytest.raises(InvalidClientIdError):
+        auth.reload()
+
+    # The previously-loaded client must still authenticate (maps rolled back).
+    assert auth.authenticate("gw_live_key_123") is not None
+    assert auth.get_client("kairos") is not None
+
+
+def test_prefix_colliding_client_ids_rejected(tmp_path):
+    """A client id that is a hyphen-prefix of another must fail loud at load —
+    otherwise c-{id}- order-ownership markers cross-wire the two clients."""
+    config = tmp_path / "clients.yaml"
+    config.write_text("clients:\n  - id: heber\n    key: k1\n  - id: heber-watch\n    key: k2\n")
+    with pytest.raises(InvalidClientIdError, match="ownership prefix"):
+        ClientAuthenticator(config)
+
+
+def test_client_for_key_resolves_custom_rate_limit_without_logging(tmp_path):
+    """The rate-limit middleware resolves a client's custom rate_limit via a
+    quiet key lookup (it runs before auth sets request.state.client)."""
+    config = tmp_path / "clients.yaml"
+    config.write_text("clients:\n  - id: fast\n    key: gw_fast_key\n    permissions:\n      rate_limit: 6000\n")
+    auth = ClientAuthenticator(config)
+
+    client = auth.client_for_key("gw_fast_key")
+    assert client is not None
+    assert client.id == "fast"
+    assert client.permissions.rate_limit == 6000  # custom limit, not the default
+
+    assert auth.client_for_key("wrong_key") is None
+    assert auth.client_for_key("") is None

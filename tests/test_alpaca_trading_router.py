@@ -2508,9 +2508,7 @@ def _stub_trading_provider(test_registry) -> Any:
     # and verifies its client_order_id prefix. The granted authz client is
     # ``m04-granted-trader``, so return an order it owns or the pre-check 404s
     # before the operation under test runs.
-    provider.get_order = MagicMock(
-        return_value={"id": "ord-m04", "client_order_id": "c-m04-granted-trader-dg-stub"}
-    )
+    provider.get_order = MagicMock(return_value={"id": "ord-m04", "client_order_id": "c-m04-granted-trader-dg-stub"})
     return provider
 
 
@@ -2714,24 +2712,31 @@ def test_authz_trader_without_trading_capability_can_create_order_with_cap(
     assert response.json()["data"]["id"] == "ord-m04"
 
 
-def test_real_config_grants_trading_capability_to_kairos_cerberus_3roses() -> None:
-    """The live clients.yaml must grant ``trading: true`` to exactly the three
-    order-placing systems (kairos, cerberus, 3roses) and withhold it from the
-    read-only trader clients (orion, atlas, orbit)."""
+def test_real_config_grants_trading_capability_to_order_placing_clients() -> None:
+    """The live clients.yaml must grant ``trading: true`` to exactly the
+    order-placing systems that route orders through the gateway
+    (kairos, cerberus, 3roses, orion) and withhold it from EVERY other client.
+
+    orion was granted the capability (commit 709fe35) because it places orders
+    through the gateway. drogon trades direct-to-Alpaca, not via the gateway,
+    so it stays withheld here. This asserts the FULL parsed client map, so any
+    future client that gains trading must be added to ``trading_granted``
+    consciously — otherwise this test fails, which is the intended tripwire."""
     from gateway.core.auth import ClientAuthenticator
 
     config_path = Path(__file__).resolve().parents[1] / "config" / "clients.yaml"
     auth = ClientAuthenticator(config_path)
 
-    for client_id in ("kairos", "cerberus", "3roses"):
-        c = auth.get_client(client_id)
-        assert c is not None, client_id
-        assert c.permissions.trading is True, f"{client_id} should have trading capability"
+    trading_granted = {"kairos", "cerberus", "3roses", "orion"}
 
-    for client_id in ("orion", "atlas", "orbit"):
+    actual: dict[str, bool] = {}
+    for client_id in auth.list_client_ids():
         c = auth.get_client(client_id)
         assert c is not None, client_id
-        assert c.permissions.trading is False, f"{client_id} should NOT have trading capability"
+        actual[client_id] = c.permissions.trading
+
+    expected = {client_id: (client_id in trading_granted) for client_id in actual}
+    assert actual == expected, f"trading capability drift vs config: {actual}"
 
 
 def test_real_config_restricts_plaintext_to_powerless_test_client() -> None:
@@ -3673,3 +3678,28 @@ async def test_get_order_with_legacy_unprefixed_client_order_id_returns_404(
     # stance — see PR body for the rationale.
     assert exc.value.status_code == 404
     assert exc.value.detail["code"] == "GW-E4404"
+
+
+def test_account_wide_actions_require_super_admin() -> None:
+    """Account-wide flatten / config require super_admin; per-symbol close stays at trader."""
+    from gateway.api.deps import _enforce_account_wide_admin
+    from gateway.core.auth import Client, ClientPermissions
+
+    trader = Client(id="kairos", permissions=ClientPermissions(trading=True), role="trader")
+    super_admin = Client(id="ops", permissions=ClientPermissions(trading=True), role="super_admin")
+
+    # Trader is BLOCKED from account-wide actions.
+    for method, path in [
+        ("DELETE", "/api/v1/alpaca/positions"),  # close_all_positions
+        ("PATCH", "/api/v1/alpaca/account/configurations"),
+    ]:
+        with pytest.raises(HTTPException) as exc:
+            _enforce_account_wide_admin(method, path, trader)
+        assert exc.value.status_code == 403
+
+    # Trader CAN still close its own single position (not account-wide).
+    _enforce_account_wide_admin("DELETE", "/api/v1/alpaca/positions/AAPL", trader)
+
+    # super_admin passes the account-wide gate.
+    _enforce_account_wide_admin("DELETE", "/api/v1/alpaca/positions", super_admin)
+    _enforce_account_wide_admin("PATCH", "/api/v1/alpaca/account/configurations", super_admin)

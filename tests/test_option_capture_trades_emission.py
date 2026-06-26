@@ -200,3 +200,24 @@ async def test_per_contract_trades_skips_contracts_without_last_price(mock_alpac
             if env["feed"] == "option_trades":
                 trade_envs.append(env)
     assert len(trade_envs) == 1
+
+
+def test_option_trade_size_uses_last_trade_size_not_volume(service_with_trades):
+    """A missing/zero last_trade_size must yield size 0, never the whole-day
+    volume (which would mint one fake trade of size = full-day volume and
+    double-count flow / corrupt VWAP)."""
+    contract = _fake_contract(
+        occ_symbol="SPY260516C00500000",
+        underlying="SPY",
+        strike=500.0,
+        expiration="2026-05-16",
+        option_type="call",
+        last_size=0,  # no last-trade size reported
+    )
+    contract["volume"] = 9999  # whole-day volume must NOT leak into trade size
+    payload = {"chain_json": {"data": {"contracts": [contract]}}}
+
+    envs = service_with_trades._build_per_contract_trade_envelopes(payload, datetime(2026, 4, 29, tzinfo=UTC))
+
+    assert len(envs) == 1
+    assert envs[0]["payload"]["size"] == 0  # not 9999

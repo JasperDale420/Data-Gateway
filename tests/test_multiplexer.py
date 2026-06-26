@@ -1233,3 +1233,99 @@ async def test_on_envelope_cancellation_propagates(
             AlpacaStreamType.STOCKS_SIP,
             {"T": "b", "S": "AAPL", "t": "2026-05-21T13:30:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1},
         )
+
+
+@pytest.mark.asyncio
+async def test_supervisor_revives_only_dormant_subscribed_streams(monkeypatch) -> None:
+    """The supervisor revives a dormant stream that still has subscribers, and
+    leaves connected, reconnecting, and unsubscribed streams untouched.
+
+    Regression guard for the top page risk: a stream that exhausts its
+    reconnect budget set ``_running = False`` and went silent until a *new*
+    subscribe that long-lived bots never send.
+    """
+
+    async def _on_data(_client_id: str, _data_type: str, _message: dict) -> None:
+        return
+
+    mux = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+
+    revived: list[str] = []
+
+    async def _fake_ensure(stream_type) -> bool:
+        revived.append(stream_type.value)
+        return True
+
+    monkeypatch.setattr(mux, "_ensure_connected", _fake_ensure)
+
+    def _conn(*, running: bool, connected: bool, subs):
+        return SimpleNamespace(
+            _running=running,
+            is_connected=connected,
+            _subscriptions=SimpleNamespace(get_all_subscriptions=lambda subs=subs: subs),
+        )
+
+    one_sub = ({"AAPL"}, set(), set(), set())
+    no_sub = (set(), set(), set(), set())
+    # Enum members are hashable and carry .value (which the supervisor logs).
+    mux._connections = cast(
+        Any,
+        {
+            AlpacaStreamType.STOCKS_SIP: _conn(
+                running=False, connected=False, subs=one_sub
+            ),  # dormant + subbed → revive
+            AlpacaStreamType.OPTIONS: _conn(running=False, connected=False, subs=no_sub),  # dormant, no subs → skip
+            AlpacaStreamType.CRYPTO: _conn(running=False, connected=True, subs=one_sub),  # connected → skip
+            AlpacaStreamType.NEWS: _conn(running=True, connected=False, subs=one_sub),  # reconnecting → skip
+        },
+    )
+
+    await mux._supervise_once()
+
+    assert revived == [AlpacaStreamType.STOCKS_SIP.value]
+
+
+def test_sequence_tracker_evicts_at_cap() -> None:
+    """SequenceTracker caps tracked keys so OPRA contracts can't leak forever."""
+    from gateway.core.stream import SequenceTracker
+
+    tracker = SequenceTracker()
+    tracker._MAX_COUNTERS = 3  # shrink for the test
+
+    for i in range(5):
+        tracker.next_seq(f"OCC{i}", "quotes")
+
+    assert len(tracker._counters) == 3  # oldest LRU keys evicted
+    # An evicted contract harmlessly restarts its sequence at 1 (no data loss).
+    assert tracker.next_seq("OCC0", "quotes") == 1
+
+
+@pytest.mark.asyncio
+async def test_track_task_auto_discards_on_completion() -> None:
+    """Completed stream tasks are removed from _tasks (no multi-day task leak)."""
+
+    async def _on_data(_c: str, _d: str, _m: dict) -> None:
+        return
+
+    mux = StreamMultiplexer(
+        api_key="k",  # pragma: allowlist secret
+        api_secret="s",  # pragma: allowlist secret
+        on_data=_on_data,
+        lazy_connect=True,
+    )
+
+    async def _quick() -> None:
+        return None
+
+    task = asyncio.create_task(_quick())
+    mux._track_task(task)
+    assert task in mux._tasks
+
+    await task
+    await asyncio.sleep(0)  # let the done-callback run
+    assert task not in mux._tasks

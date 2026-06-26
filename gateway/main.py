@@ -73,7 +73,6 @@ from gateway.api import (
     legacy_symbology_router,
     market_router,
     news_router,
-    quality_router,
     replay_router,
     sec_router,
     symbology_router,
@@ -87,6 +86,7 @@ from gateway.api.errors import gateway_http_exception_handler
 from gateway.api.metrics import router as metrics_router
 from gateway.api.middleware import (
     CacheMiddleware,
+    CorrelationIdMiddleware,
     EventEnvelopeMiddleware,
     GlobalRateLimitMiddleware,
     InputValidationMiddleware,
@@ -96,6 +96,7 @@ from gateway.api.middleware import (
 )
 from gateway.config import get_settings
 from gateway.core.globals import set_flow_fanout, set_multiplexer, set_registry
+from gateway.core.log_throttle import LogThrottle
 from gateway.core.logger import logger
 from gateway.core.metrics import (
     init_metrics,
@@ -108,6 +109,12 @@ from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import StreamMultiplexer
 
 attach_error_buffer_handler()
+
+# A single broken downstream client would otherwise emit one ERROR per streamed
+# event in the fallback fanout path. Throttle to one line per client per
+# interval (suppressed count still reported) so one bad client can't flood the
+# error log — the per-event fanout flood class behind past incidents.
+_STREAM_SEND_ERROR_LOG_THROTTLE = LogThrottle(interval_seconds=10.0)
 
 
 async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> None:
@@ -150,12 +157,15 @@ async def _on_stream_data(client_id: str, data_type: str, envelope: dict) -> Non
                 }
             )
         except Exception as e:
-            logger.error(
-                "stream_send_error",
-                client_id=client_id,
-                event_id=envelope.get("event_id", "unknown"),
-                error=str(e),
-            )
+            allowed, suppressed = _STREAM_SEND_ERROR_LOG_THROTTLE.should_emit(client_id)
+            if allowed:
+                logger.error(
+                    "stream_send_error",
+                    client_id=client_id,
+                    event_id=envelope.get("event_id", "unknown"),
+                    error=str(e),
+                    suppressed_since_last=suppressed,
+                )
 
 
 async def _on_stream_envelope(envelope: dict) -> None:
@@ -212,6 +222,10 @@ def _create_data_sink_dedup_cache(settings):
         redis_url=settings.data_sink_redis_url,
         default_ttl=86400,  # 24h TTL for dedup keys
         max_connections=settings.data_sink_redis_pool_size,
+        # Tie the dedup pool to the sink worker count so a saturated dedup pool
+        # can never starve the workers (the "Too many connections" flood) — the
+        # REST/poller dict path runs set_nx inline per published event.
+        worker_count=settings.data_sink_worker_count,
         operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
     )
 
@@ -253,6 +267,15 @@ async def lifespan(app: FastAPI):
             pass
 
     uptime_task = asyncio.create_task(_uptime_loop())
+
+    loop_watchdog = None
+    if settings.loop_watchdog_enabled:
+        from gateway.core.loop_watchdog import LoopStallWatchdog
+
+        loop_watchdog = LoopStallWatchdog(
+            stall_threshold_seconds=settings.loop_watchdog_stall_threshold_seconds,
+        )
+        await loop_watchdog.start()
 
     # Initialize provider registry. In production (debug=False) we enforce
     # `required: true` providers — gateway refuses to boot if a critical
@@ -312,6 +335,10 @@ async def lifespan(app: FastAPI):
             max_len=settings.data_sink_max_stream_len,
             operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
             pool_size=settings.data_sink_redis_pool_size,
+            # Tie the XADD pool to the worker count so a worker_count set above
+            # pool_size can't serialize the workers on connection acquisition.
+            worker_count=settings.data_sink_worker_count,
+            failed_buffer_capacity=settings.data_sink_failed_buffer_capacity,
         )
         sink_registry.register(redis_sink)
 
@@ -343,12 +370,17 @@ async def lifespan(app: FastAPI):
         logger.info("sighup_received", action="reloading_config")
         # Clear settings cache to reload on next access
         get_settings.cache_clear()
-        # Reload client authenticator
+        # Reload client authenticator. reload() is atomic — on a bad config it
+        # rolls back to the last-good clients and raises. Catch here so a SIGHUP
+        # against a broken clients.yaml can't propagate out of the signal
+        # handler; the gateway keeps serving the previous config instead.
         from gateway.api.deps import get_authenticator
 
-        auth = get_authenticator()
-        auth.reload()
-        logger.info("config_reloaded")
+        try:
+            get_authenticator().reload()
+            logger.info("config_reloaded")
+        except Exception:
+            logger.error("config_reload_failed_kept_previous", exc_info=True)
 
     # Register SIGHUP handler (Unix only)
     try:
@@ -608,6 +640,9 @@ async def lifespan(app: FastAPI):
     if sink_registry:
         await sink_registry.close_all()
 
+    if loop_watchdog is not None:
+        await loop_watchdog.stop()
+
     uptime_task.cancel()
     with suppress(asyncio.CancelledError):
         await uptime_task
@@ -668,6 +703,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Correlation/trace-id is OUTERMOST (added last) so the per-request trace_id
+    # is bound into the log context before any other middleware runs — every log
+    # line for the request, including rate-limit rejections, then carries it.
+    app.add_middleware(CorrelationIdMiddleware)
 
     # Routers
     app.include_router(health_router)
@@ -691,7 +730,6 @@ def create_app() -> FastAPI:
     app.include_router(adjustments_router)
     app.include_router(legacy_corporate_router)
     app.include_router(legacy_adjustments_router)
-    app.include_router(quality_router)
     app.include_router(catalog_router)
     app.include_router(backfill_router)
 

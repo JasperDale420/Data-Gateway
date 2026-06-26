@@ -710,3 +710,131 @@ async def test_flow_publish_forwards_flow_tap(monkeypatch: pytest.MonkeyPatch) -
 
     await poller._poll_flow_alerts(sink_registry=_FakeSinkRegistry(), limit=1)
     assert captured["on_published"] is _tap
+
+
+@pytest.mark.asyncio
+async def test_eod_per_ticker_fetch_retries_transient_error() -> None:
+    """A transient 5xx on a per-ticker EOD fetch (greek_exposure) is retried.
+
+    Guards the fix that routed the 8 per-ticker EOD feeds through
+    _fetch_with_retry, closing scattered per-ticker daily holes in Heber Gold.
+    """
+    import httpx
+
+    poller = UWPoller()
+
+    async def _publish(**kwargs):
+        return len(kwargs["envelopes"]), 0
+
+    poller._publish_envelopes = _publish  # type: ignore[method-assign]
+
+    calls = {"n": 0}
+
+    def _make_503() -> httpx.HTTPStatusError:
+        request = httpx.Request("GET", "https://api.unusualwhales.com/api/stock/AAPL/greek-exposure")
+        response = httpx.Response(503, request=request)
+        return httpx.HTTPStatusError("503", request=request, response=response)
+
+    class _Row:
+        def model_dump(self) -> dict:
+            return {"ticker": "AAPL", "call_gex": 1.0}
+
+    class _FlakyProvider:
+        async def get_greek_exposure(self, ticker: str):  # noqa: ARG002
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _make_503()
+            return [_Row()]
+
+    poller._provider = _FlakyProvider()
+
+    published = await poller._poll_eod_greek_exposure(sink_registry=_FakeSinkRegistry(), ticker="AAPL")
+
+    assert calls["n"] == 2  # retried once after the 503
+    assert published == 1
+
+
+def test_envelope_build_skip_is_metered(monkeypatch) -> None:
+    """A record that fails to wrap is skipped AND metered, so steady partial UW
+    loss from schema drift surfaces on the dropped-message alert, not just logs.
+    """
+    poller = UWPoller()
+    calls: list[tuple[str, str]] = []
+
+    def _fake_wrap(*, event, provider, feed, source):
+        if event.get("bad"):
+            raise ValueError("schema drift")
+        return {"ts_event": "2026-06-25T00:00:00Z", "payload": event}
+
+    monkeypatch.setattr("gateway.core.uw_poller.wrap_event", _fake_wrap)
+    monkeypatch.setattr(
+        "gateway.core.uw_poller.record_message_dropped",
+        lambda reason, feed="unknown": calls.append((reason, feed)),
+    )
+
+    records = [{"bad": True}, {"bad": False}]
+    envelopes, _ = poller._build_feed_envelopes(records, feed="darkpool", out_of_order_log="x", use_model_dump=False)
+
+    assert len(envelopes) == 1  # the bad record was skipped, the good one kept
+    assert calls == [("envelope_build_skipped", "darkpool")]
+
+
+@pytest.mark.asyncio
+async def test_publish_envelopes_records_per_feed_published() -> None:
+    """The per-feed published counter increments so a feed silently going to zero
+    during market hours (e.g. darkpool window overflow) is visible per feed."""
+    from gateway.core.metrics import FEED_PUBLISHED
+
+    poller = UWPoller()
+    poller._redis_dedupe = None  # isolate from real Redis dedup state (deterministic)
+    envelopes = [{"event_id": f"dp-feedmetric-{i}", "feed": "darkpool", "payload": {}} for i in range(3)]
+    before = FEED_PUBLISHED.labels(feed="darkpool")._value.get()
+
+    published, _ = await poller._publish_envelopes(
+        sink_registry=_FakeSinkRegistry(),
+        envelopes=envelopes,
+        dedupe_prefix="uw:dp",
+        missing_event_log="x",
+    )
+
+    assert published == 3
+    assert FEED_PUBLISHED.labels(feed="darkpool")._value.get() == before + 3
+
+
+def test_dedup_cache_has_hard_size_cap() -> None:
+    """The in-process dedup cache is LRU-capped so a burst can't grow it unbounded
+    between TTL cleanups (an evicted id just re-publishes once; Heber dedups it)."""
+    from gateway.core.base_poller import DedupMixin
+
+    mixin = DedupMixin()
+    mixin._init_dedup(cache_ttl_seconds=3600)
+    mixin._MAX_SEEN_IDS = 5  # shrink for the test
+
+    for i in range(20):
+        mixin._mark_seen(f"id{i}")
+
+    assert len(mixin._seen_ids) == 5  # capped
+    assert mixin._is_duplicate("id19")  # most-recent kept
+    assert not mixin._is_duplicate("id0")  # oldest evicted
+
+
+@pytest.mark.asyncio
+async def test_eod_cancel_releases_running_claim(tmp_path) -> None:
+    """A shutdown that cancels EOD mid-run must release the persistent 'running'
+    claim so the next startup re-runs today's EOD (not deferred until stale)."""
+    poller = UWPoller()
+    poller._eod_state = UwEodStateStore(tmp_path / "eod.json", stale_after_seconds=3600)
+    today = uw_poller_module.datetime.now(uw_poller_module.ET).strftime("%Y-%m-%d")
+
+    assert poller._eod_state.claim(today) is True
+    assert poller._eod_state.should_defer(today) is True  # running blocks re-run
+
+    async def _cancelled(_sink) -> None:
+        raise asyncio.CancelledError()
+
+    poller._poll_eod_snapshots = _cancelled  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await poller._run_eod_with_logging(sink_registry=None, previous_eod_date=None)
+
+    assert poller._eod_state.should_defer(today) is False  # claim released → retry allowed
