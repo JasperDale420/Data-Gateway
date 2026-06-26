@@ -22,6 +22,20 @@ class InputValidationMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Enforce the URL-length limit (previously a dead constant): reject an
+        # over-long request target — path + query string — with 414 before any
+        # route or query parsing, bounding query-string amplification at the door.
+        from gateway.core.security import PARAM_LIMITS
+
+        query_string = scope.get("query_string", b"") or b""
+        if len(path.encode("utf-8")) + len(query_string) > PARAM_LIMITS["url_max_bytes"]:
+            response = JSONResponse(
+                status_code=414,
+                content={"detail": {"code": "GW-E8003", "message": "Request URI too long"}},
+            )
+            await response(scope, receive, send)
+            return
+
         # Check content-length from raw headers (fast-path / honest clients)
         headers = dict(scope.get("headers", []))
         content_length_raw = headers.get(b"content-length")
