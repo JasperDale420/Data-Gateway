@@ -21,6 +21,19 @@ class IPConnectionTracker:
     last_seen: float = field(default_factory=time.time)
 
 
+_global_ratelimiter: "GlobalRateLimitMiddleware | None" = None
+
+
+def get_global_ratelimiter() -> "GlobalRateLimitMiddleware | None":
+    """Return the installed global rate-limit middleware instance, if any.
+
+    ``app.add_middleware`` does not expose the instance, so the middleware
+    registers itself here on construction. Admin blocklist endpoints use this
+    to manage the ENFORCED blocklist rather than a separate dead dict.
+    """
+    return _global_ratelimiter
+
+
 class GlobalRateLimitMiddleware:
     """Global and per-IP rate limiting.
 
@@ -76,6 +89,11 @@ class GlobalRateLimitMiddleware:
         self._blocked_ips: set[str] = set()
         self._last_prune = time.time()
         self._prune_interval = 60.0
+
+        # Register as the process-wide instance so admin blocklist endpoints can
+        # manage the enforced blocklist (last one installed wins).
+        global _global_ratelimiter
+        _global_ratelimiter = self
 
     def _get_client_ip(self, scope: Scope) -> str:
         """Extract client IP from ASGI scope.

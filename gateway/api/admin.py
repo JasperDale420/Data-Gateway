@@ -1187,10 +1187,21 @@ async def admin_add_to_blocklist(
         "blocked_at": datetime.now(UTC).isoformat(),
         "blocked_by": client.id,
     }
+    # Actually ENFORCE the block: push it into the global rate-limit middleware's
+    # blocklist (which the request path checks). Without this, the admin entry was
+    # metadata-only and the IP was never blocked.
+    from gateway.api.middleware.global_ratelimit import get_global_ratelimiter
+
+    limiter = get_global_ratelimiter()
+    enforced = limiter is not None
+    if limiter is not None:
+        limiter.block_ip(ip, duration_seconds=max(1, duration_hours) * 3600)
+    entry["enforced"] = enforced
+
     _ip_blocklist[ip] = entry
-    logger.info("admin_ip_blocked", ip=ip, reason=reason, actor=client.id, code="GW-I2005")
+    logger.info("admin_ip_blocked", ip=ip, reason=reason, actor=client.id, enforced=enforced, code="GW-I2005")
     return {
         "success": True,
-        "data": {"blocked": True, "entry": entry},
+        "data": {"blocked": enforced, "entry": entry},
         "meta": {"timestamp": datetime.now(UTC).isoformat(), "actor": client.id},
     }
