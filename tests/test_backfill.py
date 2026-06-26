@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gateway.core.backfill import (
+    BACKFILL_DISPATCH,
     HEAVYWEIGHT_FEEDS,
     BackfillEngine,
     BackfillJob,
@@ -17,6 +18,10 @@ from gateway.core.backfill import (
     SymbolProgress,
     _date_chunks,
     _normalize_results,
+    _uw_historic_option_volume,
+    _uw_iv_rank,
+    _uw_iv_term_structure,
+    _uw_oi_change,
     get_backfill_engine,
 )
 
@@ -742,3 +747,116 @@ async def test_publish_items_reports_partial_sink_failure() -> None:
         published = await engine._publish_items(items=items, provider="alpaca", feed="bars", job_id="job1")
 
     assert published == 2
+
+
+# ── UW EOD feed backfill dispatch ──────────────────────────────────────
+
+_UW_EOD_FEEDS = ("oi_change", "iv_rank", "iv_term_structure", "historic_option_volume")
+
+
+def test_uw_eod_feeds_registered_in_dispatch() -> None:
+    """The four UW EOD feeds dispatch to callables."""
+    for feed in _UW_EOD_FEEDS:
+        key = ("unusual_whales", feed)
+        assert key in BACKFILL_DISPATCH
+        assert callable(BACKFILL_DISPATCH[key])
+
+
+def test_uw_eod_feeds_in_supported_feeds() -> None:
+    engine = _make_engine()
+    feeds = engine.supported_feeds
+    for feed in _UW_EOD_FEEDS:
+        assert {"provider": "unusual_whales", "feed": feed} in feeds
+
+
+@pytest.mark.asyncio
+async def test_uw_oi_change_fetcher_calls_provider() -> None:
+    provider = MagicMock()
+    provider.get_oi_change = AsyncMock(return_value=[{"symbol": "AAPL", "call_oi_change": 10}])
+    s = datetime(2026, 6, 25, tzinfo=UTC)
+    e = datetime(2026, 6, 25, 23, 59, 59, tzinfo=UTC)
+
+    rows = await _uw_oi_change(provider, "AAPL", s, e)
+
+    provider.get_oi_change.assert_awaited_once_with("AAPL", date_str="2026-06-25")
+    assert rows == [{"symbol": "AAPL", "call_oi_change": 10}]
+
+
+@pytest.mark.asyncio
+async def test_uw_iv_rank_fetcher_wraps_single_result_in_list() -> None:
+    provider = MagicMock()
+    provider.get_iv_rank = AsyncMock(return_value={"symbol": "AAPL", "iv_rank": 0.5})
+    s = datetime(2026, 6, 25, tzinfo=UTC)
+    e = datetime(2026, 6, 25, 23, 59, 59, tzinfo=UTC)
+
+    rows = await _uw_iv_rank(provider, "AAPL", s, e)
+
+    provider.get_iv_rank.assert_awaited_once_with("AAPL", date_str="2026-06-25")
+    assert rows == [{"symbol": "AAPL", "iv_rank": 0.5}]
+
+
+@pytest.mark.asyncio
+async def test_uw_iv_rank_fetcher_returns_empty_for_none() -> None:
+    provider = MagicMock()
+    provider.get_iv_rank = AsyncMock(return_value=None)
+    s = datetime(2026, 6, 25, tzinfo=UTC)
+    e = datetime(2026, 6, 25, 23, 59, 59, tzinfo=UTC)
+
+    rows = await _uw_iv_rank(provider, "AAPL", s, e)
+
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_uw_iv_term_structure_fetcher_calls_provider() -> None:
+    provider = MagicMock()
+    provider.get_iv_term_structure = AsyncMock(return_value=[{"symbol": "AAPL", "expiry": "2026-07-17", "iv": 0.4}])
+    s = datetime(2026, 6, 25, tzinfo=UTC)
+    e = datetime(2026, 6, 25, 23, 59, 59, tzinfo=UTC)
+
+    rows = await _uw_iv_term_structure(provider, "AAPL", s, e)
+
+    # Snapshot-only provider method — no date param.
+    provider.get_iv_term_structure.assert_awaited_once_with("AAPL")
+    assert rows == [{"symbol": "AAPL", "expiry": "2026-07-17", "iv": 0.4}]
+
+
+@pytest.mark.asyncio
+async def test_uw_historic_option_volume_fetcher_calls_provider() -> None:
+    provider = MagicMock()
+    provider.get_historic_option_volume = AsyncMock(
+        return_value=[{"symbol": "AAPL", "expiry": "2026-07-17", "volume": 100}]
+    )
+    s = datetime(2026, 6, 25, tzinfo=UTC)
+    e = datetime(2026, 6, 25, 23, 59, 59, tzinfo=UTC)
+
+    rows = await _uw_historic_option_volume(provider, "AAPL", s, e)
+
+    provider.get_historic_option_volume.assert_awaited_once_with("AAPL", date_str="2026-06-25")
+    assert rows == [{"symbol": "AAPL", "expiry": "2026-07-17", "volume": 100}]
+
+
+def test_wrap_items_forces_equity_key_for_expiry_feeds() -> None:
+    """Expiry-carrying analytics feeds must wrap as equity, not malformed option keys.
+
+    Without the override, ``expiry`` makes ``wrap_event`` infer instrument_type=option
+    and produce ``option:AAPL`` (no OCC suffix), which Heber rejects — failing the chunk.
+    """
+    item = {"symbol": "AAPL", "expiry": "2026-07-17", "iv": 0.4, "timestamp": "2026-06-25T00:00:00Z"}
+    messages = BackfillEngine._wrap_items([dict(item)], "unusual_whales", "iv_term_structure")
+
+    assert len(messages) == 1
+    _topic, envelope = messages[0]
+    assert envelope["instrument_type"] == "equity"
+    assert envelope["instrument_key"] == "equity:AAPL"
+
+
+def test_wrap_items_no_override_for_non_expiry_feeds() -> None:
+    """oi_change / iv_rank have no top-level expiry and need no equity override."""
+    item = {"symbol": "AAPL", "call_oi_change": 5, "date": "2026-06-25"}
+    messages = BackfillEngine._wrap_items([dict(item)], "unusual_whales", "oi_change")
+
+    assert len(messages) == 1
+    _topic, envelope = messages[0]
+    assert envelope["instrument_type"] == "equity"
+    assert envelope["instrument_key"] == "equity:AAPL"

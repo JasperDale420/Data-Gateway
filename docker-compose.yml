@@ -19,16 +19,20 @@ services:
       - GATEWAY_CACHE_REDIS_URL=redis://redis:6379/0
       - GATEWAY_DATA_SINK_REDIS_URL=redis://redis:6379/0
       - REDIS_URL=redis://redis:6379/0
-      # Stream buffer for large backfills. Tuned alongside Redis maxmemory:
-      # ~3KB/entry × 300K = ~900MB worst-case stream size, fits under the 2GB
-      # Redis cap with room for the dedup cache + heber:watch/snapshots.
-      # The previous 500K cap (with Redis maxmemory=1GB) was the root cause of
-      # the 2026-05-05 sink outage: streams grew past Redis capacity, XADD
-      # latency spiked, the data_sink:redis_streams circuit breaker opened,
-      # and ~32 hours of UW data was lost from the bounded failed-event
-      # buffer. Default in code is 100K; backfill jobs >300K records should
-      # be split or temporarily raise this knob via env override.
-      - GATEWAY_DATA_SINK_MAX_STREAM_LEN=300000
+      # Stream buffer for large backfills + EOD bursts. MUST move in lockstep
+      # with Redis maxmemory below: ~3KB/entry × 500K = ~1.5GB worst-case stream,
+      # which needs the 4GB Redis cap (set below) with room for the dedup cache +
+      # heber:watch/snapshots on the same instance.
+      # History: a 500K cap with maxmemory=1GB was the root cause of the
+      # 2026-05-05 sink outage (streams outgrew Redis, XADD latency spiked, the
+      # data_sink:redis_streams circuit breaker opened, ~32h of UW data lost). It
+      # was dropped to 300K @ 2GB to recover. Raised back to 500K on 2026-06-25 —
+      # but ONLY paired with maxmemory 2GB→4GB — so an EOD burst (~114k msgs) into
+      # an at-cap stream no longer evicts the earliest unread feeds while a
+      # consumer is briefly down (the cause of the 2026-06-25 oi_change loss).
+      # PREREQ before deploying: confirm Docker has enough RAM for Redis at 4GB.
+      # Default in code is 100K.
+      - GATEWAY_DATA_SINK_MAX_STREAM_LEN=500000
       # Heber sink capacity for opening-bell and option-capture bursts.
       - GATEWAY_DATA_SINK_WORKER_COUNT=32
       - GATEWAY_DATA_SINK_REDIS_POOL_SIZE=64
@@ -82,12 +86,15 @@ services:
     container_name: data-gateway-redis
     ports:
       - "6379:6379"
-    # maxmemory raised from 1gb to 2gb on 2026-05-06: gives 4× headroom
-    # for the heber:events stream (~900MB worst case at 300K entries), the
-    # dedup cache, heber:watch/snapshots, and burst margin. Without this
-    # headroom the 500K stream cap could grow past 1GB and cause the
-    # sink-side circuit breaker to open silently (RCA: 2026-05-05 outage).
-    command: redis-server --save "" --appendonly no --maxmemory 2gb --maxmemory-policy allkeys-lru
+    # maxmemory: 1gb→2gb on 2026-05-06, then 2gb→4gb on 2026-06-25 paired with the
+    # 300K→500K stream cap above. ~1.5GB worst-case heber:events at 500K entries +
+    # the dedup cache + heber:watch/snapshots + DLQ all share this instance, so the
+    # cap and maxmemory MUST be raised together — raising the stream cap without the
+    # memory headroom is exactly what caused the 2026-05-05 sink outage. allkeys-lru
+    # can still evict unread stream entries under memory pressure, so headroom here is
+    # the backstop behind the explicit MAXLEN. PREREQ: confirm the Docker VM has the
+    # RAM to back 4GB before deploying.
+    command: redis-server --save "" --appendonly no --maxmemory 4gb --maxmemory-policy allkeys-lru
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]

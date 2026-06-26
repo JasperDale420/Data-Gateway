@@ -47,6 +47,13 @@ ALPACA_CRYPTO_FEEDS = frozenset({"crypto_bars", "crypto_trades"})
 # Auto-expire completed/failed/cancelled jobs after this duration (seconds)
 JOB_EXPIRY_SECONDS = 3600
 
+# Per-underlying UW analytics feeds whose rows carry an ``expiry`` field. Without
+# an equity override, ``_infer_instrument_type`` sees ``expiry`` and tags every
+# row as ``instrument_type=option`` with a malformed ``option:{symbol}`` key (no
+# OCC suffix), which ``wrap_event`` rejects -- failing the whole chunk. The EOD
+# poller applies the same override; see ``_poll_eod_iv_term_structure``.
+UW_EQUITY_ANALYTICS_FEEDS = frozenset({"iv_term_structure", "historic_option_volume"})
+
 
 class BackfillStatus(str, Enum):
     """Lifecycle states for a backfill job."""
@@ -222,6 +229,30 @@ async def _uw_greeks(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> l
     return await p.get_greek_exposure(sym, date_str=s.strftime("%Y-%m-%d"))
 
 
+async def _uw_oi_change(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Daily EOD feed, one snapshot per trading day. Fetch the chunk's start date.
+    return await p.get_oi_change(sym, date_str=s.strftime("%Y-%m-%d"))
+
+
+async def _uw_iv_rank(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Daily EOD as-of value. ``get_iv_rank`` returns a single model (or None); wrap
+    # it in a list so the publish path handles it like every other fetcher.
+    result = await p.get_iv_rank(sym, date_str=s.strftime("%Y-%m-%d"))
+    return [result] if result else []
+
+
+async def _uw_iv_term_structure(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Per-underlying analytics: one row per expiry of the SAME ticker. The provider
+    # method is snapshot-only (no date param), so a backfill returns the current
+    # term structure regardless of [start, end] — see module note in CHANGELOG.
+    return await p.get_iv_term_structure(sym)
+
+
+async def _uw_historic_option_volume(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
+    # Daily EOD feed, volume/premium bucketed per expiry. Fetch the chunk's start date.
+    return await p.get_historic_option_volume(sym, date_str=s.strftime("%Y-%m-%d"))
+
+
 async def _uw_earnings(p: Any, sym: str, s: datetime, e: datetime, **kw: Any) -> list:
     return await p.get_earnings(sym)
 
@@ -262,6 +293,10 @@ BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     ("unusual_whales", "insider_trades"): _uw_insiders,
     ("unusual_whales", "institutions"): _uw_institutions,
     ("unusual_whales", "greek_exposure"): _uw_greeks,
+    ("unusual_whales", "oi_change"): _uw_oi_change,
+    ("unusual_whales", "iv_rank"): _uw_iv_rank,
+    ("unusual_whales", "iv_term_structure"): _uw_iv_term_structure,
+    ("unusual_whales", "historic_option_volume"): _uw_historic_option_volume,
     ("unusual_whales", "earnings"): _uw_earnings,
     ("unusual_whales", "market_tide"): _uw_market_tide,
     ("unusual_whales", "sector_tide"): _uw_sector_tide,
@@ -706,6 +741,26 @@ class BackfillEngine:
             )
 
     @staticmethod
+    def _equity_overrides(item: dict[str, Any], provider: str, feed: str) -> dict[str, Any]:
+        """Force the equity instrument key for per-underlying analytics feeds.
+
+        ``iv_term_structure`` / ``historic_option_volume`` rows carry an
+        ``expiry`` field, so ``_infer_instrument_type`` would otherwise tag them
+        as option contracts with a malformed ``option:{symbol}`` key and fail the
+        chunk. Mirrors the EOD poller's per-feed override.
+        """
+        if provider != "unusual_whales" or feed not in UW_EQUITY_ANALYTICS_FEEDS:
+            return {}
+        symbol = str(item.get("symbol") or item.get("ticker") or "").upper()
+        if not symbol:
+            return {}
+        return {
+            "instrument_type_override": "equity",
+            "instrument_key_override": f"equity:{symbol}",
+            "symbol_override": symbol,
+        }
+
+    @staticmethod
     def _wrap_items(items: list[dict[str, Any]], provider: str, feed: str) -> list[tuple[str, dict[str, Any]]]:
         """Sort items by timestamp and wrap each in an envelope.
 
@@ -715,7 +770,16 @@ class BackfillEngine:
         """
         items.sort(key=lambda x: x.get("timestamp") or x.get("t") or "")
         return [
-            (HEBER_EVENTS_TOPIC, wrap_event(event=item, provider=provider, feed=feed, source="backfill"))
+            (
+                HEBER_EVENTS_TOPIC,
+                wrap_event(
+                    event=item,
+                    provider=provider,
+                    feed=feed,
+                    source="backfill",
+                    **BackfillEngine._equity_overrides(item, provider, feed),
+                ),
+            )
             for item in items
         ]
 
