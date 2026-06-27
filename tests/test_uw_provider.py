@@ -217,6 +217,25 @@ async def test_get_short_interest_none_response_returns_empty(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_short_interest_empty_record_returns_empty(monkeypatch):
+    """An all-UNSET interest-float record (tier without the feed) yields no rows,
+    not a misleading all-zero short-interest row."""
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    class _EmptyRecord:
+        def to_dict(self):
+            return {}  # all fields UNSET upstream
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        return _EmptyRecord()
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    assert await provider.get_short_interest("aapl") == []
+
+
+@pytest.mark.asyncio
 async def test_get_flow_alerts_uses_native_offset_when_supported(monkeypatch):
     """When SDK supports offset, provider should use it directly."""
     provider = UnusualWhalesProvider()

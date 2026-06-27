@@ -75,6 +75,12 @@ class UWMarketMixin:
                 response.to_dict() if hasattr(response, "to_dict") else (response if isinstance(response, dict) else {})
             )
             get = record.get
+            # interest-float returns an all-UNSET record on UW tiers that don't
+            # include it (observed empty even for high-SI names). Emit nothing
+            # rather than a misleading all-zero short-interest row.
+            if not (get("si_float_returned") or get("percent_returned") or get("days_to_cover_returned")):
+                logger.info("uw_short_interest_fetched", symbol=symbol, count=0)
+                return []
             results = [
                 NormalizedShortData(
                     symbol=symbol.upper(),
