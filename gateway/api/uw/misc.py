@@ -133,6 +133,7 @@ async def get_greek_flow_expiry(
 @router.get("/news/headlines", response_model=SuccessResponse)
 async def get_news_headlines(
     sources: str | None = Query(default=None, description="Comma-separated sources"),
+    ticker: str | None = Query(default=None, description="Ticker symbol to search headlines for"),
     search_term: str | None = Query(default=None, description="Search term"),
     major_only: bool | None = Query(default=None, description="Major news only"),
     limit: int = Query(default=50, le=200, ge=1),
@@ -142,7 +143,12 @@ async def get_news_headlines(
     cache: InMemoryCache = Depends(get_cache),
 ):
     """Get latest financial news headlines."""
-    cache_key = f"uw:news:headlines:{sources or 'all'}:{search_term or 'none'}:{major_only}:{limit}:{page or 1}"
+    normalized_ticker = ticker.upper() if ticker else None
+    effective_search_term = search_term or normalized_ticker
+    cache_key = (
+        f"uw:news:headlines:{sources or 'all'}:{normalized_ticker or 'all'}:"
+        f"{effective_search_term or 'none'}:{major_only}:{limit}:{page or 1}"
+    )
     sources_list = sources.split(",") if sources else None
     return await execute_uw_cached(
         cache=cache,
@@ -151,10 +157,17 @@ async def get_news_headlines(
         ttl=60,
         fetcher=lambda provider: provider.get_news_headlines(
             sources=sources_list,
-            search_term=search_term,
+            search_term=effective_search_term,
             major_only=major_only,
             limit=limit,
             page=page,
         ),
-        build_response=lambda data: make_response(data, count=len(data)),
+        build_response=lambda data: make_response(
+            data,
+            count=len(data),
+            extra_meta={
+                "ticker": normalized_ticker,
+                "search_term": effective_search_term,
+            },
+        ),
     )
