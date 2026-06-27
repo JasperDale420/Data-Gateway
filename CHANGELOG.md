@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Option OI-change now reports real call vs put open interest** (`gateway/providers/uw/options.py`): `/api/v1/uw/options/{ticker}/oi-change` hardcoded `put_oi`/`put_oi_change` to 0 and stuffed every contract's OI into the call side, and used UW's `oi_change` *ratio* (truncated to int) instead of the absolute change. Each row is now classified call/put by its OCC `option_symbol` and reports the absolute `oi_diff_plain`, so a sum over rows is a genuine call-vs-put net. Consumers that summed these rows (e.g. opening-confirmation, OI-trend signals) were silently call-biased and used a meaningless magnitude.
+- **Short interest now returns actual short-interest data** (`gateway/providers/uw/market.py`): `get_short_interest` called UW's borrow/rebate endpoint (`shorts.get_data`) and read short-interest keys that don't exist there, so `short_interest` / `days_to_cover` / `short_percent_float` came back empty for every ticker. It now calls the interest-float endpoint and maps `si_float_returned` / `days_to_cover_returned` / `percent_returned`. Note: this endpoint is a single latest snapshot (no history/date param).
+
 ### Added
 
 - **Per-request trace/correlation id** (`gateway/api/middleware/correlation.py`): a new outermost `CorrelationIdMiddleware` reads an inbound `x-trace-id` (or mints one), binds it into the structlog context via `empire_core.bind_context` so every log line for the request carries it, echoes it back on the response, and clears it on the way out. A single REST request — and its downstream sink publishes — can now be followed across the JSON logs by id, where previously correlation relied on timestamp+symbol guesswork. The `bind_context`/`clear_context` plumbing existed but had zero call-sites.

@@ -109,6 +109,113 @@ async def test_get_greek_exposure_date_only_timestamp_is_utc(monkeypatch):
     assert rows[0].symbol == "SPY"
 
 
+def test_occ_contract_type_parses_call_put():
+    from gateway.providers.uw.options import _occ_contract_type
+
+    assert _occ_contract_type("AAPL260116C00190000") == "call"
+    assert _occ_contract_type("AAPL260116P00150000") == "put"
+    assert _occ_contract_type("MSFT  240315C00350000") == "call"  # space-padded OCC
+    assert _occ_contract_type("PCG260116P00012000") == "put"  # ticker itself contains a P
+    assert _occ_contract_type(None) is None
+    assert _occ_contract_type("garbage") is None
+
+
+@pytest.mark.asyncio
+async def test_get_oi_change_splits_call_put_by_occ_symbol(monkeypatch):
+    """Each oi-change row is one contract; OI must be routed to the correct side by
+    its OCC symbol, using the absolute oi_diff_plain (NOT the oi_change ratio), so a
+    sum over rows is a real call-vs-put aggregate."""
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        return _FakeResponse(
+            [
+                # call contract: curr 35207, prev 2119 -> +33088 (oi_change is a ratio, ignore)
+                {
+                    "option_symbol": "AAPL260116C00190000",
+                    "curr_date": "2026-06-26",
+                    "curr_oi": 35207,
+                    "last_oi": 2119,
+                    "oi_diff_plain": 33088,
+                    "oi_change": "15.61",
+                },
+                # put contract: curr 10000, prev 12000 -> -2000
+                {
+                    "option_symbol": "AAPL260116P00150000",
+                    "curr_date": "2026-06-26",
+                    "curr_oi": 10000,
+                    "last_oi": 12000,
+                    "oi_diff_plain": -2000,
+                    "oi_change": "-0.16",
+                },
+            ]
+        )
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    rows = await provider.get_oi_change("aapl", "2026-06-26")
+
+    assert len(rows) == 2
+    call_row, put_row = rows
+    assert (call_row.call_oi, call_row.put_oi) == (35207, 0)
+    assert (call_row.call_oi_change, call_row.put_oi_change) == (33088, 0)
+    assert (put_row.call_oi, put_row.put_oi) == (0, 10000)
+    assert (put_row.call_oi_change, put_row.put_oi_change) == (0, -2000)
+    # The aggregate Kairos sums is now a genuine call-vs-put net.
+    assert sum(r.call_oi_change for r in rows) == 33088
+    assert sum(r.put_oi_change for r in rows) == -2000
+
+
+@pytest.mark.asyncio
+async def test_get_short_interest_maps_interest_float_fields(monkeypatch):
+    """get_short_interest now uses the interest-float endpoint (single latest
+    snapshot) and maps si_float_returned / days_to_cover_returned / percent_returned
+    into the short-interest schema (previously all-empty)."""
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    class _FakeRecord:
+        def to_dict(self):
+            return {
+                "market_date": "2026-06-13",
+                "si_float_returned": 12_500_000,
+                "days_to_cover_returned": "3.4",
+                "percent_returned": "8.7",
+                "total_float_returned": 143_000_000,
+                "symbol": "AAPL",
+            }
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        return _FakeRecord()
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    rows = await provider.get_short_interest("aapl")
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.symbol == "AAPL"
+    assert row.date == "2026-06-13"
+    assert row.short_interest == 12_500_000
+    assert str(row.days_to_cover) == "3.4"
+    assert str(row.short_percent_float) == "8.7"
+    assert row.short_percent_outstanding is None
+
+
+@pytest.mark.asyncio
+async def test_get_short_interest_none_response_returns_empty(monkeypatch):
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        return None
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    assert await provider.get_short_interest("aapl") == []
+
+
 @pytest.mark.asyncio
 async def test_get_flow_alerts_uses_native_offset_when_supported(monkeypatch):
     """When SDK supports offset, provider should use it directly."""
