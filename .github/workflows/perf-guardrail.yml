@@ -34,7 +34,7 @@ jobs:
 
       - name: Restore perf history cache
         id: perf-cache-restore
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .perf
           key: ${{ runner.os }}-perf-history-v1-${{ github.ref_name }}-${{ github.run_id }}
@@ -84,7 +84,7 @@ jobs:
 
       - name: Save perf history cache
         if: always()
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .perf
           key: ${{ steps.perf-cache-restore.outputs.cache-primary-key }}
