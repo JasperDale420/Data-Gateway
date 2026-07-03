@@ -297,6 +297,43 @@ class UWBaseMixin(DataProvider):
         status_code = getattr(response, "status_code", None)
         return status_code if isinstance(status_code, int) else None
 
+    async def _raw_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """Authenticated GET against the UW REST API, returning the JSON ``data`` payload.
+
+        Shared primitive for endpoints not covered by the vendored SDK (v5.1). The SDK's
+        httpx client already carries the base URL and bearer auth. ``None``-valued params
+        are dropped; remaining values are stringified. Returns ``payload["data"]`` when the
+        response is the standard ``{"data": ...}`` envelope, otherwise the raw JSON body.
+        """
+        if not self._client:
+            logger.warning("uw_client_not_initialized", path=path)
+            return []
+
+        # Drop None params; pass lists/tuples through so httpx emits repeated keys
+        # (e.g. ``ticker[]=AAPL&ticker[]=MSFT``). Scalars (str/int/float/bool) are left
+        # for httpx to serialize — notably bool -> "true"/"false".
+        clean: dict[str, Any] = {}
+        for key, value in (params or {}).items():
+            if value is None:
+                continue
+            clean[key] = [str(item) for item in value] if isinstance(value, list | tuple) else value
+        try:
+            http_client = self._client.get_httpx_client()
+            response = await self._call_sync(http_client.get, path, params=clean)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as e:
+            status_code = self._extract_http_status_code(e)
+            if status_code is not None and status_code >= 500:
+                logger.warning("uw_raw_get_upstream_unavailable", path=path, status_code=status_code)
+            else:
+                logger.error("uw_raw_get_failed", path=path, error=str(e))
+            raise
+
+        if isinstance(payload, dict) and "data" in payload:
+            return payload["data"]
+        return payload
+
     def _parse_iv_rank_payload(self, symbol: str, payload: Any) -> NormalizedIVRank | None:
         """Parse raw IV-rank payload into canonical schema."""
         data = payload.get("data") if isinstance(payload, dict) else payload
