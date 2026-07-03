@@ -56,32 +56,45 @@ class UWMarketMixin:
         try:
             from unusualwhales.api import shorts
 
+            # shorts.get_data returns borrow/rebate data (short_shares_available,
+            # fee_rate) — NOT short interest, so the NormalizedShortData fields all
+            # came back empty. The actual short-interest record (shares shorted,
+            # days-to-cover, % float) is the interest-float endpoint, which returns
+            # ONE latest snapshot (no history / no date param).
             response = await self._call_sync(
-                shorts.get_data.sync,
+                shorts.get_interest_float.sync,
                 symbol.upper(),
                 client=self._client,
             )
 
-            results = []
-            for item in self._extract_data(response):
-                get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
-                results.append(
-                    NormalizedShortData(
-                        symbol=symbol.upper(),
-                        date=str(get("date") or ""),
-                        short_interest=_safe_int(get("short_interest")),
-                        days_to_cover=(Decimal(str(get("days_to_cover") or 0)) if get("days_to_cover") else None),
-                        short_percent_float=(
-                            Decimal(str(get("short_percent_float") or 0)) if get("short_percent_float") else None
-                        ),
-                        short_percent_outstanding=(
-                            Decimal(str(get("short_percent_outstanding") or 0))
-                            if get("short_percent_outstanding")
-                            else None
-                        ),
-                        provider="unusual_whales",
-                    )
+            if response is None:
+                logger.info("uw_short_interest_fetched", symbol=symbol, count=0)
+                return []
+
+            record = (
+                response.to_dict() if hasattr(response, "to_dict") else (response if isinstance(response, dict) else {})
+            )
+            get = record.get
+            # interest-float returns an all-UNSET record on UW tiers that don't
+            # include it (observed empty even for high-SI names). Emit nothing
+            # rather than a misleading all-zero short-interest row.
+            if not (get("si_float_returned") or get("percent_returned") or get("days_to_cover_returned")):
+                logger.info("uw_short_interest_fetched", symbol=symbol, count=0)
+                return []
+            results = [
+                NormalizedShortData(
+                    symbol=symbol.upper(),
+                    date=str(get("market_date") or get("date") or ""),
+                    short_interest=_safe_int(get("si_float_returned")),
+                    days_to_cover=(
+                        Decimal(str(get("days_to_cover_returned"))) if get("days_to_cover_returned") else None
+                    ),
+                    short_percent_float=(Decimal(str(get("percent_returned"))) if get("percent_returned") else None),
+                    # interest-float does not report % of shares outstanding.
+                    short_percent_outstanding=None,
+                    provider="unusual_whales",
                 )
+            ]
 
             logger.info("uw_short_interest_fetched", symbol=symbol, count=len(results))
             return results

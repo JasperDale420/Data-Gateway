@@ -7,7 +7,6 @@ import httpx
 from alpaca.common.enums import Sort
 from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import (
-    ActivityType,
     AssetClass,
     AssetExchange,
     AssetStatus,
@@ -682,10 +681,17 @@ class AlpacaTradingMixin:
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
         try:
-            activities = self._trading_client.get_account_activities(
-                activity_types=([ActivityType(t) for t in activity_types] if activity_types else None),
-            )
-            return [self._model_to_dict(a) for a in activities]
+            # alpaca-py >=0.41 removed TradingClient.get_account_activities (it
+            # moved to BrokerClient, which needs Broker-API creds the gateway
+            # does not hold). Call the Trading API endpoint directly via the
+            # SDK's low-level client, which returns raw activity dicts already.
+            params: dict[str, Any] = {}
+            if activity_types:
+                params["activity_types"] = ",".join(activity_types)
+            # ponytail: one page (Alpaca caps page_size at 100), newest-first by
+            # default — enough for close-recon's "a recent close aged out" case.
+            activities = self._trading_client.get("/account/activities", data=params or None)
+            return list(activities or [])
         except APIError as e:
             logger.error("alpaca_activities_error", error=str(e))
             raise

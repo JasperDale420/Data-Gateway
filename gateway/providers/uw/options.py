@@ -1,5 +1,6 @@
 """UW Options mixin — option chains, contracts, greeks, OI, premium, max pain, IV, screener."""
 
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -10,6 +11,20 @@ from gateway.schemas import NormalizedIVRank
 
 from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_float, _safe_int
 from .transient import is_transient_upstream_error
+
+# OCC option symbol: the contract type (C/P) is the single char immediately
+# before the 8-digit strike at the end (e.g. AAPL260116C00190000 -> C).
+_OCC_TYPE_RE = re.compile(r"[CP](?=\d{8}$)")
+
+
+def _occ_contract_type(option_symbol: str | None) -> str | None:
+    """Return 'call' or 'put' from an OCC option symbol, or None if unparseable."""
+    if not option_symbol:
+        return None
+    match = _OCC_TYPE_RE.search(option_symbol.replace(" ", ""))
+    if not match:
+        return None
+    return "call" if match.group() == "C" else "put"
 
 
 def _parse_uw_timestamp(value: Any) -> datetime:
@@ -399,14 +414,24 @@ class UWOptionsMixin:
             results = []
             for item in self._extract_data(response):
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
+                # Each upstream row is ONE option contract (a call or a put), keyed
+                # by its OCC option_symbol. Route its open interest to the correct
+                # side so a sum over rows is a real call-vs-put aggregate. The
+                # absolute OI change is ``oi_diff_plain`` (curr_oi - last_oi);
+                # ``oi_change`` upstream is a ratio, not a contract count — never sum it.
+                # Unparseable symbols fall back to the call side (option_symbol is
+                # always present in practice).
+                is_put = _occ_contract_type(get("option_symbol")) == "put"
+                curr_oi = int(float(get("curr_oi") or get("call_oi") or 0))
+                oi_diff = int(float(get("oi_diff_plain") or 0))
                 results.append(
                     NormalizedOIChange(
                         symbol=symbol.upper(),
                         date=str(get("date") or get("curr_date") or ""),
-                        call_oi=int(float(get("call_oi") or get("curr_oi") or 0)),
-                        put_oi=int(float(get("put_oi") or 0)),
-                        call_oi_change=int(float(get("call_oi_change") or get("oi_change") or 0)),
-                        put_oi_change=int(float(get("put_oi_change") or 0)),
+                        call_oi=0 if is_put else curr_oi,
+                        put_oi=curr_oi if is_put else 0,
+                        call_oi_change=oi_diff if not is_put else 0,
+                        put_oi_change=oi_diff if is_put else 0,
                         avg_price=(Decimal(str(get("avg_price"))) if get("avg_price") is not None else None),
                         prev_oi=(int(float(get("last_oi"))) if get("last_oi") is not None else None),
                         option_symbol=get("option_symbol"),

@@ -285,3 +285,62 @@ def test_do_not_exercise_http_error_reraises(
     with pytest.raises(httpx.HTTPStatusError):
         prov.do_not_exercise_option("AAPL250117C00200000")
     assert ("error", "alpaca_option_dne_error") in _silence_logger
+
+
+# ── get_account_activities ───────────────────────────────────────────────────
+
+
+def test_get_account_activities_calls_low_level_endpoint() -> None:
+    # alpaca-py >=0.41 dropped TradingClient.get_account_activities (it moved to
+    # BrokerClient). The provider must hit the Trading API endpoint directly via
+    # the SDK's low-level get(), returning the raw dicts unchanged.
+    captured: dict[str, Any] = {}
+
+    def _get(path: str, data: Any = None) -> Any:
+        captured["path"] = path
+        captured["data"] = data
+        return [
+            {"id": "1", "activity_type": "FILL", "symbol": "AAPL", "order_id": "o1"},
+            {"id": "2", "activity_type": "FILL", "symbol": "MSFT", "order_id": "o2"},
+        ]
+
+    prov = _Provider(get=_get)
+    result = prov.get_account_activities(["FILL"])
+
+    assert captured["path"] == "/account/activities"
+    assert captured["data"] == {"activity_types": "FILL"}
+    assert result == [
+        {"id": "1", "activity_type": "FILL", "symbol": "AAPL", "order_id": "o1"},
+        {"id": "2", "activity_type": "FILL", "symbol": "MSFT", "order_id": "o2"},
+    ]
+
+
+def test_get_account_activities_joins_multiple_types() -> None:
+    captured: dict[str, Any] = {}
+
+    def _get(path: str, data: Any = None) -> Any:
+        captured["data"] = data
+        return []
+
+    prov = _Provider(get=_get)
+    prov.get_account_activities(["FILL", "DIV"])
+    assert captured["data"] == {"activity_types": "FILL,DIV"}
+
+
+def test_get_account_activities_no_types_passes_none() -> None:
+    captured: dict[str, Any] = {}
+
+    def _get(path: str, data: Any = None) -> Any:
+        captured["data"] = data
+        return []
+
+    prov = _Provider(get=_get)
+    prov.get_account_activities(None)
+    assert captured["data"] is None
+
+
+def test_get_account_activities_api_error_reraises(_silence_logger: list[tuple[str, str]]) -> None:
+    prov = _Provider(get=_raises(_api_error(40010000)))
+    with pytest.raises(APIError):
+        prov.get_account_activities(["FILL"])
+    assert ("error", "alpaca_activities_error") in _silence_logger
