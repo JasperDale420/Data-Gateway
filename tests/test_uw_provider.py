@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
+from gateway.core.envelope import wrap_event
 from gateway.providers.uw import DEFAULT_UW_MAX_INFLIGHT_CALLS, UnusualWhalesProvider
 
 
@@ -165,6 +166,62 @@ async def test_get_oi_change_splits_call_put_by_occ_symbol(monkeypatch):
     # The aggregate Kairos sums is now a genuine call-vs-put net.
     assert sum(r.call_oi_change for r in rows) == 33088
     assert sum(r.put_oi_change for r in rows) == -2000
+
+
+class _FakeDataResponse:
+    def __init__(self, data):
+        self.data = data
+
+
+@pytest.mark.asyncio
+async def test_get_historic_option_volume_stable_distinct_event_ids(monkeypatch):
+    """volume-oi-expiry rows carry ``expires`` (not ``expiry``), no ``date`` and no
+    ``timestamp``. The provider must map ``expires`` -> ``expiry`` and anchor ts_event
+    to the snapshot day, never ``now()``. Otherwise the FEED_UNIQUE_FIELDS tuple
+    (symbol, date, expiry) is (SYMBOL, "", None) for every row, so all per-expiry rows
+    collapse to a single event_id that also drifts on each re-fetch -- dropping and
+    duplicating this per-day snapshot at Heber.
+    """
+    provider = UnusualWhalesProvider()
+    provider._client = object()
+
+    async def _fake_call_sync(_func, *args, **kwargs):
+        return _FakeDataResponse(
+            [
+                {"expires": "2026-01-16", "volume": 100, "oi": 200},
+                {"expires": "2026-02-20", "volume": 300, "oi": 400},
+            ]
+        )
+
+    monkeypatch.setattr(provider, "_call_sync", _fake_call_sync)
+
+    def _event_ids(rows):
+        return [
+            wrap_event(
+                row,
+                provider="unusual_whales",
+                feed="historic_option_volume",
+                source="rest",
+                instrument_type_override="equity",
+                instrument_key_override="equity:SPY",
+                symbol_override="SPY",
+            )["event_id"]
+            for row in rows
+        ]
+
+    rows = await provider.get_historic_option_volume("SPY", "2026-01-02")
+
+    # expires is surfaced as expiry, and ts_event is the requested snapshot day (no now()).
+    assert [r["expiry"] for r in rows] == ["2026-01-16", "2026-02-20"]
+    assert all(r["timestamp"] == "2026-01-02" for r in rows)
+    assert all(r["date"] == "2026-01-02" for r in rows)
+
+    ids = _event_ids(rows)
+    assert len(set(ids)) == 2  # distinct expiries stay distinct
+
+    # Re-fetching the same snapshot day reproduces the same event_ids (idempotent).
+    rows_again = await provider.get_historic_option_volume("SPY", "2026-01-02")
+    assert _event_ids(rows_again) == ids
 
 
 @pytest.mark.asyncio

@@ -552,3 +552,35 @@ def test_darkpool_distinct_trades_get_distinct_event_ids():
     e1 = wrap_event(event={**base, "tracking_id": "dup"}, provider="unusual_whales", feed="darkpool", source="rest")
     e2 = wrap_event(event={**base, "tracking_id": "dup"}, provider="unusual_whales", feed="darkpool", source="rest")
     assert e1["event_id"] == e2["event_id"]  # true duplicate collapses to one id
+
+
+def test_oi_change_distinct_contracts_get_distinct_event_ids():
+    """Distinct OCC contracts on one underlying/date must not collapse to one event_id.
+
+    Mirrors the darkpool tracking_id guard. FEED_UNIQUE_FIELDS['oi_change'] leads with
+    ``option_symbol``, but NormalizedOIChange used to omit that field, so Pydantic
+    (extra="ignore") dropped it before the payload reached compute_event_id. Two
+    contracts sharing ``call_oi_change`` (often 0) then hashed identically and all but
+    one dropped at Heber's Bronze dedup. Building the payload via ``model_dump`` makes
+    this test fail if the schema ever stops carrying ``option_symbol``.
+    """
+    from gateway.schemas import NormalizedOIChange
+
+    def eid(option_symbol: str) -> str:
+        row = NormalizedOIChange(
+            symbol="AAPL",
+            date="2025-01-02",
+            call_oi=0,
+            put_oi=0,
+            call_oi_change=0,
+            put_oi_change=0,
+            option_symbol=option_symbol,
+            provider="unusual_whales",
+        )
+        env = wrap_event(row.model_dump(mode="json"), provider="unusual_whales", feed="oi_change", source="rest")
+        return env["event_id"]
+
+    a = eid("AAPL250117C00200000")
+    b = eid("AAPL250117C00210000")
+    assert a != b  # distinct contracts kept
+    assert eid("AAPL250117C00200000") == a  # true duplicate still collapses to one id

@@ -472,17 +472,27 @@ class UWOptionsMixin:
             if not data:
                 return []
 
-            now_iso = datetime.now(UTC).isoformat()
+            # UW's volume-oi-expiry rows carry no date/timestamp -- only expires/volume/oi.
+            # Anchor ts_event to the snapshot day (date_str for backfill, today for the
+            # live EOD poller); never stamp wall-clock now(), which makes ts_event -- and
+            # so the event_id -- drift on every re-fetch, duplicating this per-day snapshot
+            # at Heber.
+            # ponytail: today() on the live path is day-granular and stable per fetch-day;
+            # pass an explicit ET trading date from the poller if the UTC-midnight boundary
+            # ever matters.
+            snapshot_date = str(date_str or datetime.now(UTC).date().isoformat())
             results = []
             for item in data:
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
-                item_date = str(get("date") or date_str or "")
+                raw_ts = get("timestamp")
                 results.append(
                     {
                         "symbol": symbol.upper(),
-                        "timestamp": str(get("timestamp") or now_iso),
-                        "date": item_date,
-                        "expiry": get("expiry"),
+                        "timestamp": str(raw_ts) if raw_ts else snapshot_date,
+                        "date": str(get("date") or snapshot_date),
+                        # UW returns the expiry as `expires`; reading only `expiry` yielded
+                        # None for every row, collapsing all per-expiry rows to one id.
+                        "expiry": get("expiry") or get("expires"),
                         "volume": _safe_int(get("volume")) if get("volume") is not None else 0,
                         "open_interest": (
                             _safe_int(get("open_interest") or get("oi"))
