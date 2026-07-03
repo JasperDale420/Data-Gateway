@@ -272,6 +272,14 @@ class Settings(BaseSettings):
     uw_eod_hour: int = Field(default=16, ge=0, le=23)  # 4:00 PM ET
     uw_eod_minute: int = Field(default=30, ge=0, le=59)  # 4:30 PM ET
     uw_core_tickers: str = ""  # comma-separated override, empty = use defaults
+    uw_universe_file: Path = Field(
+        default=Path("config/uw_pit_universe.json"),
+        description=(
+            "JSON file with an 'active' symbol list (Atlas PIT universe export). When it exists, "
+            "EOD capture uses that list as its ticker set and disables the dynamic screener rotation. "
+            "Missing file falls back to uw_core_tickers / DEFAULT_CORE_TICKERS."
+        ),
+    )
     uw_dynamic_ticker_count: int = Field(default=20, ge=0)
     uw_eod_concurrency: int = Field(default=5, ge=1, le=20)
     uw_eod_state_path: Path = Field(
