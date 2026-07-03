@@ -287,8 +287,8 @@ class Settings(BaseSettings):
         description="Persistent JSON state file used to prevent duplicate UW EOD runs across restarts",
     )
     uw_eod_claim_stale_after_seconds: int = Field(
-        default=7200,
-        ge=300,
+        default=14400,  # 4h — the ~989-ticker PIT universe EOD run can exceed the old 2h window,
+        ge=300,  # which would let a mid-run restart launch a duplicate concurrent EOD run
         description="Allow a UW EOD run to be retried when a running claim is older than this many seconds",
     )
 

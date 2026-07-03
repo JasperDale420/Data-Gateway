@@ -12,6 +12,16 @@ Tiers:
   tier1  cheap, ~1 call/ticker, full multi-year series. Run once over the whole universe.
   tier3  per-day snapshot feeds (~1 call/trading-day/ticker). Sampled: top-N symbols, N days.
 
+OPERATIONAL SAFETY (heber:events is shared + capital-adjacent):
+  - Run when the live gateway is QUIET and Heber is CAUGHT UP. tier1 greek_exposure alone is
+    ~989 tickers x ~750 rows ≈ 740k records; if that outruns Heber's consumer the stream's
+    MAXLEN trim can evict live events not yet read. --max-stream-len defaults high so the
+    driver never trims, but the live gateway's own 100k-trim still caps the stream if it is
+    writing concurrently — so do not run this during market hours. The bulletproof fix is a
+    separate stream Heber also consumes (needs Heber-side consumer config).
+  - Shares the 40k/day UW quota with the live gateway (EOD ~8k + flow/darkpool/tide ~5k).
+    Keep --daily-budget so EOD + live + backfill stay under 40k, and avoid the live EOD window.
+
 Usage:
     set -a; source .env; set +a
     uv run python scripts/uw_backfill_driver.py --tier 1                    # cheap full-universe
@@ -79,9 +89,15 @@ def _feeds() -> dict[str, Feed]:
         Feed("insider_trades", 1, lambda p, s, d: p.get_insiders(symbol=s, limit=200)),
     ]
     # tier3: one call per trading day.
+    # NOTE: oi_change and historic_option_volume are deliberately EXCLUDED. Both have
+    # pre-existing gateway/schema bugs that make their event_ids collapse or drift, so
+    # backfilling them would drop or duplicate rows at Heber:
+    #   - oi_change: NormalizedOIChange drops `option_symbol` (the FEED_UNIQUE_FIELDS lead
+    #     key), so contracts with equal remaining fields hash identically.
+    #   - historic_option_volume: provider stamps now() when UW omits `timestamp`, so the
+    #     event_id is non-deterministic across re-fetches.
+    # Re-add here only after those are fixed in the provider/empire-schemas.
     t3 = [
-        Feed("oi_change", 3, lambda p, s, d: p.get_oi_change(s, date_str=d)),
-        Feed("historic_option_volume", 3, lambda p, s, d: p.get_historic_option_volume(s, date_str=d)),
         Feed("darkpool", 3, lambda p, s, d: p.get_darkpool_ticker(s, date_str=d, limit=500)),
     ]
     return {f.name: f for f in t1 + t3}
@@ -138,6 +154,16 @@ class Progress:
 # ── publish ──
 
 
+# Congress/insider payloads carry no event-time field, so wrap_event would fall back to
+# now() and every re-fetch would mint a fresh event_id → duplicate Bronze rows, AND would
+# differ from what the live EOD poller publishes for the same trade. Stamp `timestamp` from
+# the filing date exactly as uw_poller._stamp_filing_ts_event does, so event_ids match.
+_FILING_TS_KEYS = {
+    "congress_trades": ("filed_at_date", "transaction_date"),
+    "insider_trades": ("filing_date", "transaction_date"),
+}
+
+
 def _to_envelopes(records: Any, symbol: str, feed: str) -> list[dict]:
     from gateway.core.envelope import wrap_event
 
@@ -145,11 +171,18 @@ def _to_envelopes(records: Any, symbol: str, feed: str) -> list[dict]:
         return []
     if not isinstance(records, list):
         records = [records]
+    symbol = symbol.upper()  # Heber's equity-key validator requires ^equity:[A-Z0-9...]
+    ts_keys = _FILING_TS_KEYS.get(feed)
     envs = []
     for item in records:
         if item is None:
             continue
-        payload = item.model_dump() if hasattr(item, "model_dump") else item
+        payload = item.model_dump() if hasattr(item, "model_dump") else dict(item)
+        if ts_keys and not payload.get("timestamp"):
+            for k in ts_keys:
+                if payload.get(k):
+                    payload["timestamp"] = payload[k]
+                    break
         # Force equity keys for these per-underlying feeds — several carry expiry/strike
         # fields that _infer_instrument_type would otherwise mis-key as option:{symbol}
         # (no OCC suffix) and Heber would drop 100% at Bronze→Silver.
@@ -214,7 +247,11 @@ async def run(args: argparse.Namespace) -> int:
     if not redis_url:
         print("[fatal] GATEWAY_DATA_SINK_REDIS_URL not set", file=sys.stderr)
         return 2
-    sink = RedisStreamsSink(redis_url=redis_url)
+    # heber:events is a shared, MAXLEN-trimmed stream. Give the driver's sink a very large
+    # max_len so its own xadds never trim live gateway events the consumer hasn't read yet
+    # (the OPRA-DLQ eviction failure mode). Still run backfill when the gateway is quiet and
+    # Heber is caught up — see the module docstring's operational notes.
+    sink = RedisStreamsSink(redis_url=redis_url, max_len=args.max_stream_len)
 
     calls = 0
     published = 0
@@ -233,10 +270,20 @@ async def run(args: argparse.Namespace) -> int:
                 records = await feed.fetch(provider, sym, day)
                 calls += 1
                 envs = _to_envelopes(records, sym, feed.name)
-                if envs:
-                    ok = await sink.publish_batch([(TOPIC, e) for e in envs])
+                if not envs:
+                    prog.mark(key)  # genuine empty response — nothing to publish, done
+                else:
+                    results = await sink.publish_batch_results([(TOPIC, e) for e in envs])
+                    ok = sum(results)
                     published += ok
-                prog.mark(key)
+                    # Only mark done when EVERY record landed. On a partial/failed publish
+                    # (Redis blip, breaker open, pool exhausted) leave the unit pending so a
+                    # rerun re-fetches and re-publishes; Heber dedups whatever already landed.
+                    # Marking done here would be a permanent silent data gap on resume.
+                    if ok == len(envs):
+                        prog.mark(key)
+                    else:
+                        print(f"[partial] {key}: {ok}/{len(envs)} published, will retry", file=sys.stderr)
             except Exception as e:  # complete-but-log: skip one unit, keep the run alive
                 print(f"[err] {key}: {type(e).__name__}: {e}", file=sys.stderr)
             if calls >= args.daily_budget:
@@ -285,23 +332,23 @@ def self_check() -> int:
         assert not Progress(sp).has("MSFT|ftds")
     days = trading_days(dt.date(2026, 1, 1), dt.date(2026, 1, 7))
     assert days == ["2026-01-01", "2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07"], days
-    assert set(FEEDS) >= {"greek_exposure", "ftds", "earnings", "oi_change", "darkpool"}
-    # every proven feed name must be one the EOD poller/Heber already know
-    proven = {
-        "greek_exposure",
-        "ftds",
-        "short_volume",
-        "earnings",
-        "congress_trades",
-        "insider_trades",
-        "oi_change",
-        "historic_option_volume",
-        "darkpool",
-    }
+    # Every feed must be one the EOD poller publishes AND Heber has a Silver normalizer for.
+    # oi_change/historic_option_volume are intentionally excluded (event_id bugs) — guard both.
+    proven = {"greek_exposure", "ftds", "short_volume", "earnings", "congress_trades", "insider_trades", "darkpool"}
     assert set(FEEDS) == proven, f"feed set drifted from proven contract: {set(FEEDS) ^ proven}"
-    envs = _to_envelopes([{"symbol": "AAPL", "date": "2025-01-02", "call_gamma": 1}], "AAPL", "greek_exposure")
-    assert envs and envs[0]["instrument_key"] == "equity:AAPL", envs
+    assert "oi_change" not in FEEDS and "historic_option_volume" not in FEEDS, "excluded feed re-added without fix"
+    envs = _to_envelopes([{"symbol": "aapl", "date": "2025-01-02", "call_gamma": 1}], "aapl", "greek_exposure")
+    assert envs and envs[0]["instrument_key"] == "equity:AAPL", envs  # symbol uppercased
     assert envs[0]["feed"] == "greek_exposure"
+    # congress/insider get their ts_event stamped from the filing date (event_id parity with EOD)
+    c = _to_envelopes(
+        [{"ticker": "AAPL", "filed_at_date": "2025-03-04", "transaction_date": "2025-02-01"}], "AAPL", "congress_trades"
+    )
+    assert "2025-03-04" in c[0]["ts_event"], c[0]["ts_event"]
+    i = _to_envelopes(
+        [{"ticker": "AAPL", "filing_date": "2025-03-05", "transaction_date": "2025-02-02"}], "AAPL", "insider_trades"
+    )
+    assert "2025-03-05" in i[0]["ts_event"], i[0]["ts_event"]
     print("self-check OK")
     return 0
 
@@ -314,6 +361,12 @@ def main() -> int:
     ap.add_argument("--state-file", default=str(DEFAULT_STATE))
     ap.add_argument("--daily-budget", type=int, default=15000, help="max UW calls this run")
     ap.add_argument("--concurrency", type=int, default=8)
+    ap.add_argument(
+        "--max-stream-len",
+        type=int,
+        default=5_000_000,
+        help="MAXLEN cap the driver's sink applies to heber:events (large so backfill never trims live events)",
+    )
     ap.add_argument("--top-n", type=int, default=200, help="tier3: symbol subset size")
     ap.add_argument("--depth-days", type=int, default=90, help="tier3: trailing days to backfill")
     ap.add_argument("--symbols-file", help="tier3: newline/space list of symbols (liquidity-ranked)")
