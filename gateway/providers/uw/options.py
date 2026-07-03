@@ -39,8 +39,13 @@ def _parse_uw_timestamp(value: Any) -> datetime:
 class UWOptionsMixin:
     """Mixin providing options analytics, chains, contracts, greeks, and screener endpoints."""
 
-    async def get_greek_exposure(self, symbol: str, date_str: str | None = None) -> list:
-        """Get Greek exposure (GEX) data for a ticker."""
+    async def get_greek_exposure(self, symbol: str, date_str: str | None = None, timeframe: str | None = None) -> list:
+        """Get Greek exposure (GEX) data for a ticker.
+
+        ``timeframe`` widens the returned daily series (UW default 1Y; ``2Y``,
+        ``3Y`` verified working). ``date`` alone returns nothing for historical
+        dates, so backfill callers should pass ``timeframe`` rather than ``date``.
+        """
         from gateway.schemas import NormalizedGreekExposure
 
         if not self._client:
@@ -55,6 +60,7 @@ class UWOptionsMixin:
                 client=self._client,
                 ticker=symbol.upper(),
                 date=_or_unset(date_str),
+                timeframe=_or_unset(timeframe),
             )
 
             results = []
@@ -1043,15 +1049,21 @@ class UWOptionsMixin:
             logger.error("uw_spot_exposures_failed", error=str(e), symbol=symbol)
             raise
 
-    async def get_options_volume(self, symbol: str) -> list[dict]:
-        """Get options volume and premium for a trading date."""
+    async def get_options_volume(self, symbol: str, limit: int | None = None) -> list[dict]:
+        """Get daily options volume and premium series.
+
+        ``limit`` returns that many trailing trading days (UW caps ~500 ≈ 2yr);
+        omit for the default single latest day.
+        """
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         from unusualwhales.api.stock import get_options_volume
 
         try:
-            response = await self._call_sync(get_options_volume.sync, symbol.upper(), client=self._client)
+            response = await self._call_sync(
+                get_options_volume.sync, symbol.upper(), client=self._client, limit=_or_unset(limit)
+            )
             data = self._extract_data(response)
             return data
         except Exception as e:
