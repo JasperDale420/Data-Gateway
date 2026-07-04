@@ -176,6 +176,11 @@ def make_response(
     }
 
 
+def count_of(data: Any) -> int | None:
+    """Return element count for list/tuple payloads, else None (dict/scalar responses)."""
+    return len(data) if isinstance(data, list | tuple) else None
+
+
 def make_list_response(data_list: list[Any]) -> dict:
     """Build success response for list data without pagination."""
     return {
@@ -226,6 +231,7 @@ __all__ = [
     "DESC_EXPIRY",
     "DESC_LIMIT",
     "MAX_UW_CURSOR_OFFSET",
+    "count_of",
     "cursor_fetch_limit",
     "cursor_page_limit",
     "execute_uw_cached",

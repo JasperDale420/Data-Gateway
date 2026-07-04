@@ -5,13 +5,16 @@ from fastapi import APIRouter
 from gateway.api.uw import (
     alerts,
     calendar,
+    congress_ext,
     contracts,
+    crossasset,
     earnings,
     etf,
     etf_extended,
     extended,
     flow,
     flow_analytics,
+    fundamentals,
     greeks,
     insiders,
     institutions,
@@ -21,12 +24,16 @@ from gateway.api.uw import (
     misc,
     options,
     options_data,
+    options_ext,
     politicians,
+    predictions,
+    private_markets,
     screener,
     seasonality,
     shorts,
     stock,
     volatility,
+    volatility_ext,
 )
 
 router = APIRouter(prefix="/api/v1/uw", tags=["unusual_whales"])
@@ -55,5 +62,12 @@ router.include_router(alerts.router)
 router.include_router(stock.router)
 router.include_router(contracts.router)
 router.include_router(extended.router)
+router.include_router(volatility_ext.router)
+router.include_router(options_ext.router)
+router.include_router(fundamentals.router)
+router.include_router(congress_ext.router)
+router.include_router(crossasset.router)
+router.include_router(predictions.router)
+router.include_router(private_markets.router)
 
 __all__ = ["router"]
