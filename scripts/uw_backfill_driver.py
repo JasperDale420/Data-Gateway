@@ -89,15 +89,12 @@ def _feeds() -> dict[str, Feed]:
         Feed("insider_trades", 1, lambda p, s, d: p.get_insiders(symbol=s, limit=200)),
     ]
     # tier3: one call per trading day.
-    # NOTE: oi_change and historic_option_volume are deliberately EXCLUDED. Both have
-    # pre-existing gateway/schema bugs that make their event_ids collapse or drift, so
-    # backfilling them would drop or duplicate rows at Heber:
-    #   - oi_change: NormalizedOIChange drops `option_symbol` (the FEED_UNIQUE_FIELDS lead
-    #     key), so contracts with equal remaining fields hash identically.
-    #   - historic_option_volume: provider stamps now() when UW omits `timestamp`, so the
-    #     event_id is non-deterministic across re-fetches.
-    # Re-add here only after those are fixed in the provider/empire-schemas.
+    # oi_change + historic_option_volume were previously excluded for event_id bugs; both are
+    # now fixed (this branch cherry-picks the DG fix, and oi_change also needs empire-schemas'
+    # NormalizedOIChange.option_symbol — see the PR's cross-repo dependency note).
     t3 = [
+        Feed("oi_change", 3, lambda p, s, d: p.get_oi_change(s, date_str=d)),
+        Feed("historic_option_volume", 3, lambda p, s, d: p.get_historic_option_volume(s, date_str=d)),
         Feed("darkpool", 3, lambda p, s, d: p.get_darkpool_ticker(s, date_str=d, limit=500)),
     ]
     return {f.name: f for f in t1 + t3}
@@ -333,10 +330,18 @@ def self_check() -> int:
     days = trading_days(dt.date(2026, 1, 1), dt.date(2026, 1, 7))
     assert days == ["2026-01-01", "2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07"], days
     # Every feed must be one the EOD poller publishes AND Heber has a Silver normalizer for.
-    # oi_change/historic_option_volume are intentionally excluded (event_id bugs) — guard both.
-    proven = {"greek_exposure", "ftds", "short_volume", "earnings", "congress_trades", "insider_trades", "darkpool"}
+    proven = {
+        "greek_exposure",
+        "ftds",
+        "short_volume",
+        "earnings",
+        "congress_trades",
+        "insider_trades",
+        "oi_change",
+        "historic_option_volume",
+        "darkpool",
+    }
     assert set(FEEDS) == proven, f"feed set drifted from proven contract: {set(FEEDS) ^ proven}"
-    assert "oi_change" not in FEEDS and "historic_option_volume" not in FEEDS, "excluded feed re-added without fix"
     envs = _to_envelopes([{"symbol": "aapl", "date": "2025-01-02", "call_gamma": 1}], "aapl", "greek_exposure")
     assert envs and envs[0]["instrument_key"] == "equity:AAPL", envs  # symbol uppercased
     assert envs[0]["feed"] == "greek_exposure"
