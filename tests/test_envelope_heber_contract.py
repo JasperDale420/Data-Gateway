@@ -126,6 +126,20 @@ REST_FEED_CASES: dict[str, tuple[dict, dict]] = {
         {"instrument_type_override": "forex"},
     ),
     "fundamentals": ({"symbol": "AAPL", "market_cap": 1_000_000, "timestamp": _TS}, {}),
+    # Company financial statements — one equity row per fiscal period. The backfill
+    # driver forces equity overrides; fiscal_date_ending supplies a stable ts_event.
+    "income_statement": (
+        {"ticker": "AAPL", "fiscal_date_ending": "2026-03-31", "report_type": "quarterly", "total_revenue": 1},
+        {"instrument_type_override": "equity", "instrument_key_override": "equity:AAPL"},
+    ),
+    "balance_sheet": (
+        {"ticker": "AAPL", "fiscal_date_ending": "2026-03-31", "report_type": "quarterly", "total_assets": 1},
+        {"instrument_type_override": "equity", "instrument_key_override": "equity:AAPL"},
+    ),
+    "cash_flow": (
+        {"ticker": "AAPL", "fiscal_date_ending": "2026-03-31", "report_type": "quarterly", "operating_cashflow": 1},
+        {"instrument_type_override": "equity", "instrument_key_override": "equity:AAPL"},
+    ),
     "greek_exposure": ({"symbol": "AAPL", "call_gamma": 0.5, "timestamp": _TS}, {}),
     "iv_rank": ({"symbol": "AAPL", "iv_rank": 0.4, "timestamp": _TS}, {}),
     "oi_change": ({"symbol": "AAPL", "date": "2025-01-02", "call_oi_change": 100, "timestamp": _TS}, {}),

@@ -87,6 +87,11 @@ def _feeds() -> dict[str, Feed]:
         Feed("earnings", 1, lambda p, s, d: p.get_earnings_ticker(s)),
         Feed("congress_trades", 1, lambda p, s, d: p.get_congress_trades(symbol=s, limit=200)),
         Feed("insider_trades", 1, lambda p, s, d: p.get_insiders(symbol=s, limit=200)),
+        # Company financial statements: one call returns the full quarterly series
+        # (~102 rows, 2005→now). ts_event is anchored to fiscal_date_ending by wrap_event.
+        Feed("income_statement", 1, lambda p, s, d: p.get_income_statements(s)),
+        Feed("balance_sheet", 1, lambda p, s, d: p.get_balance_sheets(s)),
+        Feed("cash_flow", 1, lambda p, s, d: p.get_cash_flows(s)),
     ]
     # tier3: one call per trading day.
     # oi_change + historic_option_volume were previously excluded for event_id bugs; both are
@@ -340,6 +345,9 @@ def self_check() -> int:
         "oi_change",
         "historic_option_volume",
         "darkpool",
+        "income_statement",
+        "balance_sheet",
+        "cash_flow",
     }
     assert set(FEEDS) == proven, f"feed set drifted from proven contract: {set(FEEDS) ^ proven}"
     envs = _to_envelopes([{"symbol": "aapl", "date": "2025-01-02", "call_gamma": 1}], "aapl", "greek_exposure")
