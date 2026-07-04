@@ -265,6 +265,26 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
         ("id", None, ""),
     ],
     "treasury_yields": [("date", None, ""), ("maturity", None, ""), ("yield_pct", None, 0)],
+    # Company financial statements: one row per (ticker, fiscal period, report_type).
+    # A single call returns ~102 quarterly rows spanning 2005→now, so the period
+    # identity MUST be in the event_id or every quarter collapses to one hash (the
+    # same failure mode fixed for oi_change/insider_trades). UW keys the period by
+    # ``fiscal_date_ending`` (verified against the live endpoint 2026-07-03).
+    "income_statement": [
+        ("ticker", "symbol", ""),
+        ("fiscal_date_ending", None, ""),
+        ("report_type", None, ""),
+    ],
+    "balance_sheet": [
+        ("ticker", "symbol", ""),
+        ("fiscal_date_ending", None, ""),
+        ("report_type", None, ""),
+    ],
+    "cash_flow": [
+        ("ticker", "symbol", ""),
+        ("fiscal_date_ending", None, ""),
+        ("report_type", None, ""),
+    ],
 }
 
 
@@ -455,6 +475,7 @@ def wrap_event(
             or payload.get("report_date")
             or payload.get("effective_date")
             or payload.get("period_end_date")
+            or payload.get("fiscal_date_ending")  # UW financial statements
         )
         ts_event = _parse_event_timestamp(ts_event_raw) or datetime.now(UTC)
 
