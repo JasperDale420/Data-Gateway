@@ -1,0 +1,7665 @@
+{
+ "generated_from": "/Users/jacobmcmillan/Empire/Atlasv2/atlas/data/universes/pit_liquidity_top1000.parquet",
+ "asof": "2026-06-09",
+ "window_days": 780,
+ "active_count": 989,
+ "backfill_count": 1333,
+ "active": [
+  "A",
+  "AA",
+  "AAL",
+  "AAOI",
+  "AAON",
+  "AAP",
+  "AAPL",
+  "ABBV",
+  "ABNB",
+  "ABT",
+  "ACGL",
+  "ACHR",
+  "ACI",
+  "ACM",
+  "ACN",
+  "ADBE",
+  "ADC",
+  "ADI",
+  "ADM",
+  "ADP",
+  "ADSK",
+  "AEE",
+  "AEIS",
+  "AEM",
+  "AEO",
+  "AEP",
+  "AER",
+  "AES",
+  "AFL",
+  "AFRM",
+  "AG",
+  "AGCO",
+  "AGI",
+  "AGNC",
+  "AGX",
+  "AHR",
+  "AIG",
+  "AIZ",
+  "AJG",
+  "AKAM",
+  "ALAB",
+  "ALB",
+  "ALC",
+  "ALGN",
+  "ALK",
+  "ALL",
+  "ALLE",
+  "ALLY",
+  "ALNY",
+  "ALSN",
+  "ALV",
+  "AMAT",
+  "AMCR",
+  "AMD",
+  "AME",
+  "AMG",
+  "AMGN",
+  "AMH",
+  "AMKR",
+  "AMP",
+  "AMPX",
+  "AMRZ",
+  "AMT",
+  "AMZN",
+  "ANET",
+  "ANF",
+  "AON",
+  "AOS",
+  "APA",
+  "APD",
+  "APG",
+  "APH",
+  "APLD",
+  "APO",
+  "APP",
+  "APTV",
+  "AR",
+  "ARCC",
+  "ARE",
+  "ARES",
+  "ARMK",
+  "ARWR",
+  "AS",
+  "ASND",
+  "ASTS",
+  "ATI",
+  "ATO",
+  "AU",
+  "AVAV",
+  "AVB",
+  "AVGO",
+  "AVTR",
+  "AVY",
+  "AWI",
+  "AWK",
+  "AXON",
+  "AXP",
+  "AXSM",
+  "AXTA",
+  "AXTI",
+  "AYI",
+  "AZN",
+  "AZO",
+  "B",
+  "BA",
+  "BAC",
+  "BAH",
+  "BALL",
+  "BAM",
+  "BAP",
+  "BAX",
+  "BBIO",
+  "BBWI",
+  "BBY",
+  "BCE",
+  "BDX",
+  "BE",
+  "BEN",
+  "BF.B",
+  "BG",
+  "BIIB",
+  "BILL",
+  "BIRK",
+  "BJ",
+  "BKNG",
+  "BKR",
+  "BLD",
+  "BLDR",
+  "BLK",
+  "BMNR",
+  "BMO",
+  "BMRN",
+  "BMY",
+  "BN",
+  "BNS",
+  "BOOT",
+  "BR",
+  "BRK.A",
+  "BRK.B",
+  "BRKR",
+  "BRO",
+  "BROS",
+  "BRX",
+  "BSX",
+  "BSY",
+  "BTU",
+  "BURL",
+  "BWA",
+  "BWXT",
+  "BX",
+  "BXP",
+  "C",
+  "CACC",
+  "CACI",
+  "CAG",
+  "CAH",
+  "CALM",
+  "CARR",
+  "CART",
+  "CASY",
+  "CAT",
+  "CAVA",
+  "CB",
+  "CBOE",
+  "CBRE",
+  "CCEP",
+  "CCI",
+  "CCJ",
+  "CCK",
+  "CCL",
+  "CDE",
+  "CDNS",
+  "CDW",
+  "CE",
+  "CEG",
+  "CELH",
+  "CENX",
+  "CF",
+  "CFG",
+  "CG",
+  "CGNX",
+  "CHD",
+  "CHDN",
+  "CHE",
+  "CHKP",
+  "CHRD",
+  "CHRW",
+  "CHTR",
+  "CHWY",
+  "CHYM",
+  "CI",
+  "CIEN",
+  "CIFR",
+  "CINF",
+  "CL",
+  "CLF",
+  "CLH",
+  "CLS",
+  "CLSK",
+  "CLX",
+  "CM",
+  "CMC",
+  "CMCSA",
+  "CME",
+  "CMG",
+  "CMI",
+  "CMS",
+  "CNC",
+  "CNH",
+  "CNI",
+  "CNM",
+  "CNP",
+  "CNQ",
+  "CNX",
+  "COF",
+  "COHR",
+  "COIN",
+  "COMP",
+  "COO",
+  "COP",
+  "COR",
+  "CORZ",
+  "COST",
+  "CP",
+  "CPAY",
+  "CPB",
+  "CPNG",
+  "CPRT",
+  "CPT",
+  "CRBG",
+  "CRCL",
+  "CRDO",
+  "CRH",
+  "CRL",
+  "CRM",
+  "CRML",
+  "CROX",
+  "CRS",
+  "CRSP",
+  "CRWD",
+  "CRWV",
+  "CSCO",
+  "CSGP",
+  "CSL",
+  "CSX",
+  "CTAS",
+  "CTSH",
+  "CTVA",
+  "CUBE",
+  "CVCO",
+  "CVE",
+  "CVNA",
+  "CVS",
+  "CVX",
+  "CW",
+  "CWAN",
+  "CYTK",
+  "CZR",
+  "D",
+  "DAL",
+  "DAR",
+  "DASH",
+  "DAVE",
+  "DB",
+  "DBX",
+  "DD",
+  "DDOG",
+  "DDS",
+  "DE",
+  "DECK",
+  "DELL",
+  "DG",
+  "DGX",
+  "DHI",
+  "DHR",
+  "DINO",
+  "DIS",
+  "DKNG",
+  "DKS",
+  "DLR",
+  "DLTR",
+  "DOC",
+  "DOCN",
+  "DOCS",
+  "DOCU",
+  "DOV",
+  "DOW",
+  "DOX",
+  "DPZ",
+  "DRI",
+  "DT",
+  "DTE",
+  "DTM",
+  "DUK",
+  "DUOL",
+  "DVA",
+  "DVN",
+  "DX",
+  "DXCM",
+  "DY",
+  "EA",
+  "EAT",
+  "EBAY",
+  "ECL",
+  "ED",
+  "EFX",
+  "EG",
+  "EGO",
+  "EHC",
+  "EIX",
+  "EL",
+  "ELAN",
+  "ELF",
+  "ELS",
+  "ELV",
+  "EME",
+  "EMN",
+  "EMR",
+  "ENB",
+  "ENPH",
+  "ENTG",
+  "EOG",
+  "EPAM",
+  "EPD",
+  "EQH",
+  "EQIX",
+  "EQR",
+  "EQT",
+  "EQX",
+  "ES",
+  "ESI",
+  "ESLT",
+  "ESS",
+  "ESTC",
+  "ET",
+  "ETN",
+  "ETR",
+  "ETSY",
+  "EVR",
+  "EVRG",
+  "EW",
+  "EWBC",
+  "EXC",
+  "EXE",
+  "EXEL",
+  "EXK",
+  "EXP",
+  "EXPD",
+  "EXPE",
+  "EXR",
+  "F",
+  "FANG",
+  "FAST",
+  "FBIN",
+  "FCNCA",
+  "FCX",
+  "FDS",
+  "FDX",
+  "FE",
+  "FER",
+  "FERG",
+  "FFIV",
+  "FHN",
+  "FICO",
+  "FIG",
+  "FIGR",
+  "FIS",
+  "FISV",
+  "FITB",
+  "FIVE",
+  "FIX",
+  "FLEX",
+  "FLNC",
+  "FLR",
+  "FLS",
+  "FLUT",
+  "FLY",
+  "FN",
+  "FNB",
+  "FND",
+  "FNF",
+  "FNV",
+  "FORM",
+  "FOUR",
+  "FOX",
+  "FOXA",
+  "FRO",
+  "FROG",
+  "FRPT",
+  "FSLR",
+  "FSLY",
+  "FSM",
+  "FTAI",
+  "FTI",
+  "FTNT",
+  "FTV",
+  "FWONK",
+  "GAP",
+  "GD",
+  "GDDY",
+  "GE",
+  "GEHC",
+  "GEN",
+  "GEV",
+  "GFS",
+  "GGG",
+  "GH",
+  "GILD",
+  "GIS",
+  "GKOS",
+  "GLPI",
+  "GLW",
+  "GLXY",
+  "GM",
+  "GME",
+  "GMED",
+  "GNRC",
+  "GOOG",
+  "GOOGL",
+  "GPC",
+  "GPN",
+  "GRMN",
+  "GS",
+  "GTLB",
+  "GTLS",
+  "GWRE",
+  "GWW",
+  "H",
+  "HAL",
+  "HALO",
+  "HAS",
+  "HBAN",
+  "HBM",
+  "HCA",
+  "HCC",
+  "HD",
+  "HEI",
+  "HIG",
+  "HII",
+  "HIMS",
+  "HL",
+  "HLI",
+  "HLT",
+  "HON",
+  "HOOD",
+  "HPE",
+  "HPQ",
+  "HRI",
+  "HRL",
+  "HSIC",
+  "HST",
+  "HSY",
+  "HUBB",
+  "HUBS",
+  "HUM",
+  "HUT",
+  "HWM",
+  "HXL",
+  "HYMC",
+  "IAG",
+  "IBKR",
+  "IBM",
+  "IBP",
+  "IBRX",
+  "ICE",
+  "ICLR",
+  "IDCC",
+  "IDXX",
+  "IESC",
+  "IEX",
+  "IFF",
+  "ILMN",
+  "IMO",
+  "INCY",
+  "INSM",
+  "INTC",
+  "INTU",
+  "INVH",
+  "IONQ",
+  "IONS",
+  "IOT",
+  "IP",
+  "IQV",
+  "IR",
+  "IREN",
+  "IRM",
+  "ISRG",
+  "IT",
+  "ITT",
+  "ITW",
+  "IVZ",
+  "J",
+  "JAZZ",
+  "JBHT",
+  "JBL",
+  "JBTM",
+  "JCI",
+  "JEF",
+  "JHG",
+  "JHX",
+  "JKHY",
+  "JLL",
+  "JNJ",
+  "JOBY",
+  "JPM",
+  "KDP",
+  "KEX",
+  "KEY",
+  "KEYS",
+  "KGC",
+  "KHC",
+  "KIM",
+  "KKR",
+  "KLAC",
+  "KLAR",
+  "KMB",
+  "KMI",
+  "KMX",
+  "KNSL",
+  "KNX",
+  "KO",
+  "KR",
+  "KRMN",
+  "KTOS",
+  "KVUE",
+  "LAD",
+  "LBRT",
+  "LDOS",
+  "LEN",
+  "LEU",
+  "LH",
+  "LHX",
+  "LII",
+  "LIN",
+  "LITE",
+  "LKQ",
+  "LLY",
+  "LMND",
+  "LMT",
+  "LNC",
+  "LNG",
+  "LNT",
+  "LOGI",
+  "LOW",
+  "LPLA",
+  "LRCX",
+  "LSCC",
+  "LULU",
+  "LUMN",
+  "LUNR",
+  "LUV",
+  "LVS",
+  "LW",
+  "LYB",
+  "LYFT",
+  "LYV",
+  "M",
+  "MA",
+  "MAA",
+  "MANH",
+  "MAR",
+  "MARA",
+  "MAS",
+  "MASI",
+  "MCD",
+  "MCHP",
+  "MCK",
+  "MCO",
+  "MDB",
+  "MDGL",
+  "MDLZ",
+  "MDT",
+  "MEDP",
+  "MELI",
+  "MET",
+  "META",
+  "MGA",
+  "MGM",
+  "MGY",
+  "MHK",
+  "MIDD",
+  "MKC",
+  "MKL",
+  "MKSI",
+  "MKTX",
+  "MLI",
+  "MLM",
+  "MMM",
+  "MNDY",
+  "MNST",
+  "MO",
+  "MOD",
+  "MOH",
+  "MORN",
+  "MOS",
+  "MP",
+  "MPC",
+  "MPLX",
+  "MPWR",
+  "MRK",
+  "MRNA",
+  "MRVL",
+  "MS",
+  "MSCI",
+  "MSFT",
+  "MSI",
+  "MSTR",
+  "MT",
+  "MTB",
+  "MTCH",
+  "MTD",
+  "MTDR",
+  "MTN",
+  "MTSI",
+  "MTZ",
+  "MU",
+  "MUR",
+  "MUSA",
+  "NBIS",
+  "NBIX",
+  "NCLH",
+  "NDAQ",
+  "NDSN",
+  "NEE",
+  "NEM",
+  "NET",
+  "NEU",
+  "NFLX",
+  "NI",
+  "NKE",
+  "NLY",
+  "NOC",
+  "NOV",
+  "NOW",
+  "NRG",
+  "NSC",
+  "NTAP",
+  "NTNX",
+  "NTR",
+  "NTRA",
+  "NTRS",
+  "NU",
+  "NUE",
+  "NVDA",
+  "NVMI",
+  "NVR",
+  "NVT",
+  "NVTS",
+  "NWSA",
+  "NXE",
+  "NXPI",
+  "NXT",
+  "NYT",
+  "O",
+  "OC",
+  "ODFL",
+  "OHI",
+  "OKE",
+  "OKLO",
+  "OKTA",
+  "OLLI",
+  "OMC",
+  "OMF",
+  "ON",
+  "ONDS",
+  "ONON",
+  "ONTO",
+  "ORCL",
+  "ORLY",
+  "OSCR",
+  "OSK",
+  "OTIS",
+  "OVV",
+  "OWL",
+  "OXY",
+  "PAAS",
+  "PANW",
+  "PATH",
+  "PAYC",
+  "PAYX",
+  "PBF",
+  "PCAR",
+  "PCG",
+  "PCOR",
+  "PCTY",
+  "PEG",
+  "PEGA",
+  "PEN",
+  "PEP",
+  "PFE",
+  "PFG",
+  "PFGC",
+  "PG",
+  "PGR",
+  "PH",
+  "PHM",
+  "PI",
+  "PINS",
+  "PKG",
+  "PL",
+  "PLD",
+  "PLNT",
+  "PLTR",
+  "PM",
+  "PNC",
+  "PNFP",
+  "PNR",
+  "PNW",
+  "PODD",
+  "POOL",
+  "POWL",
+  "PPG",
+  "PPL",
+  "PR",
+  "PRAX",
+  "PRIM",
+  "PRMB",
+  "PRU",
+  "PSA",
+  "PSKY",
+  "PSX",
+  "PTC",
+  "PTEN",
+  "PWR",
+  "PYPL",
+  "Q",
+  "QBTS",
+  "QCOM",
+  "QGEN",
+  "QRVO",
+  "QS",
+  "QSR",
+  "QUBT",
+  "QXO",
+  "RACE",
+  "RBA",
+  "RBC",
+  "RBLX",
+  "RBRK",
+  "RCAT",
+  "RCL",
+  "RDDT",
+  "RDW",
+  "REG",
+  "REGN",
+  "REXR",
+  "RF",
+  "RGEN",
+  "RGLD",
+  "RGTI",
+  "RH",
+  "RIG",
+  "RIOT",
+  "RITM",
+  "RIVN",
+  "RJF",
+  "RKLB",
+  "RKT",
+  "RL",
+  "RMBS",
+  "RMD",
+  "RNA",
+  "RNR",
+  "ROIV",
+  "ROK",
+  "ROKU",
+  "ROL",
+  "ROP",
+  "ROST",
+  "RPM",
+  "RPRX",
+  "RRC",
+  "RRX",
+  "RS",
+  "RSG",
+  "RTX",
+  "RUN",
+  "RVMD",
+  "RVTY",
+  "RY",
+  "S",
+  "SAIA",
+  "SANM",
+  "SARO",
+  "SATS",
+  "SBAC",
+  "SBUX",
+  "SCCO",
+  "SCHW",
+  "SCI",
+  "SEB",
+  "SEDG",
+  "SEI",
+  "SF",
+  "SFM",
+  "SGI",
+  "SHAK",
+  "SHOP",
+  "SHW",
+  "SIRI",
+  "SITE",
+  "SITM",
+  "SJM",
+  "SLAB",
+  "SLB",
+  "SM",
+  "SMCI",
+  "SMR",
+  "SMTC",
+  "SN",
+  "SNA",
+  "SNDK",
+  "SNOW",
+  "SNPS",
+  "SNX",
+  "SO",
+  "SOFI",
+  "SOLV",
+  "SOUN",
+  "SPG",
+  "SPGI",
+  "SPOT",
+  "SRE",
+  "SSNC",
+  "SSRM",
+  "STE",
+  "STLA",
+  "STLD",
+  "STM",
+  "STRL",
+  "STT",
+  "STX",
+  "STZ",
+  "SU",
+  "SUI",
+  "SW",
+  "SWK",
+  "SWKS",
+  "SYF",
+  "SYK",
+  "SYM",
+  "SYY",
+  "T",
+  "TAP",
+  "TD",
+  "TDG",
+  "TDY",
+  "TEAM",
+  "TECH",
+  "TECK",
+  "TEL",
+  "TEM",
+  "TER",
+  "TEX",
+  "TFC",
+  "TFX",
+  "TGT",
+  "THC",
+  "TIGO",
+  "TJX",
+  "TKO",
+  "TLN",
+  "TMDX",
+  "TMO",
+  "TMUS",
+  "TOL",
+  "TOST",
+  "TPG",
+  "TPL",
+  "TPR",
+  "TRGP",
+  "TRI",
+  "TRMB",
+  "TROW",
+  "TRP",
+  "TRU",
+  "TRV",
+  "TSCO",
+  "TSEM",
+  "TSLA",
+  "TSN",
+  "TT",
+  "TTAN",
+  "TTD",
+  "TTE",
+  "TTEK",
+  "TTMI",
+  "TTWO",
+  "TW",
+  "TWLO",
+  "TXN",
+  "TXRH",
+  "TXT",
+  "TYL",
+  "U",
+  "UAL",
+  "UAMY",
+  "UBER",
+  "UBS",
+  "UDR",
+  "UEC",
+  "UHS",
+  "ULTA",
+  "UNH",
+  "UNM",
+  "UNP",
+  "UPS",
+  "UPST",
+  "URBN",
+  "URI",
+  "USAR",
+  "USB",
+  "USFD",
+  "UTHR",
+  "UUUU",
+  "V",
+  "VAL",
+  "VEEV",
+  "VFC",
+  "VG",
+  "VIAV",
+  "VICI",
+  "VICR",
+  "VIK",
+  "VKTX",
+  "VLO",
+  "VLTO",
+  "VLY",
+  "VMC",
+  "VNOM",
+  "VRSK",
+  "VRSN",
+  "VRT",
+  "VRTX",
+  "VSEC",
+  "VSNT",
+  "VST",
+  "VTR",
+  "VTRS",
+  "VZ",
+  "W",
+  "WAB",
+  "WAL",
+  "WAT",
+  "WBD",
+  "WBS",
+  "WCC",
+  "WCN",
+  "WDAY",
+  "WDC",
+  "WEC",
+  "WELL",
+  "WFC",
+  "WFRD",
+  "WH",
+  "WHR",
+  "WING",
+  "WIX",
+  "WLK",
+  "WM",
+  "WMB",
+  "WMS",
+  "WMT",
+  "WPC",
+  "WPM",
+  "WRB",
+  "WSM",
+  "WSO",
+  "WST",
+  "WTW",
+  "WULF",
+  "WWD",
+  "WY",
+  "WYNN",
+  "XEL",
+  "XOM",
+  "XP",
+  "XPO",
+  "XYL",
+  "XYZ",
+  "YUM",
+  "Z",
+  "ZBH",
+  "ZBRA",
+  "ZETA",
+  "ZION",
+  "ZM",
+  "ZS",
+  "ZTS"
+ ],
+ "backfill": [
+  {
+   "symbol": "A",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AAL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AAOI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AAON",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AAP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AAPL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ABBV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ABNB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ABR",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "ABT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ABX",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "ACGL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ACHC",
+   "start": "2024-07-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "ACHR",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ACI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ACLS",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "ACM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ACN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ADBE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ADC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ADI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ADM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ADMA",
+   "start": "2024-10-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "ADP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ADSK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ADT",
+   "start": "2025-07-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "AEE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AEG",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "AEIS",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AEM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AEO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AEP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AER",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AES",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AFG",
+   "start": "2025-04-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "AFL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AFRM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AG",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AGCO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AGI",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AGNC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AGX",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AHR",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AI",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "AIG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AIT",
+   "start": "2024-07-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "AIZ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AJG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AKAM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AKRO",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "AL",
+   "start": "2026-01-01",
+   "end": "2026-04-07"
+  },
+  {
+   "symbol": "ALAB",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALGM",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "ALGN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALIT",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "ALK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALKS",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "ALL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALLE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALLY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALNY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALSN",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ALT",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "ALTM",
+   "start": "2025-01-01",
+   "end": "2025-03-05"
+  },
+  {
+   "symbol": "ALTR",
+   "start": "2025-01-01",
+   "end": "2025-03-25"
+  },
+  {
+   "symbol": "ALV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMAT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMCR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AME",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMG",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMGN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMKR",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMPX",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMR",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "AMRZ",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AMZN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AN",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "ANET",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ANF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ANSS",
+   "start": "2024-04-20",
+   "end": "2025-07-16"
+  },
+  {
+   "symbol": "AON",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AOS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "APA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "APD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "APG",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "APH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "APLD",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "APLS",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "APO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "APP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "APPF",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "APTV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AQN",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "AR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ARCC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ARCH",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "ARDX",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "ARE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ARES",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ARMK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ARRY",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "ARW",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "ARWR",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AS",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ASND",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ASO",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "ASTS",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ATI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ATKR",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "ATO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AU",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AUR",
+   "start": "2025-01-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "AVAV",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AVB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AVGO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AVTR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AVY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AWI",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AWK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AXNX",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "AXON",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AXP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AXS",
+   "start": "2025-04-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "AXSM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AXTA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AXTI",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AYI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AZEK",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "AZN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AZO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "AZPN",
+   "start": "2025-01-01",
+   "end": "2025-03-11"
+  },
+  {
+   "symbol": "B",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BAC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BAH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BALL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BAM",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BAP",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BAX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BBAI",
+   "start": "2025-07-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "BBIO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BBT",
+   "start": "2025-10-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "BBWI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BBY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BC",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "BCE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BDX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BECN",
+   "start": "2024-04-20",
+   "end": "2025-04-28"
+  },
+  {
+   "symbol": "BEN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BERY",
+   "start": "2024-04-20",
+   "end": "2025-04-29"
+  },
+  {
+   "symbol": "BF.B",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BFAM",
+   "start": "2025-01-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "BG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BHVN",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "BIIB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BILL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BIO",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "BIRK",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BJ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BK",
+   "start": "2024-04-20",
+   "end": "2026-05-20"
+  },
+  {
+   "symbol": "BKNG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BKR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BL",
+   "start": "2024-07-01",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "BLD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BLDR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BLK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BMNR",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BMO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BMRN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BMY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BNS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BOOT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BPMC",
+   "start": "2024-04-20",
+   "end": "2025-07-17"
+  },
+  {
+   "symbol": "BR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BRBR",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "BRK.A",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BRK.B",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BRKR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BRO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BROS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BRX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BSX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BSY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BTDR",
+   "start": "2025-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "BTSG",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "BTU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BULL",
+   "start": "2025-07-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "BURL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BWA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BWXT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BXP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "BYD",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "C",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CACC",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CACI",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CADE",
+   "start": "2026-01-01",
+   "end": "2026-01-30"
+  },
+  {
+   "symbol": "CAG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CAH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CAKE",
+   "start": "2025-01-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "CALM",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CAMT",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "CAR",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "CARR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CART",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CASY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CAT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CAVA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CBOE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CBRE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CBRL",
+   "start": "2024-07-01",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "CCCS",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "CCEP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CCI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CCJ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CCK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CCL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CDE",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CDNS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CDTX",
+   "start": "2026-01-01",
+   "end": "2026-01-06"
+  },
+  {
+   "symbol": "CDW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CEG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CEIX",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "CELC",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "CELH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CENX",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CERE",
+   "start": "2024-04-20",
+   "end": "2024-07-31"
+  },
+  {
+   "symbol": "CF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CFG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CFLT",
+   "start": "2024-04-20",
+   "end": "2026-03-16"
+  },
+  {
+   "symbol": "CFR",
+   "start": "2024-10-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "CG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CGC",
+   "start": "2024-07-01",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "CGNX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CHD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CHDN",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CHE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CHH",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "CHK",
+   "start": "2024-04-20",
+   "end": "2024-10-01"
+  },
+  {
+   "symbol": "CHKP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CHRD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CHRW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CHTR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CHWY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CHX",
+   "start": "2024-07-01",
+   "end": "2025-07-15"
+  },
+  {
+   "symbol": "CHYM",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CIEN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CIFR",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CINF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CIVI",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "CL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CLF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CLH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CLS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CLSK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CLX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CMA",
+   "start": "2024-04-20",
+   "end": "2026-01-30"
+  },
+  {
+   "symbol": "CMC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CMCSA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CME",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CMG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CMI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CMS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CNC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CNH",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CNHI",
+   "start": "2024-04-20",
+   "end": "2024-05-17"
+  },
+  {
+   "symbol": "CNI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CNK",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "CNM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CNP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CNQ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CNR",
+   "start": "2025-04-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "CNX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "COF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "COGT",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "COHR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "COIN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "COKE",
+   "start": "2024-07-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "COLB",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "COLD",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "COMM",
+   "start": "2025-10-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "COMP",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "COO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "COOP",
+   "start": "2025-04-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "COP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "COR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CORT",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "CORZ",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "COST",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CPAY",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CPB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CPNG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CPRI",
+   "start": "2024-07-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "CPRT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CPT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRBG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRCL",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRDO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRI",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "CRL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRML",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CROX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRS",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRSP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRUS",
+   "start": "2024-07-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "CRWD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CRWV",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CSCO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CSGP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CSIQ",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "CSL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CSX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CTAS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CTLT",
+   "start": "2024-04-20",
+   "end": "2024-12-17"
+  },
+  {
+   "symbol": "CTRA",
+   "start": "2024-04-20",
+   "end": "2026-05-06"
+  },
+  {
+   "symbol": "CTRE",
+   "start": "2025-01-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "CTSH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CTVA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CUBE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CVCO",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CVE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CVLT",
+   "start": "2025-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "CVNA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CVS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CVX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CW",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CWAN",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CYBR",
+   "start": "2024-04-20",
+   "end": "2026-02-10"
+  },
+  {
+   "symbol": "CYTK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "CZR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "D",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DAL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DAR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DASH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DAVE",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DAY",
+   "start": "2024-10-01",
+   "end": "2026-02-03"
+  },
+  {
+   "symbol": "DB",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DBX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DDOG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DDS",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DECK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DELL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DFS",
+   "start": "2024-04-20",
+   "end": "2025-05-16"
+  },
+  {
+   "symbol": "DG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DGX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DHI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DHR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DINO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DIS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DJCO",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "DJT",
+   "start": "2024-07-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "DKNG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DKS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DLR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DLTR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DNB",
+   "start": "2025-07-01",
+   "end": "2025-08-25"
+  },
+  {
+   "symbol": "DOC",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DOCN",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DOCS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DOCU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DOOR",
+   "start": "2024-04-20",
+   "end": "2024-05-14"
+  },
+  {
+   "symbol": "DOV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DOW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DOX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DPZ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DRI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DTE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DTM",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DUK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DUOL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DV",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "DVA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DVN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DX",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DXC",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "DXCM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "DY",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EAT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EBAY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ECL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ED",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EDR",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "EFX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EGO",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EGP",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "EHC",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EIX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ELAN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ELF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ELS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ELV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EME",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EMN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EMR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ENB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ENPH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ENSG",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "ENTG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ENVX",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "EOG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EOSE",
+   "start": "2025-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "EPAM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EPD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EQH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EQIX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EQR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EQT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EQX",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ERIE",
+   "start": "2025-01-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "ES",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ESI",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ESLT",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ESS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ESTC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ET",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ETN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ETR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ETRN",
+   "start": "2024-04-20",
+   "end": "2024-07-19"
+  },
+  {
+   "symbol": "ETSY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EVH",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "EVR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EVRG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EWBC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EXAS",
+   "start": "2024-04-20",
+   "end": "2026-03-20"
+  },
+  {
+   "symbol": "EXC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EXE",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EXEL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EXK",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EXLS",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "EXP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EXPD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EXPE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "EXR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "F",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FANG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FAST",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FBIN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FCN",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "FCNCA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FCX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FDS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FDX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FER",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FERG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FFIV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FHN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FI",
+   "start": "2024-04-20",
+   "end": "2025-11-10"
+  },
+  {
+   "symbol": "FICO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FIG",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FIGR",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FIS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FISV",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FITB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FIVE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FIVN",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "FIX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FL",
+   "start": "2024-04-20",
+   "end": "2025-09-05"
+  },
+  {
+   "symbol": "FLEX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FLG",
+   "start": "2025-04-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "FLNC",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FLR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FLS",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FLUT",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FLY",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FMC",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "FN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FNB",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FND",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FNF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FNV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FORM",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FOUR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FOX",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FOXA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FR",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "FRO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FROG",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FRPT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FRSH",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "FRT",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "FSLR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FSLY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FSM",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FTAI",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FTI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FTNT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FTV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FUN",
+   "start": "2024-10-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "FWONK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "FYBR",
+   "start": "2024-10-01",
+   "end": "2026-01-16"
+  },
+  {
+   "symbol": "G",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "GAP",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GCT",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "GD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GDDY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GEHC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GEN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GEO",
+   "start": "2025-01-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "GEV",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GFL",
+   "start": "2025-04-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "GFS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GGG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GH",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GILD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GIS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GKOS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GL",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "GLBE",
+   "start": "2025-04-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "GLOB",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "GLPI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GLW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GLXY",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GME",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GMED",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GNRC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GNTX",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "GOLD",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "GOOG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GOOGL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GPC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GPI",
+   "start": "2024-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "GPK",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "GPN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GPS",
+   "start": "2024-04-20",
+   "end": "2024-08-21"
+  },
+  {
+   "symbol": "GRAB",
+   "start": "2025-07-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "GRAL",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "GRMN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GRRR",
+   "start": "2025-04-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "GS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GT",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "GTES",
+   "start": "2025-01-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "GTLB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GTLS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GVA",
+   "start": "2025-01-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "GWRE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GWW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "GXO",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "H",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HAE",
+   "start": "2025-04-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "HAL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HALO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HAS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HBAN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HBI",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "HBM",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HCA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HCC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HCP",
+   "start": "2024-04-20",
+   "end": "2025-02-26"
+  },
+  {
+   "symbol": "HD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HEES",
+   "start": "2025-04-01",
+   "end": "2025-05-30"
+  },
+  {
+   "symbol": "HEI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HES",
+   "start": "2024-04-20",
+   "end": "2025-07-17"
+  },
+  {
+   "symbol": "HIG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HII",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HIMS",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HL",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HLI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HLNE",
+   "start": "2025-01-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "HLT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HOG",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "HOLX",
+   "start": "2024-04-20",
+   "end": "2026-04-06"
+  },
+  {
+   "symbol": "HON",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HOOD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HP",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "HPE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HPQ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HQY",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "HR",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "HRB",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "HRI",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HRL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HSAI",
+   "start": "2025-07-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "HSIC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HST",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HSY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HUBB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HUBS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HUM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HUN",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "HUT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HWM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HXL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "HYMC",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IAG",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IBKR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IBM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IBP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IBRX",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ICE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ICLR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IDCC",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IDXX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IESC",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IEX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IFF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ILMN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IMO",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IMVT",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "INCY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "INFA",
+   "start": "2024-07-01",
+   "end": "2025-11-17"
+  },
+  {
+   "symbol": "INGR",
+   "start": "2025-01-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "INOD",
+   "start": "2025-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "INSM",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "INSP",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "INTC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "INTU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "INVH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IONQ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IONS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IOT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IOVA",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "IP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IPG",
+   "start": "2024-04-20",
+   "end": "2025-11-26"
+  },
+  {
+   "symbol": "IQV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IREN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IRM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IRTC",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "ISRG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ITCI",
+   "start": "2024-04-20",
+   "end": "2025-04-01"
+  },
+  {
+   "symbol": "ITGR",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "ITRI",
+   "start": "2024-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "ITT",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ITW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "IVZ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "J",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JAZZ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JBHT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JBL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JBLU",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "JBS",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "JBTM",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JCI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JEF",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JHG",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JHX",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JKHY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JLL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JNJ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JNPR",
+   "start": "2024-04-20",
+   "end": "2025-07-01"
+  },
+  {
+   "symbol": "JOBY",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JPM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "JWN",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "JXN",
+   "start": "2024-07-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "K",
+   "start": "2024-04-20",
+   "end": "2025-12-10"
+  },
+  {
+   "symbol": "KBH",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "KBR",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "KD",
+   "start": "2025-04-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "KDP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KEX",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KEY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KEYS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KGC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KHC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KIM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KKR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KLAC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KLAR",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KMB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KMI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KMX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KNSL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KNX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KRMN",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KRYS",
+   "start": "2024-07-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "KSS",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "KTOS",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KVUE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "KVYO",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "L",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "LAD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LAMR",
+   "start": "2024-10-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "LB",
+   "start": "2024-07-01",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "LBRDK",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "LBRT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LCID",
+   "start": "2025-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "LDOS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LEA",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "LECO",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "LEN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LEU",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LEVI",
+   "start": "2024-07-01",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "LH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LHX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LII",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LIN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LINE",
+   "start": "2024-10-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "LITE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LKQ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LLY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LMND",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LMT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LNC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LNG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LNT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LNTH",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "LNW",
+   "start": "2024-04-20",
+   "end": "2025-11-12"
+  },
+  {
+   "symbol": "LOAR",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "LOGI",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LOW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LPLA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LPX",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "LRCX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LRN",
+   "start": "2025-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "LSCC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LSTR",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "LSXMK",
+   "start": "2024-04-20",
+   "end": "2024-09-09"
+  },
+  {
+   "symbol": "LTH",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "LULU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LUMN",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LUNR",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LUV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LVS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LYB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LYFT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "LYV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "M",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MAA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MANH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MAR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MARA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MAS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MASI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MAT",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "MBLY",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "MCD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MCHP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MCK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MCO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MDB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MDGL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MDLZ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MDT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MEDP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MELI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MET",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "META",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "METC",
+   "start": "2025-10-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "MFC",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "MGA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MGM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MGY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MHK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MHO",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "MIDD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MIR",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "MKC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MKL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MKSI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MKTX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MLI",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MLM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MMC",
+   "start": "2024-04-20",
+   "end": "2026-01-13"
+  },
+  {
+   "symbol": "MMM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MMSI",
+   "start": "2025-04-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "MMYT",
+   "start": "2024-07-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "MNDY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MNST",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MOD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MOH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MORN",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MOS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MPC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MPLX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MPW",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "MPWR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MRK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MRNA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MRO",
+   "start": "2024-04-20",
+   "end": "2024-11-21"
+  },
+  {
+   "symbol": "MRVL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MSCI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MSFT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MSI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MSM",
+   "start": "2024-07-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "MSTR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MT",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MTB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MTCH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MTD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MTDR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MTH",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "MTN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MTSI",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MTZ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MUR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "MUSA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NBIS",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NBIX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NCLH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NDAQ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NDSN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NE",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "NEE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NEGG",
+   "start": "2025-10-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "NEM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NET",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NEU",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NFE",
+   "start": "2024-10-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "NFLX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NGD",
+   "start": "2025-10-01",
+   "end": "2026-03-19"
+  },
+  {
+   "symbol": "NI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NKE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NKLA",
+   "start": "2024-07-01",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "NLY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NNE",
+   "start": "2025-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "NNN",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "NOC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NOG",
+   "start": "2024-07-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "NOV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NOVA",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "NOW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NRG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NSC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NSIT",
+   "start": "2025-01-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "NTAP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NTNX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NTR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NTRA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NTRS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NUE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NVAX",
+   "start": "2024-07-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "NVDA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NVMI",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NVR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NVST",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "NVT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NVTS",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NWSA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NXE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NXPI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NXST",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "NXT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "NYCB",
+   "start": "2024-10-01",
+   "end": "2024-10-25"
+  },
+  {
+   "symbol": "NYT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "O",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ODD",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "ODFL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OGE",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "OGN",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "OHI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OKE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OKLO",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OKTA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OLED",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "OLLI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OLN",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "OMC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OMF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ON",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ONB",
+   "start": "2025-04-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "ONDS",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ONON",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ONTO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OPEN",
+   "start": "2025-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "ORCL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ORI",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "ORLY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OSCR",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OSK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OTIS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OUST",
+   "start": "2025-10-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "OVV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OWL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OXY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "OZK",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "PAA",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "PAAS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PANW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PARA",
+   "start": "2024-04-20",
+   "end": "2025-08-06"
+  },
+  {
+   "symbol": "PATH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PAYC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PAYX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PBF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PCAR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PCG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PCOR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PCTY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PCVX",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "PEG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PEGA",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PEN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PENN",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "PEP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PFE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PFG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PFGC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PGR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PGY",
+   "start": "2025-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "PH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PHM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PI",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PII",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "PINS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PK",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "PKG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PL",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PLAY",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "PLD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PLNT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PLTR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PNC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PNFP",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PNM",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "PNR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PNW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PODD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "POOL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "POST",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "POWL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PPC",
+   "start": "2025-04-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "PPG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PPL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PRAX",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PRCT",
+   "start": "2025-01-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "PRGO",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "PRIM",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PRKS",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "PRMB",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PRU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PSA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PSKY",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PSN",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "PSTG",
+   "start": "2024-04-20",
+   "end": "2026-04-16"
+  },
+  {
+   "symbol": "PSX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PTC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PTCT",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "PTEN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PTGX",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "PTON",
+   "start": "2025-01-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "PVH",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "PWR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PXD",
+   "start": "2024-04-20",
+   "end": "2024-05-02"
+  },
+  {
+   "symbol": "PYPL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "PZZA",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "Q",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "QBTS",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "QCOM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "QGEN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "QLYS",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "QRVO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "QS",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "QSR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "QTWO",
+   "start": "2025-01-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "QUBT",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "QURE",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "QXO",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RACE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RBA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RBC",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RBLX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RBRK",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RCAT",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RCL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RDDT",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RDFN",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "RDW",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "REG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "REGN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "REXR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RGA",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "RGEN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RGLD",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RGTI",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RHI",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "RHP",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "RIG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RIOT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RITM",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RIVN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RJF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RKLB",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RKT",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RMBS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RMD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RNA",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RNR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ROIV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ROK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ROKU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ROL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ROOT",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "ROP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ROST",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RPM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RPRX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RRC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RRX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RSG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RTX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RUN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RVMD",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RVTY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RXRX",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "RY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "RYAN",
+   "start": "2025-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "S",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SAIA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SAIC",
+   "start": "2025-04-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "SAM",
+   "start": "2024-07-01",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "SANM",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SARO",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SATS",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SAVA",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "SBAC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SBC",
+   "start": "2024-10-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "SBET",
+   "start": "2025-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "SBLK",
+   "start": "2024-07-01",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "SBUX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SCCO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SCHW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SCI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SEB",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SEDG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SEE",
+   "start": "2024-04-20",
+   "end": "2026-04-08"
+  },
+  {
+   "symbol": "SEI",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SEIC",
+   "start": "2025-01-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "SERV",
+   "start": "2024-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "SEZL",
+   "start": "2025-07-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "SF",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SFM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SG",
+   "start": "2024-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "SGI",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SHAK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SHLS",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "SHOP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SHW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SIG",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "SIRI",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SITE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SITM",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SJM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SKX",
+   "start": "2024-04-20",
+   "end": "2025-09-11"
+  },
+  {
+   "symbol": "SLAB",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SLB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SLG",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "SLM",
+   "start": "2025-04-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "SLNO",
+   "start": "2025-07-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "SM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SMAR",
+   "start": "2024-04-20",
+   "end": "2025-01-21"
+  },
+  {
+   "symbol": "SMCI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SMG",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "SMMT",
+   "start": "2025-07-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "SMR",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SMTC",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SNA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SNAP",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "SNDK",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SNOW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SNPS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SNV",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "SNX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SOFI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SOLV",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SOUN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SPG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SPGI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SPOT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SPR",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "SQ",
+   "start": "2024-04-20",
+   "end": "2025-01-17"
+  },
+  {
+   "symbol": "SRCL",
+   "start": "2024-10-01",
+   "end": "2024-11-01"
+  },
+  {
+   "symbol": "SRE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SRPT",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "SSB",
+   "start": "2024-10-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "SSD",
+   "start": "2024-07-01",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "SSNC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SSRM",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ST",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "STAG",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "STE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "STLA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "STLD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "STM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "STNE",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "STNG",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "STRL",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "STT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "STX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "STZ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SUI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SUM",
+   "start": "2025-01-01",
+   "end": "2025-02-10"
+  },
+  {
+   "symbol": "SW",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SWAV",
+   "start": "2024-04-20",
+   "end": "2024-05-30"
+  },
+  {
+   "symbol": "SWK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SWKS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SWN",
+   "start": "2024-04-20",
+   "end": "2024-09-30"
+  },
+  {
+   "symbol": "SWTX",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "SYF",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SYK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SYM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "SYY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "T",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TAP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TDG",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TDOC",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "TDW",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "TDY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TEAM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TECH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TECK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TEL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TEM",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TER",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TERN",
+   "start": "2026-04-01",
+   "end": "2026-05-04"
+  },
+  {
+   "symbol": "TEX",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TFC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TFX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TGE",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "TGT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TGTX",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "THC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "THO",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "TIGO",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TJX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TKO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TLN",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TLRY",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "TMDX",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TMHC",
+   "start": "2024-10-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "TMO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TMUS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TNDM",
+   "start": "2024-07-01",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "TOL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TOST",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TPG",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TPH",
+   "start": "2026-04-01",
+   "end": "2026-05-13"
+  },
+  {
+   "symbol": "TPL",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TPR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TPX",
+   "start": "2024-04-20",
+   "end": "2025-02-14"
+  },
+  {
+   "symbol": "TREX",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "TRGP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TRI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TRIP",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "TRMB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TROW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TRP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TRU",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TRV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TSCO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TSEM",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TSLA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TSN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TTAN",
+   "start": "2025-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TTC",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "TTD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TTE",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TTEK",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TTMI",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TTWO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TU",
+   "start": "2026-01-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "TW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TWLO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TXG",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "TXN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TXNM",
+   "start": "2025-07-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "TXRH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TXT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "TYL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "U",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UAA",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "UAL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UAMY",
+   "start": "2026-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UBER",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UBS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UDR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UEC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UGI",
+   "start": "2024-07-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "UHS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UI",
+   "start": "2025-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "ULTA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UMBF",
+   "start": "2025-04-01",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "UNH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UNM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UNP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UPS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UPST",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "URBN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "URI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "USAR",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "USB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "USFD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UTHR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "UUUU",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "V",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VAC",
+   "start": "2024-04-20",
+   "end": "2024-06-30"
+  },
+  {
+   "symbol": "VAL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VEEV",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VFC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VG",
+   "start": "2025-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VIAV",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VICI",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VICR",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VIK",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VKTX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VLO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VLTO",
+   "start": "2024-07-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VLY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VMC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VMI",
+   "start": "2024-07-01",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "VNO",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "VNOM",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VOYA",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "VRN",
+   "start": "2025-04-01",
+   "end": "2025-05-09"
+  },
+  {
+   "symbol": "VRNS",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "VRSK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VRSN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VRT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VRTX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VSAT",
+   "start": "2025-10-01",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "VSCO",
+   "start": "2024-04-20",
+   "end": "2026-06-01"
+  },
+  {
+   "symbol": "VSEC",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VSNT",
+   "start": "2026-04-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VST",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VTR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VTRS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "VVV",
+   "start": "2024-04-20",
+   "end": "2024-12-31"
+  },
+  {
+   "symbol": "VZ",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "W",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WAB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WAL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WAT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WBA",
+   "start": "2024-04-20",
+   "end": "2025-08-27"
+  },
+  {
+   "symbol": "WBD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WBS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WCC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WCN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WDAY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WDC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WEC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WELL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WEN",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "WEX",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "WFC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WFRD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WGS",
+   "start": "2025-04-01",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "WH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WHR",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WING",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WIRE",
+   "start": "2024-07-01",
+   "end": "2024-07-01"
+  },
+  {
+   "symbol": "WIX",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WLK",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WMB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WMG",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "WMS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WMT",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WNS",
+   "start": "2025-10-01",
+   "end": "2025-10-16"
+  },
+  {
+   "symbol": "WOLF",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "WPC",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WPM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WRB",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WRK",
+   "start": "2024-04-20",
+   "end": "2024-07-05"
+  },
+  {
+   "symbol": "WSC",
+   "start": "2024-04-20",
+   "end": "2025-06-30"
+  },
+  {
+   "symbol": "WSM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WSO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WST",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WTRG",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "WTW",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WU",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "WULF",
+   "start": "2025-01-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WWD",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WY",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "WYNN",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "X",
+   "start": "2024-04-20",
+   "end": "2025-06-17"
+  },
+  {
+   "symbol": "XEL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "XOM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "XP",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "XPO",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "XRAY",
+   "start": "2024-04-20",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "XYL",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "XYZ",
+   "start": "2025-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "YETI",
+   "start": "2024-04-20",
+   "end": "2025-09-30"
+  },
+  {
+   "symbol": "YOU",
+   "start": "2025-01-01",
+   "end": "2025-03-31"
+  },
+  {
+   "symbol": "YUM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "YUMC",
+   "start": "2024-04-20",
+   "end": "2025-12-31"
+  },
+  {
+   "symbol": "Z",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ZBH",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ZBRA",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ZETA",
+   "start": "2024-10-01",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ZI",
+   "start": "2024-04-20",
+   "end": "2025-05-12"
+  },
+  {
+   "symbol": "ZIM",
+   "start": "2024-04-20",
+   "end": "2026-03-31"
+  },
+  {
+   "symbol": "ZION",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ZM",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ZS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  },
+  {
+   "symbol": "ZTS",
+   "start": "2024-04-20",
+   "end": "2026-06-09"
+  }
+ ]
+}

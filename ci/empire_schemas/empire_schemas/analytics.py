@@ -42,7 +42,15 @@ class NormalizedIVRank(BaseModel):
 
 
 class NormalizedOIChange(BaseModel):
-    """Open interest change data."""
+    """Open interest change data.
+
+    ``option_symbol`` is the per-contract OCC key. It (not the underlying) is what
+    makes two contracts on the same underlying/date distinct: the gateway's event_id
+    dedup leads with it (FEED_UNIQUE_FIELDS["oi_change"]). Omitting it here silently
+    dropped it from the payload, collapsing all contracts sharing ``call_oi_change``
+    to one event_id and losing all but one at Bronze. ``volume``/``trades``/
+    ``avg_price``/``prev_oi`` are carried through for downstream analytics.
+    """
 
     symbol: str
     date: str
@@ -50,6 +58,11 @@ class NormalizedOIChange(BaseModel):
     put_oi: int
     call_oi_change: int
     put_oi_change: int
+    option_symbol: str | None = None
+    volume: int | None = None
+    trades: int | None = None
+    avg_price: Decimal | None = None
+    prev_oi: int | None = None
     provider: str
 
 

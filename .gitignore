@@ -105,3 +105,6 @@ config/ROTATION_HANDOFF.md
 
 # Large generated reference data (regenerated from provider specs, not source)
 data_dictionary.yaml
+
+# UW backfill driver progress state
+state/

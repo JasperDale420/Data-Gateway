@@ -10,8 +10,10 @@ Features:
 """
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, time
+from pathlib import Path
 from time import monotonic as _monotonic
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -58,6 +60,24 @@ MARKET_TIDE_POLL_INTERVAL = 3600  # 1 hour (API returns full day's data)
 # Extended hours (darkpool runs here too)
 PREMARKET_START = time(4, 0)  # 4:00 AM ET
 AFTERHOURS_END = time(20, 0)  # 8:00 PM ET
+
+
+def _load_pit_active(universe_file: Path) -> list[str] | None:
+    """Load the 'active' symbol list from the Atlas PIT universe export.
+
+    Returns None (fall back to core-tickers/defaults) if the file is missing or
+    malformed — a bad universe file must not break gateway startup.
+    """
+    try:
+        if not universe_file.exists():
+            return None
+        data = json.loads(universe_file.read_text())
+        active = [str(s).strip().upper() for s in data.get("active", []) if str(s).strip()]
+        return active or None
+    except Exception as e:
+        logger.warning("uw_pit_universe_load_failed", file=str(universe_file), error=str(e))
+        return None
+
 
 # Sector names for sector tide polling — must match UW SDK Sector enum values exactly.
 # See: vendor/unusualwhales_sdk/unusualwhales/models/sector.py
@@ -434,14 +454,24 @@ class UWPoller(DedupMixin, BasePoller):
         # Initialize ticker universe for EOD polling
         if self.eod_enabled:
             settings = get_settings()
-            core = (
-                [t.strip().upper() for t in settings.uw_core_tickers.split(",") if t.strip()]
-                if settings.uw_core_tickers
-                else None
-            )
+            # Prefer the Atlas PIT universe export when present: use its active symbols and
+            # turn off the dynamic screener rotation (this is the "stop random tickers,
+            # capture the PIT universe" swap). Fall back to core-tickers/defaults otherwise.
+            pit = _load_pit_active(settings.uw_universe_file)
+            if pit:
+                core: list[str] | None = pit
+                dynamic_count = 0
+                logger.info("uw_eod_universe_from_pit_file", file=str(settings.uw_universe_file), count=len(pit))
+            else:
+                core = (
+                    [t.strip().upper() for t in settings.uw_core_tickers.split(",") if t.strip()]
+                    if settings.uw_core_tickers
+                    else None
+                )
+                dynamic_count = settings.uw_dynamic_ticker_count
             self._ticker_universe = TickerUniverse(
                 core_tickers=core,
-                dynamic_count=settings.uw_dynamic_ticker_count,
+                dynamic_count=dynamic_count,
             )
 
         logger.info(

@@ -39,8 +39,13 @@ def _parse_uw_timestamp(value: Any) -> datetime:
 class UWOptionsMixin:
     """Mixin providing options analytics, chains, contracts, greeks, and screener endpoints."""
 
-    async def get_greek_exposure(self, symbol: str, date_str: str | None = None) -> list:
-        """Get Greek exposure (GEX) data for a ticker."""
+    async def get_greek_exposure(self, symbol: str, date_str: str | None = None, timeframe: str | None = None) -> list:
+        """Get Greek exposure (GEX) data for a ticker.
+
+        ``timeframe`` widens the returned daily series (UW default 1Y; ``2Y``,
+        ``3Y`` verified working). ``date`` alone returns nothing for historical
+        dates, so backfill callers should pass ``timeframe`` rather than ``date``.
+        """
         from gateway.schemas import NormalizedGreekExposure
 
         if not self._client:
@@ -55,6 +60,7 @@ class UWOptionsMixin:
                 client=self._client,
                 ticker=symbol.upper(),
                 date=_or_unset(date_str),
+                timeframe=_or_unset(timeframe),
             )
 
             results = []
@@ -466,17 +472,27 @@ class UWOptionsMixin:
             if not data:
                 return []
 
-            now_iso = datetime.now(UTC).isoformat()
+            # UW's volume-oi-expiry rows carry no date/timestamp -- only expires/volume/oi.
+            # Anchor ts_event to the snapshot day (date_str for backfill, today for the
+            # live EOD poller); never stamp wall-clock now(), which makes ts_event -- and
+            # so the event_id -- drift on every re-fetch, duplicating this per-day snapshot
+            # at Heber.
+            # ponytail: today() on the live path is day-granular and stable per fetch-day;
+            # pass an explicit ET trading date from the poller if the UTC-midnight boundary
+            # ever matters.
+            snapshot_date = str(date_str or datetime.now(UTC).date().isoformat())
             results = []
             for item in data:
                 get = item.get if isinstance(item, dict) else lambda k, d=None, _item=item: getattr(_item, k, d)
-                item_date = str(get("date") or date_str or "")
+                raw_ts = get("timestamp")
                 results.append(
                     {
                         "symbol": symbol.upper(),
-                        "timestamp": str(get("timestamp") or now_iso),
-                        "date": item_date,
-                        "expiry": get("expiry"),
+                        "timestamp": str(raw_ts) if raw_ts else snapshot_date,
+                        "date": str(get("date") or snapshot_date),
+                        # UW returns the expiry as `expires`; reading only `expiry` yielded
+                        # None for every row, collapsing all per-expiry rows to one id.
+                        "expiry": get("expiry") or get("expires"),
                         "volume": _safe_int(get("volume")) if get("volume") is not None else 0,
                         "open_interest": (
                             _safe_int(get("open_interest") or get("oi"))
@@ -1043,15 +1059,21 @@ class UWOptionsMixin:
             logger.error("uw_spot_exposures_failed", error=str(e), symbol=symbol)
             raise
 
-    async def get_options_volume(self, symbol: str) -> list[dict]:
-        """Get options volume and premium for a trading date."""
+    async def get_options_volume(self, symbol: str, limit: int | None = None) -> list[dict]:
+        """Get daily options volume and premium series.
+
+        ``limit`` returns that many trailing trading days (UW caps ~500 ≈ 2yr);
+        omit for the default single latest day.
+        """
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
         from unusualwhales.api.stock import get_options_volume
 
         try:
-            response = await self._call_sync(get_options_volume.sync, symbol.upper(), client=self._client)
+            response = await self._call_sync(
+                get_options_volume.sync, symbol.upper(), client=self._client, limit=_or_unset(limit)
+            )
             data = self._extract_data(response)
             return data
         except Exception as e:
