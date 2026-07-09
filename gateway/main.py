@@ -651,6 +651,13 @@ async def lifespan(app: FastAPI):
     # Step 8: Reset coordinator state for next startup
     ShutdownCoordinator.reset()
 
+    # Final: drain the logging QueueListener so records buffered on its
+    # background thread reach disk before the process exits. Must be last —
+    # it stops the listener, so any log emitted after this would be lost.
+    from empire_core.logger import shutdown_logging
+
+    shutdown_logging()
+
 
 def create_app() -> FastAPI:
     """Application factory."""
