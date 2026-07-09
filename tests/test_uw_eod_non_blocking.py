@@ -200,3 +200,57 @@ async def test_stop_cancels_in_flight_eod_task(monkeypatch):
 
     assert cancelled.is_set(), "stop() must cancel the in-flight EOD task"
     assert poller._eod_task is None, "EOD task reference must be cleared on stop"
+
+
+@pytest.mark.asyncio
+async def test_market_hours_check_runs_off_the_loop_thread(monkeypatch):
+    """``_is_market_hours`` (heavy pandas ``is_market_open``) must run in a
+    worker thread, not on the event-loop thread that services the poll loop.
+
+    ``exchange_calendars`` does synchronous pandas work; running it inline on
+    the single asyncio loop was a source of multi-second loop stalls. The poll
+    loop now dispatches the sync helper via ``asyncio.to_thread``. This test
+    records the thread each side runs on and asserts they differ.
+    """
+    import threading
+
+    poller = UWPoller(flow_enabled=True)
+    poller._running = True
+
+    loop_thread_ident = threading.get_ident()
+    helper_thread_ident: list[int] = []
+
+    def recording_market_hours() -> bool:
+        helper_thread_ident.append(threading.get_ident())
+        return False  # False keeps the loop from doing any real flow polling
+
+    # Force flow to be due so the loop reaches the market-hours check.
+    monkeypatch.setattr(poller, "_should_poll_flow", lambda: True)
+    monkeypatch.setattr(poller, "_should_poll_darkpool", lambda: False)
+    monkeypatch.setattr(poller, "_should_poll_tide", lambda: False)
+    monkeypatch.setattr(poller, "_should_poll_sector_tide", lambda: False)
+    monkeypatch.setattr(poller, "_should_poll_eod", lambda: False)
+    monkeypatch.setattr(poller, "_is_market_hours", recording_market_hours)
+    monkeypatch.setattr(poller, "_cleanup_cache", MagicMock())
+
+    sink_registry = _FakeSink()
+    from gateway.core import globals as globals_module
+
+    globals_module.set_sink_registry(sink_registry)
+
+    # Stop after one iteration; the fake sleep runs on the loop thread.
+    _orig_sleep = asyncio.sleep
+
+    async def fast_sleep(_delay):
+        poller._running = False
+        await _orig_sleep(0)
+
+    monkeypatch.setattr("gateway.core.uw_poller.asyncio.sleep", fast_sleep)
+
+    await asyncio.wait_for(poller._poll_loop(), timeout=2.0)
+
+    assert helper_thread_ident, "_is_market_hours was never invoked by the poll loop"
+    assert helper_thread_ident[0] != loop_thread_ident, (
+        "regression: _is_market_hours ran on the event-loop thread instead of "
+        "a worker thread -- its blocking pandas work will stall the loop."
+    )

@@ -532,27 +532,29 @@ class UWPoller(DedupMixin, BasePoller):
 
                 # Poll flow alerts (every 5 minutes during market hours)
                 if self.flow_enabled and self._should_poll_flow():
-                    if self._is_market_hours():
+                    if await asyncio.to_thread(self._is_market_hours):
                         logger.info("uw_poller_polling_flow", limit=poll_limit)
                         await self._poll_flow_alerts(sink_registry, poll_limit)
                         self._last_flow_poll = datetime.now(UTC)
 
                 # Poll darkpool (every minute during market AND extended hours)
                 if self.darkpool_enabled and self._should_poll_darkpool():
-                    if self._is_market_hours() or self._is_extended_hours():
+                    if await asyncio.to_thread(self._is_market_hours) or await asyncio.to_thread(
+                        self._is_extended_hours
+                    ):
                         logger.info("uw_poller_polling_darkpool", limit=poll_limit)
                         await self._poll_darkpool(sink_registry, poll_limit)
                         self._last_darkpool_poll = datetime.now(UTC)
 
                 # Poll market tide (hourly since API returns full day's data)
                 if self.market_tide_enabled and self._should_poll_tide():
-                    if self._is_market_hours():
+                    if await asyncio.to_thread(self._is_market_hours):
                         await self._poll_market_tide(sink_registry)
                         self._last_tide_poll = datetime.now(UTC)
 
                 # Poll sector tides (hourly, independent timer from market tide)
                 if self.sector_tide_enabled and self._should_poll_sector_tide():
-                    if self._is_market_hours():
+                    if await asyncio.to_thread(self._is_market_hours):
                         await self._poll_sector_tides(sink_registry)
                         self._last_sector_tide_poll = datetime.now(UTC)
 
@@ -562,7 +564,11 @@ class UWPoller(DedupMixin, BasePoller):
                 # the EOD fan-out (tickers × 8 feeds) is in flight. Without
                 # this, awaiting EOD inline starves all other pollers for the
                 # duration of the EOD run.
-                if self.eod_enabled and self._should_poll_eod() and (self._eod_task is None or self._eod_task.done()):
+                if (
+                    self.eod_enabled
+                    and await asyncio.to_thread(self._should_poll_eod)
+                    and (self._eod_task is None or self._eod_task.done())
+                ):
                     logger.info("uw_poller_starting_eod_snapshots")
                     # Mark the date *before* spawning so a second tick within
                     # the same minute doesn't double-schedule the EOD work
@@ -873,7 +879,7 @@ class UWPoller(DedupMixin, BasePoller):
             raise RuntimeError("UW provider not initialized")
         if self._ticker_universe is None:
             raise RuntimeError("Ticker universe not initialized for EOD polling")
-        if not self._eod_state.claim(today_str):
+        if not await asyncio.to_thread(self._eod_state.claim, today_str):
             logger.info("uw_eod_skipped_persistent_state", trading_date=today_str)
             return
 
