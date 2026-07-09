@@ -276,6 +276,12 @@ SINK_PRODUCER_TIMEOUT_DROPS_BY_FEED = Counter(
     ["sink", "source", "feed"],
 )
 
+SINK_PRODUCER_TIMEOUT_LOSS = Counter(
+    "gateway_sink_producer_timeout_loss_total",
+    "Producer-timeout events truly lost — the sink had no failover buffer to spill into",
+    ["sink", "source", "feed"],
+)
+
 REST_LOW_PRIORITY_SHED = Counter(
     "gateway_rest_low_priority_shed_total",
     "Low-priority REST sink publishes shed before enqueueing",
@@ -904,6 +910,20 @@ def record_sink_producer_timeout_drop(
     """Increment the producer-side queue-put timeout counter (emergency drop)."""
     SINK_PRODUCER_TIMEOUT_DROPS.labels(sink=sink).inc()
     SINK_PRODUCER_TIMEOUT_DROPS_BY_FEED.labels(
+        sink=sink,
+        source=_clean_metric_label(source),
+        feed=_clean_metric_label(feed),
+    ).inc()
+
+
+def record_sink_producer_timeout_loss(
+    sink: str,
+    *,
+    source: str | None = None,
+    feed: str | None = None,
+) -> None:
+    """Increment the producer-timeout TRUE-LOSS counter (no buffer to spill into)."""
+    SINK_PRODUCER_TIMEOUT_LOSS.labels(
         sink=sink,
         source=_clean_metric_label(source),
         feed=_clean_metric_label(feed),

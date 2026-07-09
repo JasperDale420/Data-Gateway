@@ -32,6 +32,7 @@ from gateway.core.logger import logger
 from gateway.core.metrics import (
     record_low_priority_rest_shed,
     record_sink_producer_timeout_drop,
+    record_sink_producer_timeout_loss,
     record_sink_publish,
     set_sink_queue_capacity,
     set_sink_queue_size,
@@ -80,6 +81,23 @@ class DataSink(ABC):
     def record_publish_metrics(self) -> bool:
         """Whether the sink records publish metrics internally."""
         return False
+
+    def buffer_event(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
+        """Spill an undeliverable event into a retry buffer.
+
+        Returns True if the event was buffered for later drain, False if this
+        sink has no buffer (the event is lost). Default: no buffer.
+        """
+        return False
+
+    def schedule_drain(self) -> None:
+        """Best-effort: flush the retry buffer once transient backpressure clears.
+
+        Default: no-op. Buffered sinks override this. A producer-timeout spill
+        happens while the connection is healthy (queue full, not Redis down),
+        so nothing else would drain it until the next reconnect.
+        """
+        return None
 
     async def close(self) -> None:  # noqa: B027
         """Close the sink connection. Override if cleanup is needed."""
@@ -143,6 +161,7 @@ class DataSinkRegistry:
             "scheduled": 0,
             "queued": 0,
             "dropped_producer_timeout": 0,
+            "producer_timeout_loss": 0,
             "low_priority_shed": 0,
         }
         self._publish_stats_by_source_feed: dict[str, dict[str, int]] = {}
@@ -410,7 +429,13 @@ class DataSinkRegistry:
                 timeout=self._producer_block_timeout_seconds,
             )
         except TimeoutError:
+            buffered = sink.buffer_event(topic, data)
+            if buffered:
+                sink.schedule_drain()
             self._publish_stats["dropped_producer_timeout"] += 1
+            if not buffered:
+                self._publish_stats["producer_timeout_loss"] = self._publish_stats.get("producer_timeout_loss", 0) + 1
+                record_sink_producer_timeout_loss(sink.name, source=source, feed=partition_feed)
             self._record_partitioned_publish_stat(
                 "dropped_producer_timeout",
                 data,
@@ -420,13 +445,16 @@ class DataSinkRegistry:
             record_sink_producer_timeout_drop(sink.name, source=source, feed=partition_feed)
             allowed, suppressed = _PRODUCER_DROP_LOG_THROTTLE.should_emit(sink.name)
             if allowed:
-                logger.critical(
+                # Spilled = recoverable (warning); true loss = page-worthy (critical).
+                log_fn = logger.warning if buffered else logger.critical
+                log_fn(
                     "data_sink_producer_timeout_drop",
                     sink=sink.name,
                     topic=topic,
                     queue_size=self._queue_size,
                     producer_block_timeout_seconds=self._producer_block_timeout_seconds,
                     suppressed_since_last=suppressed,
+                    spilled_to_buffer=buffered,
                     **_event_log_context(data),
                 )
             if not sink.record_publish_metrics:
@@ -513,14 +541,18 @@ class DataSinkRegistry:
         buffer = getattr(sink, "buffer_event", None)
         if callable(buffer):
             try:
-                buffer(topic, data)
-                logger.warning(
-                    "data_sink_worker_buffered_inflight_event",
-                    sink=sink.name,
-                    topic=topic,
-                    reason=reason,
-                )
-                return
+                # buffer_event returns True only if the event actually landed
+                # in a retry buffer. The ABC default returns False (no buffer),
+                # so a falsy return must fall through to the loss log rather
+                # than being treated as a successful rescue.
+                if buffer(topic, data):
+                    logger.warning(
+                        "data_sink_worker_buffered_inflight_event",
+                        sink=sink.name,
+                        topic=topic,
+                        reason=reason,
+                    )
+                    return
             except Exception:
                 logger.exception(
                     "data_sink_worker_buffer_failed",

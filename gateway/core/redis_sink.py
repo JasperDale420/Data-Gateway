@@ -331,11 +331,12 @@ class RedisStreamsSink(DataSink):
                 total_evicted=self._buffer_stats["evicted"],
             )
 
-    def buffer_event(self, topic: str, data: dict[str, Any] | str | bytes) -> None:
+    def buffer_event(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
         """Buffer an event from the registry when circuit breaker is OPEN.
 
         Serializes the data and delegates to _buffer_failed_event so it
-        participates in the same drain logic on reconnect.
+        participates in the same drain logic on reconnect. Returns True to
+        signal the event was buffered (this sink always has a buffer).
         """
         if isinstance(data, str):
             payload = data.encode()
@@ -344,6 +345,23 @@ class RedisStreamsSink(DataSink):
         else:
             payload = orjson.dumps(data, default=str)
         self._buffer_failed_event(topic, payload)
+        return True
+
+    def schedule_drain(self) -> None:
+        """Kick a buffer drain when connected and events are pending.
+
+        Serialized by _drain_lock; _do_drain no-ops on an empty buffer, so a
+        redundant schedule is harmless. Skips when disconnected (drain then
+        happens on reconnect via _ensure_connected)."""
+        if self._redis is None or not self._failed_buffer:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._drain_buffer())
+        self._drain_tasks.add(task)
+        task.add_done_callback(self._drain_tasks.discard)
 
     async def _drain_buffer(self) -> None:
         """Drain buffered failed events after a successful reconnect.

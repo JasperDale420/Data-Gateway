@@ -155,21 +155,35 @@ groups:
           summary: "Low-priority REST sink publishing is being shed for {{ $labels.feed }}"
           description: "The Gateway is skipping low-priority REST background publishes for feed {{ $labels.feed }} because the sink queue is under pressure. HTTP responses are still returned normally."
 
-      # Sink producer-side queue-put timeout drops — emergency.
-      # The bounded queue + worker pool absorbs steady-state bursts; a
-      # producer drop means the queue is full AND workers can't drain it
-      # within data_sink_producer_block_timeout_seconds (default 100ms).
-      # That is a true sink stall or hard overload, not steady-state
-      # backpressure. Use a 1m lookback with no debounce so any non-zero
-      # rate pages immediately — every drop is a permanently lost event.
-      - alert: SinkProducerTimeoutDrops
-        expr: sum(increase(gateway_sink_producer_timeout_drops_total[1m])) by (sink) > 0
+      # Sink producer-side queue-put timeout TRUE LOSS — emergency.
+      # A producer-timeout event is spilled into the sink's failover buffer
+      # when one exists; loss only occurs when the sink has NO buffer, which
+      # is a genuinely-lost event to Heber. Use a 1m lookback with no debounce
+      # so any non-zero rate pages immediately — every loss is unrecoverable.
+      - alert: SinkProducerTimeoutLoss
+        expr: sum(increase(gateway_sink_producer_timeout_loss_total[1m])) by (sink) > 0
         for: 0m
         labels:
           severity: critical
         annotations:
-          summary: "Sink {{ $labels.sink }} dropped events at the producer in the last minute"
-          description: "gateway_sink_producer_timeout_drops_total is non-zero on sink {{ $labels.sink }} — the bounded dispatch queue is full AND workers cannot drain it within data_sink_producer_block_timeout_seconds. Any non-zero rate means events are being lost permanently to Heber; investigate sink health immediately. Runbook: check downstream Redis latency, raise data_sink_worker_count / data_sink_queue_size, verify circuit-breaker state on the sink."
+          summary: "Sink {{ $labels.sink }} LOST events at the producer in the last minute"
+          description: "gateway_sink_producer_timeout_loss_total is non-zero on sink {{ $labels.sink }} — the bounded dispatch queue timed out AND the sink has no failover buffer to spill into, so the event is permanently lost to Heber. Investigate sink health immediately. Runbook: check downstream Redis latency, raise data_sink_worker_count / data_sink_queue_size, verify the sink implements buffer_event."
+
+      # Sink producer-side queue-put timeout drops (spilled to buffer) — warning.
+      # These events were NOT lost: they timed out on the bounded dispatch queue
+      # (queue full AND workers couldn't drain within
+      # data_sink_producer_block_timeout_seconds) and were spilled into the
+      # sink's failover buffer to be drained on catch-up. A sustained rate still
+      # signals the live Heber stream is under real backpressure; page only if it
+      # persists (buffer eviction / true loss have their own critical alerts).
+      - alert: SinkProducerTimeoutDropsSustained
+        expr: sum(increase(gateway_sink_producer_timeout_drops_total[5m])) by (sink) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sink {{ $labels.sink }} is spilling producer-timeout events to its buffer"
+          description: "gateway_sink_producer_timeout_drops_total is sustained non-zero on sink {{ $labels.sink }} — the bounded dispatch queue is timing out and events are being spilled into the failover buffer (not lost, but delayed). Runbook: check downstream Redis latency, raise data_sink_worker_count / data_sink_queue_size, and watch gateway_sink_buffer_size / SinkBufferEvictionsActive for escalation."
 
       # Per-feed zero-row alert during market hours.
       # A continuously-polled feed (flow_alerts, darkpool) that creates zero

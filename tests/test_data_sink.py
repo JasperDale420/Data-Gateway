@@ -751,6 +751,84 @@ class TestBoundedQueueDispatch:
         await registry.drain_queues(timeout_seconds=2.0)
 
 
+class _BufferingBlockingSpillSink(_BlockingSink):
+    """Blocking sink whose ``buffer_event`` succeeds and records ``schedule_drain``.
+
+    Mirrors RedisStreamsSink's post-spill contract: ``buffer_event`` returns
+    True once the event lands in the retry buffer, and the registry then calls
+    ``schedule_drain`` to flush it once backpressure clears.
+    """
+
+    def __init__(self, release_event: asyncio.Event, sink_name: str = "spill") -> None:
+        super().__init__(release_event, sink_name)
+        self.buffered: list[tuple[str, Any]] = []
+        self.schedule_drain_calls = 0
+
+    def buffer_event(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
+        self.buffered.append((topic, data))
+        return True
+
+    def schedule_drain(self) -> None:
+        self.schedule_drain_calls += 1
+
+
+class TestProducerTimeoutSpill:
+    """Producer-timeout events spill into the sink's failover buffer, not the floor."""
+
+    @pytest.mark.asyncio
+    async def test_producer_timeout_spills_to_buffer_when_supported(self) -> None:
+        """A timed-out event lands in buffer_event, schedule_drain is called, and
+        the drop is counted as recoverable (dropped_producer_timeout) — not loss."""
+        release_event = asyncio.Event()
+        registry = DataSinkRegistry(
+            queue_size=1,
+            worker_count=1,
+            producer_block_timeout_seconds=0.01,
+        )
+        sink = _BufferingBlockingSpillSink(release_event, sink_name="spill-buffered")
+        registry.register(sink)
+
+        # queue(1) + worker(1) absorb 2; the 3rd times out and must spill.
+        await registry.publish_all("heber:events", {"event_id": "absorb-1"})
+        await registry.publish_all("heber:events", {"event_id": "absorb-2"})
+        await registry.publish_all("heber:events", {"event_id": "spill-me"})
+
+        assert sink.buffered == [("heber:events", {"event_id": "spill-me"})]
+        assert sink.schedule_drain_calls == 1
+
+        stats = registry.get_publish_stats()
+        assert stats["dropped_producer_timeout"] == 1
+        assert stats["producer_timeout_loss"] == 0
+
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+    @pytest.mark.asyncio
+    async def test_producer_timeout_records_loss_when_no_buffer(self) -> None:
+        """A sink with no buffer (default ABC buffer_event -> False) records a
+        true loss in producer_timeout_loss."""
+        release_event = asyncio.Event()
+        registry = DataSinkRegistry(
+            queue_size=1,
+            worker_count=1,
+            producer_block_timeout_seconds=0.01,
+        )
+        sink = _BlockingSink(release_event, sink_name="spill-noloss")
+        registry.register(sink)
+
+        # queue(1) + worker(1) absorb 2; the 3rd times out and is lost.
+        await registry.publish_all("heber:events", {"event_id": "absorb-1"})
+        await registry.publish_all("heber:events", {"event_id": "absorb-2"})
+        await registry.publish_all("heber:events", {"event_id": "lost-me"})
+
+        stats = registry.get_publish_stats()
+        assert stats["dropped_producer_timeout"] == 1
+        assert stats["producer_timeout_loss"] == 1
+
+        release_event.set()
+        await registry.drain_queues(timeout_seconds=2.0)
+
+
 # ── Cancellation Routing Tests ───────────────────────────────────────
 
 
