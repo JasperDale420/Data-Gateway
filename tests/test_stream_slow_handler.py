@@ -59,7 +59,13 @@ def recording_stream_logger(monkeypatch):
 @pytest.mark.asyncio
 async def test_receive_loop_warns_when_on_message_exceeds_slow_threshold(
     recording_stream_logger,
+    monkeypatch,
 ) -> None:
+    # Patch the threshold low so the test stays fast and independent of the
+    # production value (1.0s) — it verifies the slow-handler warning mechanism,
+    # not the specific tuning constant.
+    monkeypatch.setattr("gateway.core.stream._ON_MESSAGE_SLOW_THRESHOLD_SECONDS", 0.1)
+
     async def _slow(_msg: dict) -> None:
         await asyncio.sleep(0.12)
 

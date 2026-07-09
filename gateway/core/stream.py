@@ -53,7 +53,10 @@ STREAM_SUPERVISOR_INTERVAL_SECONDS = 20.0
 # Warn when a single on_message call holds the receive loop this long;
 # long handlers fill Alpaca's outbound buffer and can trigger their
 # slow-client (407) disconnect path, surfacing on our side as code 1006.
-_ON_MESSAGE_SLOW_THRESHOLD_SECONDS = 0.1
+# 1.0s (not 0.1s): at 0.1s this fired ~2,600×/day on benign opening-bell
+# batches (median ~0.15s, p95 ~1s); 1.0s keeps the genuinely-slow tail that
+# actually risks the disconnect while cutting the log flood ~95%.
+_ON_MESSAGE_SLOW_THRESHOLD_SECONDS = 1.0
 MESSAGE_TYPE_TO_DATA_TYPE = {
     "b": "bars",
     "q": "quotes",
