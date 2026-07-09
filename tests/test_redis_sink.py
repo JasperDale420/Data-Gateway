@@ -944,6 +944,42 @@ async def test_ensure_connected_triggers_drain_on_reconnect(
     assert drain_called
 
 
+@pytest.mark.asyncio
+async def test_schedule_drain_branches() -> None:
+    """schedule_drain no-ops without a connection or buffered events, and creates
+    exactly one tracked task that self-removes once it runs when both are present."""
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0")
+
+    # Branch 1: disconnected → no task created even with buffered events.
+    sink._redis = None
+    sink._connected = False
+    sink._failed_buffer.append(("gateway.stream.bars", b'{"symbol":"AAPL"}'))
+    sink.schedule_drain()
+    assert len(sink._drain_tasks) == 0
+
+    # Branch 2: connected but empty buffer → no task created.
+    client = _HealthyRedisClient()
+    sink._redis = client
+    sink._connected = True
+    sink._failed_buffer.clear()
+    sink.schedule_drain()
+    assert len(sink._drain_tasks) == 0
+
+    # Branch 3: connected AND buffered → exactly one task, tracked in _drain_tasks.
+    sink._failed_buffer.append(("gateway.stream.bars", b'{"symbol":"MSFT"}'))
+    sink.schedule_drain()
+    assert len(sink._drain_tasks) == 1
+    task = next(iter(sink._drain_tasks))
+
+    # Await the scheduled task (no sleeps) — it drains through the healthy client.
+    await task
+    # The done-callback removes it from the tracking set.
+    assert len(sink._drain_tasks) == 0
+    # The drain actually ran: the buffered event was published and cleared.
+    assert len(sink._failed_buffer) == 0
+    assert sink._buffer_stats["drained"] == 1
+
+
 # ── String Payload Buffering ─────────────────────────────────────────
 
 
