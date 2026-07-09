@@ -12,8 +12,10 @@ timestamp on the loop every ``heartbeat_interval``; a separate daemon thread (wh
 is NOT on the loop, so it keeps running during a freeze) watches that timestamp. When
 the heartbeat goes stale by more than ``stall_threshold`` the loop is *currently*
 blocked, so the thread dumps every thread's stack via ``faulthandler`` — including the
-blocked event-loop thread's exact synchronous frame — plus GC counts. One dump per
-stall; a recovery line records the total stalled duration.
+blocked event-loop thread's exact synchronous frame — plus GC counts and stats. It keeps
+re-sampling while the stall persists (up to ``_max_stall_samples`` dumps, one per
+``check_interval``) so the dumps span the freeze window rather than catching only the
+moment of first detection; a recovery line records the total stalled duration.
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ class LoopStallWatchdog:
         self._on_stall = on_stall or self._default_on_stall
         self._on_recover = on_recover or self._default_on_recover
         self._max_stall_samples = 5
+        self._current_stall_sample = 0
 
         self._last_beat: float | None = None
         self._running = False
@@ -118,6 +121,7 @@ class LoopStallWatchdog:
                     samples = 0
                 if samples < self._max_stall_samples:
                     samples += 1
+                    self._current_stall_sample = samples
                     self._safe_call(self._on_stall, gap)
             elif stall_active:
                 stall_active = False
@@ -143,7 +147,8 @@ class LoopStallWatchdog:
         logger.warning(
             "event_loop_stall_detected",
             stalled_seconds=round(stalled_seconds, 2),
-            elapsed_seconds=round(stalled_seconds, 2),
+            sample_index=self._current_stall_sample,
+            max_samples=self._max_stall_samples,
             threshold_seconds=self._stall_threshold,
             gc_counts=gc.get_count(),
             gc_stats=gc.get_stats(),

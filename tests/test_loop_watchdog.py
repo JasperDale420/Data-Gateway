@@ -49,6 +49,7 @@ async def test_watchdog_samples_repeatedly_through_a_long_stall() -> None:
     await wd.stop()
 
     assert 2 <= len(samples) <= wd._max_stall_samples
+    assert samples == sorted(samples)  # gap grows monotonically across the stall
 
 
 @pytest.mark.asyncio
