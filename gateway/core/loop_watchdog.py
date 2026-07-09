@@ -49,6 +49,7 @@ class LoopStallWatchdog:
         self._check_interval = check_interval_seconds
         self._on_stall = on_stall or self._default_on_stall
         self._on_recover = on_recover or self._default_on_recover
+        self._max_stall_samples = 5
 
         self._last_beat: float | None = None
         self._running = False
@@ -95,9 +96,15 @@ class LoopStallWatchdog:
             raise
 
     def _watch_loop(self) -> None:
-        """Runs on a daemon thread, off the event loop, so it survives a freeze."""
+        """Runs on a daemon thread, off the event loop, so it survives a freeze.
+
+        A single stall is sampled repeatedly (one per ``check_interval``, capped at
+        ``_max_stall_samples``) so the stack dumps span the whole freeze instead of
+        catching only the moment of first detection.
+        """
         stall_active = False
         stall_started_beat: float | None = None
+        samples = 0
         while self._running:
             time.sleep(self._check_interval)
             last_beat = self._last_beat
@@ -108,6 +115,9 @@ class LoopStallWatchdog:
                 if not stall_active:
                     stall_active = True
                     stall_started_beat = last_beat
+                    samples = 0
+                if samples < self._max_stall_samples:
+                    samples += 1
                     self._safe_call(self._on_stall, gap)
             elif stall_active:
                 stall_active = False
@@ -133,8 +143,10 @@ class LoopStallWatchdog:
         logger.warning(
             "event_loop_stall_detected",
             stalled_seconds=round(stalled_seconds, 2),
+            elapsed_seconds=round(stalled_seconds, 2),
             threshold_seconds=self._stall_threshold,
             gc_counts=gc.get_count(),
+            gc_stats=gc.get_stats(),
             stacks=stacks,
         )
         record_event_loop_stall()

@@ -33,6 +33,25 @@ async def test_watchdog_detects_synchronous_loop_stall() -> None:
 
 
 @pytest.mark.asyncio
+async def test_watchdog_samples_repeatedly_through_a_long_stall() -> None:
+    samples: list[float] = []
+    wd = LoopStallWatchdog(
+        stall_threshold_seconds=0.2,
+        heartbeat_interval_seconds=0.05,
+        check_interval_seconds=0.05,
+        on_stall=lambda s: samples.append(s),
+        on_recover=lambda t: None,
+    )
+    wd._max_stall_samples = 3
+    await wd.start()
+    time.sleep(0.7)  # long synchronous block -> should yield >1 sample, capped at 3
+    await asyncio.sleep(0.2)  # let the watcher observe and the loop resume
+    await wd.stop()
+
+    assert 2 <= len(samples) <= wd._max_stall_samples
+
+
+@pytest.mark.asyncio
 async def test_watchdog_quiet_on_healthy_loop() -> None:
     stalls: list[float] = []
     watchdog = LoopStallWatchdog(
