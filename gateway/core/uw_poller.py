@@ -191,6 +191,10 @@ class UWPoller(DedupMixin, BasePoller):
         if now - cached_at < self._MARKET_HOURS_CACHE_TTL:
             return cached_val
         result = self._calendar.is_market_open()
+        # May be written from a to_thread worker (poll loop) AND the loop thread
+        # (admin snapshot -> _get_darkpool_interval) concurrently. Safe only
+        # because this is a single atomic tuple rebind under the GIL — do NOT
+        # convert to a multi-step mutation.
         self._market_hours_cache = (result, now)
         return result
 
@@ -203,6 +207,9 @@ class UWPoller(DedupMixin, BasePoller):
         now_et = datetime.now(ET)
         current_time = now_et.time()
         result = PREMARKET_START <= current_time <= AFTERHOURS_END and self._calendar.is_trading_day(now_et.date())
+        # See _is_market_hours: may be written from a to_thread worker as well as
+        # the loop thread; safe only as a single atomic tuple rebind under the
+        # GIL — do NOT convert to a multi-step mutation.
         self._extended_hours_cache = (result, now)
         return result
 

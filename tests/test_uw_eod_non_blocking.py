@@ -254,3 +254,57 @@ async def test_market_hours_check_runs_off_the_loop_thread(monkeypatch):
         "regression: _is_market_hours ran on the event-loop thread instead of "
         "a worker thread -- its blocking pandas work will stall the loop."
     )
+
+
+@pytest.mark.asyncio
+async def test_eod_gate_check_runs_off_the_loop_thread(monkeypatch):
+    """``_should_poll_eod`` (blocking EOD-state file read + ``fcntl.flock``) must
+    run in a worker thread, not on the event-loop thread.
+
+    ``_should_poll_eod`` calls ``UwEodStateStore.should_defer`` which does
+    ``Path.read_text()`` under a file lock. The poll loop now dispatches it via
+    ``asyncio.to_thread``. Distinct from the flow-gate test: a regression that
+    reverted only the ``_should_poll_eod`` wrap would pass that test but fail
+    this one.
+    """
+    import threading
+
+    poller = UWPoller(eod_enabled=True)
+    poller._running = True
+
+    loop_thread_ident = threading.get_ident()
+    gate_thread_ident: list[int] = []
+
+    def recording_should_poll_eod() -> bool:
+        gate_thread_ident.append(threading.get_ident())
+        return False  # False keeps the EOD branch from spawning real work
+
+    # Everything else off so the loop reaches the EOD gate deterministically.
+    monkeypatch.setattr(poller, "_should_poll_flow", lambda: False)
+    monkeypatch.setattr(poller, "_should_poll_darkpool", lambda: False)
+    monkeypatch.setattr(poller, "_should_poll_tide", lambda: False)
+    monkeypatch.setattr(poller, "_should_poll_sector_tide", lambda: False)
+    monkeypatch.setattr(poller, "_should_poll_eod", recording_should_poll_eod)
+    monkeypatch.setattr(poller, "_cleanup_cache", MagicMock())
+
+    sink_registry = _FakeSink()
+    from gateway.core import globals as globals_module
+
+    globals_module.set_sink_registry(sink_registry)
+
+    # Stop after one iteration; the fake sleep runs on the loop thread.
+    _orig_sleep = asyncio.sleep
+
+    async def fast_sleep(_delay):
+        poller._running = False
+        await _orig_sleep(0)
+
+    monkeypatch.setattr("gateway.core.uw_poller.asyncio.sleep", fast_sleep)
+
+    await asyncio.wait_for(poller._poll_loop(), timeout=2.0)
+
+    assert gate_thread_ident, "_should_poll_eod was never invoked by the poll loop"
+    assert gate_thread_ident[0] != loop_thread_ident, (
+        "regression: _should_poll_eod ran on the event-loop thread instead of "
+        "a worker thread -- its blocking EOD-state file I/O will stall the loop."
+    )
