@@ -1,8 +1,11 @@
 """Resumable, budget-metered UnusualWhales historical backfill over the Atlas PIT universe.
 
 Runs as its OWN process with its own UW provider + Redis sink, so backfill load never
-touches the live capital-adjacent gateway event loop. Publishes EventEnvelopes to the same
-``heber:events`` stream the gateway uses, so Heber ingests them identically.
+touches the live capital-adjacent gateway event loop. Publishes EventEnvelopes to a
+DEDICATED ``heber:events:backfill`` stream (not the live ``heber:events``), consumed by a
+separate Heber ``heber-backfill-consumer`` — so a multi-year backfill can never fill the
+live stream to its MAXLEN and evict un-read live events. Override with ``--stream`` /
+``HEBER_BACKFILL_STREAM``. Heber ingests backfill records identically (same EventEnvelope).
 
 ONLY backfills feeds that are already proven end-to-end (the EOD poller publishes them and
 Heber has a Silver normalizer). Adding a NEW feed requires a gateway FEED_UNIQUE_FIELDS entry
@@ -12,13 +15,14 @@ Tiers:
   tier1  cheap, ~1 call/ticker, full multi-year series. Run once over the whole universe.
   tier3  per-day snapshot feeds (~1 call/trading-day/ticker). Sampled: top-N symbols, N days.
 
-OPERATIONAL SAFETY (heber:events is shared + capital-adjacent):
-  - Run when the live gateway is QUIET and Heber is CAUGHT UP. tier1 greek_exposure alone is
-    ~989 tickers x ~750 rows ≈ 740k records; if that outruns Heber's consumer the stream's
-    MAXLEN trim can evict live events not yet read. --max-stream-len defaults high so the
-    driver never trims, but the live gateway's own 100k-trim still caps the stream if it is
-    writing concurrently — so do not run this during market hours. The bulletproof fix is a
-    separate stream Heber also consumes (needs Heber-side consumer config).
+OPERATIONAL SAFETY:
+  - Backfill now publishes to the DEDICATED ``heber:events:backfill`` stream, so it can no
+    longer evict live events from ``heber:events`` — the live stream and the backfill stream
+    have independent MAXLEN caps and independent Heber consumers. --max-stream-len caps the
+    backfill stream only; if a huge backfill outruns the ``heber-backfill-consumer`` it trims
+    re-runnable BACKFILL data, never live capital-adjacent events.
+    DEPLOY ORDERING: the Heber ``heber-backfill-consumer`` must be running before this driver
+    publishes, else backfill records land in a stream nobody reads and eventually trim.
   - Shares the 40k/day UW quota with the live gateway (EOD ~8k + flow/darkpool/tide ~5k).
     Keep --daily-budget so EOD + live + backfill stay under 40k, and avoid the live EOD window.
 
@@ -47,7 +51,9 @@ from typing import Any
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_UNIVERSE = REPO / "config" / "uw_pit_universe.json"
 DEFAULT_STATE = REPO / "state" / "uw_backfill_progress.json"
-TOPIC = "heber:events"
+# Dedicated backfill stream — NOT the live "heber:events" — so bulk history can never fill the
+# live stream to MAXLEN and evict un-read live events. Override via --stream / HEBER_BACKFILL_STREAM.
+DEFAULT_BACKFILL_STREAM = "heber:events:backfill"
 
 
 def load_dotenv(path: Path = REPO / ".env") -> None:
@@ -249,10 +255,11 @@ async def run(args: argparse.Namespace) -> int:
     if not redis_url:
         print("[fatal] GATEWAY_DATA_SINK_REDIS_URL not set", file=sys.stderr)
         return 2
-    # heber:events is a shared, MAXLEN-trimmed stream. Give the driver's sink a very large
-    # max_len so its own xadds never trim live gateway events the consumer hasn't read yet
-    # (the OPRA-DLQ eviction failure mode). Still run backfill when the gateway is quiet and
-    # Heber is caught up — see the module docstring's operational notes.
+    # Publish to the dedicated backfill stream. Precedence: --stream > HEBER_BACKFILL_STREAM > default.
+    topic = args.stream or os.environ.get("HEBER_BACKFILL_STREAM") or DEFAULT_BACKFILL_STREAM
+    print(f"publishing to stream: {topic}")
+    # max_len caps the dedicated backfill stream only; live "heber:events" is untouched. If a huge
+    # backfill outruns heber-backfill-consumer this trims re-runnable backfill data, never live events.
     sink = RedisStreamsSink(redis_url=redis_url, max_len=args.max_stream_len)
 
     calls = 0
@@ -275,7 +282,7 @@ async def run(args: argparse.Namespace) -> int:
                 if not envs:
                     prog.mark(key)  # genuine empty response — nothing to publish, done
                 else:
-                    results = await sink.publish_batch_results([(TOPIC, e) for e in envs])
+                    results = await sink.publish_batch_results([(topic, e) for e in envs])
                     ok = sum(results)
                     published += ok
                     # Only mark done when EVERY record landed. On a partial/failed publish
@@ -350,6 +357,10 @@ def self_check() -> int:
         "cash_flow",
     }
     assert set(FEEDS) == proven, f"feed set drifted from proven contract: {set(FEEDS) ^ proven}"
+    # Guard the decoupling intent: the default publish target must stay the dedicated backfill
+    # stream, never the live "heber:events" — a silent revert would re-introduce live eviction.
+    assert DEFAULT_BACKFILL_STREAM == "heber:events:backfill", DEFAULT_BACKFILL_STREAM
+    assert DEFAULT_BACKFILL_STREAM != "heber:events", "backfill must not default to the live stream"
     envs = _to_envelopes([{"symbol": "aapl", "date": "2025-01-02", "call_gamma": 1}], "aapl", "greek_exposure")
     assert envs and envs[0]["instrument_key"] == "equity:AAPL", envs  # symbol uppercased
     assert envs[0]["feed"] == "greek_exposure"
@@ -375,10 +386,19 @@ def main() -> int:
     ap.add_argument("--daily-budget", type=int, default=15000, help="max UW calls this run")
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument(
+        "--stream",
+        default=None,
+        help=(
+            "Redis stream to publish to. Default (heber:events:backfill via HEBER_BACKFILL_STREAM) is a "
+            "DEDICATED backfill stream so bulk history cannot evict live events from heber:events. "
+            "Only override to heber:events if you deliberately want the old shared-stream behavior."
+        ),
+    )
+    ap.add_argument(
         "--max-stream-len",
         type=int,
         default=5_000_000,
-        help="MAXLEN cap the driver's sink applies to heber:events (large so backfill never trims live events)",
+        help="MAXLEN cap the driver's sink applies to the backfill stream (trims re-runnable backfill, never live events)",
     )
     ap.add_argument("--top-n", type=int, default=200, help="tier3: symbol subset size")
     ap.add_argument("--depth-days", type=int, default=90, help="tier3: trailing days to backfill")
