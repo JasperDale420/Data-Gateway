@@ -106,14 +106,19 @@ class RateLimitMiddleware:
 
         # Check rate limit
         if not bucket.consume():
+            retry_after = bucket.reset_after
             logger.warning(
                 "rate_limit_exceeded",
                 client_id=client_id,
                 limit=bucket.limit,
+                method=request.method,
+                path=request.url.path,
+                retry_after_seconds=retry_after,
+                reset_at=int(bucket.reset_at),
             )
             record_rate_limit_exceeded(client_id)
             headers = self._rate_limit_headers(bucket)
-            headers["Retry-After"] = str(bucket.reset_after)
+            headers["Retry-After"] = str(retry_after)
             response = Response(
                 content='{"error": {"code": "GW-E4001", "message": "Rate limit exceeded"}}',
                 status_code=429,

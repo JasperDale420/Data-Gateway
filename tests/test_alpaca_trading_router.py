@@ -729,6 +729,44 @@ async def test_run_trading_provider_call_releases_permit_on_timeout(
 
 
 @pytest.mark.asyncio
+async def test_run_trading_provider_call_timeout_log_includes_request_context(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+    import time
+
+    monkeypatch.setattr(
+        trading,
+        "get_settings",
+        lambda: Settings(alpaca_trading_max_inflight=2, alpaca_trading_call_timeout_seconds=0.5),
+    )
+    trading._reset_trading_inflight_sem_for_tests()
+
+    def _slow(_p: Any) -> Any:
+        time.sleep(1.0)
+        return "late"
+
+    with caplog.at_level(logging.ERROR, logger="data-gateway"), pytest.raises(HTTPException):
+        await trading._run_trading_provider_call(
+            provider=SimpleNamespace(),
+            provider_fn=_slow,
+            operation="get_orders",
+            log_context={
+                "client_id": "orion",
+                "method": "GET",
+                "path": "/api/v1/alpaca/orders",
+            },
+        )
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert "alpaca_trading_call_timeout" in rendered
+    assert "client_id" in rendered and "orion" in rendered
+    assert "path" in rendered and "/api/v1/alpaca/orders" in rendered
+    assert "method" in rendered and "GET" in rendered
+
+
+@pytest.mark.asyncio
 async def test_run_trading_provider_call_releases_permit_on_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

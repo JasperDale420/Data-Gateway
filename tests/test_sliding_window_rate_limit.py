@@ -8,6 +8,7 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 import time
 
 from starlette.testclient import TestClient
@@ -150,3 +151,19 @@ class TestRetryAfterHeader:
         assert response.status_code == 200
         assert "X-RateLimit-Limit" in response.headers
         assert response.headers["X-RateLimit-Limit"] == "10"
+
+    def test_429_log_includes_request_context(self, caplog) -> None:
+        app = self._make_app(limit=1)
+        client = TestClient(app)
+
+        client.get("/test")
+        with caplog.at_level(logging.WARNING, logger="data-gateway"):
+            response = client.get("/test")
+
+        assert response.status_code == 429
+        rendered = "\n".join(record.getMessage() for record in caplog.records)
+        assert "rate_limit_exceeded" in rendered
+        assert "client_id" in rendered
+        assert "method" in rendered and "GET" in rendered
+        assert "path" in rendered and "/test" in rendered
+        assert "retry_after_seconds" in rendered

@@ -485,12 +485,14 @@ async def _execute_trading_call(
     registry: ProviderRegistry,
     provider_fn: Callable[[Any], Any],
     operation: str,
+    log_context: dict[str, Any] | None = None,
 ) -> Any:
     async def call(provider: Any) -> Any:
         return await _run_trading_provider_call(
             provider=provider,
             provider_fn=provider_fn,
             operation=operation,
+            log_context=log_context,
         )
 
     call.__qualname__ = f"trading.{operation}"
@@ -509,12 +511,14 @@ async def _execute_trading_cached_call(
     route_label: str,
     provider_fn: Callable[[Any], Any],
     operation: str,
+    log_context: dict[str, Any] | None = None,
 ) -> Any:
     async def call(provider: Any) -> Any:
         return await _run_trading_provider_call(
             provider=provider,
             provider_fn=provider_fn,
             operation=operation,
+            log_context=log_context,
         )
 
     call.__qualname__ = f"trading.{operation}"
@@ -571,6 +575,7 @@ async def _run_trading_provider_call(
     provider_fn: Callable[[Any], Any],
     operation: str,
     idempotency_context: dict[str, Any] | None = None,
+    log_context: dict[str, Any] | None = None,
 ) -> Any:
     """Run a single trading-SDK call with timeout + backpressure protection.
 
@@ -612,6 +617,7 @@ async def _run_trading_provider_call(
             "alpaca_trading_backpressure_reject",
             operation=operation,
             max_inflight=settings.alpaca_trading_max_inflight,
+            **(log_context or {}),
             **(idempotency_context or {}),
         )
         detail_503: dict[str, Any] = {
@@ -647,6 +653,7 @@ async def _run_trading_provider_call(
                 "alpaca_trading_call_timeout",
                 operation=operation,
                 timeout_seconds=timeout_seconds,
+                **(log_context or {}),
                 **(idempotency_context or {}),
             )
             detail_504: dict[str, Any] = {
@@ -725,6 +732,7 @@ async def get_account(
         registry=registry,
         provider_fn=lambda provider: provider.get_account(),
         operation="get_account",
+        log_context={"client_id": client.id, "method": "GET", "path": "/api/v1/alpaca/account"},
     )
     return {"success": True, "data": data, "meta": {"provider": "alpaca"}}
 
@@ -1018,6 +1026,7 @@ async def get_orders(
             until=until,
         ),
         operation="get_orders",
+        log_context={"client_id": client.id, "method": "GET", "path": "/api/v1/alpaca/orders"},
     )
     # Filter to only orders owned by this caller, THEN truncate to the
     # caller-requested limit. Defensive against a provider that returns
@@ -1420,6 +1429,7 @@ async def get_positions(
         registry=registry,
         provider_fn=lambda provider: provider.get_positions(),
         operation="get_positions",
+        log_context={"client_id": client.id, "method": "GET", "path": "/api/v1/alpaca/positions"},
     )
     return {
         "success": True,
