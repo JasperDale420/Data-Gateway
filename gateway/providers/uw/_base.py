@@ -1,6 +1,7 @@
 """UW Base mixin — shared init, helpers, constants, and normalization."""
 
 import asyncio
+import json
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -23,6 +24,8 @@ from gateway.schemas import (
     NormalizedIVRank,
     NormalizedMarketTide,
 )
+
+from .transient import _uw_error_context
 
 # Error message constants
 ERR_NOT_INITIALIZED = "Provider not initialized"
@@ -297,6 +300,15 @@ class UWBaseMixin(DataProvider):
         status_code = getattr(response, "status_code", None)
         return status_code if isinstance(status_code, int) else None
 
+    @staticmethod
+    def _json_payload(response: Any) -> Any:
+        """Parse JSON while preserving the response for failure logs."""
+        try:
+            return response.json()
+        except json.JSONDecodeError as exc:
+            object.__setattr__(exc, "_uw_response", response)
+            raise
+
     async def _raw_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """Authenticated GET against the UW REST API, returning the JSON ``data`` payload.
 
@@ -321,13 +333,14 @@ class UWBaseMixin(DataProvider):
             http_client = self._client.get_httpx_client()
             response = await self._call_sync(http_client.get, path, params=clean)
             response.raise_for_status()
-            payload = response.json()
+            payload = self._json_payload(response)
         except Exception as e:
             status_code = self._extract_http_status_code(e)
+            context = _uw_error_context(e, provider_endpoint="raw_get", path=path)
             if status_code is not None and status_code >= 500:
-                logger.warning("uw_raw_get_upstream_unavailable", path=path, status_code=status_code)
+                logger.warning("uw_raw_get_upstream_unavailable", **context)
             else:
-                logger.error("uw_raw_get_failed", path=path, error=str(e))
+                logger.error("uw_raw_get_failed", error=str(e), **context)
             raise
 
         if isinstance(payload, dict) and "data" in payload:

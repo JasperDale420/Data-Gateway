@@ -6,7 +6,7 @@ import ssl
 import httpx
 import pytest
 
-from gateway.providers.uw.transient import is_transient_upstream_error
+from gateway.providers.uw.transient import _uw_error_context, is_transient_upstream_error
 
 
 def test_json_decode_error_is_transient() -> None:
@@ -65,3 +65,17 @@ def test_unrelated_exception_is_not_transient() -> None:
     assert is_transient_upstream_error(ValueError("bad input")) is False
     assert is_transient_upstream_error(RuntimeError("custom application bug")) is False
     assert is_transient_upstream_error(KeyError("missing")) is False
+
+
+def test_uw_error_context_includes_http_response_preview() -> None:
+    request = httpx.Request("GET", "https://api.unusualwhales.com/api/stock/AAPL/iv-rank")
+    response = httpx.Response(503, text="service unavailable from upstream", request=request)
+    exc = httpx.HTTPStatusError("503", request=request, response=response)
+
+    assert _uw_error_context(exc, provider_endpoint="iv_rank", path="/api/stock/AAPL/iv-rank", symbol="AAPL") == {
+        "provider_endpoint": "iv_rank",
+        "path": "/api/stock/AAPL/iv-rank",
+        "symbol": "AAPL",
+        "status_code": 503,
+        "body_preview": "service unavailable from upstream",
+    }

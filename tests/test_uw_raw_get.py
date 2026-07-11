@@ -1,13 +1,18 @@
 """Param-coercion contract for UWBaseMixin._raw_get (raw-HTTP endpoint primitive)."""
 
+import json
 from typing import Any
+
+import pytest
 
 from gateway.providers.uw import UnusualWhalesProvider
 
 
 class _FakeResponse:
-    def __init__(self, payload: Any):
+    def __init__(self, payload: Any, *, text: str = ""):
         self._payload = payload
+        self.text = text
+        self.status_code = 200
 
     def raise_for_status(self) -> None:  # noqa: D401
         return None
@@ -67,3 +72,39 @@ async def test_raw_get_returns_empty_when_uninitialized():
     p = UnusualWhalesProvider()
     p._client = None
     assert await p._raw_get("/api/anything") == []
+
+
+async def test_raw_get_logs_json_parse_context_and_reraises(monkeypatch):
+    p = UnusualWhalesProvider()
+    logged: list[tuple[str, dict[str, Any]]] = []
+
+    class BrokenJsonResponse(_FakeResponse):
+        def json(self) -> Any:
+            raise json.JSONDecodeError("Expecting value", self.text, 0)
+
+    async def fake_call_sync(func, *args, **kwargs):
+        return BrokenJsonResponse(None, text="Service Unavailable")
+
+    fake_httpx = type("H", (), {"get": lambda *a, **k: None})()
+    monkeypatch.setattr(p, "_client", type("C", (), {"get_httpx_client": lambda self: fake_httpx})())
+    monkeypatch.setattr(p, "_call_sync", fake_call_sync)
+    monkeypatch.setattr(
+        "gateway.providers.uw._base.logger",
+        type("L", (), {"error": lambda self, event, **kwargs: logged.append((event, kwargs))})(),
+    )
+
+    with pytest.raises(json.JSONDecodeError):
+        await p._raw_get("/api/stock/AAPL/iv-rank")
+
+    assert logged == [
+        (
+            "uw_raw_get_failed",
+            {
+                "path": "/api/stock/AAPL/iv-rank",
+                "error": "Expecting value: line 1 column 1 (char 0)",
+                "provider_endpoint": "raw_get",
+                "status_code": 200,
+                "body_preview": "Service Unavailable",
+            },
+        )
+    ]

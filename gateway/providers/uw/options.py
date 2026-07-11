@@ -10,7 +10,7 @@ from gateway.core.logger import logger
 from gateway.schemas import NormalizedIVRank
 
 from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_float, _safe_int
-from .transient import is_transient_upstream_error
+from .transient import _uw_error_context, is_transient_upstream_error
 
 # OCC option symbol: the contract type (C/P) is the single char immediately
 # before the 8-digit strike at the end (e.g. AAPL260116C00190000 -> C).
@@ -89,9 +89,18 @@ class UWOptionsMixin:
 
         except Exception as e:
             if is_transient_upstream_error(e):
-                logger.warning("uw_greek_exposure_failed", symbol=symbol, error=str(e))
+                logger.warning(
+                    "uw_greek_exposure_failed",
+                    error=str(e),
+                    **_uw_error_context(e, provider_endpoint="greek_exposure", symbol=symbol),
+                )
             else:
-                logger.error("uw_greek_exposure_failed", symbol=symbol, error=str(e), exc_info=True)
+                logger.error(
+                    "uw_greek_exposure_failed",
+                    error=str(e),
+                    exc_info=True,
+                    **_uw_error_context(e, provider_endpoint="greek_exposure", symbol=symbol),
+                )
             raise
 
     async def get_greek_exposure_by_strike(self, symbol: str, date_str: str | None = None) -> list:
@@ -137,9 +146,18 @@ class UWOptionsMixin:
 
         except Exception as e:
             if is_transient_upstream_error(e):
-                logger.warning("uw_greek_exposure_strike_failed", symbol=symbol, error=str(e))
+                logger.warning(
+                    "uw_greek_exposure_strike_failed",
+                    error=str(e),
+                    **_uw_error_context(e, provider_endpoint="greek_exposure_strike", symbol=symbol),
+                )
             else:
-                logger.error("uw_greek_exposure_strike_failed", symbol=symbol, error=str(e), exc_info=True)
+                logger.error(
+                    "uw_greek_exposure_strike_failed",
+                    error=str(e),
+                    exc_info=True,
+                    **_uw_error_context(e, provider_endpoint="greek_exposure_strike", symbol=symbol),
+                )
             raise
 
     async def get_greek_exposure_by_expiry(self, symbol: str, date_str: str | None = None) -> list:
@@ -348,17 +366,18 @@ class UWOptionsMixin:
         try:
             # The SDK response parser for this endpoint is incompatible with
             # the live payload shape, so fetch raw JSON directly.
+            path = f"/api/stock/{quote(symbol.upper(), safe='')}/iv-rank"
             http_client = self._client.get_httpx_client()
             params = {"date": date_str} if date_str else None
 
             try:
                 response = await self._call_sync(
                     http_client.get,
-                    f"/api/stock/{quote(symbol.upper(), safe='')}/iv-rank",
+                    path,
                     params=params,
                 )
                 response.raise_for_status()
-                payload = response.json()
+                payload = self._json_payload(response)
             except Exception as e:
                 status_code = self._extract_http_status_code(e)
                 if date_str and status_code == 422:
@@ -370,10 +389,10 @@ class UWOptionsMixin:
                     )
                     response = await self._call_sync(
                         http_client.get,
-                        f"/api/stock/{quote(symbol.upper(), safe='')}/iv-rank",
+                        path,
                     )
                     response.raise_for_status()
-                    payload = response.json()
+                    payload = self._json_payload(response)
                 else:
                     raise
 
@@ -396,7 +415,11 @@ class UWOptionsMixin:
                 )
                 return None  # Keep returning None for 422 specifically
             else:
-                logger.error("uw_iv_rank_failed", symbol=symbol, error=str(e))
+                logger.error(
+                    "uw_iv_rank_failed",
+                    error=str(e),
+                    **_uw_error_context(e, provider_endpoint="iv_rank", path=path, symbol=symbol),
+                )
                 raise
 
     async def get_oi_change(self, symbol: str, date_str: str | None = None) -> list:

@@ -12,7 +12,7 @@ from gateway.schemas import (
 )
 
 from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
-from .transient import is_transient_upstream_error
+from .transient import _uw_error_context, is_transient_upstream_error
 
 _ET = ZoneInfo("America/New_York")
 
@@ -34,23 +34,25 @@ class UWFlowMixin:
 
         try:
             http_client = self._client.get_httpx_client()
+            path = "/api/darkpool/recent"
             params: dict[str, str] = {"limit": str(limit)}
             if offset > 0:
                 params["offset"] = str(offset)
 
             response = await self._call_sync(
                 http_client.get,
-                "/api/darkpool/recent",
+                path,
                 params=params,
             )
             response.raise_for_status()
-            payload = response.json()
+            payload = self._json_payload(response)
         except Exception as e:
             status_code = self._extract_http_status_code(e)
+            context = _uw_error_context(e, provider_endpoint="darkpool_recent_raw", path=path)
             if status_code is not None and status_code >= 500:
-                logger.warning("uw_darkpool_recent_upstream_unavailable", status_code=status_code, error=str(e))
+                logger.warning("uw_darkpool_recent_upstream_unavailable", error=str(e), **context)
             else:
-                logger.error("uw_darkpool_recent_raw_failed", error=str(e))
+                logger.error("uw_darkpool_recent_raw_failed", error=str(e), **context)
             raise
 
         data_items = payload.get("data") if isinstance(payload, dict) else payload
@@ -103,9 +105,18 @@ class UWFlowMixin:
 
         except Exception as e:
             if is_transient_upstream_error(e):
-                logger.warning("uw_flow_alerts_failed", error=str(e))
+                logger.warning(
+                    "uw_flow_alerts_failed",
+                    error=str(e),
+                    **_uw_error_context(e, provider_endpoint="flow_alerts"),
+                )
             else:
-                logger.error("uw_flow_alerts_failed", error=str(e), exc_info=True)
+                logger.error(
+                    "uw_flow_alerts_failed",
+                    error=str(e),
+                    exc_info=True,
+                    **_uw_error_context(e, provider_endpoint="flow_alerts"),
+                )
             raise
 
     async def get_ticker_flow(
@@ -165,9 +176,18 @@ class UWFlowMixin:
 
         except Exception as e:
             if is_transient_upstream_error(e):
-                logger.warning("uw_ticker_flow_failed", symbol=symbol, error=str(e))
+                logger.warning(
+                    "uw_ticker_flow_failed",
+                    error=str(e),
+                    **_uw_error_context(e, provider_endpoint="ticker_flow", symbol=symbol),
+                )
             else:
-                logger.error("uw_ticker_flow_failed", symbol=symbol, error=str(e), exc_info=True)
+                logger.error(
+                    "uw_ticker_flow_failed",
+                    error=str(e),
+                    exc_info=True,
+                    **_uw_error_context(e, provider_endpoint="ticker_flow", symbol=symbol),
+                )
             raise
 
     async def get_darkpool_recent(
@@ -300,9 +320,18 @@ class UWFlowMixin:
 
         except Exception as e:
             if is_transient_upstream_error(e):
-                logger.warning("uw_market_tide_failed", error=str(e))
+                logger.warning(
+                    "uw_market_tide_failed",
+                    error=str(e),
+                    **_uw_error_context(e, provider_endpoint="market_tide"),
+                )
             else:
-                logger.error("uw_market_tide_failed", error=str(e), exc_info=True)
+                logger.error(
+                    "uw_market_tide_failed",
+                    error=str(e),
+                    exc_info=True,
+                    **_uw_error_context(e, provider_endpoint="market_tide"),
+                )
             raise
 
     async def get_group_greek_flow(self, flow_group: str, date_str: str | None = None) -> list[dict]:
@@ -659,19 +688,25 @@ class UWFlowMixin:
 
         try:
             http_client = self._client.get_httpx_client()
+            path = f"/api/market/{quote(sector, safe='')}/sector-tide"
             params: dict[str, str] = {}
             if date_str:
                 params["date"] = date_str
 
             response = await self._call_sync(
                 http_client.get,
-                f"/api/market/{quote(sector, safe='')}/sector-tide",
+                path,
                 params=params,
             )
             response.raise_for_status()
-            payload = response.json()
+            payload = self._json_payload(response)
         except Exception as e:
-            logger.error("uw_sector_tide_raw_failed", sector=sector, error=str(e))
+            logger.error(
+                "uw_sector_tide_raw_failed",
+                sector=sector,
+                error=str(e),
+                **_uw_error_context(e, provider_endpoint="sector_tide_raw", path=path),
+            )
             raise
 
         data_items = payload.get("data") if isinstance(payload, dict) else payload
@@ -794,19 +829,24 @@ class UWFlowMixin:
 
         try:
             http_client = self._client.get_httpx_client()
+            path = f"/api/etf/{quote(symbol.upper(), safe='')}/tide"
             params: dict[str, str] = {}
             if date_str:
                 params["date"] = date_str
 
             response = await self._call_sync(
                 http_client.get,
-                f"/api/etf/{quote(symbol.upper(), safe='')}/tide",
+                path,
                 params=params,
             )
             response.raise_for_status()
-            payload = response.json()
+            payload = self._json_payload(response)
         except Exception as e:
-            logger.error("uw_etf_tide_raw_failed", symbol=symbol, error=str(e))
+            logger.error(
+                "uw_etf_tide_raw_failed",
+                error=str(e),
+                **_uw_error_context(e, provider_endpoint="etf_tide_raw", path=path, symbol=symbol),
+            )
             raise
 
         data_items = payload.get("data") if isinstance(payload, dict) else payload
