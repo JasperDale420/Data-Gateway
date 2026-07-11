@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Downstream remediation handoff notes for Orion and Kairos** (`docs/ORION_KAIROS_REMEDIATION_HANDOFF_2026-07-11.md`): captured July 5-11 Gateway log evidence for Orion Alpaca option rejects and the Kairos rate-limit burst, including counts, affected symbols, caller client IDs, and representative file:line references.
+
 ### Fixed
 
 - **UW poller's market-hours and EOD-state checks no longer stall the event loop** (`gateway/core/uw_poller.py`): the single-threaded poll loop called `_is_market_hours()` (which runs `exchange_calendars`' synchronous pandas work) and the EOD-state file-lock checks (`_should_poll_eod` → `should_defer`, and `claim`, which do blocking `Path.read_text()` + `fcntl.flock`) directly on the asyncio loop. A 2026-07-06 postmortem tied loop stalls (up to ~80s) partly to these blocking calls. Their invocations inside `_poll_loop`/`_poll_eod_snapshots` now run off the loop via `asyncio.to_thread`, so a slow calendar/pandas lookup or a contended EOD state file can no longer freeze streaming dispatch, WebSocket heartbeats, or other pollers. The helpers stay synchronous (so their sync callers — `_get_darkpool_interval`, the quotes/trades pollers, and the existing tests — are untouched) and the existing 30s market-hours cache still applies.
