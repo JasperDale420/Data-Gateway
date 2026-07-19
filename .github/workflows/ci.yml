@@ -70,8 +70,11 @@ jobs:
         run: bandit -c pyproject.toml -r gateway/
 
       - name: Semgrep (empire coding rules)
+        # Pinned: 1.170+ fails rule validation (PatternParseError) on the
+        # `except $EXCEPTION: return None` pattern in the vendored rules.
+        # Bump the pin together with a rule re-vendor/validation, not blind.
         run: |
-          pip install semgrep
+          pip install "semgrep==1.157.0"
           semgrep scan --config .semgrep/empire-rules.yaml --error --metrics off gateway/ tests/
 
       - name: Architecture contracts (import-linter)
