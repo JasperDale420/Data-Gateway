@@ -18,6 +18,9 @@ ruff check .
 echo "[pre-push] ruff format check…"
 ruff format --check .
 
+echo "[pre-push] uv.lock freshness…"
+uv lock --check
+
 echo "[pre-push] fast tests (auth, smoke, wire contract, money path)…"
 uv run pytest -q --timeout=60 \
   tests/test_auth.py \

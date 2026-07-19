@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **CI now enforces the gates that previously existed only on paper** (`.github/workflows/ci.yml`, `.semgrep/empire-rules.yaml`, `ci/mypy_dirty_allowlist.txt`, `Makefile`, `.githooks/pre-push`): the 4 import-linter architecture contracts (written in `.importlinter` but never installed or run) are now a blocking CI step and `make arch`; the Empire semgrep coding rules are vendored in-repo and blocking (0 findings at introduction; the raw-httpx rules exclude `gateway/core/http_client.py`, the wrapper itself); mypy gates on a dirty-file allowlist — any of the 149 currently-clean files gaining type errors fails the build, while the 37 known-dirty files are grandfathered until cleaned; a per-file coverage ratchet guards the Alpaca order money path (router ≥88%, provider ≥45%); the Heber wire-contract tests run as their own named step; a PR guard fails when `pyproject.toml` changes without `uv.lock` (full `uv lock --check` runs in the pre-push hook, which now also checks lockfile freshness); and the pip cache is actually keyed on `pyproject.toml`/`uv.lock` instead of a nonexistent requirements file.
 - **Downstream remediation handoff notes for Orion and Kairos** (`docs/ORION_KAIROS_REMEDIATION_HANDOFF_2026-07-11.md`): captured July 5-11 Gateway log evidence for Orion Alpaca option rejects and the Kairos rate-limit burst, including counts, affected symbols, caller client IDs, and representative file:line references.
 
 ### Fixed

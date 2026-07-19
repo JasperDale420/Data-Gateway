@@ -1,0 +1,163 @@
+# Vendored from /Users/jacobmcmillan/Empire/.semgrep/empire-rules.yaml (2026-07-19).
+# Upstream wins on drift — re-vendor rather than editing rules here.
+# Local delta: gateway/core/http_client.py excluded from the raw-httpx rules
+# (it IS the wrapper those rules point to).
+rules:
+  # --- HTTP Client Rules ---
+  # These rules exclude test files (tests legitimately create httpx clients for API testing)
+  # and script files (standalone scripts may not have wrapper access)
+  - id: empire-no-raw-httpx-client
+    pattern: httpx.Client(...)
+    paths:
+      exclude:
+        - "tests/**"
+        - "test_*"
+        - "scripts/**"
+        - "debug_*"
+        - "gateway/core/http_client.py"
+    message: >
+      Use `create_http_client()` from `core/http_client.py` instead of raw `httpx.Client()`.
+      The wrapper provides structured logging, retry logic, and consistent timeouts.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — HTTP Client Wrapper section"
+
+  - id: empire-no-raw-httpx-async-client
+    pattern: httpx.AsyncClient(...)
+    paths:
+      exclude:
+        - "tests/**"
+        - "test_*"
+        - "scripts/**"
+        - "debug_*"
+        - "gateway/core/http_client.py"
+    message: >
+      Use `create_async_http_client()` from `core/http_client.py` instead of raw `httpx.AsyncClient()`.
+      The wrapper provides structured logging, retry logic, and consistent timeouts.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — HTTP Client Wrapper section"
+
+  # --- Logging Rules ---
+  - id: empire-no-logger-success
+    pattern: logger.success(...)
+    message: >
+      `logger.success()` is not part of structlog. Use `logger.info()` instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — Structured Logging Standard"
+
+  - id: empire-no-logger-add
+    pattern: logger.add(...)
+    paths:
+      exclude:
+        - "scripts/**"
+    message: >
+      Do not use `logger.add()` for file sinks. Configure outputs centrally in the
+      repo's logger shim (`core/logger.py`).
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — Structured Logging Standard"
+
+  - id: empire-no-logger-opt-exception
+    pattern: logger.opt(exception=True)
+    message: >
+      Use `exc_info=True` for exception tracebacks, not `logger.opt(exception=True)`.
+      This is the structlog standard.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — Structured Logging Standard"
+
+  - id: empire-no-logger-contextualize
+    pattern: logger.contextualize(...)
+    message: >
+      Use `logger.bind(key=value)` for contextual logging, not `logger.contextualize()`.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — Structured Logging Standard"
+
+  # --- Testing Rules ---
+  - id: empire-no-sleep-in-tests
+    patterns:
+      - pattern: time.sleep(...)
+      - pattern: asyncio.sleep(...)
+    paths:
+      include:
+        - "tests/**"
+        - "test_*"
+    message: >
+      Avoid `time.sleep()` / `asyncio.sleep()` in tests. Tests must be deterministic
+      and fast. Use mocking or event-based synchronization instead.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — Test Quality Rules"
+
+  # --- Error Handling Rules ---
+  - id: empire-no-bare-exception
+    pattern: |
+      except Exception:
+          ...
+    message: >
+      Avoid bare `except Exception:`. Use specific exception types for better debugging.
+      If you must catch broadly, log with `exc_info=True` and re-raise or handle explicitly.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — Error Message Guidelines"
+
+  - id: empire-no-return-none-for-failure
+    pattern: |
+      except $EXCEPTION:
+          return None
+    message: >
+      Never return None to indicate failure. Raise an exception with details instead.
+      This makes failures visible and debuggable.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — Error Handling"
+
+  # --- Data Safety Rules ---
+  - id: empire-no-hardcoded-api-keys
+    patterns:
+      - pattern: |
+          $KEY = "sk-..."
+      - pattern: |
+          $KEY = "sqa_..."
+      - pattern: |
+          api_key = "$VALUE"
+    message: >
+      Never hardcode API keys or secrets. Use environment variables via Pydantic Settings.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      reference: "GEMINI.md — Safety Rules"
+
+  # --- Session Rules ---
+  - id: empire-no-raw-engine-creation
+    pattern: create_engine(..., echo=True, ...)
+    message: >
+      Do not hardcode `echo=True` in engine creation. Configure `echo` via Pydantic
+      Settings so it can be toggled per environment.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: empire-standard
+      reference: "GEMINI.md — Database Session Patterns"

@@ -1,4 +1,4 @@
-.PHONY: setup test test-all lint format typecheck run deploy clean install-hooks
+.PHONY: setup test test-all lint format typecheck arch run deploy clean install-hooks
 
 ## Local development setup — installs runtime + local SDK + dev tools.
 ## Bare `uv sync` will NOT work because empire-core, empire-schemas, and
@@ -36,6 +36,10 @@ format:
 ## Type-check with mypy.
 typecheck:
 	mypy .
+
+## Architecture contracts (import-linter, config in .importlinter).
+arch:
+	uv run lint-imports
 
 ## Start the gateway server (debug mode).
 run: setup

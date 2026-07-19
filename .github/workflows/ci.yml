@@ -28,6 +28,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            uv.lock
 
       - name: Install dependencies
         run: |
@@ -39,18 +42,51 @@ jobs:
           pip install -e ".[dev]"
           pip install pre-commit "bandit[toml]"
 
+      - name: Verify uv.lock changed alongside pyproject.toml
+        # `uv lock --check` can't run here (the [local] extra resolves via
+        # ../empire-core path deps that only exist in the monorepo checkout;
+        # the real freshness check runs in .githooks/pre-push). This guard
+        # catches the common drift: a PR editing dependencies without
+        # relocking.
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --depth=1 origin "$GITHUB_BASE_REF"
+          changed=$(git diff --name-only "origin/$GITHUB_BASE_REF"...HEAD)
+          if echo "$changed" | grep -qx 'pyproject.toml' && ! echo "$changed" | grep -qx 'uv.lock'; then
+            echo "::error::pyproject.toml changed without uv.lock — run 'uv lock' and commit the result"
+            exit 1
+          fi
+          echo "OK: pyproject.toml/uv.lock consistent"
+
       - name: Run pre-commit hooks
         run: pre-commit run --all-files
 
       - name: Security scan (bandit)
         run: bandit -c pyproject.toml -r gateway/
 
-      - name: Type check (mypy)
-        # Advisory for now — the codebase has pre-existing type errors (see the
-        # per-module suppressions in [tool.mypy]). Surfaces regressions in PRs
-        # without blocking; flip continue-on-error off once typing is clean.
-        run: mypy gateway/
-        continue-on-error: true
+      - name: Semgrep (empire coding rules)
+        run: |
+          pip install semgrep
+          semgrep scan --config .semgrep/empire-rules.yaml --error --metrics off gateway/ tests/
+
+      - name: Architecture contracts (import-linter)
+        run: lint-imports
+
+      - name: Type check (mypy — no new dirty files)
+        # The full mypy output is advisory context; the GATE is the allowlist:
+        # any file gaining mypy errors that is not already listed in
+        # ci/mypy_dirty_allowlist.txt fails the build. Shrink the list over
+        # time — never grow it without a reason in the PR description.
+        run: |
+          mypy gateway/ | tee mypy_out.txt || true
+          grep -oE '^gateway/[a-zA-Z0-9_/]+\.py' mypy_out.txt | sort -u > mypy_dirty_actual.txt
+          new_dirty=$(comm -13 ci/mypy_dirty_allowlist.txt mypy_dirty_actual.txt)
+          if [ -n "$new_dirty" ]; then
+            echo "::error::Files with new mypy errors (not in ci/mypy_dirty_allowlist.txt):"
+            echo "$new_dirty"
+            exit 1
+          fi
+          echo "OK: no new mypy-dirty files ($(wc -l < mypy_dirty_actual.txt) known-dirty of $(wc -l < ci/mypy_dirty_allowlist.txt) allowed)"
 
       - name: Verify provider endpoint contract is up-to-date
         run: python scripts/generate_provider_contract.py --check
@@ -58,6 +94,19 @@ jobs:
       - name: Run tests with coverage
         run: |
           pytest --cov=gateway --cov-report=xml --cov-report=term-missing
+
+      - name: Wire-contract tests (Heber envelope)
+        # These already run inside the full suite above; this named step makes
+        # a wire-contract regression fail loudly and legibly on its own line.
+        run: pytest -q --timeout=60 --no-cov tests/test_envelope_heber_contract.py
+
+      - name: Money-path coverage floor (Alpaca trading)
+        # Per-file ratchet on the order-placement money path, measured from the
+        # full-suite .coverage data above. Floors = measured-at-introduction
+        # minus 2pts. Raise them as tests land; never lower without sign-off.
+        run: |
+          coverage report --include='gateway/api/alpaca/trading.py' --fail-under=88
+          coverage report --include='gateway/providers/alpaca/trading.py' --fail-under=45
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
