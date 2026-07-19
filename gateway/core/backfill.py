@@ -5,6 +5,7 @@ and publish results through the DataSinkRegistry -> Redis Streams -> Heber pipel
 """
 
 import asyncio
+import os
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum
@@ -19,7 +20,10 @@ from gateway.core.security import InputValidator
 
 _INPUT_VALIDATOR = InputValidator()
 
-HEBER_EVENTS_TOPIC = "heber:events"
+# Bulk backfill publishes to the dedicated stream consumed by
+# heber-backfill-consumer, isolating it from the live feed so a large job can
+# never MAXLEN-evict un-consumed live events (same design as uw_backfill_driver).
+HEBER_EVENTS_TOPIC = os.environ.get("GATEWAY_BACKFILL_STREAM", "heber:events:backfill")
 
 # Default chunk size in days for splitting date ranges
 DEFAULT_CHUNK_DAYS = 1
