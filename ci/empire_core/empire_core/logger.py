@@ -417,3 +417,11 @@ def log_retry(
         delay_seconds=delay_seconds,
         error=error,
     )
+
+
+def shutdown_logging() -> None:
+    """Stop the logging queue listener, flushing buffered records. Idempotent.
+
+    The real empire_core drains a QueueListener here; this CI stub has no
+    queue, so there is nothing to flush.
+    """
