@@ -62,6 +62,11 @@ repo.
 - **Old stashes**: 4 stashes from March–June 2026 (`git stash list`) —
   including one from the 2026-06-11 Orion incident referencing clients.yaml
   hashing WIP. Review and drop deliberately.
+- **Perf budget too thin on `test_replay_run_large_message_batch_memory_profile`**:
+  budget 0.350s vs an observed 0.34–0.43s spread on shared CI runners on
+  identical code (3 boundary failures + passes on 2026-07-19). Re-baseline
+  the budget with margin — `config/perf_budgets.json` is under the
+  bind-mounted `config/`, so do it in a deploy window.
 - **Ratchet the money-path coverage floors** (`.github/workflows/ci.yml`,
   "Money-path coverage floor") as provider tests land; same for the global
   `fail_under = 58` in `pyproject.toml`.
