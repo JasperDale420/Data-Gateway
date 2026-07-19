@@ -14,6 +14,8 @@ Coverage:
     * failed-event buffer fill -> evict -> drain against live Redis
 """
 
+import asyncio
+
 import pytest
 
 from gateway.core.cache import RedisCache
@@ -110,13 +112,24 @@ async def test_buffer_drain_on_reconnect(redis_sink, redis_probe):
     assert redis_sink.get_buffer_stats()["buffer_size"] == 10
 
     # Reconnect triggers an async drain of the failed buffer. Publish forces
-    # a reconnect; then explicitly drain to make the assertion deterministic.
+    # a reconnect; then explicitly drain as well. The reconnect-scheduled
+    # background drain races the explicit one: whichever wins snapshot-clears
+    # the buffer, and the loser no-ops on the now-empty buffer — possibly while
+    # the winner's pipeline is still in flight. So poll until the drained
+    # events land instead of asserting a fixed count at a fixed moment.
     assert await redis_sink.publish(topic, "trigger") is True
     await redis_sink._do_drain()
 
+    # 10 buffered + 1 trigger publish, once whichever drain won completes.
+    expected = 11
+    deadline = asyncio.get_running_loop().time() + 5.0
+    while (
+        redis_sink.get_buffer_stats()["buffer_size"] != 0 or await redis_probe.xlen(topic) != expected
+    ) and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+
     assert redis_sink.get_buffer_stats()["buffer_size"] == 0
-    # 10 buffered + 1 trigger publish.
-    assert await redis_probe.xlen(topic) == 11
+    assert await redis_probe.xlen(topic) == expected
 
 
 async def test_redis_cache_set_nx_module_importable():
