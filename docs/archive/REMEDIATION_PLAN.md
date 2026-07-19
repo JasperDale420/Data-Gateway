@@ -1,3 +1,5 @@
+> **Historical — superseded as of 2026-07.** Kept for incident/audit reference; do not follow as current process.
+
 # Data-Gateway Remediation Plan
 
 Derived from the 2026-06-10 audit + Heber-ledger verification. Encoded as a
