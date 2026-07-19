@@ -215,8 +215,13 @@ class UWMarketMixin:
                     NormalizedIVTermStructure(
                         symbol=symbol.upper(),
                         expiry=str(get("expiry") or get("expiration_date") or ""),
-                        iv=Decimal(str(get("iv") or get("implied_volatility") or 0)),
+                        # The UW term-structure endpoint carries the ATM IV in
+                        # "volatility" (see ImpliedVolatilityTermStructure in the
+                        # vendored SDK); the old "iv"/"implied_volatility" keys
+                        # never exist, which stored a literal 0 on every row.
+                        iv=Decimal(str(get("volatility") or get("iv") or get("implied_volatility") or 0)),
                         days_to_expiry=_safe_int(get("days_to_expiry") or get("dte")),
+                        # No per-side IVs on this endpoint — these stay None.
                         call_iv=Decimal(str(get("call_iv") or 0)) if get("call_iv") else None,
                         put_iv=Decimal(str(get("put_iv") or 0)) if get("put_iv") else None,
                         provider="unusual_whales",
