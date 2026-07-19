@@ -80,12 +80,16 @@ services:
       retries: 3
       start_period: 5s
 
-  # Redis for Heber data sink (ephemeral — no persistence)
+  # Redis for Heber data sink. AOF-persistent since 2026-07-19: the Jul 12 power
+  # outage restarted this instance empty, destroying all stream/DLQ/consumer-group
+  # state (survivable then only because consumer lag was ~0 at power-off).
   redis:
     image: redis:7-alpine
     container_name: data-gateway-redis
     ports:
-      - "6379:6379"
+      # localhost-only: this instance is unauthenticated; containers still reach it
+      # via host.docker.internal, which lands on the host loopback on Docker Desktop.
+      - "127.0.0.1:6379:6379"
     # maxmemory: 1gb→2gb on 2026-05-06, then 2gb→4gb on 2026-06-25 paired with the
     # 300K→500K stream cap above. ~1.5GB worst-case heber:events at 500K entries +
     # the dedup cache + heber:watch/snapshots + DLQ all share this instance, so the
@@ -94,7 +98,9 @@ services:
     # can still evict unread stream entries under memory pressure, so headroom here is
     # the backstop behind the explicit MAXLEN. PREREQ: confirm the Docker VM has the
     # RAM to back 4GB before deploying.
-    command: redis-server --save "" --appendonly no --maxmemory 4gb --maxmemory-policy allkeys-lru
+    command: redis-server --save "" --appendonly yes --appendfsync everysec --maxmemory 4gb --maxmemory-policy allkeys-lru
+    volumes:
+      - data-gateway-redis-data:/data
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]
@@ -102,3 +108,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+volumes:
+  data-gateway-redis-data:
