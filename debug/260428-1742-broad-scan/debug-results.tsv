@@ -1,0 +1,42 @@
+iteration	type	hypothesis	result	severity	location	description
+1	hypothesis	redis_sink._drain_buffer task fire-and-forget	confirmed	HIGH	gateway/core/redis_sink.py:151	Task can be GC'd; silent event loss on Redis reconnect
+2	hypothesis	option_capture _run_loop swallows errors	disproven	-	gateway/core/option_capture.py:313	try/except logs and continues — by design
+3	hypothesis	option_capture stagger exceeds interval	disproven	-	gateway/core/option_capture.py:205	Bucket logic prevents double-cycling
+4	hypothesis	option_capture stagger applies on errors	disproven	-	gateway/core/option_capture.py:207	Stagger is between symbols, not after errors
+5	hypothesis	option_capture _to_float "or 0.0" treats 0 as null	disproven	-	gateway/core/option_capture.py:415	Both branches give 0.0 — idempotent
+6	hypothesis	option_capture as_of_date strips tz	disproven	-	gateway/core/option_capture.py:222	Within market hours UTC date == ET date
+7	hypothesis	data_sink fallback inflates total_published	confirmed	LOW	gateway/core/data_sink.py:258	Only affects non-publish_batch sinks; minor metric inaccuracy
+8	hypothesis	data_sink:198 unstored task	disproven	-	gateway/core/data_sink.py:198	Stored in _background_tasks with discard callback
+9	hypothesis	connections.disconnect race	disproven	-	gateway/core/connections.py:93	Lock-protected; correct
+10	hypothesis	connections.connect serializes handshakes	disproven	-	gateway/core/connections.py:67	Real impact negligible
+11	hypothesis	connections.broadcast_shutdown sequential	disproven	-	gateway/core/connections.py:280	Suboptimal but not a bug
+12	hypothesis	connections.close_all sequential	disproven	-	gateway/core/connections.py:302	Suboptimal but not a bug
+13	hypothesis	uw_poller duplicate EOD block	confirmed	LOW	gateway/core/uw_poller.py:444-447	Dead code; copy-paste artifact
+14	hypothesis	uw_poller dedup marks first N as seen	confirmed	MEDIUM	gateway/core/uw_poller.py:259-269	Index-prefix assumption breaks on partial Redis pipeline failure
+15	hypothesis	alpaca _install_session_default_timeout breaks user timeout=None	disproven	-	gateway/providers/alpaca/_base.py:39	setdefault preserves explicit overrides
+16	hypothesis	alpaca shutdown leaks trading session	confirmed	LOW	gateway/providers/alpaca/_base.py:154-167	Session never explicitly closed
+17	hypothesis	backfill partial-success status logic	disproven	-	gateway/core/backfill.py:608	Inconsistency but minor
+18	hypothesis	backfill loop variable closure	disproven	-	gateway/core/backfill.py:572	Default-arg fix verified
+19	hypothesis	backfill semaphore held entire job	disproven	-	gateway/core/backfill.py:494	By design
+20	hypothesis	middleware time.time() for buckets	confirmed	LOW	gateway/api/middleware.py:105-138	Wall-clock instead of monotonic for windowed logic
+21	hypothesis	middleware envelope skip on success=False	disproven	-	gateway/api/middleware.py:854	Defensive coding; correct
+22	hypothesis	middleware:917 unstored task	disproven	-	gateway/api/middleware.py:917	Stored in _background_tasks
+23	hypothesis	UW transient missing httpx.WriteTimeout	deferred	NIT	gateway/providers/uw/transient.py:14	User declined fix in earlier review (UW is GET-only)
+24	hypothesis	RateLimitMiddleware bucket creation race	disproven	-	gateway/api/middleware.py:174	No await between check and create
+25	hypothesis	auth API key prefix collision	disproven	-	gateway/core/auth.py:239	Real keys high-entropy
+26	hypothesis	cache time.time() for TTL	confirmed	LOW	gateway/core/cache.py:61	Same class as iteration 20
+27	hypothesis	auth dict.get timing attack	disproven	-	gateway/core/auth.py:110	Practical impact essentially zero
+28	hypothesis	auth short-key full-log	disproven	-	gateway/core/auth.py:118	Real keys never short
+29	hypothesis	auth client_id collision plaintext vs hashed	disproven	-	gateway/core/auth.py:113	Order intentional
+30	hypothesis	cache get_event_loop deprecation	disproven	-	gateway/core/cache.py:220	Always called from running-loop context
+31	hypothesis	cache TTLCache + OrderedDict race	disproven	-	gateway/core/cache.py:39	Single-threaded asyncio; no race
+32	hypothesis	cache _enforce_max_size eviction order	disproven	-	gateway/core/cache.py:170	LRU correct via move_to_end
+33	hypothesis	websocket heartbeat_task GC	disproven	-	gateway/api/websocket.py:71	Local var held in scope; cancelled in finally
+34	hypothesis	websocket subscribe rollback over-unsubs	disproven	-	gateway/api/websocket.py:471	Idempotent; correct
+35	hypothesis	symbology pattern length inconsistency	disproven	-	gateway/core/symbology.py:86	Real OCC underlyings ≤5 chars
+36	hypothesis	provider transient logic	skipped	-	-	Already covered by ultrareview/declined fix
+37	hypothesis	calendar is_market_open tz default	disproven	-	gateway/core/calendar.py:498	Correctly UTC-default + convert
+38	hypothesis	calendar next_trading_day uses naive date	confirmed	LOW	gateway/core/calendar.py:522	date.today() not in ET
+39	hypothesis	stream _get_connection None handling	disproven	-	gateway/core/stream.py:947	Caller checks
+40	hypothesis	stream:916 task on dormant restart	disproven	-	gateway/core/stream.py:916	Stored in self._tasks
+41	hypothesis	option_capture _publish_envelopes loop count	disproven	-	gateway/core/option_capture.py:339	Optimistic count via fallback path; minor metric only

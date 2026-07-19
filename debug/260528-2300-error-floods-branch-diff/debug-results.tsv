@@ -1,0 +1,14 @@
+iteration	type	hypothesis	result	severity	location	description
+1	hypothesis	provider_request_failed still ERROR-level for 4xx floods	disproven	-	api/alpaca/common.py:82-155	common.py already splits 4xx→warning, 5xx→error (recent fix a12483e)
+2	hypothesis	alpaca_order_create_error still ERROR-level	disproven	-	providers/alpaca/trading.py:187	already logger.warning (insufficient-bp 403 = business reject)
+3	hypothesis	data_sink/circuit floods still ERROR-level	disproven	-	core/data_sink.py:474, core/circuit_breaker.py:222	data_sink circuit→warning(GW-W1013); publish_failed→debug for self-metric sinks
+4	hypothesis	market.py logs 4xx client errors at ERROR (remaining flood)	confirmed	MEDIUM	providers/alpaca/market.py:55,82	alpaca_bars_error/quotes_error log ERROR unconditionally; source of 4052 SPX-400 flood
+5	hypothesis	SPX 400s amplified by http_retry	disproven	-	core/http_client.py:159	_should_retry only retries {429,502,503,504}; 4xx not retried — 4052=real requests
+6	hypothesis	same ERROR-for-4xx anti-pattern in other providers	confirmed	LOW	providers/alphavantage.py, providers/finnhub.py	~40 sites log *_failed at ERROR regardless of status — NOT flooding; defer to separate PR
+7	hypothesis	branch trading.py qty<0 guard introduces regression	disproven	-	api/alpaca/trading.py:790	valid new 400 guard (GW-E4006); covered by new tests
+8	hypothesis	branch config.py tuning out of safe bounds	disproven	-	config.py:202,222,223	worker_count 16 ≤ pool 32; queue 16384 ≤ 65536 — within Field bounds
+9	hypothesis	branch stream.py validation guard skips needed validation	disproven	-	core/stream.py:1223	skips only when no clients AND no on_envelope (no consumer); no unbound-var risk
+10	hypothesis	branch uw/institutional.py SDK→httpx swap regresses	disproven	-	providers/uw/institutional.py:82-98	_call_sync(func) signature matches; raise_for_status propagates to outer except
+11	hypothesis	tests assert current ERROR level (fix would break them)	disproven	-	tests/	no test references alpaca_bars_error/quotes_error or asserts level
+12	fix	downgrade market.py 4xx to warning (bars+quotes)	applied	-	providers/alpaca/market.py:54-90	mirror common.py severity split; +4 parametrized tests
+13	verify	new severity tests pass	confirmed	-	tests/test_alpaca_provider.py	5/5 targeted; 20/20 file; 110/110 provider+branch suite
