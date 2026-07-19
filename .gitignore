@@ -108,3 +108,9 @@ data_dictionary.yaml
 
 # UW backfill driver progress state
 state/
+
+# Skill/tool output not worth tracking
+learn/
+
+# import-linter cache
+.import_linter_cache/
