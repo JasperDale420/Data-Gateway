@@ -8,11 +8,11 @@ Practical notes for contributors working inside Data Gateway.
 - WebSocket clients must authenticate quickly after connection (`/ws` auth timeout is enforced).
 - Provider permissions are controlled per client in `config/clients.yaml`.
 - Provider registration and capability flags come from `config/providers.yaml`.
-- The Unusual Whales SDK is a local submodule (`unusualwhales_sdk/`) and must be initialized after clone.
+- The Unusual Whales SDK is not a submodule. It is an editable path dependency on `../unusualwhales_python_client-5.1` (a sibling directory in the monorepo, installed via `uv sync --extra local --extra dev`); `vendor/unusualwhales_sdk/` holds a patched copy used only in Docker builds.
 
 ## Error-Log Severity & Double-Logging
 
-- **4xx vs 5xx split.** Provider and API HTTP errors are logged by status class: `4xx → logger.warning`, `5xx → logger.error`. See `gateway/api/alpaca/common.py` (`_handle_alpaca_error`, and the `APIError` / `httpx.HTTPStatusError` branches in `execute_alpaca_provider_call`) and `gateway/providers/alpaca/market.py` (`get_bars`/`get_quotes`/`get_trades`, `log = logger.warning if status < 500 else logger.error`). A *flood of 4xx WARNINGs* is almost always a misconfigured client, not a gateway bug — e.g. requesting an index symbol like `SPX` from `/v2/stocks/bars` returns a `400`. Fix the caller; don't silence the log.
+- **4xx vs 5xx split.** Provider and API HTTP errors are logged by status class: `4xx → logger.warning`, `5xx → logger.error`. See `gateway/api/alpaca/common.py` (`_handle_alpaca_error`, and the `APIError` / `httpx.HTTPStatusError` branches in `execute_alpaca_provider_call`) and `gateway/providers/alpaca/market.py` (`get_bars`/`get_quotes`, `log = logger.warning if status < 500 else logger.error`; note `get_trades` currently logs all statuses at ERROR — `alpaca_trades_error`). A *flood of 4xx WARNINGs* is almost always a misconfigured client, not a gateway bug — e.g. requesting an index symbol like `SPX` from `/v2/stocks/bars` returns a `400`. Fix the caller; don't silence the log.
 - **Provider + API double-logging.** The same upstream 4xx is logged twice for REST callers: once at the provider layer (`alpaca_bars_error` / `alpaca_quotes_error` in `gateway/providers/alpaca/market.py`) and once at the API layer (`provider_request_failed` in `gateway/api/alpaca/common.py`), both at WARNING. Non-REST callers — the pollers (`gateway/core/*_poller.py`), backfill engine, and option capture — go through the provider methods directly and so only hit the provider-layer log. When grepping error volume, expect roughly 2× the event count for REST-path 4xx versus poller-path 4xx.
 
 ## Retry Semantics
@@ -25,11 +25,11 @@ Practical notes for contributors working inside Data Gateway.
 
 ## Trading Write Idempotency
 
-- Order writes auto-mint a `dg-<uuid>` `client_order_id` when the caller omits one (`_generate_client_order_id`, `gateway/api/alpaca/trading.py`). Alpaca natively dedupes `submit_order` by `client_order_id`, so this key is the idempotency token. A **`504` from a write does NOT mean the order failed** — the asyncio `wait_for` ceiling may have fired while the executor thread was still talking to Alpaca, so the order *may have landed*. The gateway returns the minted key in the 504 response detail (and in successful response meta); on a 504 the caller must either GET the order by that `client_order_id` to check whether it placed, or safely retry with the *same* key (Alpaca returns the existing order rather than double-placing). Callers must omit `client_order_id` or supply a real non-empty value — passing `""` is rejected with `400 GW-E4006` precisely because a fresh per-retry UUID would defeat dedup (`_validate_client_order_id`).
+- Order writes auto-mint a `c-{client_id}-dg-{uuid4hex}` `client_order_id` (ownership-prefixed) when the caller omits one (`_generate_client_order_id`, `gateway/api/alpaca/trading.py`). Caller-supplied keys are also transparently prefixed with `c-{client_id}-`, so lookups and retries must use the full prefixed key returned in `meta.client_order_id` (or the 504 detail), not the raw value the caller sent. Alpaca natively dedupes `submit_order` by `client_order_id`, so this key is the idempotency token. A **`504` from a write does NOT mean the order failed** — the asyncio `wait_for` ceiling may have fired while the executor thread was still talking to Alpaca, so the order *may have landed*. The gateway returns the minted key in the 504 response detail (and in successful response meta); on a 504 the caller must either GET the order by that `client_order_id` to check whether it placed, or safely retry with the *same* key (Alpaca returns the existing order rather than double-placing). Callers must omit `client_order_id` or supply a real non-empty value — passing `""` is rejected with `400 GW-E4006` precisely because a fresh per-retry UUID would defeat dedup (`_validate_client_order_id`).
 
 ## Where Bugs Usually Hide
 
-- `gateway/api/middleware.py`: cache/envelope interaction and response wrapping edge cases.
+- `gateway/api/middleware/` (esp. `cache.py` + `envelope.py`): cache/envelope interaction and response wrapping edge cases.
 - `gateway/core/stream.py`: fanout, batching, and backpressure behavior under load.
 - `gateway/core/registry.py`: provider lifecycle and health-check orchestration.
 - `gateway/providers/*`: normalization differences between provider payload shapes.
@@ -54,8 +54,8 @@ python scripts/generate_provider_contract.py --check
 ## Documentation Map
 
 - `README.md`: onboarding and quickstart.
-- `docs/ARCHITECTURE.md`: system architecture and data flow.
+- `docs/system-architecture.md`: system architecture and data flow.
 - `docs/RUNBOOK.md`: operations and troubleshooting.
-- `docs/API_REFERENCE.md`: endpoint and stream contract reference.
+- `docs/api-reference.md`: endpoint and stream contract reference.
 - `PROVIDER_ENDPOINT_CONTRACT.md`: generated live-route contract snapshot.
 - `docs/audits/`: performance reports, audits, and smoke-check artifacts.

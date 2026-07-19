@@ -2,6 +2,8 @@
 
 Data-Gateway is the unified REST/WebSocket proxy for the Empire monorepo. It normalizes data from 7 providers (Alpaca, UnusualWhales, Finnhub, Alpha Vantage, yfinance, SEC, News) into canonical schemas and publishes EventEnvelopes to Redis Streams for Heber ingestion. Port 8080. Python 3.12, FastAPI, uv.
 
+Doc precedence: hand-written root docs are canonical; the generated set under `docs/` is a regenerable snapshot. See [docs/README.md](docs/README.md) for the full map.
+
 ## Commands
 
 ```bash

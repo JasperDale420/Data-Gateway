@@ -7,18 +7,18 @@ Thank you for contributing to Data Gateway! This document provides guidelines fo
 ```bash
 # Clone and setup
 cd Data-Gateway
-pip install -e ".[dev]"
-pre-commit install
+uv sync --extra local --extra dev   # bare `uv sync` (or pip) omits the local SDK packages and the gateway will not start
+make install-hooks                  # commit-stage hooks + the pre-push gate (.githooks/pre-push: ruff + fast contract tests on `git push`)
 
 # Copy and configure environment
 cp .env.example .env
 # Edit .env with your API keys
 
 # Run tests
-pytest tests/ -v
+uv run pytest tests/ -v
 
 # Start locally
-uvicorn gateway.main:app --reload --port 8080
+uv run uvicorn gateway.main:app --reload --port 8080
 ```
 
 ## Development Environment
@@ -41,23 +41,29 @@ The project includes VS Code configuration in `.vscode/`. Recommended extensions
 
 | Tool | Purpose |
 |------|---------|
-| **ruff** | Linting and formatting |
-| **black** | Code formatting (100 char line length) |
-| **pyright** | Type checking |
+| **ruff** | Linting and formatting (120 char line length; `ruff format .` / `make format`) |
+| **mypy** | Type checking (`make typecheck` or `mypy .`) |
 | **bandit** | Security linting |
 | **detect-secrets** | Prevent accidental secret commits |
 
-Run all checks:
+Run the commit-stage checks (ruff lint + format, detect-secrets, hygiene hooks):
 
 ```bash
 pre-commit run --all-files
+```
+
+Type checking and security linting are not part of pre-commit — run them separately (both also run in CI):
+
+```bash
+make typecheck                        # mypy
+bandit -c pyproject.toml -r gateway/  # bandit
 ```
 
 ## Project Structure
 
 ```
 gateway/
-├── api/          # FastAPI route handlers (one file per provider)
+├── api/          # FastAPI routers (packages for alpaca/, uw/, finnhub/, alphavantage/; single modules for the rest) + middleware/
 ├── core/         # Business logic (auth, cache, stream, etc.)
 ├── providers/    # Data provider implementations
 └── schemas/      # Pydantic response models
@@ -83,7 +89,7 @@ pytest tests/test_websocket.py -v
 
 ### Test Requirements
 
-- **Unit tests**: 80%+ coverage on new code
+- **Unit tests**: keep overall coverage above the CI floor (`fail_under = 58` in pyproject.toml, ratcheted up as coverage improves); aim to fully cover new code
 - **Integration tests**: Mock upstream providers
 - **WebSocket tests**: Use `TestClient.websocket_connect()`
 
@@ -109,7 +115,7 @@ pytest tests/test_websocket.py -v
 
 ## Pull Request Workflow
 
-1. Create feature branch from `main`
+1. Create feature branch from `master`
 
    ```bash
    git checkout -b feat/my-feature
@@ -126,7 +132,7 @@ pytest tests/test_websocket.py -v
 
 4. Update documentation:
    - Add entry to CHANGELOG.md under `## [Unreleased]`
-   - Update docs/API_REFERENCE.md if adding endpoints
+   - Update docs/api-reference.md if adding endpoints
    - Update README.md if changing user-facing features
 
 5. Open PR with description
@@ -155,7 +161,7 @@ docs: update README with WebSocket feed examples
 ## Documentation
 
 - **README.md**: User-facing overview and quickstart
-- **docs/API_REFERENCE.md**: Complete endpoint reference
+- **docs/api-reference.md**: Complete endpoint reference
 - **CHANGELOG.md**: Version history (keep updated!)
 - **PRD.md**: Product specification (source of truth)
 

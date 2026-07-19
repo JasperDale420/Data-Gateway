@@ -10,7 +10,7 @@ Data Gateway provides a single WebSocket and REST interface for accessing multip
 - **REST proxy with caching** — Reduce API calls with intelligent caching
 - **Client authentication** — API key based auth with permissions
 - **Provider abstraction** — Plug-and-play data source integration
-- **Idempotent trading** — Alpaca order writes auto-mint a `dg-<uuid>` `client_order_id` so a timeout (504) can be safely retried without double-placing
+- **Idempotent trading** — Alpaca order writes auto-mint a `c-<client_id>-dg-<uuid>` `client_order_id` (ownership-prefixed) so a timeout (504) can be safely retried without double-placing
 - **Bounded-queue sink dispatch** — Streaming events flow to Redis Streams through a per-sink bounded queue + worker pool, dropping only under genuine saturation
 
 ## Architecture
@@ -56,7 +56,7 @@ graph LR
     MUX & CACHE & POLL --> NORM --> SINK --> REDIS
 ```
 
-For a deep dive into each subsystem, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/AUDIT_LOGGING.md](docs/AUDIT_LOGGING.md) for security auditing details.
+For a deep dive into each subsystem, see [docs/system-architecture.md](docs/system-architecture.md) and [docs/AUDIT_LOGGING.md](docs/AUDIT_LOGGING.md) for security auditing details.
 
 | Provider | Data Types | API Key | Status |
 |---|---|---|---|
@@ -64,6 +64,7 @@ For a deep dive into each subsystem, see [docs/ARCHITECTURE.md](docs/ARCHITECTUR
 | **Unusual Whales** | Flow, Darkpool, Greeks, Institutions | Required | ✅ Full |
 | **Finnhub** | Fundamentals, Technicals, News, Forex | Required | ✅ Full |
 | **Alpha Vantage** | Time Series, Indicators, Economic | Required | ✅ Full |
+| **Massive** | Historical bars (survivorship-free) | Required | ⚠️ Loaded, not routed |
 | **yfinance** | Fundamentals, History, Options | None | ✅ Full |
 | **SEC EDGAR** | Filings, 13F, Insider Trades | None | ✅ Full |
 | **News** | News articles (NewsAPI.org) | Required | ⚠️ Partial |
@@ -84,14 +85,15 @@ cd Data-Gateway
 # Copy environment file and configure API keys
 cp .env.example .env
 
-# Install dependencies
-pip install -e ".[dev]"
+# Install dependencies (plain `uv sync` without --extra local uninstalls
+# empire-core, empire-schemas, and the UW SDK — the gateway won't start)
+uv sync --extra local --extra dev
 
 # Run tests
-pytest tests/ -v
+uv run pytest tests/ -v
 
 # Start locally
-uvicorn gateway.main:app --reload --port 8080
+uv run uvicorn gateway.main:app --reload --port 8080
 ```
 
 ### Perf Guardrails
@@ -130,6 +132,14 @@ curl http://localhost:8080/health
 | `/api/v1/symbology/*` | Symbol Resolution | OCC ↔ human format |
 | `/api/v1/bulk/*` | Bulk Jobs | historical batch retrieval |
 | `/api/v1/replay/*` | Historical Replay | backtesting sessions |
+| `/api/v1/market/*` | Market Data | market-wide data |
+| `/api/v1/news/*` | News | aggregated news |
+| `/api/v1/backfill/*` | Backfill | historical backfill jobs |
+| `/api/v1/corporate-actions/*` | Corporate Actions | splits, dividends |
+| `/api/v1/adjustment-factors/*` | Adjustments | price adjustment factors |
+| `/api/v1/admin/*` | Admin | status, logs, errors, cache |
+| `/catalog/*` | Catalog | runtime API discovery |
+| `/metrics` | Prometheus | metrics scrape |
 | `/health/*` | Health | liveness, readiness, status |
 | `/ws` | WebSocket | real-time streaming |
 
@@ -137,7 +147,7 @@ Authentication: Most endpoints require `X-Gateway-Key`. Health endpoints are pub
 
 Legacy aliases (deprecated): `/symbology/*`, `/corporate-actions/*`, `/adjustment-factors/*`.
 
-Full OpenAPI docs available at `http://localhost:8080/docs` when running.
+Full OpenAPI docs available at `http://localhost:8080/docs` when running with `GATEWAY_DEBUG=true` (disabled in production).
 
 ## Data Pipeline
 
@@ -162,7 +172,9 @@ The **Ticker Universe** manages which symbols are polled:
 - ~30 static core tickers (mega-caps, major ETFs, sector ETFs)
 - Configurable dynamic tickers refreshed daily from UW's stock screener
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details.
+When `config/uw_pit_universe.json` (Atlas PIT universe export, path configurable via `GATEWAY_UW_UNIVERSE_FILE`) is present, its `active` symbol list replaces the core + dynamic universe and screener rotation is disabled; the core tickers + dynamic screener are the fallback when the file is missing.
+
+See [docs/system-architecture.md](docs/system-architecture.md) for full details.
 
 ## Data Sink (Heber Integration)
 
@@ -186,7 +198,7 @@ curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/pr
 curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/feeds
 ```
 
-See [docs/API_REFERENCE.md](docs/API_REFERENCE.md) for complete documentation.
+See [docs/api-reference.md](docs/api-reference.md) for complete documentation.
 Provider route contracts are generated from live routes in [PROVIDER_ENDPOINT_CONTRACT.md](PROVIDER_ENDPOINT_CONTRACT.md) via `python scripts/generate_provider_contract.py`.
 
 ## WebSocket Streaming
@@ -237,9 +249,14 @@ ws://localhost:8080/ws
 | `stock_trades` | Stock trade executions | Alpaca SIP |
 | `option_bars` | Options minute bars | Alpaca OPRA |
 | `option_quotes` | Options quotes | Alpaca OPRA |
+| `option_trades` | Options trade executions | Alpaca OPRA |
 | `crypto_bars` | Crypto minute bars | Alpaca Crypto |
+| `crypto_quotes` | Crypto quotes | Alpaca Crypto |
+| `crypto_trades` | Crypto trade executions | Alpaca Crypto |
 | `crypto_orderbooks` | Crypto Level 2 orderbooks | Alpaca Crypto |
 | `news` | Real-time news articles | Alpaca News |
+
+Additional stock/crypto feeds (`dailyBars`, `updatedBars`, `lulds`, `statuses`, `imbalances`) are also supported — see `/catalog/feeds` for the authoritative list.
 
 **Symbol Formats:**
 
@@ -257,7 +274,7 @@ ws://localhost:8080/ws
 | Variable | Description | Default |
 |---|---|---|
 | `GATEWAY_DEBUG` | Enable debug mode | `false` |
-| `GATEWAY_LOG_LEVEL` | Log level | `INFO` |
+| `EMPIRE_LOG_LEVEL` | Log level (read by `empire_core.logger`) | `INFO` |
 | `GATEWAY_HOST` | Server host | `0.0.0.0` |
 | `GATEWAY_PORT` | Server port | `8080` |
 | `GATEWAY_AUTH_TIMEOUT_SECONDS` | WebSocket auth timeout | `10` |
@@ -306,31 +323,35 @@ ws://localhost:8080/ws
 
 ### Client Keys
 
-Edit `config/clients.yaml` to manage API keys:
+Keys are managed with the CLI (`uv run python -m gateway.cli generate-key` / `add-client`), which writes hashed entries to `config/clients.yaml`:
 
 ```yaml
 clients:
   - id: my_client
-    key: gw_my_api_key
+    key_hash: sha256:<sha256-of-key>
+    role: trader
     permissions:
       providers: [alpaca, unusual_whales]
       feeds: [bars, quotes, flow]
       max_symbols: 1000
+      rate_limit: 600
     enabled: true
 ```
+
+A plaintext `key:` field is still accepted as a dev-only fallback and triggers a `clients_plaintext_keys_in_use` warning at startup.
 
 ## Development
 
 ### Code Quality
 
 ```bash
-pip install -e ".[dev]"
+uv sync --extra local --extra dev
 pre-commit install
 pre-commit run --all-files
 python scripts/generate_provider_contract.py --check
 ```
 
-**Tools:** ruff, black, pyright, bandit, detect-secrets
+**Tools:** ruff (lint + format), pyright, bandit, detect-secrets, pre-commit
 
 ### Testing
 
@@ -341,10 +362,11 @@ pytest --cov=gateway --cov-report=term-missing
 
 ### CI Pipeline
 
-GitHub Actions runs on PRs and pushes to `main`:
+GitHub Actions runs on PRs and pushes to `master`:
 
-1. Pre-commit hooks + pytest with coverage
-2. SonarCloud analysis
+1. Pre-commit hooks, bandit security scan, mypy type check, provider-contract check, pytest with coverage
+2. Integration tests against real Redis
+3. SonarCloud analysis
 
 ## License
 

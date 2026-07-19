@@ -11,6 +11,8 @@ This repository uses pytest for unit and integration tests, with TDD as the defa
 
 ## Running Tests
 
+First install dependencies with `uv sync --extra local --extra dev` (or `make setup`) — plain `uv sync` removes the local-only packages (empire-core, empire-schemas, unusualwhales-python-client). Run the commands below via `uv run` (for example, `uv run pytest`) or from an activated `.venv`.
+
 ```bash
 # Default suite (excludes perf-marked tests)
 pytest
@@ -22,9 +24,10 @@ pytest -q
 pytest tests/test_auth.py -v
 
 # Single test
-pytest tests/test_auth.py::test_valid_api_key -v
+pytest tests/test_auth.py::test_authenticate_valid_key -v
 
-# Coverage summary
+# Coverage summary (fails the run if total coverage drops below 58% —
+# `fail_under` in pyproject.toml [tool.coverage.report]; ratchet up as coverage improves)
 pytest --cov=gateway --cov-report=term-missing
 ```
 
@@ -32,6 +35,7 @@ pytest --cov=gateway --cov-report=term-missing
 
 - `tests/test_*.py`: unit and integration tests.
 - `tests/perf/`: performance tests (excluded by default marker config).
+- `tests/integration/`: real-Redis integration tests (marker `integration`); skip automatically when no Redis is reachable at `GATEWAY_TEST_REDIS_URL` (default `redis://localhost:6379/15`). Run explicitly with `pytest -m integration tests/integration`.
 - `tests/smoke/`: smoke-level checks for key flows.
 - `tests/fixtures/`: reusable test payloads and fixture data.
 
@@ -40,8 +44,10 @@ pytest --cov=gateway --cov-report=term-missing
 Run this before commit when code behavior changes:
 
 ```bash
-pytest -q && ruff check . && mypy .
+pytest -q && ruff check . && ruff format --check .
 ```
+
+Optionally add `uv run mypy gateway/` for type checking (mypy is installed via the dev extras). CI gates on the mypy dirty-file allowlist (`ci/mypy_dirty_allowlist.txt`): a file not on the list gaining mypy errors fails the build.
 
 If a Docker-related change is made, also rebuild and verify:
 
