@@ -108,7 +108,12 @@ rules:
 
   # --- Error Handling Rules ---
   - id: empire-no-bare-exception
+    # Wrapped in try: form — a bare except-clause fragment is not valid
+    # Python for semgrep's pattern parser (the upstream rule never parsed,
+    # so it never actually ran; fixed here when vendoring).
     pattern: |
+      try:
+          ...
       except Exception:
           ...
     message: >
@@ -121,7 +126,10 @@ rules:
       reference: "GEMINI.md — Error Message Guidelines"
 
   - id: empire-no-return-none-for-failure
+    # Wrapped in try: form — see empire-no-bare-exception note above.
     pattern: |
+      try:
+          ...
       except $EXCEPTION:
           return None
     message: >

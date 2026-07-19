@@ -73,9 +73,17 @@ jobs:
         # Pinned: 1.170+ fails rule validation (PatternParseError) on the
         # `except $EXCEPTION: return None` pattern in the vendored rules.
         # Bump the pin together with a rule re-vendor/validation, not blind.
+        # The two except-clause rules are excluded from blocking: their
+        # upstream patterns never parsed (so they had never run anywhere);
+        # fixed in the vendored copy, they surface 72 pre-existing findings
+        # in gateway/ that need a deploy window to fix (docs/FOLLOW_UPS.md).
+        # Remove the excludes once those are cleaned up.
         run: |
           pip install "semgrep==1.157.0"
-          semgrep scan --config .semgrep/empire-rules.yaml --error --metrics off gateway/ tests/
+          semgrep scan --config .semgrep/empire-rules.yaml --error --metrics off \
+            --exclude-rule semgrep.empire-no-bare-exception \
+            --exclude-rule semgrep.empire-no-return-none-for-failure \
+            gateway/ tests/
 
       - name: Architecture contracts (import-linter)
         run: lint-imports
@@ -114,7 +122,7 @@ jobs:
         # minus 2pts. Raise them as tests land; never lower without sign-off.
         run: |
           coverage report --include='gateway/api/alpaca/trading.py' --fail-under=88
-          coverage report --include='gateway/providers/alpaca/trading.py' --fail-under=45
+          coverage report --include='gateway/providers/alpaca/trading.py' --fail-under=95
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
