@@ -29,7 +29,10 @@ DEFAULT_CRYPTO_PAIRS: list[str] = [
     "DOGE/USD",
     "AVAX/USD",
     "LINK/USD",
-    "MATIC/USD",
+    # MATIC/USD removed 2026-07-19: Alpaca delisted it in June 2023 (POL
+    # migration), so its "latest bar" endpoint forever returns the final
+    # 2023-06-23T20:33Z bar — which kept landing in Heber Bronze as a bogus
+    # dt=2023-06-23 partition whenever consumer dedupe rotated.
     "DOT/USD",
 ]
 
