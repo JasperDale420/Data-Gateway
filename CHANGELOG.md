@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Synced `CLAUDE.md` and `AGENTS.md` into one shared instruction set.
+
 ### Added
 
 - **Alpaca trading provider test coverage 47% → 99%** (`tests/test_alpaca_trading_provider_methods.py`): 109 new SDK-boundary-mocked tests covering order submission variants (bracket, stop, stop-limit, notional, extended hours, position intent), replace/cancel incl. the benign-cancel-race classifier, positions (incl. the full-close DELETE regression guard), portfolio history, assets, clock/calendar, account configurations, and all watchlist operations — success and error branches. The CI money-path floor for this file rises 45 → 95.
