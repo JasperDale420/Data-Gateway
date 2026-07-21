@@ -1100,3 +1100,45 @@ async def test_reset_connection_log_level_parameter() -> None:
 
     assert sink._redis is None
     assert sink._connected is False
+
+
+# ── Per-stream MAXLEN (2026-07-19 backfill self-eviction) ─────────────
+
+
+def test_backfill_stream_gets_larger_maxlen() -> None:
+    """The dedicated backfill stream must not inherit the live cap: a 976K-record
+    backfill self-evicted un-read UW feeds at the shared 500K cap on 2026-07-19."""
+    from gateway.core.redis_sink import BACKFILL_STREAM_MAX_LEN, BACKFILL_STREAM_TOPIC
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0", max_len=500_000)
+    assert sink._max_len_for("heber:events") == 500_000
+    assert sink._max_len_for(BACKFILL_STREAM_TOPIC) == BACKFILL_STREAM_MAX_LEN
+    assert sink._max_len_for(BACKFILL_STREAM_TOPIC) > 500_000
+    # bytes topics (redis-py may hand back bytes) resolve identically
+    assert sink._max_len_for(BACKFILL_STREAM_TOPIC.encode()) == BACKFILL_STREAM_MAX_LEN
+
+
+def test_backfill_maxlen_never_below_shared_cap() -> None:
+    """If the shared cap is raised above the backfill cap, backfill follows."""
+    from gateway.core.redis_sink import BACKFILL_STREAM_TOPIC
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0", max_len=5_000_000)
+    assert sink._max_len_for(BACKFILL_STREAM_TOPIC) == 5_000_000
+
+
+@pytest.mark.asyncio
+async def test_xadd_uses_per_stream_maxlen() -> None:
+    """publish() must pass the per-stream cap to XADD, not the shared one."""
+    from gateway.core.redis_sink import BACKFILL_STREAM_MAX_LEN, BACKFILL_STREAM_TOPIC
+
+    sink = RedisStreamsSink(redis_url="redis://localhost:6379/0", max_len=500_000)
+    client = _HealthyRedisClient()
+    sink._redis = client
+    sink._connected = True
+
+    await sink.publish(BACKFILL_STREAM_TOPIC, {"data": b"x"})
+    await sink.publish("heber:events", {"data": b"y"})
+
+    maxlens = {args[0]: kwargs["maxlen"] for args, kwargs in client.messages}
+    assert maxlens[BACKFILL_STREAM_TOPIC] == BACKFILL_STREAM_MAX_LEN
+    assert maxlens["heber:events"] == 500_000

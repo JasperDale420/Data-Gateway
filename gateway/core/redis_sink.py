@@ -8,6 +8,7 @@ batch chunks in parallel with retry logic.
 """
 
 import asyncio
+import os
 import time
 from collections import deque
 from typing import Any
@@ -28,6 +29,15 @@ DEFAULT_POOL_SIZE = 64
 BATCH_CHUNK_SIZE = 2_000
 MAX_CONCURRENT_CHUNKS = 4
 CHUNK_RETRY_ATTEMPTS = 1
+
+# The bulk-backfill stream gets its own, larger MAXLEN. On 2026-07-19 a
+# 976K-record backfill overran the single shared 500K cap and self-evicted the
+# un-read UW feeds published just before it — the exact eviction failure the
+# dedicated stream (#35) exists to isolate. Sizing: ~3KB/entry worst case →
+# 1M ≈ 3GB against the 4GB AOF-persistent instance. Jobs larger than this cap
+# must pace themselves (publish → drain → publish; see uw_backfill_driver.py).
+BACKFILL_STREAM_TOPIC = os.environ.get("GATEWAY_BACKFILL_STREAM", "heber:events:backfill")
+BACKFILL_STREAM_MAX_LEN = int(os.environ.get("GATEWAY_BACKFILL_STREAM_MAX_LEN", "1000000"))
 INITIAL_BACKOFF_SECONDS = 0.5
 MAX_BACKOFF_SECONDS = 5.0
 
@@ -114,6 +124,11 @@ class RedisStreamsSink(DataSink):
         self._redis_url = redis_url
         self._max_len = max_len
         self._approximate = approximate_trim
+        # Per-stream MAXLEN overrides (topic -> cap); everything else uses
+        # the shared max_len. See BACKFILL_STREAM_MAX_LEN above.
+        self._stream_max_len: dict[str, int] = {
+            BACKFILL_STREAM_TOPIC: max(max_len, BACKFILL_STREAM_MAX_LEN),
+        }
         self._operation_timeout_seconds = max(0.5, float(operation_timeout_seconds))
         # Settings.data_sink_redis_pool_size is already validated to [1, 128]
         # via field constraints; this is a defense-in-depth lower bound for
@@ -147,6 +162,13 @@ class RedisStreamsSink(DataSink):
         # mid-flight while the buffer drain is in progress.
         self._drain_tasks: set[asyncio.Task[None]] = set()
         self._buffer_stats = {"buffered": 0, "drained": 0, "evicted": 0}
+
+    def _max_len_for(self, topic: str | bytes) -> int:
+        """Per-stream MAXLEN: the backfill stream carries bulk re-runnable data
+        and gets a larger cap so a big job cannot self-evict (2026-07-19)."""
+        if isinstance(topic, bytes):
+            topic = topic.decode("utf-8", errors="replace")
+        return self._stream_max_len.get(topic, self._max_len)
 
     @property
     def name(self) -> str:
@@ -406,7 +428,7 @@ class RedisStreamsSink(DataSink):
                         pipe.xadd(
                             topic,
                             {b"data": payload_bytes},
-                            maxlen=self._max_len,
+                            maxlen=self._max_len_for(topic),
                             approximate=self._approximate,
                         )
                     timeout = self._operation_timeout_seconds + (len(chunk) / 500) * 0.5
@@ -489,7 +511,7 @@ class RedisStreamsSink(DataSink):
                     client.xadd(
                         topic,
                         payload,
-                        maxlen=self._max_len,
+                        maxlen=self._max_len_for(topic),
                         approximate=self._approximate,
                     ),
                     timeout=self._operation_timeout_seconds,
@@ -749,7 +771,7 @@ class RedisStreamsSink(DataSink):
                     pipe.xadd(
                         topic,
                         payload,
-                        maxlen=self._max_len,
+                        maxlen=self._max_len_for(topic),
                         approximate=self._approximate,
                     )
 

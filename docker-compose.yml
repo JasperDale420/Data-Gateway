@@ -98,7 +98,13 @@ services:
     # can still evict unread stream entries under memory pressure, so headroom here is
     # the backstop behind the explicit MAXLEN. PREREQ: confirm the Docker VM has the
     # RAM to back 4GB before deploying.
-    command: redis-server --save "" --appendonly yes --appendfsync everysec --maxmemory 4gb --maxmemory-policy allkeys-lru
+    # volatile-lru since 2026-07-20: cache/dedup keys all carry TTLs (verified
+    # 2983/3000 sampled) and remain evictable; the persistent keys — both heber
+    # streams, consumer groups, and heber:watch:* state — become non-evictable.
+    # Under allkeys-lru an at-cap instance could silently evict un-read stream
+    # entries and live watch state. If only persistent keys remain at maxmemory,
+    # writes error and the sink failover buffer absorbs them (loud, recoverable).
+    command: redis-server --save "" --appendonly yes --appendfsync everysec --maxmemory 4gb --maxmemory-policy volatile-lru
     volumes:
       - data-gateway-redis-data:/data
     restart: unless-stopped
