@@ -226,8 +226,13 @@ async def run(args: argparse.Namespace) -> int:
                 f"liquidity-ranked. Pass --symbols-file for a ranked subset.",
                 file=sys.stderr,
             )
-        end = dt.date.fromisoformat(active_asof(Path(args.universe)))
-        days = trading_days(end - dt.timedelta(days=args.depth_days), end)
+        if args.days:
+            # Targeted recovery: exactly these dates (e.g. re-fetching days lost to
+            # stream eviction), independent of the universe's asof-derived window.
+            days = [dt.date.fromisoformat(d).isoformat() for d in args.days]
+        else:
+            end = dt.date.fromisoformat(active_asof(Path(args.universe)))
+            days = trading_days(end - dt.timedelta(days=args.depth_days), end)
         work = [(s, f, day) for f in selected for s in syms for day in days]
     else:
         work = [(row["symbol"], f, None) for f in selected for row in backfill]
@@ -402,6 +407,11 @@ def main() -> int:
     )
     ap.add_argument("--top-n", type=int, default=200, help="tier3: symbol subset size")
     ap.add_argument("--depth-days", type=int, default=90, help="tier3: trailing days to backfill")
+    ap.add_argument(
+        "--days",
+        nargs="+",
+        help="tier3: explicit ISO dates to backfill (overrides the universe-asof window)",
+    )
     ap.add_argument("--symbols-file", help="tier3: newline/space list of symbols (liquidity-ranked)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--self-check", action="store_true")
