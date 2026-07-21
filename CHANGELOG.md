@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Per-ticker darkpool fetches no longer silently return 0 rows** (`gateway/providers/uw/flow.py`): the SDK's typed `DarkpoolTradeResponse` carries rows in `.data` with an empty `additional_properties`, but `get_darkpool_ticker` only read the latter — every REST `/uw/darkpool/{symbol}` call and every date-targeted darkpool backfill quietly returned nothing. Now parsed via the shared `_extract_data` (both shapes).
+
+### Added
+
+- **`--days` on the UW backfill driver** (`scripts/uw_backfill_driver.py`): tier3 recovery can target explicit ISO dates (e.g. re-fetching days lost to stream eviction) instead of being limited to the universe-asof-derived window.
+
 - **The 16:30 ET EOD run no longer publishes into the live event stream** (`gateway/core/uw_poller.py`): all EOD snapshot polls (greek_exposure, iv_rank, iv_term_structure, oi_change, historic_option_volume, short_interest, short_volume, ftds, congress_trades, insider_trades) now publish to the dedicated backfill stream (`heber:events:backfill`, 1M cap, isolated consumer) instead of `heber:events` (500K cap, market-hours firehose). On 2026-07-20 and again on 2026-07-21 the ~300K-event EOD burst was MAXLEN-evicted unread while the live consumer lagged, permanently losing oi_change, iv_rank, iv_term_structure and historic_option_volume for the day and truncating greek_exposure. EOD data is bulk re-runnable by date — exactly what the backfill stream exists for. Tests in `tests/test_uw_eod_stream_routing.py`.
 
 ### Added
