@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from typing import Any
@@ -21,6 +22,7 @@ router = APIRouter(tags=["websocket"])
 # Heartbeat settings per PRD
 HEARTBEAT_TIMEOUT = 15  # seconds
 MAX_MISSED_HEARTBEATS = 4
+_REDIS_STREAM_ID = re.compile(r"^(?:\$|\d+-\d+)$")
 
 
 @router.websocket("/ws")
@@ -276,6 +278,12 @@ async def _wait_for_auth(
         if request_id:
             response["request_id"] = request_id
         await websocket.send_json(response)
+        if response.get("type") == "subscription_ack" and response.get("resume_supported") is True:
+            from gateway.api.deps import get_flow_fanout
+
+            flow_fanout = get_flow_fanout()
+            if flow_fanout is not None:
+                flow_fanout.launch_pending_replay(connection_id)
         return False
 
     # Authenticate
@@ -528,7 +536,27 @@ async def _handle_message(
                     "provider": provider,
                     "feeds": feeds,
                 }
-            flow_fanout.subscribe(connection_id, symbols)
+            after_stream_id = message.get("after_stream_id")
+            if after_stream_id is not None and (
+                not isinstance(after_stream_id, str) or _REDIS_STREAM_ID.fullmatch(after_stream_id) is None
+            ):
+                return {
+                    "type": "subscription_ack",
+                    "status": "error",
+                    "error_code": "GW-E8001",
+                    "message": "after_stream_id must be a Redis stream ID or '$'",
+                    "provider": provider,
+                    "feeds": [FLOW_FEED],
+                }
+            if after_stream_id is None:
+                flow_fanout.subscribe(connection_id, symbols)
+                replay_state: dict[str, Any] = {}
+            else:
+                replay_state = await flow_fanout.prepare_replay(
+                    connection_id,
+                    symbols,
+                    after_stream_id=after_stream_id,
+                )
             # Record the subscription for status/quota accounting. An empty
             # symbols list is the firehose (ALL flow); without an explicit
             # entry it would count as zero subscriptions and be invisible in
@@ -553,6 +581,7 @@ async def _handle_message(
                 "feeds": [FLOW_FEED],
                 "subscribed": sorted(symbols),
                 "failed": [],
+                **replay_state,
             }
             # The fan-out exists but no producer is attached (data sink / Redis
             # UW poller never started): the subscribe is registered but no flow
@@ -565,6 +594,10 @@ async def _handle_message(
                     "Flow producer not wired — subscription registered but no flow data will arrive "
                     "until the UW poller starts"
                 )
+            elif after_stream_id is not None and not ack.get("resume_supported"):
+                ack["status"] = "warning"
+                ack["warning_code"] = "GW-W5004"
+                ack["message"] = "Durable flow replay is unavailable; reconnect completeness cannot be guaranteed"
             return ack
 
         # Try to use multiplexer if available

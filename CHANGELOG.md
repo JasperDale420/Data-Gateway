@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- UW `flow_alerts` WebSocket subscriptions can now resume from a Redis stream cursor. The Gateway durably records every published flow envelope before live fan-out, marks each live message with its transport cursor, replays only through a captured high-water mark after reconnect, and explicitly refuses resumability when retained history or replay storage cannot prove a complete handoff.
+
 - Synced `CLAUDE.md` and `AGENTS.md` into one shared instruction set.
 
 ### Added

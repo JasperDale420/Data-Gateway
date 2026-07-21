@@ -289,6 +289,62 @@ async def test_subscribe_flow_warns_when_producer_not_wired():
     assert f"{FLOW_FEED}:AAPL" in conns._conn.subscriptions
 
 
+async def test_flow_subscribe_exposes_resumable_replay_contract(monkeypatch):
+    conns = _RecordingConnections()
+    fanout = FlowFanout(conns)  # type: ignore[arg-type]
+    fanout.mark_producer_wired()
+    monkeypatch.setattr(
+        fanout,
+        "prepare_replay",
+        lambda connection_id, symbols, after_stream_id: _async_value(
+            {"resume_supported": True, "replay_high_watermark": "42-0"}
+        ),
+    )
+    original = globals_module._flow_fanout
+    globals_module.set_flow_fanout(fanout)
+    try:
+        result = await ws._handle_message(
+            {
+                "action": "subscribe",
+                "provider": "uw",
+                "feeds": ["flow_alerts"],
+                "symbols": [],
+                "after_stream_id": "17-0",
+            },
+            connection_id="conn-1",
+            connections=conns,  # type: ignore[arg-type]
+        )
+    finally:
+        globals_module.set_flow_fanout(original)
+
+    assert result["status"] == "ok"
+    assert result["resume_supported"] is True
+    assert result["replay_high_watermark"] == "42-0"
+
+
+async def test_flow_subscribe_rejects_malformed_replay_cursor(wired_fanout):
+    conns, _fanout = wired_fanout
+
+    result = await ws._handle_message(
+        {
+            "action": "subscribe",
+            "provider": "uw",
+            "feeds": ["flow_alerts"],
+            "symbols": [],
+            "after_stream_id": "not-a-cursor",
+        },
+        connection_id="conn-1",
+        connections=conns,  # type: ignore[arg-type]
+    )
+
+    assert result["status"] == "error"
+    assert result["error_code"] == "GW-E8001"
+
+
+async def _async_value(value):
+    return value
+
+
 async def test_unsubscribe_flow_drops_target(wired_fanout):
     conns, fanout = wired_fanout
     await ws._handle_message(
