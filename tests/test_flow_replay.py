@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -110,6 +111,63 @@ async def test_replay_is_bounded_to_subscription_high_watermark():
     assert replayed["event_id"] == second["event_id"]
     assert replayed["stream_cursor"] == "2-0"
     assert connections.calls[-1][0]["high_watermark"] == "2-0"
+
+
+async def test_reconnect_replays_before_buffered_live_delivery_without_duplicates_or_loss():
+    class _PausedHighWatermarkStore(_MemoryReplayStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.high_watermark_requested = asyncio.Event()
+            self.release_high_watermark = asyncio.Event()
+
+        async def high_watermark(self) -> str:
+            self.high_watermark_requested.set()
+            await self.release_high_watermark.wait()
+            return await super().high_watermark()
+
+    store = _PausedHighWatermarkStore()
+    connections = _RecordingConnections()
+    first = _flow_envelope("AAPL", premium=100_000)
+    captured_during_setup = _flow_envelope("AAPL", premium=200_000)
+    live_after_snapshot = _flow_envelope("AAPL", premium=300_000)
+    await store.append(first)
+    fanout = FlowFanout(connections, replay_store=store)  # type: ignore[arg-type]
+
+    preparing = asyncio.create_task(fanout.prepare_replay("kairos", [], after_stream_id="0-0"))
+    await store.high_watermark_requested.wait()
+
+    # This event is persisted while the high-water mark is being captured. It
+    # must be delivered by replay exactly once, never as an early live event.
+    assert await fanout.deliver(captured_during_setup) == 1
+    await fanout.drain()
+    store.release_high_watermark.set()
+    replay = await preparing
+    assert replay == {"resume_supported": True, "replay_high_watermark": "2-0"}
+
+    # This event is beyond the captured replay range and must wait behind the
+    # replay completion barrier before returning the connection to live flow.
+    assert await fanout.deliver(live_after_snapshot) == 1
+    await fanout.drain()
+    await fanout.start_pending_replay("kairos")
+
+    messages = [message for message, _targets in connections.calls]
+    assert [message["type"] for message in messages] == [
+        "replay_begin",
+        "data",
+        "data",
+        "replay_complete",
+        "data",
+    ]
+    assert [message.get("stream_cursor") for message in messages if message["type"] == "data"] == [
+        "1-0",
+        "2-0",
+        "3-0",
+    ]
+    assert [message["event_id"] for message in messages if message["type"] == "data"] == [
+        first["event_id"],
+        captured_during_setup["event_id"],
+        live_after_snapshot["event_id"],
+    ]
 
 
 async def test_prepare_replay_fails_closed_without_durable_store():
