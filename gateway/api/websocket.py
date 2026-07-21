@@ -278,12 +278,6 @@ async def _wait_for_auth(
         if request_id:
             response["request_id"] = request_id
         await websocket.send_json(response)
-        if response.get("type") == "subscription_ack" and response.get("resume_supported") is True:
-            from gateway.api.deps import get_flow_fanout
-
-            flow_fanout = get_flow_fanout()
-            if flow_fanout is not None:
-                flow_fanout.launch_pending_replay(connection_id)
         return False
 
     # Authenticate
@@ -411,6 +405,12 @@ async def _message_loop(
             response["request_id"] = request_id
 
         await websocket.send_json(response)
+        if response.get("type") == "subscription_ack" and response.get("resume_supported") is True:
+            from gateway.api.deps import get_flow_fanout
+
+            flow_fanout = get_flow_fanout()
+            if flow_fanout is not None:
+                flow_fanout.launch_pending_replay(connection_id)
 
 
 async def _handle_message(

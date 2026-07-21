@@ -15,6 +15,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
 import gateway.core.globals as globals_module
 from gateway.api import websocket as ws
@@ -320,6 +321,58 @@ async def test_flow_subscribe_exposes_resumable_replay_contract(monkeypatch):
     assert result["status"] == "ok"
     assert result["resume_supported"] is True
     assert result["replay_high_watermark"] == "42-0"
+
+
+async def test_message_loop_launches_replay_only_after_ack_is_sent(monkeypatch):
+    """A prepared replay must start after its subscription ACK reaches the client."""
+    actions: list[str] = []
+
+    class _OneMessageWebSocket:
+        def __init__(self) -> None:
+            self.received = False
+
+        async def receive(self):
+            if not self.received:
+                self.received = True
+                return {
+                    "text": (
+                        '{"action":"subscribe","provider":"uw",'
+                        '"feeds":["flow_alerts"],"symbols":[],"after_stream_id":"$"}'
+                    )
+                }
+            raise WebSocketDisconnect(code=1000)
+
+        async def send_json(self, _message):
+            actions.append("ack")
+
+    class _ReplayLauncher:
+        def launch_pending_replay(self, connection_id: str) -> None:
+            assert connection_id == "conn-1"
+            actions.append("replay")
+
+    async def _resumable_ack(*_args, **_kwargs):
+        return {
+            "type": "subscription_ack",
+            "status": "ok",
+            "resume_supported": True,
+            "replay_high_watermark": "42-0",
+        }
+
+    launcher = _ReplayLauncher()
+    original = globals_module._flow_fanout
+    globals_module.set_flow_fanout(launcher)  # type: ignore[arg-type]
+    monkeypatch.setattr(ws, "_handle_message", _resumable_ack)
+    try:
+        with pytest.raises(WebSocketDisconnect):
+            await ws._message_loop(
+                _OneMessageWebSocket(),  # type: ignore[arg-type]
+                "conn-1",
+                SimpleNamespace(),  # type: ignore[arg-type]
+            )
+    finally:
+        globals_module.set_flow_fanout(original)
+
+    assert actions == ["ack", "replay"]
 
 
 async def test_flow_subscribe_rejects_malformed_replay_cursor(wired_fanout):
