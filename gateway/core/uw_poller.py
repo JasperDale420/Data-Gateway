@@ -38,6 +38,7 @@ from tenacity import (
 )
 
 from gateway.core.logger import logger
+from gateway.core.redis_sink import BACKFILL_STREAM_TOPIC
 from gateway.core.timeutils import parse_timestamp
 from gateway.providers.uw.transient import is_transient_upstream_error
 
@@ -257,8 +258,13 @@ class UWPoller(DedupMixin, BasePoller):
         dedupe_prefix: str,
         missing_event_log: str,
         on_published: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        topic: str = HEBER_STREAM,
     ) -> tuple[int, int]:
         """Publish envelopes via batch pipeline with deduplication.
+
+        ``topic`` selects the destination stream. Live polls use the default
+        ``heber:events``; EOD bulk passes the backfill stream so a 300k+ burst
+        cannot MAXLEN-evict unread live events (2026-07-20 incident).
 
         Uses ``publish_all_batch`` when the sink registry supports it
         (single Redis pipeline per call) and falls back to individual
@@ -308,7 +314,7 @@ class UWPoller(DedupMixin, BasePoller):
         # (e.g. item 0 fails, item 1 succeeds) the count path would mark/fan-out
         # item 0 (which Heber never got) and drop item 1 (which Heber DID get),
         # breaking the push/poll event-id parity Orion's deduper relies on.
-        messages: list[tuple[str, dict[str, Any]]] = [(HEBER_STREAM, envelope) for envelope, _, _ in to_publish]
+        messages: list[tuple[str, dict[str, Any]]] = [(topic, envelope) for envelope, _, _ in to_publish]
         # ``published_indices`` is the EXACT set of positions in ``to_publish``
         # that landed in Redis when the sink can report them; ``published`` is
         # the count returned for logging/back-compat.
@@ -1013,6 +1019,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=envelopes,
             dedupe_prefix="uw:gex",
             missing_event_log="uw_gex_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 
@@ -1036,6 +1043,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=[envelope],
             dedupe_prefix="uw:ivr",
             missing_event_log="uw_ivr_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 
@@ -1076,6 +1084,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=envelopes,
             dedupe_prefix="uw:ivts",
             missing_event_log="uw_ivts_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 
@@ -1094,6 +1103,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=envelopes,
             dedupe_prefix="uw:oi",
             missing_event_log="uw_oi_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 
@@ -1135,6 +1145,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=envelopes,
             dedupe_prefix="uw:optvol",
             missing_event_log="uw_optvol_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 
@@ -1153,6 +1164,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=envelopes,
             dedupe_prefix="uw:si",
             missing_event_log="uw_si_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 
@@ -1171,6 +1183,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=envelopes,
             dedupe_prefix="uw:sv",
             missing_event_log="uw_sv_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 
@@ -1189,6 +1202,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=envelopes,
             dedupe_prefix="uw:ftd",
             missing_event_log="uw_ftd_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 
@@ -1258,6 +1272,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=envelopes,
             dedupe_prefix="uw:congress",
             missing_event_log="uw_congress_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 
@@ -1283,6 +1298,7 @@ class UWPoller(DedupMixin, BasePoller):
             envelopes=envelopes,
             dedupe_prefix="uw:insider",
             missing_event_log="uw_insider_missing_event_id",
+            topic=BACKFILL_STREAM_TOPIC,
         )
         return published
 

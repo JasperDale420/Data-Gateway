@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The 16:30 ET EOD run no longer publishes into the live event stream** (`gateway/core/uw_poller.py`): all EOD snapshot polls (greek_exposure, iv_rank, iv_term_structure, oi_change, historic_option_volume, short_interest, short_volume, ftds, congress_trades, insider_trades) now publish to the dedicated backfill stream (`heber:events:backfill`, 1M cap, isolated consumer) instead of `heber:events` (500K cap, market-hours firehose). On 2026-07-20 and again on 2026-07-21 the ~300K-event EOD burst was MAXLEN-evicted unread while the live consumer lagged, permanently losing oi_change, iv_rank, iv_term_structure and historic_option_volume for the day and truncating greek_exposure. EOD data is bulk re-runnable by date — exactly what the backfill stream exists for. Tests in `tests/test_uw_eod_stream_routing.py`.
+
 ### Added
 
 - UW `flow_alerts` WebSocket subscriptions can now resume from a Redis stream cursor. The Gateway durably records every published flow envelope before live fan-out, marks each live message with its transport cursor, replays only through a captured high-water mark after reconnect, and explicitly refuses resumability when retained history or replay storage cannot prove a complete handoff.
