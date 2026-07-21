@@ -269,13 +269,14 @@ class UWFlowMixin:
                     offset=offset,
                 )
 
-            trades = []
-            data_items = []
-            if response is not None and hasattr(response, "additional_properties") and response.additional_properties:
-                data_items = response.additional_properties.get("data", [])
+            # _extract_data handles both response shapes: legacy additional_properties["data"]
+            # and the SDK's typed DarkpoolTradeResponse carrying rows in .data (where
+            # additional_properties is empty — the old manual parse returned 0 rows forever).
+            data_items = self._extract_data(response)
             if used_local_offset and offset > 0:
                 data_items = data_items[offset:]
 
+            trades = []
             for item in data_items:
                 trade = self._normalize_darkpool_trade(item)
                 if trade:
