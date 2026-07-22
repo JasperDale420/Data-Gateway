@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **`iv_term_structure` expiries no longer risk collapsing to one row** (`gateway/core/envelope.py`): the feed emits one row per expiry of the same underlying, but it had no `FEED_UNIQUE_FIELDS` entry, so every expiry's `event_id` was derived from `provider|feed|instrument_key|ts_event` alone. With no per-row discriminator, two expiries wrapped at the same instant (the payload carries no date/timestamp, so `ts_event` is `now()`) hashed to the identical `event_id` and all but one was dropped at Heber's Bronze dedup. `expiry` is now part of the `event_id` (mirroring `oi_change`/`historic_option_volume`), so every expiry stays distinct. Regression test in `tests/test_envelope_heber_contract.py`.
+
 - **Per-ticker darkpool fetches no longer silently return 0 rows** (`gateway/providers/uw/flow.py`): the SDK's typed `DarkpoolTradeResponse` carries rows in `.data` with an empty `additional_properties`, but `get_darkpool_ticker` only read the latter — every REST `/uw/darkpool/{symbol}` call and every date-targeted darkpool backfill quietly returned nothing. Now parsed via the shared `_extract_data` (both shapes).
 
 ### Added
