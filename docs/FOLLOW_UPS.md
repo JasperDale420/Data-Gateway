@@ -62,11 +62,13 @@ repo.
 - **Old stashes**: 4 stashes from March–June 2026 (`git stash list`) —
   including one from the 2026-06-11 Orion incident referencing clients.yaml
   hashing WIP. Review and drop deliberately.
-- **Perf budget too thin on `test_replay_run_large_message_batch_memory_profile`**:
-  budget 0.350s vs an observed 0.34–0.43s spread on shared CI runners on
-  identical code (3 boundary failures + passes on 2026-07-19). Re-baseline
-  the budget with margin — `config/perf_budgets.json` is under the
-  bind-mounted `config/`, so do it in a deploy window.
+- ~~Perf budget too thin on `test_replay_run_large_message_batch_memory_profile`~~
+  **DONE 2026-07-19**: re-baselined 0.35s → 0.50s (user-approved config/ edit)
+  after 5 boundary failures against a 0.34–0.43s runner spread.
+- **`data_dictionary.yaml` has no regeneration command**: the `.gitignore`
+  comment says "regenerated from provider specs", but no script or Makefile
+  target produces it — the untracked copy in `docs/` is currently the only
+  one. Either write the generator or re-track the file.
 - **Ratchet the money-path coverage floors** (`.github/workflows/ci.yml`,
   "Money-path coverage floor") as provider tests land; same for the global
   `fail_under = 58` in `pyproject.toml`.
