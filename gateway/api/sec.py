@@ -1,7 +1,7 @@
 """SEC EDGAR API endpoints for filings and company data."""
 
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,9 +30,6 @@ def _cache_key(prefix: str, *args) -> str:
     return make_cache_key(prefix, *args)
 
 
-T = TypeVar("T")
-
-
 def _sec_error_handler(exc: Exception) -> None:
     """Map SEC-specific HTTP status codes to user-friendly errors."""
     if isinstance(exc, httpx.HTTPStatusError):
@@ -47,7 +44,7 @@ def _sec_error_handler(exc: Exception) -> None:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
-async def execute_sec_cached[T](
+async def execute_sec_cached(
     *,
     registry: ProviderRegistry,
     cache: InMemoryCache,
@@ -55,7 +52,7 @@ async def execute_sec_cached[T](
     route_name: str,
     fetcher: Callable,
     cache_ttl: int = CACHE_TTL,
-    miss_meta_builder: Callable[[T], dict] | None = None,
+    miss_meta_builder: Callable[[Any], dict] | None = None,
 ) -> dict:
     """Centralized SEC execution wrapper with caching, dedup, and error handling.
 

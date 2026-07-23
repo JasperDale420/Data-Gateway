@@ -1367,12 +1367,16 @@ async def cancel_all_orders(
         order_id = order.get("id") if isinstance(order, dict) else getattr(order, "id", None)
         if not order_id:
             return {"order_id": None, "cancelled": False, "error": "order missing id field"}
+
+        # Bind order_id via default-arg to dodge the classic
+        # loop-closure capture footgun.
+        def _cancel_fn(_provider: Any, _oid: Any = order_id) -> Any:
+            return _provider.cancel_order(_oid)
+
         try:
             await _execute_trading_call(
                 registry=registry,
-                # Bind order_id via default-arg trick to dodge the
-                # classic loop-closure capture footgun.
-                provider_fn=(lambda _provider, _oid=order_id: _provider.cancel_order(_oid)),
+                provider_fn=_cancel_fn,
                 operation="cancel_all_orders.cancel",
             )
             return {"order_id": order_id, "cancelled": True}

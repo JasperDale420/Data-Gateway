@@ -62,7 +62,7 @@ async def readiness(
                 "drain_remaining_seconds": round(coord.drain_remaining(), 1),
             },
         )
-    checks = {
+    checks: dict[str, Any] = {
         "cache": "ok",
         "connections": "ok",
     }
