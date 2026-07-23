@@ -17,6 +17,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Coverage floors ratcheted to the new measured reality** (`pyproject.toml`, `.github/workflows/ci.yml`): global `fail_under` 58 → 60 (measured 63.28% on 2026-07-23), Alpaca trading provider floor 95 → 97 (measured 99%); router floor stays 88 (measured 90). `docs/FOLLOW_UPS.md` rewritten as a living ledger — the 2026-07-22/23 debt-paydown pass closed mypy, semgrep, severity, envelope-sync, retention, and deploy-model items; open items now: 13 latent runtime bugs, the stream supervisor's post-deploy connection-limit retry policy, and the legacy mypy override groups.
+
 - **The CI `uv.lock` guard no longer blocks tool-config-only pyproject edits** (`.github/workflows/ci.yml`): changing `[tool.mypy]`/`[tool.ruff]`/etc. never affects dependency resolution, so the PR gate now only fires when the pyproject diff touches dependency-shaped lines (`[project]`/`[build-system]`/`[tool.uv]` sections, dependency arrays, `requires`, or version pins) without a matching `uv.lock` change.
 - **Pre-commit runs mypy again** (`.pre-commit-config.yaml`): with the allowlist at zero, commits now run the same `mypy gateway/` invocation as CI (project venv, not the isolated mirrors-mypy environment that would diverge from the CI gate).
 

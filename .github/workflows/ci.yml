@@ -135,7 +135,7 @@ jobs:
         # minus 2pts. Raise them as tests land; never lower without sign-off.
         run: |
           coverage report --include='gateway/api/alpaca/trading.py' --fail-under=88
-          coverage report --include='gateway/providers/alpaca/trading.py' --fail-under=95
+          coverage report --include='gateway/providers/alpaca/trading.py' --fail-under=97
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7

@@ -1,21 +1,15 @@
 # Deferred Follow-Ups
 
-Items deliberately deferred by the 2026-07-19 repo-hygiene pass. Everything
-here either required editing `gateway/`/`config/` (formerly bind-mounted into the
-running container — needs a coordinated restart window) or lives in another
-repo.
+Living ledger of deliberate deferrals. Two big passes have drained it:
+the 2026-07-19 repo-hygiene pass and the 2026-07-22/23 debt-paydown +
+baked-image cutover. Paid items are pruned; git history has the details.
 
-## Requires a deploy window (source edits)
+## Open
 
-- ~~mypy stages 2–3~~ **DONE 2026-07-22** (branch `debt/mypy-protocols`):
-  feature mixins got a type-checking-only base, the router and provider
-  `disable_error_code` overrides were dropped, and the allowlist is empty
-  (863 → 0 errors). Remaining: legacy-core and stream-provider override
-  groups in `pyproject.toml` still disable codes for their modules.
-- **Latent runtime bugs surfaced by the 2026-07-22 mypy pass** — each site
-  carries a targeted `# type: ignore` with a comment; the code paths were
-  broken before and after that pass (they raise `ImportError`/
-  `AttributeError`/`TypeError` when hit). Fix or delete deliberately:
+- **Latent runtime bugs surfaced by the 2026-07-22 mypy pass** (a
+  spawn-task chip is filed) — each site carries a `cast(Any, ...)` with a
+  comment; the code paths were broken long before that pass (they raise
+  `ImportError`/`AttributeError`/`TypeError` when hit):
   - Vendored UW SDK v5.1 lacks operations referenced by
     `providers/uw/options.py` (`get_implied_volatility_surface`,
     `get_put_call_ratio`, `get_option_volume_levels`, `get_volume_profile`),
@@ -25,71 +19,57 @@ repo.
     `providers/uw/institutional.py` (`get_trader`). Port them to the
     `_raw_get` primitive like the 2026-07 endpoint expansion did.
   - `providers/alpaca/trading.py`: `get_portfolio_history` and
-    `set_account_configurations` pass kwargs that alpaca-py does not accept
+    `set_account_configurations` pass kwargs alpaca-py does not accept
     (it takes `GetPortfolioHistoryRequest` / a full `AccountConfiguration`
-    model) — both endpoints TypeError on every call; tests mock the SDK
-    client so they never noticed.
+    model) — both TypeError on every call; tests mock the SDK client so
+    they never noticed. `set_account_configurations` needs get-merge-set.
   - `api/admin.py` `admin_reload_provider`: calls
     `registry.reload_provider(...)`, which does not exist on
-    `ProviderRegistry` — the `except AttributeError` turns every call into
-    a 404, so the admin reload endpoint has never worked.
+    `ProviderRegistry` — the endpoint has never worked.
+- **Stream supervisor treats the post-deploy Alpaca connection-limit race
+  as non-recoverable** (observed 2026-07-23): a container recreate can
+  authenticate before the old container's SIP WebSocket slot is released;
+  Alpaca replies "connection limit exceeded", the supervisor classifies it
+  as an auth failure and stops retrying, leaving `/health/ready` 503 until
+  a manual `RESTART=1 make deploy`. Treat that specific error as retryable
+  with backoff (~30-90s covers the slot-expiry window).
 - **`heber:events` constant consolidation**: 9 duplicated topic literals
-  (`gateway/main.py:210` + 6 pollers + `option_capture` + backfill +
-  `api/middleware/envelope.py`) could share one constant. Value-neutral —
-  the string is frozen forever — so only worth folding into some other
-  deploy, never as a standalone change.
-- **`stock_bars` → `bars` label unification**: the wire label (`bars`) is
-  correct; `stock_bars` survives in capability names, the client-facing WS
-  default, catalog metadata, and replay mock data. Renaming touches WS
-  clients — coordinate with consumers if ever done.
-- ~~72 grandfathered semgrep findings~~ **DONE 2026-07-22** (branch
-  `debt/semgrep-exceptions`): all 76 findings paid down — real swallows
-  narrowed/logged (heaviest: the silent circuit-breaker pre-checks in
-  `core/data_sink.py`), legitimate boundaries annotated with justified
-  `nosemgrep` — and both rules are now blocking in CI (the `--exclude-rule`
-  flags are gone; semgrep pin bumped 1.157.0 → 1.170.0).
-- ~~`get_trades` severity split~~ **DONE 2026-07-22** (same branch): all six
-  market methods that logged every status at ERROR (`get_trades`,
-  `latest_bars`, `latest_trades`, `historical_quotes`, `snapshots`,
-  `auctions`) now split 4xx→WARNING / 5xx→ERROR like `get_bars`/`get_quotes`.
+  (main.py + 6 pollers + option_capture + backfill + middleware) could
+  share one constant. Value-neutral — the string is frozen forever — fold
+  into some other change, never standalone.
+- **`stock_bars` full rename**: the subscribe surface now ACCEPTS the
+  canonical `bars`/`quotes`/`trades` as aliases (2026-07-23, PR #61);
+  retiring the `stock_*` spellings entirely would still break Cerberus
+  (`FEED_NAME_MAP` hard-dep) and Orbit live subscriptions — only after
+  those clients migrate, if ever.
+- **mypy legacy override groups** (`pyproject.toml` `[tool.mypy]`): the
+  legacy-core group (10 disabled codes) and stream-provider group remain
+  grandfathered. Shrink module-by-module when touching those files.
+- **Expose the deployed image tag via `/health`**: with baked-image
+  deploys, "what code is running" is one `docker inspect` away — but
+  surfacing `data-gateway:YYYYMMDD-sha` in the health payload would make
+  staleness observable to dashboards and downstream consumers.
+- **`data_dictionary.yaml`**: resolved as deleted (no generator ever
+  existed, zero consumers; recoverable from git history pre-`f1c4624`).
+  If it's ever wanted again, write the generator first.
+- **3 codex worktrees with real (ancient) uncommitted docs-WIP** kept under
+  `~/.codex/worktrees/{01ec,1929,b04d}/Data-Gateway` (March–April 2026,
+  against long-gone file layouts) — review and delete deliberately. The
+  other 15 Data-Gateway + all Heber codex worktrees were removed 2026-07-23.
 
-## Other repos
+## Done (kept one line each; details in git history)
 
-- **empire-core log retention is broken** (`empire_core/logger.py`): the
-  custom `namer` renames rotated files to `{service}_{date}.log`, which
-  stdlib `TimedRotatingFileHandler.getFilesToDelete()` never matches, so
-  `backupCount` deletes nothing. Data-Gateway accumulated 2.3 GB / 206
-  files before the 2026-07-19 manual prune. Fix: override
-  `getFilesToDelete()` (a spawn-task chip was filed for this).
-- **empire-schemas envelope reconciliation**: its `compute_event_id` /
-  `FEED_UNIQUE_FIELDS` / `make_instrument_key` diverge from the canonical
-  `gateway/core/envelope.py` (see DEVELOPER_NOTES.md). Either update
-  empire-schemas to match the gateway byte-for-byte (affects any repo that
-  imports it) or deprecate its copy with a warning. Do NOT point the
-  gateway at it.
-
-## Deployment model
-
-- **Baked-image deploys**: `docker-compose.yml` bind-mounts `./gateway` and
-  `./config` into the running container, so the working tree IS production.
-  Moving to baked images (build + tag + recreate) would decouple local file
-  state from the live service. Big operational change — its own project.
-
-## Nice-to-have
-
-- **Codex-session worktrees**: 18 stale detached-HEAD worktrees under
-  `~/.codex/worktrees/*/Data-Gateway` (plus similar for Heber) were left in
-  place — removing them may break resuming old Codex CLI sessions.
-- **Old stashes**: 4 stashes from March–June 2026 (`git stash list`) —
-  including one from the 2026-06-11 Orion incident referencing clients.yaml
-  hashing WIP. Review and drop deliberately.
-- ~~Perf budget too thin on `test_replay_run_large_message_batch_memory_profile`~~
-  **DONE 2026-07-19**: re-baselined 0.35s → 0.50s (user-approved config/ edit)
-  after 5 boundary failures against a 0.34–0.43s runner spread.
-- **`data_dictionary.yaml` has no regeneration command**: the `.gitignore`
-  comment says "regenerated from provider specs", but no script or Makefile
-  target produces it — the untracked copy in `docs/` is currently the only
-  one. Either write the generator or re-track the file.
-- **Ratchet the money-path coverage floors** (`.github/workflows/ci.yml`,
-  "Money-path coverage floor") as provider tests land; same for the global
-  `fail_under = 58` in `pyproject.toml`.
+- 2026-07-23: baked-image deploys (PR #58) — working tree is no longer production
+- 2026-07-23: mypy 863→0, allowlist emptied, router/provider overrides retired (PR #60)
+- 2026-07-23: semgrep 76 findings paid, both rules blocking, pin → 1.170 (PR #62)
+- 2026-07-23: Alpaca market log-severity sextet 4xx→WARNING (PR #62)
+- 2026-07-23: WS feed aliases bars/quotes/trades (PR #61)
+- 2026-07-23: empire-schemas envelope byte-synced (parity-verified) + dead
+  gateway.schemas envelope re-exports removed (PR #59, empire-schemas `b3be701`)
+- 2026-07-23: empire-core log retention fixed (custom-namer getFilesToDelete
+  override, merged + shipped in the baked image) — verify logs/ prunes to ≤30
+  dated files after the next midnight rollover
+- 2026-07-23: stashes dropped (4→0, March WIP archived to session scratchpad)
+- 2026-07-19: perf budget re-baselined 0.35s → 0.50s
+- 2026-07-19: coverage ratchets introduced; raised 2026-07-23 to 60 global /
+  88 router / 97 provider

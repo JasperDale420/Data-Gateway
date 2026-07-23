@@ -156,9 +156,9 @@ omit = ["tests/*", "scripts/*", "*/__init__.py"]
 [tool.coverage.report]
 show_missing = true
 # Coverage floor tracks measured coverage minus a small margin (~3 points below
-# the 60.8% measured 2026-06-26) so a real regression trips CI without day-to-day
+# the 63.28% measured 2026-07-23) so a real regression trips CI without day-to-day
 # flakiness. Ratchet up as coverage improves.
-fail_under = 58
+fail_under = 60
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
