@@ -3,11 +3,11 @@
 import math
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from gateway.core.logger import logger
 
-from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
+from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int, _UWMixinBase
 
 
 def _compute_realized_vol(prices: list[float], window: int) -> Decimal | None:
@@ -38,7 +38,7 @@ def _compute_realized_vol(prices: list[float], window: int) -> Decimal | None:
     return Decimal(str(sigma))
 
 
-class UWMarketMixin:
+class UWMarketMixin(_UWMixinBase):
     """Shorts, volatility, seasonality, alerts, market info, sector, news, economic calendar."""
 
     # ─────────────────────────────────────────────────────────────────
@@ -976,10 +976,11 @@ class UWMarketMixin:
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
-        from unusualwhales.api.market import get_sector_etfs
+        # get_sector_etfs is not in the vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+        from unusualwhales.api import market
 
         try:
-            response = await self._call_sync(get_sector_etfs.sync, client=self._client)
+            response = await self._call_sync(cast(Any, market).get_sector_etfs.sync, client=self._client)
             data = self._extract_data(response)
             return data
         except Exception as e:

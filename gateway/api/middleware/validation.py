@@ -1,7 +1,12 @@
 """Input validation middleware."""
 
+from typing import TYPE_CHECKING
+
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+if TYPE_CHECKING:
+    from gateway.core.security import InputValidationError
 
 
 class InputValidationMiddleware:
@@ -64,7 +69,7 @@ class InputValidationMiddleware:
         # across ``http.request`` chunks and signal 413 via the
         # ``send`` path if accumulated bytes exceed the configured cap.
         bytes_seen = 0
-        oversize_error: object | None = None
+        oversize_error: InputValidationError | None = None
 
         async def _byte_counting_receive() -> Message:
             nonlocal bytes_seen, oversize_error

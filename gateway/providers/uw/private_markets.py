@@ -9,8 +9,10 @@ and cross-dataset search. Premium endpoints.
 from typing import Any
 from urllib.parse import quote
 
+from ._base import _UWMixinBase
 
-class UWPrivateMarketsMixin:
+
+class UWPrivateMarketsMixin(_UWMixinBase):
     """Mixin providing UW private-markets REST endpoints."""
 
     async def get_private_markets_companies(

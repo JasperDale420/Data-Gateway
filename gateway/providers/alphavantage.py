@@ -334,7 +334,7 @@ class AlphaVantageProvider(DataProvider):
         "1Month": ("get_monthly", None),
     }
 
-    async def get_bars(  # type: ignore[override]
+    async def get_bars(
         self,
         symbols: list[str],
         timeframe: str,

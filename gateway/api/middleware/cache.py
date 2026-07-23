@@ -3,6 +3,7 @@
 import asyncio
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -15,6 +16,9 @@ from gateway.core.metrics import (
     record_cache_hit,
     record_cache_miss,
 )
+
+if TYPE_CHECKING:
+    from gateway.api.deps import CacheBackend
 
 
 @dataclass
@@ -108,6 +112,9 @@ class CacheMiddleware:
         "/api/v1/alpaca/account": ("/api/v1/alpaca/account",),
     }
 
+    # Set lazily by _cache_type(); its absence is the "not yet computed" signal.
+    _cache_type_label: str
+
     def __init__(
         self,
         app: ASGIApp,
@@ -118,7 +125,7 @@ class CacheMiddleware:
         self.app = app
         self.default_ttl = default_ttl
         self.max_body_bytes = max_body_bytes
-        self._cache = None  # Lazy initialization
+        self._cache: CacheBackend | None = None  # Lazy initialization
         self._cache_initialized = False
 
     def _invalidation_prefixes_for_write(self, path: str) -> tuple[str, ...]:
@@ -368,7 +375,7 @@ class CacheMiddleware:
                 return
 
             if message["type"] == "http.response.body":
-                if should_cache:
+                if should_cache and initial_message is not None:
                     body_chunks.append(message.get("body", b""))
                     if not message.get("more_body", False):
                         # Body complete — cache it and send

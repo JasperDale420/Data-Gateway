@@ -116,11 +116,6 @@ warn_unused_ignores = true
 ignore_missing_imports = true
 check_untyped_defs = true
 plugins = ["pydantic.mypy"]
-# Provider routers access methods not in base DataProvider class
-# These are implemented in concrete providers
-[[tool.mypy.overrides]]
-module = ["gateway.api", "gateway.api.__init__", "gateway.api.alpaca", "gateway.api.alpaca.*", "gateway.api.alphavantage", "gateway.api.alphavantage.*", "gateway.api.finnhub", "gateway.api.finnhub.*", "gateway.api.uw", "gateway.api.uw.*", "gateway.api.admin", "gateway.api.yf", "gateway.api.sec"]
-disable_error_code = ["attr-defined", "call-arg", "arg-type"]
 
 # Core modules with pre-existing type issues
 [[tool.mypy.overrides]]
@@ -131,11 +126,6 @@ disable_error_code = ["assignment", "union-attr", "var-annotated", "index", "ope
 [[tool.mypy.overrides]]
 module = ["gateway.providers.alpaca_stream", "gateway.providers.finnhub"]
 disable_error_code = ["list-item", "return-value", "assignment", "union-attr", "dict-item", "override"]
-
-# Provider modules with SDK type stub mismatches
-[[tool.mypy.overrides]]
-module = ["gateway.providers.uw", "gateway.providers.alpaca"]
-disable_error_code = ["call-arg", "attr-defined", "arg-type", "misc"]
 
 # Tests - don't need strict typing
 [[tool.mypy.overrides]]

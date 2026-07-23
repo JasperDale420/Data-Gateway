@@ -1,14 +1,14 @@
 """UW Institutional mixin — institutions, insiders, congress, ETF, politician methods."""
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from gateway.core.logger import logger
 
-from ._base import ERR_NOT_INITIALIZED, _safe_int
+from ._base import ERR_NOT_INITIALIZED, _safe_int, _UWMixinBase
 
 
-class UWInstitutionalMixin:
+class UWInstitutionalMixin(_UWMixinBase):
     """Institutional, insider, congress, ETF holdings, and politician endpoints."""
 
     # ─────────────────────────────────────────────────────────────────
@@ -77,10 +77,11 @@ class UWInstitutionalMixin:
             logger.warning("uw_client_not_initialized")
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
+        client = self._client
         try:
 
             def _request_recent_trades() -> Any:
-                response = self._client.get_httpx_client().request(
+                response = client.get_httpx_client().request(
                     "get",
                     "/api/congress/recent-trades",
                     params={"limit": limit},
@@ -734,11 +735,12 @@ class UWInstitutionalMixin:
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
-        from unusualwhales.api.congress import get_trader
+        # get_trader is not in the vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+        from unusualwhales.api import congress
 
         try:
             response = await self._call_sync(
-                get_trader.sync,
+                cast(Any, congress).get_trader.sync,
                 client=self._client,
                 name=name,
                 ticker=ticker,

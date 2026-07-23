@@ -3,7 +3,7 @@
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from alpaca.trading.client import TradingClient
@@ -41,7 +41,9 @@ def _install_session_default_timeout(session: Session, timeout_seconds: float) -
         kwargs.setdefault("timeout", timeout_seconds)
         return original_request(method, url, **kwargs)
 
-    session.request = request_with_default_timeout  # type: ignore[method-assign]
+    # Any-cast keeps both typed (types-requests in CI) and untyped (local)
+    # requests stubs happy with the instance-level monkey-patch.
+    cast(Any, session).request = request_with_default_timeout
 
 
 class AlpacaBaseMixin(DataProvider):
@@ -429,3 +431,15 @@ class AlpacaBaseMixin(DataProvider):
                 if not k.startswith("_")
             }
         return obj
+
+
+if TYPE_CHECKING:
+    # Feature mixins inherit this alias so type checkers can see the shared
+    # AlpacaBaseMixin surface (_client, _trading_client, _paginate, ...). It
+    # must have no runtime footprint: AlpacaProvider lists AlpacaBaseMixin LAST
+    # in its bases, so any real base with members here (including a Protocol
+    # with method stubs) would sit before AlpacaBaseMixin in the MRO and shadow
+    # the real implementations.
+    _AlpacaMixinBase = AlpacaBaseMixin
+else:
+    _AlpacaMixinBase = object

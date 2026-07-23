@@ -7,10 +7,10 @@ import httpx
 
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
-from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED
+from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, _AlpacaMixinBase
 
 
-class AlpacaNewsMixin:
+class AlpacaNewsMixin(_AlpacaMixinBase):
     """News methods."""
 
     @http_retry

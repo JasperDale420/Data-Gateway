@@ -293,7 +293,7 @@ def _enforce_status_section_cache_limit(*, max_entries: int) -> int:
     overflow = len(_status_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
         return 0
-    oldest_keys = nsmallest(overflow, _status_section_stats_cache_at, key=_status_section_stats_cache_at.get)
+    oldest_keys = nsmallest(overflow, _status_section_stats_cache_at, key=_status_section_stats_cache_at.__getitem__)
     for key in oldest_keys:
         _status_section_stats_cache.pop(key, None)
         _status_section_stats_cache_at.pop(key, None)
@@ -441,7 +441,7 @@ def _enforce_stream_section_cache_limit(*, max_entries: int) -> int:
     overflow = len(_stream_section_stats_cache_at) - max(1, max_entries)
     if overflow <= 0:
         return 0
-    oldest_keys = nsmallest(overflow, _stream_section_stats_cache_at, key=_stream_section_stats_cache_at.get)
+    oldest_keys = nsmallest(overflow, _stream_section_stats_cache_at, key=_stream_section_stats_cache_at.__getitem__)
     for key in oldest_keys:
         _stream_section_stats_cache.pop(key, None)
         _stream_section_stats_cache_at.pop(key, None)
@@ -1115,7 +1115,7 @@ async def admin_reload_provider(
     """Hot-reload a provider's configuration."""
     _require_admin(client)
     try:
-        registry.reload_provider(name)
+        registry.reload_provider(name)  # type: ignore[attr-defined]  # not implemented; the except below 404s (docs/FOLLOW_UPS.md)
     except (KeyError, AttributeError):
         raise HTTPException(
             status_code=404,

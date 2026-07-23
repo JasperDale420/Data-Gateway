@@ -7,11 +7,11 @@ import httpx
 
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
-from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED
+from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, _AlpacaMixinBase
 from gateway.schemas import NormalizedBar
 
 
-class AlpacaForexMixin:
+class AlpacaForexMixin(_AlpacaMixinBase):
     """Foreign exchange methods."""
 
     @http_retry

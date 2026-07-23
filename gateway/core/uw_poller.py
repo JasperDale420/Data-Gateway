@@ -153,7 +153,7 @@ class UWPoller(DedupMixin, BasePoller):
         # envelope that was successfully published to heber:events is also
         # handed to this coroutine for WS delivery. Default None ⇒ zero behavior
         # change. Flow only — darkpool/tide/EOD never invoke it.
-        self.on_flow_envelope: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+        self.on_flow_envelope: Callable[[dict[str, Any]], Awaitable[Any]] | None = None
 
         # Deduplication cache — OrderedDict for O(1) FIFO eviction.
         self._init_dedup(cache_ttl_seconds=7200)  # 2 hours
@@ -739,6 +739,8 @@ class UWPoller(DedupMixin, BasePoller):
 
     async def _poll_flow_alerts(self, sink_registry, limit: int) -> None:
         """Poll and publish flow alerts with deduplication."""
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         await self._poll_single_feed(
             sink_registry,
             fetch=lambda: self._provider.get_flow_alerts(limit=limit),
@@ -753,6 +755,8 @@ class UWPoller(DedupMixin, BasePoller):
 
     async def _poll_darkpool(self, sink_registry, limit: int) -> None:
         """Poll and publish darkpool trades with deduplication."""
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         await self._poll_single_feed(
             sink_registry,
             fetch=lambda: self._provider.get_darkpool_recent(limit=limit),
@@ -766,6 +770,8 @@ class UWPoller(DedupMixin, BasePoller):
 
     async def _poll_market_tide(self, sink_registry) -> None:
         """Poll and publish market tide data (last 5 records cover the poll gap)."""
+        if self._provider is None:
+            raise RuntimeError("UW provider not initialized")
         await self._poll_single_feed(
             sink_registry,
             fetch=lambda: self._provider.get_market_tide(),

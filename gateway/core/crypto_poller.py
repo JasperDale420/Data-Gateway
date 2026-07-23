@@ -179,13 +179,13 @@ class AlpacaCryptoPoller(DedupMixin, BasePoller):
 
         if published > 0:
             redis_items: list[tuple[str, Any]] = []
-            for (_env, event_id, cache_key), ok in zip(to_publish, results, strict=True):
+            for (_env, event_id, dedupe_key), ok in zip(to_publish, results, strict=True):
                 if not ok:
                     continue
                 if event_id:
                     self._mark_seen(event_id)
-                    if self._redis_dedupe is not None and cache_key:
-                        redis_items.append((cache_key, True))
+                    if self._redis_dedupe is not None and dedupe_key:
+                        redis_items.append((dedupe_key, True))
             if redis_items and self._redis_dedupe is not None:
                 await self._redis_dedupe.set_many(redis_items, ttl=self._cache_ttl_seconds)
 

@@ -3,13 +3,13 @@
 import re
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 from gateway.core.logger import logger
 from gateway.schemas import NormalizedIVRank
 
-from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_float, _safe_int
+from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_float, _safe_int, _UWMixinBase
 from .transient import _uw_error_context, is_transient_upstream_error
 
 # OCC option symbol: the contract type (C/P) is the single char immediately
@@ -36,7 +36,7 @@ def _parse_uw_timestamp(value: Any) -> datetime:
     return timestamp.astimezone(UTC)
 
 
-class UWOptionsMixin:
+class UWOptionsMixin(_UWMixinBase):
     """Mixin providing options analytics, chains, contracts, greeks, and screener endpoints."""
 
     async def get_greek_exposure(self, symbol: str, date_str: str | None = None, timeframe: str | None = None) -> list:
@@ -462,10 +462,10 @@ class UWOptionsMixin:
                         call_oi_change=oi_diff if not is_put else 0,
                         put_oi_change=oi_diff if is_put else 0,
                         avg_price=(Decimal(str(get("avg_price"))) if get("avg_price") is not None else None),
-                        prev_oi=(int(float(get("last_oi"))) if get("last_oi") is not None else None),
+                        prev_oi=(int(float(get("last_oi") or 0)) if get("last_oi") is not None else None),
                         option_symbol=get("option_symbol"),
-                        volume=(int(float(get("volume"))) if get("volume") is not None else None),
-                        trades=(int(float(get("trades"))) if get("trades") is not None else None),
+                        volume=(int(float(get("volume") or 0)) if get("volume") is not None else None),
+                        trades=(int(float(get("trades") or 0)) if get("trades") is not None else None),
                         provider="unusual_whales",
                     )
                 )
@@ -634,7 +634,9 @@ class UWOptionsMixin:
             from unusualwhales.api import stock
 
             response = await self._call_sync(
-                stock.get_implied_volatility_surface.sync,
+                cast(
+                    Any, stock
+                ).get_implied_volatility_surface.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 client=self._client,
                 ticker=symbol.upper(),
             )
@@ -712,7 +714,11 @@ class UWOptionsMixin:
         try:
             from unusualwhales.api import stock
 
-            response = await self._call_sync(stock.get_put_call_ratio.sync, client=self._client, ticker=symbol.upper())
+            response = await self._call_sync(
+                cast(Any, stock).get_put_call_ratio.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                client=self._client,
+                ticker=symbol.upper(),
+            )
             data = self._get_data_safe(response)
             if not data:
                 return []
@@ -807,7 +813,9 @@ class UWOptionsMixin:
             from unusualwhales.api import stock
 
             response = await self._call_sync(
-                stock.get_option_volume_levels.sync, client=self._client, ticker=symbol.upper()
+                cast(Any, stock).get_option_volume_levels.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                client=self._client,
+                ticker=symbol.upper(),
             )
             data = self._get_data_safe(response)
             if not data:
@@ -842,7 +850,9 @@ class UWOptionsMixin:
             from unusualwhales.api import contract
 
             response = await self._call_sync(
-                contract.get_volume_profile.sync, client=self._client, option_symbol=contract_id
+                cast(Any, contract).get_volume_profile.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                client=self._client,
+                option_symbol=contract_id,
             )
             data = self._get_data_safe(response)
             if not data:

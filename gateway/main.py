@@ -448,7 +448,8 @@ async def lifespan(app: FastAPI):
     treasury_poller = None
     if settings.data_sink_enabled and settings.data_sink_redis_url:
         av_provider = registry.get("alphavantage")
-        if av_provider is not None and getattr(av_provider, "_api_key", ""):
+        av_api_key: str = getattr(av_provider, "_api_key", "") if av_provider is not None else ""
+        if av_provider is not None and av_api_key:
             from gateway.core.treasury_poller import start_treasury_poller
 
             treasury_poller = await start_treasury_poller(
@@ -685,7 +686,8 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
     )
-    app.add_exception_handler(HTTPException, gateway_http_exception_handler)
+    # Starlette types handlers as taking bare Exception; per-exception-type handlers are a known stub gap.
+    app.add_exception_handler(HTTPException, gateway_http_exception_handler)  # type: ignore[arg-type]
 
     # Middleware (order matters: first added = outermost)
     # Security headers should be outermost (applied last, seen first by client)

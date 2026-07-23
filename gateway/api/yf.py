@@ -1,7 +1,7 @@
 """yfinance API endpoints for fundamentals and financials."""
 
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -29,17 +29,14 @@ def _cache_key(prefix: str, symbol: str, *args) -> str:
     return make_cache_key(prefix, symbol.upper(), *args)
 
 
-T = TypeVar("T")
-
-
-async def execute_yf_cached[T](
+async def execute_yf_cached(
     *,
     registry: ProviderRegistry,
     cache: InMemoryCache,
     cache_key: str,
     route_name: str,
     fetcher: Callable,
-    miss_meta_builder: Callable[[T], dict] | None = None,
+    miss_meta_builder: Callable[[Any], dict] | None = None,
 ) -> dict:
     """Centralized yfinance execution wrapper with caching, dedup, and error handling.
 

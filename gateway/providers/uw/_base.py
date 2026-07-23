@@ -6,7 +6,7 @@ import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from time import perf_counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from unusualwhales.types import UNSET, Unset
 
@@ -26,6 +26,9 @@ from gateway.schemas import (
 )
 
 from .transient import _uw_error_context
+
+if TYPE_CHECKING:
+    from unusualwhales import UnusualWhalesClient
 
 # Error message constants
 ERR_NOT_INITIALIZED = "Provider not initialized"
@@ -84,7 +87,7 @@ class UWBaseMixin(DataProvider):
     """Base mixin providing init, lifecycle, helpers, and normalization for the UW provider."""
 
     def __init__(self):
-        self._client = None
+        self._client: UnusualWhalesClient | None = None
         self._api_key: str = ""
         self._initialized: bool = False
         self._max_inflight_calls: int = DEFAULT_UW_MAX_INFLIGHT_CALLS
@@ -570,3 +573,15 @@ class UWBaseMixin(DataProvider):
         except Exception as e:
             logger.warning("uw_normalize_tide_failed", error=str(e))
             return None
+
+
+if TYPE_CHECKING:
+    # Feature mixins inherit this alias so type checkers can see the shared
+    # UWBaseMixin surface (_client, _call_sync, _extract_data, _raw_get, ...).
+    # It must have no runtime footprint: UnusualWhalesProvider lists UWBaseMixin
+    # LAST in its bases, so any real base with members here (including a
+    # Protocol with method stubs) would sit before UWBaseMixin in the MRO and
+    # shadow the real implementations.
+    _UWMixinBase = UWBaseMixin
+else:
+    _UWMixinBase = object

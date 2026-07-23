@@ -135,7 +135,7 @@ async def get_company_news(
     """Get company news from the best available provider."""
     articles = await execute_provider_failover(
         capability="news",
-        handler=lambda provider: provider.get_news(
+        handler=lambda provider: provider.get_news(  # type: ignore[attr-defined]  # news-capable providers only
             symbol=symbol.upper(),
             start=start,
             end=end,

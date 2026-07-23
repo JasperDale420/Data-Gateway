@@ -171,7 +171,7 @@ class YFinanceProvider(DataProvider):
         "1Month": "1mo",
     }
 
-    async def get_bars(  # type: ignore[override]
+    async def get_bars(
         self,
         symbols: list[str],
         timeframe: str,
