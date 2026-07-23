@@ -2,7 +2,7 @@
 
 # Data-Gateway — API Reference (Index)
 
-Quick index of every API surface. The canonical, deep reference is [API_REFERENCE.md](API_REFERENCE.md); the auto-generated route catalog is [`../PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md); the task-oriented integration guide for downstream Empire services is [CONSUMER_GUIDE.md](CONSUMER_GUIDE.md).
+Quick index of every API surface. The behavior contract for routes and services is [`../PRD.md`](../PRD.md); the auto-generated route catalog is [`../PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md); the task-oriented integration guide for downstream Empire services is [CONSUMER_GUIDE.md](CONSUMER_GUIDE.md).
 
 ---
 
@@ -40,8 +40,8 @@ Use these at runtime to learn the live surface — they reflect the actual loade
 
 | Prefix | Provider | Route count* | Quirks |
 |--------|----------|--------------|--------|
-| `/api/v1/alpaca/*` | Alpaca Markets | (live) | Stocks, options (OPRA), crypto, forex, news, corporate, **trading writes**. Trading writes prefix `client_order_id` with `c-{client_id}-` for per-client order isolation in the shared Alpaca account. If the caller provides no `client_order_id`, one is auto-minted. Idempotent on 504 retry. Mutating endpoints (POST/PATCH/DELETE orders, DELETE positions) require both `role: trader` AND `permissions.trading: true` in `clients.yaml`. |
-| `/api/v1/uw/*` | Unusual Whales | 126 | Flow, darkpool, greeks, institutions, congress, insider, screeners, options analytics, market/sector tide, seasonality. Rate-limited per UW plan. |
+| `/api/v1/alpaca/*` | Alpaca Markets | 63 | Stocks, options (OPRA), crypto, forex, news, corporate, **trading writes**. Trading writes prefix `client_order_id` with `c-{client_id}-` for per-client order isolation in the shared Alpaca account. If the caller provides no `client_order_id`, one is auto-minted. Idempotent on 504 retry. Mutating endpoints (POST/PATCH/DELETE orders, DELETE positions) require both `role: trader` AND `permissions.trading: true` in `clients.yaml`. |
+| `/api/v1/uw/*` | Unusual Whales | 207 | Flow, darkpool, greeks, institutions, congress, insider, screeners, options analytics, market/sector tide, seasonality, volatility, fundamentals, cross-asset, predictions, private markets. Rate-limited per UW plan. |
 | `/api/v1/finnhub/*` | Finnhub | 45 | Quotes (30s cache), fundamentals, news, ETFs, crypto, forex, earnings, analysis. |
 | `/api/v1/alphavantage/*` | Alpha Vantage | 30 | Time series (intraday/daily/weekly/monthly), quotes, treasury yields. **Strict 5 req/min on free tier** — rate-limited at the gateway. |
 | `/api/v1/yf/*` | yfinance | 16 | History, info, options chains/expirations. No upstream key required, but Yahoo can rate-limit by IP — gateway caches aggressively (5min `info`, longer for history). |
@@ -50,18 +50,23 @@ Use these at runtime to learn the live surface — they reflect the actual loade
 
 \* Live counts are regenerated into [`../PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md) by `scripts/generate_provider_contract.py`.
 
+**Massive** (ex-Polygon, historical aggregate bars) is registered in `config/providers.yaml` (priority 4) and loads at startup, but has **no API router yet** — it is reachable via the provider registry only, not route-mapped.
+
 ### Per-provider notes
 
 #### Alpaca
 - All routes mount under `ALPACA_ROUTER_PREFIX = /api/v1/alpaca` (`gateway/api/alpaca/common.py`).
 - 4xx errors logged at `warning`, 5xx at `error` (`execute_alpaca_provider_call`). 4xx is not retried.
-- Trading writes (`POST /api/v1/alpaca/orders`, etc.) prefix `client_order_id` with `c-{client_id}-` for per-client order isolation. If the caller provides no `client_order_id`, one is auto-minted. Idempotent on 504 retry. Mutating endpoints (POST/PATCH/DELETE orders, DELETE positions) require both `role: trader` AND `permissions.trading: true` in `clients.yaml`.
+- Trading writes (`POST /api/v1/alpaca/orders`, etc.) prefix `client_order_id` with `c-{client_id}-` for per-client order isolation (auto-minted IDs use `c-{client_id}-dg-{uuid}`). Idempotent on 504 retry — the timeout detail echoes the full `client_order_id` so callers can retry safely. Mutating endpoints (POST/PATCH/DELETE orders, DELETE positions) require both `role: trader` AND `permissions.trading: true` in `clients.yaml`; account-wide flatten (`DELETE /orders`, `DELETE /positions`) additionally requires `super_admin`.
+- Trading timeouts: reads 15s, writes 25s (`GATEWAY_ALPACA_TRADING_CALL_TIMEOUT_SECONDS` / `_WRITE_CALL_TIMEOUT_SECONDS`), SDK-session safety net 30s.
+- Live trading is fail-safe off: it requires `GATEWAY_ALLOW_LIVE_TRADING=true` AND a recognized live `APCA_API_BASE_URL`; paper mode is the default.
 - Stream endpoints map to upstream Alpaca SIP (stocks), OPRA (options), Crypto, News.
 
 #### Unusual Whales
 - Per-feed cadence drives the background poller (see [system-architecture.md §8](system-architecture.md#8-background-pollers)).
 - Cache TTLs are short for flow/darkpool (~30s); EOD analytics are cached for the trading day.
 - Some endpoints accept `*` for "all symbols" and stream the full tape.
+- ~81 endpoints not covered by the vendored SDK v5.1 are served via a shared raw-HTTP primitive (`_raw_get`) against the live UW REST API (mixins: options_ext, volatility_ext, fundamentals, congress_ext, crossasset, predictions, private_markets). The 14 UW WebSocket channels are intentionally excluded.
 
 #### Finnhub
 - Quote endpoint cached 30s.
@@ -91,8 +96,8 @@ Use these at runtime to learn the live surface — they reflect the actual loade
 |--------|---------|
 | `/api/v1/calendar/*` | Trading days, market hours, holidays (NYSE/XNYS via `exchange-calendars`) |
 | `/api/v1/symbology/*` | OCC ↔ human option symbol conversion (e.g. `AAPL250117C00200000` ↔ `AAPL 2025-01-17 $200 Call`) |
-| `/api/v1/corporate/*` | Splits, dividends, spinoffs |
-| `/api/v1/adjustments/*` | Adjustment factors (price/volume back-adjust) |
+| `/api/v1/corporate-actions/*` | Splits, dividends, spinoffs |
+| `/api/v1/adjustment-factors/*` | Adjustment factors (price/volume back-adjust) |
 
 ---
 
@@ -120,13 +125,15 @@ Notes:
 
 ## 6. Backfill (`/api/v1/backfill/*`)
 
-Long-running historical fetches that publish through the data sink (Heber consumes from `heber:events`). Chunked by date, per-provider rate-limited.
+Long-running historical fetches that publish through the data sink. Chunked by date, per-provider rate-limited.
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | `POST` | `/api/v1/backfill` | Submit a backfill job |
 | `GET` | `/api/v1/backfill/{job_id}` | Status |
 | `DELETE` | `/api/v1/backfill/{job_id}` | Cancel |
+
+**Stream isolation:** backfill publishes route to a dedicated Redis stream `heber:events:backfill` (env `GATEWAY_BACKFILL_STREAM`) with its own MAXLEN cap (`GATEWAY_BACKFILL_STREAM_MAX_LEN`, default 1,000,000), separate from the live `heber:events` stream — so a large backfill cannot evict unread live UW events. UW EOD per-ticker snapshot feeds publish to the same backfill stream; live 5-min feeds (flow_alerts, darkpool, tides) stay on `heber:events`.
 
 ---
 
@@ -146,7 +153,12 @@ Historical event replay over WebSocket — used by backtest harnesses.
 ```json
 {"action": "auth", "key": "gw_..."}
 ```
-Server replies with `AuthResult`. 10-second auth timeout (`GATEWAY_AUTH_TIMEOUT_SECONDS`).
+Server replies with `AuthResult`. 10-second auth timeout (`GATEWAY_AUTH_TIMEOUT_SECONDS`); failure closes with code 4001.
+
+### Heartbeat & limits
+- Server sends `{"type": "heartbeat"}` every `GATEWAY_WS_HEARTBEAT_INTERVAL` (default 30s); any client message counts as liveness.
+- Silence beyond interval × 4 missed heartbeats → close 4002; silence beyond `GATEWAY_WS_IDLE_TIMEOUT` (default 300s) → close 4003.
+- Frames larger than `GATEWAY_WS_MAX_MESSAGE_SIZE` (default 65536) → error `GW-E8005` + close 1009.
 
 ### Subscribe
 ```json
@@ -179,7 +191,9 @@ Wildcards:
 | `crypto_orderbooks` | Crypto Level 2 | Alpaca Crypto |
 | `news` | Real-time news | Alpaca News |
 
-**UW Flow Fanout.** When `GATEWAY_WS_FLOW_FANOUT_ENABLED=true` (default), clients subscribing to `provider: "uw", feeds: ["flow_alerts"]` receive real-time UW flow events pushed immediately after successful Redis sink publication. Use an empty `symbols` list for the full tape (firehose). This path is independent of the Alpaca multiplexer.
+**UW Flow Fanout.** When `GATEWAY_WS_FLOW_FANOUT_ENABLED=true` (default), clients subscribing with `provider: "uw"` (or `"unusual_whales"`) and feed `"flow"`/`"flow_alerts"` receive real-time UW flow events pushed immediately after successful Redis sink publication (wire feed label: `flow_alerts`). Use an empty `symbols` list for the full tape (firehose, recorded as `flow_alerts:*` in quota accounting). This path is independent of the Alpaca multiplexer, and the wire payload is byte-identical to the Redis envelope (same `event_id`, so push/poll duplicates dedupe downstream).
+
+**Resumable delivery.** Flow events are also appended to a durable Redis replay log (`GATEWAY_WS_FLOW_REPLAY_STREAM`, default `gateway:flow_alerts:replay`, capped at `GATEWAY_WS_FLOW_REPLAY_MAX_LEN` = 100,000 entries). Each delivered event carries a `stream_cursor`. To resume after a disconnect, include `"after_stream_id"` (a Redis stream ID like `"12345-0"`, or `"$"`) in the subscribe message. The subscription ack reports `resume_supported` and `replay_high_watermark`; replay launches only after the ack and sends `replay_begin` → replayed events → `replay_complete` (or `replay_error`), then flushes any live events buffered during replay (deduped by cursor). A single resume replays at most `GATEWAY_WS_FLOW_REPLAY_MAX_EVENTS_PER_RESUME` (default 50,000) events. Degradations are surfaced as ack warnings: `GW-W5003` (flow producer not wired), `GW-W5004` (durable replay store unavailable — resume requested but the Redis-backed log is down).
 
 ### Symbol formats
 | Stream | Format | Example |
@@ -203,6 +217,7 @@ Legacy payloads using `feed` (singular) are accepted in addition to `feeds`.
 Requires role `admin` or `super_admin`.
 
 - Provider status, error buffer, recent audit events, config inspect.
+- Admin routes additionally enforce an IP blocklist.
 - All admin actions are recorded by `AuditLogger`. See [AUDIT_LOGGING.md](AUDIT_LOGGING.md).
 - Hot-reload via `kill -HUP <pid>` refreshes `clients.yaml` without restart. Changes are reflected immediately in auth and rate-limit enforcement.
 
@@ -224,8 +239,8 @@ Requires role `admin` or `super_admin`.
 Forwarded to the canonical `/api/v1/*` paths; do not use in new code:
 
 - `/symbology/*` → `/api/v1/symbology/*`
-- `/corporate-actions/*` → `/api/v1/corporate/*`
-- `/adjustment-factors/*` → `/api/v1/adjustments/*`
+- `/corporate-actions/*` → `/api/v1/corporate-actions/*`
+- `/adjustment-factors/*` → `/api/v1/adjustment-factors/*`
 
 ---
 
@@ -254,7 +269,7 @@ All cache keys are **per-client scoped** to prevent cross-client leakage.
 
 ## 14. Related Documents
 
-- [API_REFERENCE.md](API_REFERENCE.md) — full deep reference (kept as the canonical source for endpoint payload shapes)
+- [`../PRD.md`](../PRD.md) — product and behavior contract for routes and services
 - [`../PROVIDER_ENDPOINT_CONTRACT.md`](../PROVIDER_ENDPOINT_CONTRACT.md) — auto-generated route catalog
 - [CONSUMER_GUIDE.md](CONSUMER_GUIDE.md) — task-oriented integration guide for Empire consumers
 - [system-architecture.md](system-architecture.md) — request lifecycle and middleware order

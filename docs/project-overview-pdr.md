@@ -18,7 +18,7 @@ Data-Gateway is the **single ingress point** for all external market data and tr
 - **Schemas are normalized** (raw provider payloads become `NormalizedBar` / `NormalizedQuote` / `NormalizedTrade` / `EventEnvelope`)
 - **Rate limits, circuit breakers, and caching** live (so 8 downstream services don't all hammer Alpaca individually)
 - **Real-time streams are multiplexed** (one Alpaca WebSocket connection per stream type, fanned out to N downstream clients)
-- **Events flow to Heber** as `EventEnvelope` messages on the `heber:events` Redis Stream
+- **Events flow to Heber** as `EventEnvelope` messages on Redis Streams — live feeds on `heber:events`, backfill and EOD snapshots on the dedicated `heber:events:backfill` stream
 
 If a service in Empire needs market data, it goes through Data-Gateway — no direct provider calls allowed downstream.
 
@@ -41,15 +41,16 @@ Data-Gateway centralizes all of the above behind a stable REST + WebSocket contr
 ## 3. Scope
 
 ### In Scope
-- REST proxy for: Alpaca, Unusual Whales, Finnhub, Alpha Vantage, yfinance, SEC EDGAR, NewsAPI
+- REST proxy for: Alpaca, Unusual Whales, Finnhub, Alpha Vantage, yfinance, SEC EDGAR, NewsAPI (the Massive provider for historical bars is loaded but not yet route-mapped)
 - WebSocket multiplexing of Alpaca SIP / OPRA / Crypto / News streams
+- Durable, resumable WebSocket fan-out of UW flow alerts (`FlowFanout` + Redis replay log; clients resume via `after_stream_id`)
 - Normalization to canonical `EventEnvelope` schemas
-- Publishing every event to Redis Streams (`heber:events`) for Heber ingestion
+- Publishing every event to Redis Streams for Heber ingestion — live feeds to `heber:events`, backfill and EOD per-ticker snapshots to `heber:events:backfill` (its own MAXLEN cap, so a large backfill cannot evict unread live events)
 - Per-client authentication, rate limiting, permission enforcement
 - Background pollers (UW flow / darkpool / market tide / EOD per-ticker)
 - Bulk historical jobs (`/api/v1/bulk/*`) and replay sessions (`/api/v1/replay/*`)
-- Idempotent order writes for Alpaca trading (`dg-<uuid>` auto-minted `client_order_id`)
-- Health, readiness, Prometheus metrics, structured audit logging
+- Idempotent, ownership-prefixed order writes for Alpaca trading (`c-<client_id>-dg-<uuid>` auto-minted `client_order_id`); live trading is disabled unless `GATEWAY_ALLOW_LIVE_TRADING` is set *and* the Alpaca base URL is a recognized live endpoint
+- Health, readiness, Prometheus metrics, structured audit logging, event-loop stall watchdog
 
 ### Out of Scope
 - Storage / persistence (Heber owns the lakehouse)
@@ -79,12 +80,14 @@ A shared cache, shared rate limiter, and a shared circuit-breaker view across pr
 - **Replay** — `XRANGE` lets Heber re-read missed events on restart.
 - **Dedup** — `event_id` is a BLAKE2b hash of `(provider, feed, instrument, ts_event, feed-specific-unique-fields)`. Heber's writer rejects duplicates by `event_id`.
 - **Backpressure** — a bounded per-sink dispatch queue + worker pool propagates Redis slowdowns back to producers rather than silently dropping.
+- **Stream isolation** — backfill and EOD snapshot traffic publishes to a separate `heber:events:backfill` stream with its own MAXLEN cap (`GATEWAY_BACKFILL_STREAM_MAX_LEN`, default 1,000,000) after a 2026-07-19 incident where a 976K-record backfill overran the shared cap and evicted unread live UW feeds.
+- **Durability** — the Redis container runs AOF (`appendonly` + `everysec` fsync) with `maxmemory-policy volatile-lru`: streams and consumer groups carry no TTL and are never cache-evicted; only TTL'd cache/dedup keys are. At-cap writes error into the sink's failover buffer instead of silently evicting.
 
-See [system-architecture.md](system-architecture.md#data-sink-heber-integration) for the full failure model.
+See [system-architecture.md](system-architecture.md#6-data-sink-heber-integration) for the full failure model.
 
 ### 4.4  Why one upstream WebSocket per stream type?
 
-Alpaca's data plans limit one concurrent stream connection per account. The `StreamMultiplexer` (`gateway/core/stream.py`) opens one upstream per stream type (stocks_sip, options_opra, crypto, news), aggregates the union of all downstream client subscriptions, and reference-counts symbols so an upstream `unsubscribe` only happens when the last interested client goes away. Without this, every downstream service competing for the same SIP stream would either get refused or thrash the connection.
+Alpaca's data plans limit one concurrent stream connection per account. The `StreamMultiplexer` (`gateway/core/stream.py`) opens one upstream per stream type (stocks_sip, options_opra, crypto, news), aggregates the union of all downstream client subscriptions, and reference-counts symbols so an upstream `unsubscribe` only happens when the last interested client goes away. A supervisor task revives dormant upstreams that still have live subscribers. Without this, every downstream service competing for the same SIP stream would either get refused or thrash the connection.
 
 ### 4.5  Why per-client cache scoping?
 
@@ -92,11 +95,11 @@ Cache keys include the `X-Gateway-Key` client id, preventing one client's author
 
 ### 4.6  Why bounded queue + worker pool for the sink (not a Semaphore)?
 
-The previous design used an `asyncio.Semaphore` and silently dropped events whose `schedule()` call exceeded an in-flight cap. Under opening-bell load, tens of thousands of events were lost per minute with no operator signal. The current design (`gateway/core/data_sink.py`) puts a bounded `asyncio.Queue` per sink, drained by a worker pool. Producers block (briefly) on `Queue.put` when full, surfacing backpressure as latency rather than data loss. A drop only happens when the producer-block timeout expires *and* the queue is still full — alerted by `gateway_sink_producer_timeout_drops_total` and a CRITICAL log line.
+The previous design used an `asyncio.Semaphore` and silently dropped events whose `schedule()` call exceeded an in-flight cap. Under opening-bell load, tens of thousands of events were lost per minute with no operator signal. The current design (`gateway/core/data_sink.py`) puts a bounded `asyncio.Queue` per sink, drained by a worker pool. Producers block (briefly) on `Queue.put` when full, surfacing backpressure as latency rather than data loss. When the producer-block timeout expires with the queue still full, the event is spilled to the sink's failed-event buffer (capacity `GATEWAY_DATA_SINK_FAILED_BUFFER_CAPACITY`, default 50,000) and drained on recovery — logged as a WARNING, recoverable. True loss occurs only if the buffer itself refuses the event; that path logs CRITICAL and increments the `producer_timeout_loss` counter.
 
 ### 4.7  Why idempotent Alpaca order writes?
 
-A `504 Gateway Timeout` on the gateway side does not tell the client whether Alpaca accepted the order. Auto-minting a `dg-<uuid>` `client_order_id` (when the caller doesn't supply one) lets the client safely retry — Alpaca rejects a duplicate `client_order_id` instead of double-placing.
+A `504 Gateway Timeout` on the gateway side does not tell the client whether Alpaca accepted the order. Every effective `client_order_id` is ownership-prefixed with `c-<client_id>-` — auto-minted as `c-<client_id>-dg-<uuid>` when the caller doesn't supply one — and the full prefixed id is returned both on success and in the `504` timeout detail, so the client can safely retry: Alpaca dedupes by `client_order_id` instead of double-placing. The same prefix drives per-client ownership checks on get/replace/cancel, and account-wide flatten requires the `super_admin` role.
 
 ### 4.8  Per-circuit severity convention
 
@@ -113,7 +116,10 @@ Sink circuits (`data_sink:*`) open at `WARNING` (controlled degradation; failed-
 | **Feed** | Logical data type (`stock_bars`, `option_quotes`, `flow_alerts`, `darkpool`, `news`, …). Maps to `FEED_UNIQUE_FIELDS` for event-id hashing. |
 | **Source** | `rest`, `stream`, or `poller`. Recorded in the envelope so Heber knows the path. |
 | **Stream multiplexer** | One upstream WS per Alpaca stream type, N downstream clients per upstream. |
-| **Data sink** | Bounded-queue + worker pool dispatcher that publishes envelopes to Redis Streams. |
+| **Data sink** | Bounded-queue + worker pool dispatcher that publishes envelopes to Redis Streams; producer timeouts spill to a failover buffer. |
+| **Backfill stream** | `heber:events:backfill` — dedicated Redis Stream (own MAXLEN cap) for backfill jobs and UW EOD snapshots, isolated from live feeds. |
+| **Flow fanout / replay** | Per-connection delivery of UW flow-alert envelopes over `/ws` (`gateway/core/flow_fanout.py`), backed by a durable Redis replay log (`gateway/core/flow_replay.py`) so clients resume from a stream cursor via `after_stream_id`. |
+| **Loop watchdog** | Off-loop thread (`gateway/core/loop_watchdog.py`) that detects event-loop stalls (> 5s default), dumps all thread stacks + GC stats, samples repeatedly through the stall, and logs total stalled seconds on recovery. |
 | **Bulk job** | Async historical fetch with status / download / delete endpoints. |
 | **Replay session** | Time-bounded historical replay over WebSocket (for backtest harnesses). |
 
@@ -122,7 +128,7 @@ Sink circuits (`data_sink:*`) open at `WARNING` (controlled degradation; failed-
 ## 6. Non-Goals
 
 - **Not a strategy framework** — does not place trades autonomously, does not compute signals.
-- **Not a database** — stores nothing durable; Redis is used for caching, dedup, the sink stream, and the failed-event buffer only.
+- **Not a database** — Redis holds only working state: caching, dedup persistence, the sink streams (live + backfill), and the flow-alert replay log. Redis runs AOF for crash-safety, but Heber owns durable storage.
 - **Not a write path to anything except Alpaca** — UW, Finnhub, Alpha Vantage, yfinance, SEC, News are read-only.
 - **Not a generic API gateway** — its concerns are market-data-specific (instrument keys, normalization, OPRA/SIP).
 
@@ -135,12 +141,12 @@ Sink circuits (`data_sink:*`) open at `WARNING` (controlled degradation; failed-
 | `/health/ready` returns `ready` within 5s of startup | Always |
 | WebSocket event publish-to-Heber lag (P99) | < 250 ms |
 | REST cache hit rate on hot endpoints | > 70% |
-| Sink producer-timeout drops | 0 (alert on any non-zero rate) |
+| Sink producer-timeout losses (spill-to-buffer refused) | 0 (alert on any non-zero rate) |
 | Sink failed-event buffer evictions | 0 (alert on any non-zero rate) |
 | Upstream provider circuit-open events per day | Tracked, < 5 under normal conditions |
 | Idempotent retry on `504` Alpaca writes never double-places | Always |
 
-Perf baselines and budgets live in `config/perf_baseline.json` and `config/perf_budgets.json`; the CI perf gate (`scripts/perf_gate.py`) enforces budgets on every PR.
+Perf baselines and budgets live in `config/perf_baseline.json` and `config/perf_budgets.json`; the CI perf gate (`scripts/perf_gate.py`) enforces budgets on every PR. CI also enforces import-linter contracts, semgrep rules, a mypy dirty-file allowlist, the Heber wire-contract suite (`tests/test_envelope_heber_contract.py`), and per-file money-path coverage floors on the Alpaca trading modules (88 / 95). Because the repo has no server-side branch protection, a pre-push hook (`make install-hooks`) runs lint, lockfile freshness, and the fast money-path suites locally before anything reaches the remote.
 
 ---
 
@@ -148,12 +154,11 @@ Perf baselines and budgets live in `config/perf_baseline.json` and `config/perf_
 
 - [system-architecture.md](system-architecture.md) — subsystem diagrams, data pipeline, sink resilience model
 - [codebase-summary.md](codebase-summary.md) — package layout, module-by-module purpose, key dependencies
-- [api-reference.md](api-reference.md) — REST + WebSocket catalog (links to `API_REFERENCE.md` and `PROVIDER_ENDPOINT_CONTRACT.md`)
+- [api-reference.md](api-reference.md) — REST + WebSocket catalog (links to `PRD.md` and `PROVIDER_ENDPOINT_CONTRACT.md`)
 - [configuration-guide.md](configuration-guide.md) — every env var, every `config/*.yaml`
 - [deployment-guide.md](deployment-guide.md) — Docker, CI, perf gate
 - [testing-guide.md](testing-guide.md) — pytest layout, markers, fixtures, smoke harness
 - [code-standards.md](code-standards.md) — ruff/mypy config, conventions, gotchas
-- [ARCHITECTURE.md](ARCHITECTURE.md) — deeper architecture (kept for historical continuity)
 - [RUNBOOK.md](RUNBOOK.md) — operational procedures, troubleshooting
 - [AUDIT_LOGGING.md](AUDIT_LOGGING.md) — security audit event taxonomy
 - [CONSUMER_GUIDE.md](CONSUMER_GUIDE.md) — task-oriented integration guide for downstream Empire services

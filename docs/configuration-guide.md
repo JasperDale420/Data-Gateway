@@ -14,11 +14,12 @@ Every environment variable, every YAML knob. For ops procedures see [RUNBOOK.md]
 | `.env.example` | Commented template — copy to `.env` for local dev. |
 | `.env` | Local secrets and overrides. **Gitignored.** |
 | `config/providers.yaml` | Provider load order, classes, capabilities. |
-| `config/clients.yaml` | Per-client API keys, roles, permissions. SIGHUP-reloadable. |
+| `config/clients.yaml` | Per-client API keys (sha256 hashes), roles, permissions. SIGHUP-reloadable. |
+| `config/uw_pit_universe.json` | Atlas PIT-universe export (~989 active tickers) driving UW EOD capture and the backfill driver. |
 | `config/perf_baseline.json` / `config/perf_budgets.json` | Perf-gate thresholds. |
 | `config/prometheus_alerts.yml` | Prometheus alerting rules. |
 
-All `GATEWAY_*` env vars are loaded by Pydantic Settings with the `GATEWAY_` prefix. Provider API keys use their provider's native env-var name (no `GATEWAY_` prefix) so SDKs pick them up unchanged.
+All `GATEWAY_*` env vars are loaded by Pydantic Settings with the `GATEWAY_` prefix, except `GATEWAY_BACKFILL_STREAM` / `GATEWAY_BACKFILL_STREAM_MAX_LEN`, which are plain `os.environ` reads (see §5). Provider API keys use their provider's native env-var name (no `GATEWAY_` prefix) so SDKs pick them up unchanged.
 
 ---
 
@@ -29,20 +30,21 @@ All `GATEWAY_*` env vars are loaded by Pydantic Settings with the `GATEWAY_` pre
 | `GATEWAY_HOST` | `0.0.0.0` | Bind host |
 | `GATEWAY_PORT` | `8080` | Bind port |
 | `GATEWAY_DEBUG` | `false` | Enables `/docs`, OpenAPI, permissive CORS. **Never** true in prod. |
-| `GATEWAY_LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `GATEWAY_LOG_LEVEL` | `INFO` | **Dead knob** — defined in Settings but never read by the runtime. Set `EMPIRE_LOG_LEVEL` instead. |
 | `GATEWAY_AUTH_TIMEOUT_SECONDS` | `10` | WebSocket auth-message timeout |
 | `GATEWAY_ALLOW_STUB_DATA` | `false` | If false, stub-only endpoints return `501 Not Implemented` |
 | `GATEWAY_SHUTDOWN_DRAIN_SECONDS` | `30` | Graceful shutdown drain window |
-| `GATEWAY_MEMORY_TARGET_MB` | `512` | Memory target before GC pressure |
-| `GATEWAY_MEMORY_HARD_LIMIT_MB` | `1024` | Hard ceiling |
+| `GATEWAY_LOOP_WATCHDOG_ENABLED` | `true` | Event-loop stall watchdog: off-loop thread stack-dumps all threads when the loop stalls past the threshold (`event_loop_stall_detected`, samples up to 5x through a stall, logs `event_loop_stall_recovered` with total stalled seconds) |
+| `GATEWAY_LOOP_WATCHDOG_STALL_THRESHOLD_SECONDS` | `5.0` | Stall threshold before the watchdog fires (min 1.0) |
 
 ### Empire-wide logging (consumed by `empire_core.logger`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EMPIRE_LOG_LEVEL` | inherits `GATEWAY_LOG_LEVEL` | Overrides global log level |
+| `EMPIRE_LOG_LEVEL` | `INFO` | The effective log level (`DEBUG` / `INFO` / `WARNING` / `ERROR`) |
 | `EMPIRE_LOG_FORMAT` | `json` | `json` (prod) or `human` / `dev` (console) |
 | `EMPIRE_LOG_DIR` | `./logs` | Directory for rotating daily log files |
+| `EMPIRE_LOG_BACKUP_COUNT` | `14` | Rotated-file retention in days (compose sets `30` so post-mortem windows survive >2 weeks) |
 
 ---
 
@@ -63,13 +65,13 @@ Cache keys include the `X-Gateway-Key` client id (per-client scoping prevents cr
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GATEWAY_RATE_LIMIT_DEFAULT` | `600` | Per-client req/min (overridable per-client in `clients.yaml`) |
+| `GATEWAY_RATE_LIMIT_DEFAULT` | `600` | Per-client req/min (overridable per-client in `clients.yaml` — the per-client `rate_limit` is honored) |
 | `GATEWAY_WS_MAX_CLIENTS` | `1000` | Max concurrent WebSocket clients |
-| `GATEWAY_WS_IDLE_TIMEOUT` | `300` | WS idle disconnect seconds |
-| `GATEWAY_WS_MAX_DURATION` | `86400` | Max WebSocket connection duration (seconds) |
+| `GATEWAY_WS_IDLE_TIMEOUT` | `300` | WS idle disconnect seconds (close 4003) |
+| `GATEWAY_WS_HEARTBEAT_INTERVAL` | `30` | Server heartbeat interval; silence > interval x 4 missed heartbeats closes 4002 |
+| `GATEWAY_WS_MAX_MESSAGE_SIZE` | `65536` | Max inbound WS frame bytes; oversize gets error `GW-E8005` + close 1009 |
 | `GATEWAY_BEHIND_TRUSTED_PROXY` | `false` | Trust `X-Forwarded-For` header |
 | `GATEWAY_TRUSTED_PROXY_CIDRS` | — | Comma-separated CIDRs of trusted proxies |
-| `GATEWAY_GC_THRESHOLD_PCT` | `80` | Trigger Python GC at this % memory usage |
 
 > **Note:** There is no `GATEWAY_RATE_LIMIT_GLOBAL` env var. `GlobalRateLimitMiddleware` enforces a hard cap of 10,000 req/min globally and 1,000 req/min per IP by default; these limits are set in code.
 
@@ -82,16 +84,21 @@ Cache keys include the `X-Gateway-Key` client id (per-client scoping prevents cr
 | `GATEWAY_DATA_SINK_ENABLED` | `false` | Master switch for Redis Streams sink |
 | `GATEWAY_DATA_SINK_REDIS_URL` | — | Redis URL for the sink (often the same Redis as the cache) |
 | `GATEWAY_DATA_SINK_REDIS_POOL_SIZE` | `32` | Redis connection pool size; must be >= `GATEWAY_DATA_SINK_WORKER_COUNT` |
-| `GATEWAY_DATA_SINK_MAX_STREAM_LEN` | `100000` | `heber:events` MAXLEN trim cap |
+| `GATEWAY_DATA_SINK_MAX_STREAM_LEN` | `100000` | `heber:events` MAXLEN trim cap (compose runs `500000`; move in lockstep with Redis `maxmemory`) |
 | `GATEWAY_DATA_SINK_QUEUE_SIZE` | `16384` | Bounded per-sink dispatch queue |
-| `GATEWAY_DATA_SINK_WORKER_COUNT` | `16` | Worker tasks draining each queue |
-| `GATEWAY_DATA_SINK_PRODUCER_BLOCK_TIMEOUT_SECONDS` | `0.1` | Max producer block on a full queue before drop |
+| `GATEWAY_DATA_SINK_WORKER_COUNT` | `24` | Worker tasks draining each queue (max 64; keep < pool size) |
+| `GATEWAY_DATA_SINK_PRODUCER_BLOCK_TIMEOUT_SECONDS` | `0.1` | Max producer block on a full queue before spilling to the failover buffer |
 | `GATEWAY_DATA_SINK_OPERATION_TIMEOUT_SECONDS` | `5.0` | Redis operation timeout |
+| `GATEWAY_DATA_SINK_FAILED_BUFFER_CAPACITY` | `50000` | Failed-event retry buffer capacity (1,000–1,000,000); drained on reconnect |
+| `GATEWAY_BACKFILL_STREAM` | `heber:events:backfill` | Dedicated Redis stream for backfill + UW EOD publishes (**plain env var**, read via `os.environ` — not a Pydantic Setting) |
+| `GATEWAY_BACKFILL_STREAM_MAX_LEN` | `1000000` | MAXLEN cap for the backfill stream (**plain env var**); separate cap so a large backfill can't evict un-read live feeds |
 | `GATEWAY_REST_SINK_EXCLUDED_FEEDS` | `greek_exposure,iv_rank,iv_term_structure,short_data,ftd,flow_alerts,darkpool` | Feeds NOT published to the live Heber stream via REST (prevents duplicates with pollers) |
 | `GATEWAY_REST_SINK_LOW_PRIORITY_MAX_QUEUE_UTILIZATION` | `0.70` | Shed low-priority REST publishes above this queue utilization |
 | `GATEWAY_STRICT_ENVELOPES` | `false` | Raise on envelope-wrap failure (default: log and continue) |
 
-See [system-architecture.md §6](system-architecture.md#6-data-sink-heber-integration) for the failure model. Drops surface as `gateway_sink_producer_timeout_drops_total{sink}` (alert: `SinkProducerTimeoutDrops`). Buffer evictions surface as `gateway_sink_buffer_evictions_total{sink}` (alert: `SinkBufferEvictionsActive`).
+See [system-architecture.md §6](system-architecture.md#6-data-sink-heber-integration) for the failure model. On producer timeout the event is **spilled to the sink's failover buffer** (recoverable, logged WARNING with `spilled_to_buffer=True`) rather than dropped outright; only a buffer refusal counts as true loss (CRITICAL, `producer_timeout_loss`). Drops surface as `gateway_sink_producer_timeout_drops_total{sink}` (alert: `SinkProducerTimeoutDrops`). Buffer evictions surface as `gateway_sink_buffer_evictions_total{sink}` (alert: `SinkBufferEvictionsActive`).
+
+**Backfill stream isolation:** backfill-engine publishes and all UW EOD per-ticker feeds route to `heber:events:backfill` with their own MAXLEN cap; live 5-min feeds (flow_alerts, darkpool, market/sector tide) stay on `heber:events`. (Added after a 976K-record backfill overran the shared cap on 2026-07-19 and self-evicted un-read UW feeds.)
 
 ---
 
@@ -101,13 +108,12 @@ See [system-architecture.md §6](system-architecture.md#6-data-sink-heber-integr
 |----------|---------|-------------|
 | `GATEWAY_STREAM_USE_IEX` | `false` | Use IEX feed instead of SIP for stocks |
 | `GATEWAY_STREAM_LAZY_CONNECT` | `true` | Open upstream WS only on first client subscription |
-| `GATEWAY_STREAM_RECONNECT_BASE_DELAY` | provider default | Exponential-backoff base delay |
 | `GATEWAY_STREAM_OPTIONS_FEED` | `opra` | Options feed: `opra` or `indicative` |
 | `GATEWAY_STREAM_EAGER_CONNECT_TYPES` | `stocks` | Stream types to connect on startup (comma-separated: `stocks`, `stocks_iex`, `options`, `crypto`, `news`) |
-| `GATEWAY_STREAM_RECONNECT_MAX_RETRIES` | `10` | Max upstream WebSocket reconnect attempts |
-| `GATEWAY_STREAM_RECONNECT_MAX_DELAY` | `16.0` | Max exponential backoff seconds |
 | `GATEWAY_STREAM_FANOUT_MAX_INFLIGHT` | `100` | Max concurrent downstream fanout operations |
 | `GATEWAY_STREAM_FANOUT_BATCH_SIZE` | `32` | Fanout batch size |
+
+> The old `GATEWAY_STREAM_RECONNECT_*` knobs (`MAX_RETRIES`, `BASE_DELAY`, `MAX_DELAY`) were removed in the dead-config cut; reconnect behavior is now managed by the stream supervisor, which also revives dormant upstreams that still have live subscribers.
 
 ---
 
@@ -115,6 +121,7 @@ See [system-architecture.md §6](system-architecture.md#6-data-sink-heber-integr
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `GATEWAY_ALLOW_LIVE_TRADING` | `false` | Paper-mode fail-safe: live trading requires this flag **and** a recognized live `APCA_API_BASE_URL` |
 | `GATEWAY_ALPACA_TRADING_CALL_TIMEOUT_SECONDS` | `15.0` | READ timeout for trading calls (`get_account`, `get_orders`, etc.) |
 | `GATEWAY_ALPACA_TRADING_WRITE_CALL_TIMEOUT_SECONDS` | `25.0` | WRITE timeout (`create_order`, `cancel_order`, etc.) — bumped for opening-bell latency spikes |
 | `GATEWAY_ALPACA_TRADING_HTTP_TIMEOUT_SECONDS` | `30.0` | HTTP-level safety-net timeout |
@@ -134,14 +141,15 @@ The UW poller starts automatically when `GATEWAY_DATA_SINK_ENABLED=true` and `UN
 | `GATEWAY_UW_EOD_ENABLED` | `false` | Enable daily EOD per-ticker polling |
 | `GATEWAY_UW_EOD_HOUR` | `16` | EOD hour (ET, 0-23) |
 | `GATEWAY_UW_EOD_MINUTE` | `30` | EOD minute (ET) |
-| `GATEWAY_UW_CORE_TICKERS` | (built-in ~30) | Comma-separated override of core ticker set |
-| `GATEWAY_UW_DYNAMIC_TICKER_COUNT` | `20` | Daily dynamic tickers from UW screener |
+| `GATEWAY_UW_UNIVERSE_FILE` | `config/uw_pit_universe.json` | Atlas PIT-universe export. When the file exists, EOD capture uses its `active` symbol list (~989 tickers) and **disables** dynamic screener rotation; missing file falls back to core tickers |
+| `GATEWAY_UW_CORE_TICKERS` | (built-in ~30) | Comma-separated override of core ticker set (fallback when no universe file) |
+| `GATEWAY_UW_DYNAMIC_TICKER_COUNT` | `20` | Daily dynamic tickers from UW screener (inactive when a universe file is present) |
 | `GATEWAY_UW_EOD_CONCURRENCY` | `5` | Max concurrent ticker polls |
 | `GATEWAY_UW_POLLER_PUBLISH_MAX_INFLIGHT` | `16` | Max in-flight poller publishes |
 | `GATEWAY_UW_EOD_STATE_PATH` | `/app/logs/state/uw_eod_state.json` | Persistent state file (prevents duplicate EOD runs across restarts) |
-| `GATEWAY_UW_EOD_CLAIM_STALE_AFTER_SECONDS` | `7200` | Allow retry when a state claim is older than this |
+| `GATEWAY_UW_EOD_CLAIM_STALE_AFTER_SECONDS` | `14400` | Allow retry when a state claim is older than this (4h — a ~989-ticker PIT run can exceed the old 2h window) |
 
-See [system-architecture.md §8](system-architecture.md#8-background-pollers) for the feed cadence table.
+EOD per-ticker feeds (`greek_exposure`, `iv_rank`, `iv_term_structure`, `oi_change`, `historic_option_volume`, `short_interest`, `short_volume`, `ftds`) publish to the **backfill stream** (`GATEWAY_BACKFILL_STREAM`), not live `heber:events`. See [system-architecture.md §8](system-architecture.md#8-background-pollers) for the feed cadence table.
 
 ---
 
@@ -150,8 +158,8 @@ See [system-architecture.md §8](system-architecture.md#8-background-pollers) fo
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GATEWAY_OPTION_CAPTURE_ENABLED` | `false` | Enable Alpaca option chain snapshot capture |
-| `GATEWAY_OPTION_CAPTURE_SYMBOLS` | — | Comma-separated underlyings |
-| `GATEWAY_OPTION_CAPTURE_INTERVAL_SECONDS` | varies | Snapshot interval |
+| `GATEWAY_OPTION_CAPTURE_SYMBOLS` | `SPY,QQQ,IWM` | Comma-separated underlyings |
+| `GATEWAY_OPTION_CAPTURE_INTERVAL_SECONDS` | `60` | Snapshot interval (compose runs 300) |
 | `GATEWAY_OPTION_CAPTURE_WS_ENABLED` | `true` | Enable WebSocket streaming for captured option symbols |
 | `GATEWAY_OPTION_CAPTURE_MARKET_HOURS_ONLY` | `true` | Only snapshot during market hours |
 | `GATEWAY_OPTION_CAPTURE_SNAPSHOT_TIMEOUT_SECONDS` | `90.0` | Per-snapshot fetch timeout |
@@ -207,11 +215,16 @@ All pollers require `GATEWAY_DATA_SINK_ENABLED=true` and the relevant provider A
 | `GATEWAY_NEWS_POLLER_FETCH_LIMIT` | `50` | Max articles per fetch (1–50) |
 | `GATEWAY_NEWS_POLLER_SYMBOLS` | — | Override symbols (empty = market-wide) |
 
-**Flow Fanout:**
+**Flow Fanout & Replay:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GATEWAY_WS_FLOW_FANOUT_ENABLED` | `true` | Push UW flow events to subscribed WebSocket clients in real time |
+| `GATEWAY_WS_FLOW_FANOUT_ENABLED` | `true` | Push UW flow events to subscribed WebSocket clients in real time (per-symbol or firehose) |
+| `GATEWAY_WS_FLOW_REPLAY_STREAM` | `gateway:flow_alerts:replay` | Durable Redis replay log (XADD, MAXLEN-capped) enabling resumable delivery via `after_stream_id` on subscribe |
+| `GATEWAY_WS_FLOW_REPLAY_MAX_LEN` | `100000` | Replay stream MAXLEN cap (min 1,000) |
+| `GATEWAY_WS_FLOW_REPLAY_MAX_EVENTS_PER_RESUME` | `50000` | Safety limit on events replayed per resume (min 100) |
+
+The replay store requires the data-sink Redis URL; when it is unavailable, resume requests degrade gracefully (ack warning `GW-W5004`) and live fanout continues.
 
 ---
 
@@ -227,6 +240,7 @@ Provider SDKs read these directly — **no** `GATEWAY_` prefix.
 | `UNUSUAL_WHALES_API_KEY` | Unusual Whales | Yes |
 | `FINNHUB_API_KEY` | Finnhub | Yes |
 | `ALPHAVANTAGE_API_KEY` | Alpha Vantage | Yes |
+| `MASSIVE_API_KEY` | Massive (ex-Polygon) | Optional — provider loads but is not route-mapped yet; env name configurable via `api_key_env` in `providers.yaml` |
 | `NEWS_API_KEY` | NewsAPI.org | Optional (otherwise news routes return empty) |
 | `SEC_USER_AGENT` | SEC EDGAR | Recommended (SEC requires identifying user-agent) |
 
@@ -236,36 +250,60 @@ yfinance requires no key.
 
 ## 12. `config/providers.yaml`
 
-Defines which providers are loaded, in what order, with what capabilities.
+Defines which providers are loaded, with what priority, config, and capabilities. Eight providers: alpaca (1, required), unusual_whales (1, required), news (1), sec (1), yfinance (2, required), finnhub (2), alphavantage (3), massive (4 — loaded and directly callable, but not in `routes:` yet).
 
 ```yaml
 providers:
-  - name: alpaca
+  alpaca:
+    enabled: true
+    required: true   # load-critical: init failure aborts startup when GATEWAY_DEBUG=false
     module: gateway.providers.alpaca
     class: AlpacaProvider
-    priority: 100
-    enabled: true
+    priority: 1
+    config:
+      api_key_env: APCA_API_KEY_ID
+      secret_key_env: APCA_API_SECRET_KEY
+      base_url_env: APCA_API_BASE_URL
+      feed: sip          # or iex
     capabilities:
-      - bars
-      - quotes
-      - trades
-      - options
-      - crypto
-      - trading
-  - name: unusual_whales
+      streaming: true
+      historical: true
+      bars: true
+      quotes: true
+      trades: true
+      options: true
+
+  unusual_whales:
+    enabled: true
+    required: true
     module: gateway.providers.uw
-    class: UWProvider
-    priority: 90
-    enabled: true
+    class: UnusualWhalesProvider
+    priority: 1
+    config:
+      api_key_env: UNUSUAL_WHALES_API_KEY
+      max_inflight_calls: 32
     capabilities:
-      - flow
-      - darkpool
-      - greeks
-      - institutional
-  # ... finnhub, alphavantage, yfinance, sec, news
+      streaming: false
+      historical: true
+      flow: true
+      darkpool: true
+  # ... yfinance, finnhub, alphavantage, massive, news, sec
+
+routes:
+  stocks:
+    providers: [alpaca, yfinance]
+    fallback_on: [connection_error, timeout, rate_limit]
+  options:
+    providers: [alpaca]
+    fallback_on: []
+  flow:
+    providers: [unusual_whales]
+    fallback_on: []
 ```
 
-- `priority` orders providers for capabilities they share (higher = preferred).
+- `priority` orders providers for capabilities they share (lower number = preferred).
+- `required: true` makes the provider load-critical: with `GATEWAY_DEBUG=false`, a load/init failure aborts gateway startup; otherwise the failure is logged and startup continues.
+- `config` holds env-var **names** (e.g. `api_key_env`), never key material. Per-provider throttles live here too (uw `max_inflight_calls: 32`, alphavantage `quotes_max_concurrency: 2`, massive `bars_max_concurrency: 2` + `min_request_interval_seconds: 13.0` for free-tier ~5/min pacing).
 - `enabled: false` skips loading.
 - Reload requires a process restart (no SIGHUP).
 
@@ -273,37 +311,38 @@ providers:
 
 ## 13. `config/clients.yaml`
 
-Per-client authentication. SIGHUP reloads in place.
+Per-client authentication. SIGHUP reloads in place. Nine clients are configured: `cerberus`, `3roses`, `orion`, `atlas`, `orbit`, `kairos`, `heber-watch`, `test`, `drogon`. Keys are stored as **sha256 hashes** (`key_hash`) — the plaintext key lives only in each consumer's `.env`. The lone exception is `test`, which keeps a plaintext dev key.
 
 ```yaml
 clients:
-  - id: cerberus
-    key: gw_cerberus_<hex>
-    role: trader
-    enabled: true
-    permissions:
-      providers: [alpaca, unusual_whales, finnhub]
-      feeds: [stock_bars, stock_quotes, flow_alerts, darkpool]
-      max_symbols: 5000
-      ws_subscriptions_max: 5000
-      rate_limit: 1200      # overrides GATEWAY_RATE_LIMIT_DEFAULT
-  - id: 3roses
-    key: gw_3roses_<hex>
-    role: trader
-    enabled: true
-    permissions:
-      providers: [alpaca, finnhub]
-      feeds: [stock_bars, stock_quotes, stock_trades, news]
-      max_symbols: 1000
-  - id: test
-    key: gw_test_<hex>
-    role: admin
-    enabled: true
-    permissions:
-      providers: ['*']
-      feeds: ['*']
-      max_symbols: 100
+- enabled: true
+  id: cerberus
+  key_hash: sha256:<64-hex>          # plaintext keys are never stored here
+  permissions:
+    feeds: [bars, quotes, trades, flow]
+    providers: [alpaca, uw, yfinance, finnhub, alphavantage, sec]
+    max_symbols: 1000
+    rate_limit: 600                  # overrides GATEWAY_RATE_LIMIT_DEFAULT
+    trading: true                    # fine-grained trading capability
+  role: trader
+- enabled: true
+  id: orion
+  key_hash: sha256:<64-hex>
+  old_key_hashes: []                 # rotation support — old hashes stay valid during rollover
+  # ...
+- enabled: true
+  id: test
+  key: gw_test_dev_key_67890         # dev-only plaintext key
+  permissions:
+    feeds: [bars, quotes]
+    providers: [alpaca]
+    max_symbols: 100
+    rate_limit: 60
 ```
+
+- `trading: true` gates order-placement routes (cerberus, 3roses, orion, kairos, drogon have it).
+- Client ids also become order-ownership prefixes (`c-<client_id>-...`); ids that would prefix-collide with an existing client are rejected at startup.
+- Account-wide flatten (`DELETE /orders`, `DELETE /positions`) additionally requires the `super_admin` role.
 
 ### Key management CLI
 ```bash
@@ -324,6 +363,7 @@ Consumed by `scripts/perf_gate.py` in CI (`.github/workflows/perf-guardrail.yml`
 
 - **Baseline:** historical measurement, used to compute regressions.
 - **Budgets:** absolute limits per operation (e.g. envelope-wrap latency, stream-fanout time).
+- CI prefers the per-branch cached `.perf/perf_budgets.active.json` / `.perf/perf_baseline.active.json` over the static files; `scripts/merge_static_budgets.py` merges explicit static raises into the active set (the ratchet otherwise only tightens).
 
 Manage with:
 ```bash
@@ -367,9 +407,15 @@ Retention: 14 days by default. Override with `EMPIRE_LOG_DIR`.
 | Service | Container | Port | Purpose |
 |---------|-----------|------|---------|
 | `gateway` | `data-gateway` | 8080 | FastAPI app |
-| `redis` | `data-gateway-redis` | 6379 | Cache + sink + dedup + audit ring |
+| `redis` | `data-gateway-redis` | 6379 (bound `127.0.0.1` only) | Cache + sink + dedup + audit ring |
 
 Environment variables are passed through from the host `.env`. See [deployment-guide.md](deployment-guide.md) for the build context (must be the monorepo root, not the repo root).
+
+**Redis durability & memory** (`redis-server` command flags in compose): RDB snapshots off (`--save ""`), **AOF on** (`--appendonly yes --appendfsync everysec` — added 2026-07-19 after a power outage restarted Redis empty), data persisted in the named volume `data-gateway-redis-data`, `--maxmemory 4gb --maxmemory-policy volatile-lru` (TTL'd cache/dedup keys are evictable; the persistent heber streams and consumer groups are not — at-cap writes error into the sink failover buffer instead of silently evicting). The instance is unauthenticated, hence the localhost-only bind.
+
+**Compose overrides vs code defaults:** `GATEWAY_DATA_SINK_MAX_STREAM_LEN=500000`, `GATEWAY_DATA_SINK_WORKER_COUNT=32`, `GATEWAY_DATA_SINK_REDIS_POOL_SIZE=64`, `EMPIRE_LOG_BACKUP_COUNT=30`, `GATEWAY_UW_EOD_ENABLED=true`, option capture on for SPY/QQQ/IWM at 300s.
+
+**Bind mounts:** `./gateway`, `./config`, and `./logs` are live-mounted into the container — committed code changes do **not** take effect until a restart. Use `scripts/deploy.sh` (restart) or `scripts/deploy.sh --build` / `make deploy` to apply them; the script polls the healthcheck and prints the deployed git SHA.
 
 ---
 
@@ -379,7 +425,7 @@ Environment variables are passed through from the host `.env`. See [deployment-g
 |---------|----------|
 | **Local dev** | `GATEWAY_DEBUG=true`, `GATEWAY_ALLOW_STUB_DATA=true`, `GATEWAY_DATA_SINK_ENABLED=false` |
 | **Staging** | `GATEWAY_DEBUG=false`, `GATEWAY_DATA_SINK_ENABLED=true`, real provider keys, paper-trading Alpaca base URL |
-| **Production** | All of staging + `GATEWAY_LOG_LEVEL=INFO`, `EMPIRE_LOG_FORMAT=json`, live Alpaca base URL, `GATEWAY_UW_EOD_ENABLED=true`, `GATEWAY_QUOTES_POLLER_ENABLED=true`, `GATEWAY_WS_FLOW_FANOUT_ENABLED=true` |
+| **Production** | All of staging + `EMPIRE_LOG_LEVEL=INFO`, `EMPIRE_LOG_FORMAT=json`, live Alpaca base URL + `GATEWAY_ALLOW_LIVE_TRADING=true`, `GATEWAY_UW_EOD_ENABLED=true`, `GATEWAY_QUOTES_POLLER_ENABLED=true`, `GATEWAY_WS_FLOW_FANOUT_ENABLED=true` |
 
 ---
 

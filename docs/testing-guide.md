@@ -12,8 +12,8 @@ How to run, organize, and write tests for Data-Gateway. For perf-gate / CI speci
 # First time / after lock-file changes
 make setup                      # uv sync --extra local --extra dev
 
-# Unit tests only (fast, no I/O, no network)
-make test                       # uv run pytest -m unit --tb=short -q
+# Fast tests (excludes perf + integration)
+make test                       # uv run pytest -m "not perf and not integration" --tb=short -q
 
 # Everything except perf (the default)
 uv run pytest
@@ -23,6 +23,9 @@ uv run pytest tests/test_envelope.py
 
 # Single test by name
 uv run pytest -k "test_event_id_dedup"
+
+# Integration tests (need a reachable Redis — see section 7)
+uv run pytest -m integration tests/integration
 
 # Performance benchmarks (excluded by default)
 uv run pytest -m perf
@@ -39,18 +42,24 @@ uv run pytest --cov=gateway --cov-report=term-missing
 
 ```
 tests/
-├── conftest.py                 # Shared fixtures (TestClient, mocked providers, test API key)
-├── fixtures/                   # Static JSON fixtures of provider responses
-├── generate_fixtures.py        # Refresh fixtures from live providers
-├── smoke/                      # Live-provider smoke tests (gated, manual / nightly CI)
+├── conftest.py                 # Shared fixtures (TestClient, mocked registry, test API key, real-Redis fixtures)
+├── fixtures/                   # 13 static fixtures — 11 JSON (bars/quotes/trades, option chains, UW flow) + 2 symbol lists (.txt)
+├── generate_fixtures.py        # Regenerate the synthetic fixtures
+├── smoke/                      # Fast post-deploy smoke tests (run in CI and the pre-push gate)
+├── integration/                # Real-Redis sink tests, marker `integration` (skipped when Redis unreachable)
 ├── perf/                       # Benchmark tests, marker `perf`, excluded by default
-└── test_*.py                   # ~120 unit + integration tests, grouped by router or core module
+└── test_*.py                   # 130 test files (~1,435 test functions; more collected via parametrize), grouped by router or core module
 ```
 
 Test file naming convention:
 - `test_<provider>_<concern>_router.py` — router-level tests (`test_alpaca_stock_router.py`, `test_finnhub_news_router.py`, …)
 - `test_<provider>_provider.py` — provider adapter tests
 - `test_<core_module>.py` — core infrastructure tests (`test_envelope.py`, `test_circuit_breaker.py`, `test_cache.py`, …)
+
+Suites with special status:
+- `test_envelope_heber_contract.py` — the Gateway → Heber wire-contract suite; CI re-runs it on its own step for legible failures, and it is part of the pre-push gate.
+- `test_alpaca_trading_router.py` / `test_alpaca_trading_provider_methods.py` — money-path suites; CI enforces per-file coverage floors on the code they cover (see section 10), and both run in the pre-push gate.
+- Newer core modules have matching suites: `test_flow_fanout.py`, `test_flow_replay.py`, `test_loop_watchdog.py`, `test_websocket_flow_routing.py`, `test_uw_backfill_driver_days.py`.
 
 ---
 
@@ -61,10 +70,10 @@ Declared in `pyproject.toml`:
 | Marker | Definition | When to use |
 |--------|------------|-------------|
 | `unit` | Fast, isolated, no I/O or network | Default for pure-function and mocked tests |
-| `integration` | Real DB / file I/O / component interactions | When the test touches more than one core module |
+| `integration` | Real DB / file I/O / component interactions | `tests/integration/` (real-Redis sink tests); excluded from `make test` |
 | `e2e` | Full system flow | Smoke flows that exercise startup → request → sink → shutdown |
 | `slow` | Tests > 1s | Long-running tests excluded by default |
-| `perf` | Benchmark / performance tests | Excluded by default via `addopts = "-m 'not perf'"` |
+| `perf` | Benchmark / performance tests | Excluded by default via `addopts` (`-m 'not perf'`) |
 
 Apply with `@pytest.mark.<marker>` or via the `pytestmark = pytest.mark.<marker>` module-level convention.
 
@@ -79,12 +88,13 @@ From `pyproject.toml`:
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "-v --tb=short -m 'not perf'"
+addopts = "-v --tb=short -m 'not perf' --timeout=60"
 ```
 
 - `asyncio_mode = "auto"` — write `async def test_*` without `@pytest.mark.asyncio`.
 - `asyncio_default_fixture_loop_scope = "function"` — each test gets its own event loop (prevents fixture bleed).
 - `addopts` excludes `perf` by default and uses short tracebacks.
+- `--timeout=60` (pytest-timeout) — any single test that hangs (e.g. a broken production timeout) is killed after 60s instead of stalling the run.
 
 ---
 
@@ -92,11 +102,12 @@ addopts = "-v --tb=short -m 'not perf'"
 
 The canonical fixtures live in `tests/conftest.py`. Highlights:
 
-- **`client`** — FastAPI `TestClient(app)` with mocked provider registry.
-- **`async_client`** — `httpx.AsyncClient` against the same app.
+- **`client`** — FastAPI `TestClient(app)`.
+- **`override_deps`** (autouse) — swaps in test settings / authenticator / cache / connection manager / registry via `app.dependency_overrides`, and nulls the sink registry and stream multiplexer so tests never publish to a real Redis stream or dial upstream Alpaca.
+- **`test_registry`** — `MagicMock` provider registry returning an `AsyncMock` provider (`get_bars`, `get_quote`, `get_chain` stubbed; `get_calendar` is a plain `MagicMock` because it's called via `asyncio.to_thread`).
 - **`test_api_key`** — the `test` client key from `config/clients.yaml`. Pre-built `auth_headers` fixture wraps it as `{"X-Gateway-Key": ...}`.
-- **Provider mocks** — `MockAlpacaProvider`, etc., implementing `DataProvider`. Returns deterministic fixture data from `tests/fixtures/`.
-- **`redis_mock`** — `fakeredis` instance for cache / dedup / sink tests.
+- **Data fixtures** — deterministic JSON loaded from `tests/fixtures/`: `valid_bars`, `invalid_bars`, `valid_quotes`, `valid_trades`, `option_chains`, `uw_flow_samples`, `symbols_1000`, `symbols_5000`, `invalid_high_low`, `crossed_quote`.
+- **Real-Redis fixtures** — `redis_probe` / `redis_sink` / `redis_cache` connect to `GATEWAY_TEST_REDIS_URL` (default `redis://localhost:6379/15`), flush DB 15 before and after each test, and skip the test when no Redis is reachable.
 
 ```python
 async def test_alpaca_bars_returns_envelope(client, auth_headers):
@@ -112,31 +123,47 @@ async def test_alpaca_bars_returns_envelope(client, auth_headers):
 
 ---
 
-## 6. Smoke Tests (Live Providers)
+## 6. Smoke Tests
 
-`tests/smoke/` exercises real providers. **Not** run by default — they need real API keys and provider availability.
+`tests/smoke/test_smoke.py` — 13 fast post-deploy checks (health, readiness, auth) against the in-process `TestClient`; no live keys required. They run as part of the default suite, in the pre-push gate, and in `.github/workflows/release-readiness.yml` (with `--timeout=10`).
 
 ```bash
-# Local (requires .env populated with real keys)
 uv run pytest tests/smoke -v
+```
 
-# Via the dedicated harness with structured output
+**Live-provider** smoke is a separate, manual harness that exercises real providers (requires `.env` populated with real keys):
+
+```bash
 python scripts/live_provider_smoke.py
 ```
 
-`scripts/live_provider_smoke.py` produces a structured report consumed by the CI workflow in `.github/workflows/release-readiness.yml`. Historical reports are checked into `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md`.
+Historical reports are checked into `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md` (checklist in `docs/audits/LIVE_PROVIDER_SMOKE_CHECKLIST.md`).
 
 ---
 
-## 7. Performance Tests
+## 7. Integration Tests (Real Redis)
 
-`tests/perf/` contains benchmark tests (marker: `perf`).
+`tests/integration/test_redis_sink_integration.py` runs 6 tests against a **real** Redis: publish → `XLEN`, `publish_batch` pipelining, dedup `SET NX` first-wins + TTL, and failed-event buffer fill → evict → drain. Marked `integration`; skipped gracefully when Redis is unreachable.
+
+```bash
+uv run pytest -m integration tests/integration
+```
+
+- URL comes from `GATEWAY_TEST_REDIS_URL` (default `redis://localhost:6379/15`, defined as `DEFAULT_TEST_REDIS_URL` in `tests/conftest.py`).
+- **DB 15 is reserved for tests** and flushed before/after each test by the `redis_probe`/`redis_sink` fixtures — never point the var at a production DB.
+- CI runs these in a dedicated `integration-tests` job with a `redis:7` service container.
+
+---
+
+## 8. Performance Tests
+
+`tests/perf/` contains benchmark tests (marker: `perf`, 8 tests across `test_perf_baseline.py`, `test_perf_stream_sink.py`, `test_perf_replay_bulk_memory.py`).
 
 ```bash
 uv run pytest -m perf
 ```
 
-CI runs them via `scripts/perf_gate.py` (`.github/workflows/perf-guardrail.yml`):
+CI runs them via `scripts/perf_gate.py` (`.github/workflows/perf-guardrail.yml`). The workflow restores a per-branch `.perf` history cache, merges explicit static-budget raises via `scripts/merge_static_budgets.py` (the ratchet only tightens), and prefers `.perf/perf_budgets.active.json` / `.perf/perf_baseline.active.json` over the static config files when present:
 
 ```bash
 python scripts/perf_gate.py \
@@ -148,29 +175,30 @@ python scripts/perf_gate.py \
 ```
 
 - **Budgets** live in `config/perf_budgets.json`.
-- **Baselines** live in `config/perf_baseline.json` — managed via `scripts/perf_baseline_manager.py`.
+- **Baselines** live in `config/perf_baseline.json` — managed via `scripts/perf_baseline_manager.py` (run after the gate to refresh history/budgets/baseline).
 - **Promotion** of new baselines: `scripts/perf_promote_active_configs.py`.
 - **Release readiness**: `scripts/perf_release_readiness.py` + `docs/audits/PERF_RELEASE_READINESS.md`.
+- Perf artifacts are uploaded with 14-day retention.
 
 ---
 
-## 8. Fixture Generation
+## 9. Fixture Generation
 
-`tests/generate_fixtures.py` re-pulls live provider responses and writes them to `tests/fixtures/`. Run only when:
+`tests/generate_fixtures.py` generates **synthetic** mock data (random-walk bars, quotes, trades, option chains, plus invalid/edge-case records like crossed quotes and extreme prices) per the PRD's test-data requirements — it does not call live providers. Run only when:
 
-- a provider changes its response schema
+- a schema change requires new fixture fields
 - you're adding a new feed or endpoint
-- a fixture has gone stale (e.g. references a delisted symbol)
+- a fixture has gone stale
 
 ```bash
-uv run python tests/generate_fixtures.py --provider alpaca --endpoint bars
+uv run python tests/generate_fixtures.py   # regenerates everything in tests/fixtures/ (no CLI flags)
 ```
 
 Commit the regenerated fixtures alongside the code change that motivated them.
 
 ---
 
-## 9. Coverage
+## 10. Coverage
 
 ```bash
 uv run pytest --cov=gateway --cov-report=term-missing
@@ -182,48 +210,62 @@ Coverage config (`pyproject.toml [tool.coverage.*]`):
 - omits: `tests/*`, `scripts/*`, `*/__init__.py`
 - excludes lines like `if __name__ == .__main__.:`, `raise NotImplementedError`, `if TYPE_CHECKING:`
 
-There is no enforced coverage threshold — coverage is a directional signal, not a gate.
+Coverage **is** enforced:
+
+- **Global gate**: `fail_under = 58` (~3 points below the 60.8% measured 2026-06-26 — ratchet it up as coverage grows, never lower it).
+- **Money-path per-file floors** (CI, from the full-suite `.coverage`): `gateway/api/alpaca/trading.py` ≥ 88%, `gateway/providers/alpaca/trading.py` ≥ 95%. Floors are measured-at-introduction minus 2 points; raise them as tests land, never lower without sign-off.
 
 ---
 
-## 10. Pre-Commit
+## 11. Pre-Commit & Pre-Push
 
 `.pre-commit-config.yaml` runs on every commit:
 
 ```bash
-pre-commit install                 # first time
+make install-hooks                 # pre-commit install + pre-commit install --hook-type pre-push
 pre-commit run --all-files         # ad-hoc
 ```
 
-Hooks include `ruff`, `ruff-format`, `detect-secrets`, plus a check that `PROVIDER_ENDPOINT_CONTRACT.md` is in sync with the live routes (`scripts/generate_provider_contract.py --check`).
+Commit-stage hooks include `ruff`, `ruff-format`, `detect-secrets`, plus a check that `PROVIDER_ENDPOINT_CONTRACT.md` is in sync with the live routes (`scripts/generate_provider_contract.py --check`).
+
+**Pre-push gate** (`.githooks/pre-push`, run via pre-commit's pre-push stage): the repo is private on the free GitHub plan, so there is no server-side branch protection — this hook is the only mechanical gate before code reaches the remote. It runs:
+
+1. `ruff check .` and `ruff format --check .`
+2. `uv lock --check` — the real lockfile-freshness check (only works inside the monorepo, so CI can't run it)
+3. Fast tests with `--timeout=60` over 7 files: `test_auth.py`, `smoke/test_smoke.py`, `test_api_integration.py`, `test_websocket.py`, `test_envelope_heber_contract.py`, `test_alpaca_trading_router.py`, `test_alpaca_trading_provider_methods.py`
+
+Bypass in a pinch with `git push --no-verify`.
 
 ---
 
-## 11. Common Patterns
+## 12. Common Patterns
 
 ### Mocking an outbound HTTP call
-Use `httpx.MockTransport` or `respx`:
+Use `httpx.MockTransport` (see `tests/test_massive_provider.py` for a full example):
 ```python
 from httpx import MockTransport, Response
 
-async def test_with_mocked_finnhub(client, auth_headers, monkeypatch):
-    def handler(request):
-        return Response(200, json={"c": 150.25, "h": 151.0, "l": 149.5, ...})
+def handler(request):
+    return Response(200, json={"c": 150.25, "h": 151.0, "l": 149.5})
 
-    transport = MockTransport(handler)
-    # inject via the http_client factory
+transport = MockTransport(handler)
+# inject via the provider's client / the http_client factory
 ```
 
-### Asserting an `EventEnvelope` was sunk
-Use the `mock_sink` fixture (records every `publish_all` call):
+### Asserting an `EventEnvelope` was published
+The poller tests define a local `mock_sink_registry` fixture (an `AsyncMock` with `publish_all`) and assert on the recorded calls (see `tests/test_treasury_poller.py`):
 ```python
-async def test_stream_event_reaches_sink(client, mock_sink):
-    # ... trigger a stream event ...
-    assert len(mock_sink.published) == 1
-    env = mock_sink.published[0]
-    assert env.provider == "alpaca"
-    assert env.feed == "stock_bars"
-    assert env.instrument_key == "equity:AAPL"
+@pytest.fixture
+def mock_sink_registry():
+    sink = AsyncMock()
+    sink.publish_all = AsyncMock()
+    return sink
+
+async def test_publish_envelopes(poller, mock_provider, mock_sink_registry):
+    poller._provider = mock_provider
+    await poller._poll_and_publish(mock_sink_registry)
+    assert mock_sink_registry.publish_all.call_count == 2
+    topic = mock_sink_registry.publish_all.call_args_list[0].args[0]
 ```
 
 ### Testing the circuit breaker
@@ -231,11 +273,13 @@ Force the breaker open by calling `cb.record_failure()` repeatedly, then assert 
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 | Symptom | Cause / Fix |
 |---------|-------------|
 | `ImportError: empire_core` | Ran `uv sync` without `--extra local`. Re-run `make setup`. |
+| `Failed: Timeout >60.0s` | pytest-timeout killed a hanging test (`--timeout=60` in `addopts`). Fix the hang; don't raise the cap. |
+| Integration tests skipped | No Redis reachable at `GATEWAY_TEST_REDIS_URL` (default `redis://localhost:6379/15`). Start the compose Redis or point the var at another instance. |
 | `RuntimeError: This event loop is already running` | A sync fixture is awaiting an async resource. Mark the fixture `async` or use `asyncio_default_fixture_loop_scope`. |
 | Test hangs on shutdown | A background task wasn't tracked; `ShutdownCoordinator` is waiting. Add the task to the coordinator's set. |
 | `401 Unauthorized` in tests | Missing `auth_headers` fixture. The `test` client must be enabled in `config/clients.yaml`. |
@@ -243,7 +287,7 @@ Force the breaker open by calling `cb.record_failure()` repeatedly, then assert 
 
 ---
 
-## 13. Related Documents
+## 14. Related Documents
 
 - [project-overview-pdr.md](project-overview-pdr.md)
 - [codebase-summary.md](codebase-summary.md)

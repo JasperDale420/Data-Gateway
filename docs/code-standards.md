@@ -11,10 +11,12 @@ Conventions enforced in this repo, on top of the monorepo-wide standards in `/Us
 | Tool | Config | Notes |
 |------|--------|-------|
 | **ruff** | `pyproject.toml [tool.ruff]` | Inlined (not extending `ruff-base.toml`) because CI checks out this repo standalone. `target-version = "py312"`, `line-length = 120`. |
-| **mypy** | `pyproject.toml [tool.mypy]` | `python_version = "3.12"`, `check_untyped_defs = true`, `pydantic.mypy` plugin. Per-module overrides relax legacy modules. |
-| **pyright** | `pyproject.toml [tool.pyright]` | `typeCheckingMode = "basic"` |
+| **mypy** | `pyproject.toml [tool.mypy]` | `python_version = "3.12"`, `check_untyped_defs = true`, `pydantic.mypy` plugin. Per-module overrides relax legacy modules. CI gate: any file with mypy errors **not** listed in `ci/mypy_dirty_allowlist.txt` fails the build — shrink the allowlist over time, never grow it without PR justification. |
+| **pyright** | `pyproject.toml [tool.pyright]` | `typeCheckingMode = "basic"` (kept alongside mypy) |
 | **bandit** | `pyproject.toml [tool.bandit]` | Skips: B101, B104, B110, B311, B324. See `pyproject.toml` for rationale on each. |
-| **pre-commit** | `.pre-commit-config.yaml` | `ruff`, `ruff-format`, `detect-secrets`, more. Run `pre-commit install` after first clone. |
+| **semgrep** | `.semgrep/empire-rules.yaml` | Blocking in CI (`--error`, pinned `semgrep==1.157.0`) over `gateway/` and `tests/`. Two rules (`empire-no-bare-exception`, `empire-no-return-none-for-failure`) are excluded while their grandfathered findings are cleared. |
+| **pre-commit** | `.pre-commit-config.yaml` | `ruff`, `ruff-format`, `detect-secrets`, more. Run `make install-hooks` after first clone (installs pre-commit **and** the pre-push stage). |
+| **pre-push gate** | `.githooks/pre-push` | `ruff check` → `ruff format --check` → `uv lock --check` → fast test subset (auth, smoke, API integration, websocket, Heber envelope contract, Alpaca money-path). The repo has no server-side branch protection (free plan), so this hook is the only mechanical gate before code reaches the remote. |
 | **detect-secrets** | `.secrets.baseline` | Maintained baseline; update if a real change is needed. |
 | **import-linter** | `.importlinter` | Layered contracts; run `lint-imports` to verify. |
 | **markdownlint** | `.markdownlintignore` | Excludes auto-generated docs. |
@@ -42,6 +44,7 @@ ignore = [B007, B008, B027, B904, E402, E501, N817, N818, SIM102, SIM103, SIM105
 ### 2.3  Settings
 - All config goes through `gateway/config.py` (`Settings(BaseSettings)` with `GATEWAY_` env prefix).
 - Never read `os.environ` directly in business code — add a field to `Settings` and inject via `get_settings()`.
+- Known exceptions: `GATEWAY_BACKFILL_STREAM` (default `heber:events:backfill`) is env-only, read via `os.environ` in both `gateway/core/redis_sink.py` and `gateway/core/backfill.py`; `GATEWAY_BACKFILL_STREAM_MAX_LEN` (default `1000000`) is env-only, read in `gateway/core/redis_sink.py` only. Do not add new env-only vars without a similar cross-module reason.
 
 ### 2.4  HTTP client
 - Use `gateway/core/http_client.py` factories — never construct `httpx.Client` / `AsyncClient` directly.
@@ -55,13 +58,13 @@ ignore = [B007, B008, B027, B904, E402, E501, N817, N818, SIM102, SIM103, SIM105
   ```
 - The shim delegates to `empire_core.logger.setup_logging("data-gateway")`. **Never** call `structlog.configure()` or `logging.basicConfig()` directly.
 - Event names are `snake_case` verbs/nouns (`order_placed`, `stream_reconnect`, `circuit_opened`).
-- Use `log_error(logger, exc, "operation", **ctx)` for exception logging — it extracts `GatewayError` fields and includes traceback.
+- Use `log_error(logger, exc, "operation", **ctx)` for exception logging — it extracts `EmpireError` fields (`error_code`, `details` from `empire_core.errors.EmpireError`) and includes traceback.
 - Trace propagation: `bind_context(trace_id=…, correlation_id=…)` / `clear_context()`.
 
 ### 2.6  Errors
-- Use `gateway.core.errors.GatewayError` subclasses, **not** bare `Exception`.
+- Raise **specific exception types**, not bare `Exception`. There is no repo-wide `GatewayError` base — modules define their own narrow types (e.g. `CircuitOpenError` in `gateway/core/circuit_breaker.py`, `RateLimitExceeded` in `gateway/core/rate_limiter.py`, `EnvelopeWrapError` in `gateway/core/envelope.py`, `MassivePaginationLimitError` in `gateway/providers/massive.py`). Services needing coded exceptions use `empire_core.errors.EmpireError`.
 - Error code convention: `GW-{E|W|I}{NNNN}`. E = error, W = warning, I = info. Examples: `GW-E1011` (provider circuit opened), `GW-W1013` (sink circuit opened).
-- API errors serialize to `{"success": false, "error": {"code": "...", "message": "...", "details": {...}}}` (see `gateway/api/errors.py`).
+- API errors serialize to `{"success": false, "error": {"code": "...", "message": "...", "details": {...}}}` — `gateway/api/errors.py` normalizes `HTTPException` payloads into this envelope (it defines no exception classes of its own).
 - 4xx upstream errors → `logger.warning`, 5xx → `logger.error`. The split lives in `gateway/api/alpaca/common.py::execute_alpaca_provider_call` and mirrors at the provider layer in `gateway/providers/alpaca/market.py`.
 
 ### 2.7  Circuit breakers
@@ -82,6 +85,7 @@ ignore = [B007, B008, B027, B904, E402, E501, N817, N818, SIM102, SIM103, SIM105
   - `crypto:BTC-USD`
   - `forex:EUR-USD`
 - **`_infer_instrument_type` gotcha:** any payload with `strike` or `expiry` is flagged `instrument_type=option`. For *per-underlying analytics that include an expiry* (e.g. `iv_term_structure`), this is wrong and Heber rejects 100% of the records. When adding such a poller, pass `instrument_type_override="equity"` and `instrument_key_override=f"equity:{ticker.upper()}"` to `wrap_event()`. See `_poll_eod_iv_term_structure` in `gateway/core/uw_poller.py` for the reference example.
+- **`FEED_UNIQUE_FIELDS` discipline:** every feed must declare the payload fields that make a row unique (32 feeds currently). Missing a per-row field causes silent `event_id` collisions and rows collapsing in Heber Bronze — `insider_trades` needed `id` (200 rows → ~2), `iv_term_structure` needed `expiry` (its payload has no timestamp, so `ts_event=now()` collided across expiries). When adding a feed, add its unique fields at the same time.
 
 ---
 
@@ -106,29 +110,33 @@ Do not reorder without understanding the impact (e.g. moving Cache before RateLi
 
 - Streaming events reach the sink via **one** code path: `StreamMultiplexer(on_envelope=_on_stream_envelope)` in `gateway/main.py`.
 - The `_on_stream_envelope` callback awaits `registry.publish_all(...)` **inline**; the registry's bounded queue is the only gate.
-- **Never** add a second sink-publish call from a fanout path — this is what caused the historical "zero `source:stream` events to Heber" incident.
-- Backpressure is propagated as latency, not data loss. A drop only happens after the producer-block timeout (default 0.1s) on a full queue. Drops surface as `gateway_sink_producer_timeout_drops_total{sink}` and a CRITICAL log; the `SinkProducerTimeoutDrops` Prometheus alert fires on any non-zero rate.
-- Sink failed-event buffer is a bounded `deque(maxlen=10_000)`. Eviction = silent data loss; monitored by `gateway_sink_buffer_evictions_total{sink}` and `SinkBufferEvictionsActive`.
+- **Never** add a second sink-publish call from a fanout path — this is what caused the historical "zero `source:stream` events to Heber" incident. `FlowFanout` (`gateway/core/flow_fanout.py`, WS flow-alert delivery) is not a second publish path: it delivers the *already-published* envelope to WebSocket clients after sink publish, byte-identical (same `event_id`) so push/poll duplicates collapse downstream.
+- Backpressure is propagated as latency, not data loss. On producer-block timeout (default 0.1s, full queue) the event is **spilled to the sink's failover buffer** (`sink.buffer_event()` + `sink.schedule_drain()`) — logged WARNING with `spilled_to_buffer=True`, recoverable. True loss only occurs if the buffer refuses the event: CRITICAL log + `producer_timeout_loss` stat (`record_sink_producer_timeout_loss`) alongside `dropped_producer_timeout`.
+- Sink failed-event buffer capacity is settings-tunable via `GATEWAY_DATA_SINK_FAILED_BUFFER_CAPACITY` (default 50,000). Eviction = silent data loss; monitored by `gateway_sink_buffer_evictions_total{sink}` and `SinkBufferEvictionsActive`.
+- **Backfill stream isolation:** the backfill engine and the UW EOD per-ticker feeds publish to the dedicated `heber:events:backfill` stream (`GATEWAY_BACKFILL_STREAM`) with its own MAXLEN cap (`GATEWAY_BACKFILL_STREAM_MAX_LEN`, default 1,000,000) — never to live `heber:events` (a 2026-07-19 976K-record backfill overran the shared cap and self-evicted unread live UW feeds). Live 5-min feeds (flow_alerts, darkpool, tides) stay on `heber:events`.
 
 ---
 
 ## 6. Testing Conventions
 
 - pytest markers: `unit`, `integration`, `e2e`, `slow`, `perf` (declared in `pyproject.toml`).
-- `asyncio_mode = "auto"` — `async def test_*` works without `@pytest.mark.asyncio`.
+- `asyncio_mode = "auto"` — `async def test_*` works without `@pytest.mark.asyncio`. `addopts` also applies a per-test `--timeout=60`.
 - Use `TestClient(app)` from `tests/conftest.py` for HTTP; mock providers via the fixtures there.
 - Live-provider tests live in `tests/smoke/` and are gated behind environment variables — never run them in default unit-test runs.
 - Performance tests (`tests/perf/`) are marker-excluded by default (`addopts = "-m 'not perf'"`). Run with `pytest -m perf`.
+- Integration tests (`tests/integration/`) run against a **real Redis** — URL from `GATEWAY_TEST_REDIS_URL` (default `redis://localhost:6379/15`; DB 15 is flushed around each test) — and skip gracefully when Redis is unreachable. CI runs them in a `redis:7` service container. `make test` excludes both `perf` and `integration`.
+- Coverage: overall `fail_under = 58`; CI additionally enforces per-file money-path floors — `gateway/api/alpaca/trading.py` ≥ 88, `gateway/providers/alpaca/trading.py` ≥ 95. Floors are a ratchet: raise as tests land, never lower without sign-off.
+- The Heber wire-contract suite (`tests/test_envelope_heber_contract.py`) gets its own named CI step and runs in the pre-push gate — keep it green before touching envelope/sink code.
 - Default test API key (`test` client) is loaded from `config/clients.yaml`.
 
 ---
 
 ## 7. Configuration Files
 
-- All `GATEWAY_*` env vars are documented in `.env.example` and `gateway/config.py`. Adding a new field requires updating both.
-- Provider API keys use provider-specific prefixes, **not** `GATEWAY_` (`APCA_API_KEY_ID`, `UNUSUAL_WHALES_API_KEY`, …) for SDK compatibility.
-- `config/clients.yaml`: never check in real keys; the committed file uses placeholder keys. Real keys live in deployment secrets.
-- `config/providers.yaml`: changing priority/capabilities affects routing — coordinate with downstream service owners.
+- All `GATEWAY_*` env vars are documented in `.env.example` and `gateway/config.py`. Adding a new field requires updating both. (Exception: the env-only backfill-stream vars in §2.3 live outside `Settings`.)
+- Provider API keys use provider-specific prefixes, **not** `GATEWAY_` (`APCA_API_KEY_ID`, `UNUSUAL_WHALES_API_KEY`, `MASSIVE_API_KEY`, …) for SDK compatibility.
+- `config/clients.yaml`: client keys are stored as sha256 `key_hash` values — never check in plaintext key material (the only plaintext key is the `test` dev client's). Real keys live in deployment secrets.
+- `config/providers.yaml`: changing priority/capabilities affects routing — coordinate with downstream service owners. Providers marked `required: true` abort startup on load/init failure when `GATEWAY_DEBUG=false`.
 
 ---
 
@@ -145,8 +153,11 @@ Do not reorder without understanding the impact (e.g. moving Cache before RateLi
 
 - API keys: never log full keys. Use `key_prefix=key[:8]` if you need to identify which key in audit logs.
 - Audit-worthy events (auth success/failure, key creation/rotation/revocation, admin actions, IP blocks) go through `AuditLogger`, not the regular structured logger. See [AUDIT_LOGGING.md](AUDIT_LOGGING.md).
-- Alpaca trading writes auto-mint a `dg-<uuid>` `client_order_id` when the caller doesn't supply one — **do not** remove or weaken this without explicit permission. It is the only thing preventing double-placement on retry after a 504.
+- Alpaca trading writes auto-mint an ownership-prefixed `c-<client_id>-dg-<uuid>` `client_order_id` when the caller doesn't supply one; caller-supplied IDs get the same `c-<client_id>-` prefix applied (foreign prefixes rejected, Alpaca's 128-char ceiling enforced). The full prefixed ID is returned in `meta.client_order_id` **and** in the 504 timeout detail so a retry can never double-place. **Do not** remove or weaken this without explicit permission.
+- Live trading is double-gated: `GATEWAY_ALLOW_LIVE_TRADING` (default `false`) **and** a recognized live `APCA_API_BASE_URL` are both required. Paper mode is the fail-safe default — never invert this.
+- Account-wide flatten (`DELETE /orders`, `DELETE /positions`) requires the `super_admin` role.
 - Stub data is **disabled** by default (`GATEWAY_ALLOW_STUB_DATA=false`). Endpoints that have no real loader return `501 Not Implemented` rather than silently returning fake data. Only enable in fixture-generation or local-dev modes.
+- Interpolating user input into upstream UW URLs must URL-encode path segments (SSRF guard) — follow the existing pattern in `gateway/providers/uw/`.
 
 ---
 
@@ -156,13 +167,15 @@ Do not reorder without understanding the impact (e.g. moving Cache before RateLi
 |---------|----------------|
 | Creating `httpx.Client` directly | Bypasses shared retry, timeout, logging |
 | Calling `structlog.configure()` | Breaks `empire_core.logger` correlation-id propagation |
-| Catching bare `Exception` | Hides genuine bugs; use specific `GatewayError` subclasses |
+| Catching bare `Exception` | Hides genuine bugs; use specific exception types (`CircuitOpenError`, `RateLimitExceeded`, …) |
 | Returning `None` to indicate failure | Raise an error with details instead |
 | Adding `os.environ.get(...)` in business code | Add a field to `Settings` |
 | Publishing to the sink outside `_on_stream_envelope` | Re-introduces the duplicate-path bug |
 | Using `_infer_instrument_type` defaults for per-underlying analytics with expiry | Heber rejects all records — pass `instrument_type_override="equity"` |
+| Adding a feed without updating `FEED_UNIQUE_FIELDS` | Silent `event_id` collisions collapse rows in Heber Bronze |
+| Publishing bulk backfill/EOD data to live `heber:events` | Overruns the shared MAXLEN cap and evicts unread live events — use the `heber:events:backfill` topic |
 | `uv sync` without `--extra local` | Uninstalls `empire-core`, `empire-schemas`, vendored UW SDK; gateway fails to import |
-| Removing the `dg-<uuid>` auto-mint in Alpaca writes | Loses 504-retry safety |
+| Removing the `c-<client_id>-dg-<uuid>` auto-mint/ownership prefix in Alpaca writes | Loses 504-retry safety and cross-client order isolation |
 
 ---
 

@@ -67,7 +67,26 @@ Services started:
 | Service   | Container             | Port  | Purpose                       |
 |-----------|-----------------------|-------|-------------------------------|
 | `gateway` | `data-gateway`        | 8080  | FastAPI application           |
-| `redis`   | `data-gateway-redis`  | 6379  | Cache + sink + dedup store    |
+| `redis`   | `data-gateway-redis`  | 6379 (bound to `127.0.0.1` only) | Cache + sink + dedup store    |
+
+Compose specifics:
+
+- `gateway` bind-mounts `./gateway` (source), `./config`, and `./logs` into the container. Committed code changes do **not** take effect until the container restarts — see *Deploying changes* below.
+- `redis` binds to `127.0.0.1:6379` only (the instance is unauthenticated); containers reach it via `host.docker.internal`.
+- Redis persistence: AOF enabled (`--appendonly yes --appendfsync everysec`) with named volume `data-gateway-redis-data` — RDB-only setups came back empty after the 2026-07-12 power outage.
+- Redis memory: `--maxmemory 4gb --maxmemory-policy volatile-lru` — TTL'd cache/dedup keys are evictable; the `heber:events*` streams and consumer groups are not. At-cap writes error into the sink failover buffer instead of silently evicting.
+- Backfill publishes route to a dedicated stream `heber:events:backfill` (`GATEWAY_BACKFILL_STREAM`) with its own MAXLEN cap (`GATEWAY_BACKFILL_STREAM_MAX_LEN`, default 1,000,000), separate from the live-stream cap — a 976K-record backfill once overran the shared cap and self-evicted un-read UW feeds.
+
+### Deploying changes (compose)
+
+Because source is bind-mounted, a restart is required to pick up committed changes:
+
+```bash
+make deploy                  # scripts/deploy.sh → docker compose restart gateway
+BUILD=1 make deploy          # scripts/deploy.sh --build → docker compose up -d --build
+```
+
+`deploy.sh` polls the container healthcheck (up to 45×2s), prints the deployed git sha + subject, and exits non-zero if unhealthy.
 
 ### Runtime image notes
 - Base: `python:3.12-slim`
@@ -83,26 +102,36 @@ Services started:
 In `.github/workflows/`:
 
 ### `ci.yml` — main pipeline
-Runs on every PR + push to `main`:
-1. Checkout
-2. Set up Python 3.12 + uv
-3. `make setup`
-4. `ruff check .`
-5. `mypy .` (per-module override-relaxed)
-6. `pytest -m unit` then full suite (excluding `perf`)
-7. Coverage report
-8. SonarCloud analysis
+Runs on every PR + push to `master`. Three jobs:
+
+**`lint-and-test`** (Python 3.12, pip; installs the vendored CI stubs in `ci/` — `empire_core`, `empire_schemas`, `unusualwhales_sdk` — then `pip install -e ".[dev]"`):
+1. `uv.lock` pair guard (PR-only) — fails if `pyproject.toml` changed without `uv.lock` in the diff
+2. `pre-commit run --all-files`
+3. `bandit -c pyproject.toml -r gateway/`
+4. Semgrep (`.semgrep/empire-rules.yaml`, pinned `semgrep==1.157.0`, blocking)
+5. `lint-imports` (import-linter, blocking)
+6. mypy dirty-file allowlist gate — any file with mypy errors not listed in `ci/mypy_dirty_allowlist.txt` fails the build
+7. Provider-contract check (`scripts/generate_provider_contract.py --check`)
+8. Full suite with coverage (`pytest --cov=gateway`), then the wire-contract suite (`tests/test_envelope_heber_contract.py`) as its own named step
+9. Money-path coverage floors: `gateway/api/alpaca/trading.py` ≥ 88%, `gateway/providers/alpaca/trading.py` ≥ 95%
+
+**`integration-tests`**: redis:7 service container, runs `pytest -m integration tests/integration` (`GATEWAY_TEST_REDIS_URL=redis://localhost:6379/15`).
+
+**`sonar-analysis`**: Sonar scan; every step is gated on `SONAR_TOKEN` being set.
 
 ### `perf-guardrail.yml` — perf gate
-Runs `scripts/perf_gate.py` against `config/perf_budgets.json` and `config/perf_baseline.json`. Produces:
+Restores a per-branch `.perf` history cache, merges explicit static-budget raises (`scripts/merge_static_budgets.py`, ratchet only tightens), runs `scripts/perf_gate.py` against the active budgets/baseline (falling back to `config/perf_budgets.json` / `config/perf_baseline.json`), then `scripts/perf_baseline_manager.py` refreshes history/budgets/baseline and the cache is re-saved. Produces:
 - JUnit XML (`perf-junit.xml`)
 - Plain log (`perf-output.txt`)
 - Summary JSON (`perf-summary.json`)
 
-A regression beyond budget fails the build.
+A regression beyond budget fails the build. Artifacts kept 14 days.
 
 ### `release-readiness.yml` — pre-release checks
-Includes the live-provider smoke harness (`scripts/live_provider_smoke.py`) and writes/checks `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md`.
+Runs `pre-commit run --all-files` plus a targeted release-test set with `--timeout=10`: `tests/test_auth.py`, `tests/test_api_integration.py`, `tests/smoke/test_smoke.py`, `tests/test_websocket.py`.
+
+### Local pre-push gate
+The repo is private on the free GitHub plan — there is no server-side branch protection, so `.githooks/pre-push` (installed via `make install-hooks`) is the only mechanical gate before code reaches the remote. It runs `ruff check`, `ruff format --check`, `uv lock --check` (the real lockfile-freshness check — CI can't resolve the monorepo path deps), and a fast 7-file test set including the money-path and wire-contract suites. Bypass only with `git push --no-verify`.
 
 ---
 
@@ -111,8 +140,9 @@ Includes the live-provider smoke harness (`scripts/live_provider_smoke.py`) and 
 | Concern | Where |
 |---------|-------|
 | Env vars | `.env` (local), deployment secrets (staging/prod) |
-| Client API keys | `config/clients.yaml` (committed with placeholders; real values via secrets mount) |
-| Provider routing | `config/providers.yaml` |
+| Client API keys | `config/clients.yaml` (committed as sha256 `key_hash` entries; only the `test` client keeps a plaintext dev key) |
+| Provider routing | `config/providers.yaml` (`required: true` providers abort startup on load/init failure when `GATEWAY_DEBUG=false`) |
+| UW PIT ticker universe | `config/uw_pit_universe.json` — when present, UW EOD capture uses its `active` symbols (~989) and disables dynamic screener rotation |
 | Prometheus alerts | `config/prometheus_alerts.yml` |
 
 See [configuration-guide.md](configuration-guide.md) for the full env-var inventory.
@@ -138,15 +168,16 @@ See [configuration-guide.md](configuration-guide.md) for the full env-var invent
 | Metrics | `GET /metrics` | Prometheus scrape |
 | Alerts | `config/prometheus_alerts.yml` | Alertmanager |
 | Logs | `logs/data-gateway_*.log`, stdout JSON | log shipper (vector, fluentbit, …) |
-| Audit | `AuditLogger` → dedicated `audit` logger + in-memory ring buffer | SIEM / `/api/v1/admin/audit/recent` |
+| Audit | `AuditLogger` → dedicated `gateway.audit` logger + in-memory ring buffer (not HTTP-exposed; admin log views are `/api/v1/admin/logs/recent`, `/api/v1/admin/errors/summary`) | SIEM via log shipper |
 | Catalog | `GET /catalog/*` | Downstream services for runtime discovery |
 
 Key alerts:
-- `SinkProducerTimeoutDrops` — sink dropped events
-- `SinkBufferEvictionsActive` — failed-event buffer evicting
-- Provider circuit-open
+- `SinkProducerTimeoutDrops` — sink dropped events (producer-timeout events now spill to the failover buffer first; only buffer-refused events count as true loss)
+- `SinkBufferEvictionsActive` — failed-event buffer evicting (`gateway_sink_buffer_evictions_total`)
+- Provider circuit-open (circuit-breaker state exported as a metric)
 - WebSocket disconnect spike
 - Cache hit-rate drop
+- Event-loop stalls — the `LoopStallWatchdog` (on by default, `GATEWAY_LOOP_WATCHDOG_ENABLED`, threshold `GATEWAY_LOOP_WATCHDOG_STALL_THRESHOLD_SECONDS`=5.0) logs `event_loop_stall_detected` with all-thread stack dumps + gc stats, samples repeatedly through a stall (up to 5), and `event_loop_stall_recovered` records total stalled seconds; stall metrics are exported to Prometheus
 
 ---
 
@@ -164,11 +195,11 @@ terminationGracePeriodSeconds: 90  # 30s drain + 60s budget for steps 4-7
 ## 9. Rollout Procedure
 
 1. **Local verify**: `make test`, `make lint`, `make typecheck`. Run `pytest -m perf` if touching hot paths.
-2. **Open PR**: CI runs `ci.yml` + `perf-guardrail.yml`. Both must pass.
-3. **Live smoke** (manual or scheduled): `python scripts/live_provider_smoke.py` against real keys; update `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md`.
-4. **Tag**: bump `CHANGELOG.md` (move `[Unreleased]` to a dated section).
-5. **Build & push** image: `docker build -f Data-Gateway/Dockerfile -t <registry>/data-gateway:<tag> .` from monorepo root, then `docker push`.
-6. **Deploy** (per environment). Watch `/health/ready` and `gateway_sink_*` metrics.
+2. **Push**: the pre-push gate (`make install-hooks`) runs ruff, the lockfile check, and the fast test set.
+3. **Open PR**: CI runs `ci.yml` + `perf-guardrail.yml` + `release-readiness.yml`. All must pass.
+4. **Live smoke** (manual or scheduled): `python scripts/live_provider_smoke.py` against real keys; update `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md`.
+5. **Tag**: bump `CHANGELOG.md` (move `[Unreleased]` to a dated section).
+6. **Deploy** (compose host): `make deploy` — or `BUILD=1 make deploy` when deps/Dockerfile changed. Source is bind-mounted, so a restart is required for committed changes to take effect. Watch `/health/ready` and `gateway_sink_*` metrics.
 7. **Post-deploy** smoke: `curl /catalog/streams` against the new instance with a valid key; subscribe to a single feed via WS and assert events flow within 30s.
 
 ---
@@ -185,12 +216,16 @@ terminationGracePeriodSeconds: 90  # 30s drain + 60s budget for steps 4-7
 
 | Pitfall | Fix |
 |---------|-----|
+| Committed fix has no effect in the running container | Source is bind-mounted (`./gateway`); the running process keeps the old code until restart. Run `make deploy` (this is why `scripts/deploy.sh` exists — the darkpool feed once stayed broken this way). |
 | `ImportError: empire_core` in container | Dockerfile must be built from monorepo root, not `Data-Gateway/`. |
 | Gateway starts but `/health/ready` stuck | Inspect `checks` JSON — usually a missing provider key or unreachable Redis. |
 | WebSocket clients mass-disconnect under load | Confirm uvicorn flags `--ws-ping-interval 30 --ws-ping-timeout 90`. The Dockerfile sets these; bare-metal runs need to add them. |
 | Heber sees no events post-deploy | Confirm `GATEWAY_DATA_SINK_ENABLED=true` and `GATEWAY_DATA_SINK_REDIS_URL` set. Check `gateway_sink_queue_size` is non-zero on traffic. |
 | Perf gate fails on PR | Run `python scripts/perf_gate.py ...` locally to see which metric regressed; either fix or rebaseline via `scripts/perf_baseline_manager.py` with rationale in the PR. |
 | `unusualwhales-python-client` missing in container | Ensure `Data-Gateway/vendor/unusualwhales_sdk/` is committed and present at build time. |
+| Large backfill evicts live events from Redis | Backfill publishes route to the dedicated `heber:events:backfill` stream with its own cap (`GATEWAY_BACKFILL_STREAM_MAX_LEN`, default 1,000,000). Keep `GATEWAY_DATA_SINK_MAX_STREAM_LEN` and Redis `maxmemory` moving in lockstep. |
+| Redis comes back empty after host restart / power loss | AOF must stay enabled (`--appendonly yes --appendfsync everysec`) with the `data-gateway-redis-data` named volume — see compose specifics in §3. |
+| WS flow-alert resume unavailable (`GW-W5004` on subscribe ack) | The durable flow replay store (`gateway:flow_alerts:replay`) needs the data-sink Redis URL; without it the fanout runs live-only. Check the `flow_fanout_initialized` startup log for replay availability. |
 
 ---
 
