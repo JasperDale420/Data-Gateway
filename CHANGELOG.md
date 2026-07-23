@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **WS clients can subscribe with the canonical feed names `bars`/`quotes`/`trades`** — the wire envelope labels are now accepted on the WebSocket subscribe surface as aliases of `stock_bars`/`stock_quotes`/`stock_trades`, which stay fully supported. Either spelling works for subscribe, unsubscribe, and client permission lists (a client authorized for `stock_bars` may subscribe via `bars` and vice versa); acks and subscription tracking always report the canonical `stock_*` name. `/catalog/feeds` advertises both spellings (`alias_of` marks the aliases), and unknown feed names are still rejected. Wire envelopes published to Redis are unchanged.
+
 ### Fixed
 
 - **The two exception-handling semgrep rules are now blocking in CI — 76 grandfathered findings paid down to 0** (`gateway/`, `.github/workflows/ci.yml`): `empire-no-bare-exception` (69) and `empire-no-return-none-for-failure` (7) had been excluded from the blocking scan since being fixed in the vendored rules (their upstream patterns never parsed, so they had never run anywhere). The real swallows are fixed: the four silent circuit-breaker pre-checks in the data-sink publish path no longer hide every exception behind `pass` (narrowed to the only expected lookup failure, with a debug log and unchanged fail-open semantics); secret-file read errors, invalid pagination cursors, WebSocket oversize/broadcast/replay send failures, Redis cache/sink cleanup errors, and the holiday-name/health-check fallbacks all log before continuing. Legitimately broad catches — route-boundary 502 mapping (Alpha Vantage ×20, Alpaca common), reload rollbacks, worker/batch/supervisor loops, health degradation, and documented Optional parse helpers — carry `nosemgrep` annotations with one-line justifications. The `--exclude-rule` flags are gone from CI and the semgrep pin moves 1.157.0 → 1.170.0 (which validates the fixed vendored patterns).
@@ -17,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - **Pre-commit runs mypy again** (`.pre-commit-config.yaml`): with the allowlist at zero, commits now run the same `mypy gateway/` invocation as CI (project venv, not the isolated mirrors-mypy environment that would diverge from the CI gate).
 
 ### Fixed
+- **empire-schemas' envelope module reconciled with the canonical gateway implementation** (`ci/empire_schemas`, empire-schemas repo): the shared package's dormant `compute_event_id`/`FEED_UNIQUE_FIELDS`/`make_instrument_key` had diverged (float-based Decimal stringification, missing dedup keys, naive crypto splitting) — it is now byte-parity-synced (verified against the pinned contract hash). The dead `gateway.schemas` envelope re-exports, which silently handed callers the divergent copy, are removed; `gateway.core.envelope` is the single implementation.
 
 - **`iv_term_structure` expiries no longer risk collapsing to one row** (`gateway/core/envelope.py`): the feed emits one row per expiry of the same underlying, but it had no `FEED_UNIQUE_FIELDS` entry, so every expiry's `event_id` was derived from `provider|feed|instrument_key|ts_event` alone. With no per-row discriminator, two expiries wrapped at the same instant (the payload carries no date/timestamp, so `ts_event` is `now()`) hashed to the identical `event_id` and all but one was dropped at Heber's Bronze dedup. `expiry` is now part of the `event_id` (mirroring `oi_change`/`historic_option_volume`), so every expiry stays distinct. Regression test in `tests/test_envelope_heber_contract.py`.
 

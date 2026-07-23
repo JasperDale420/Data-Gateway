@@ -92,14 +92,14 @@ class TestComputeEventId:
     def test_event_id_is_pinned_and_decimal_precision_sensitive(self):
         """Pin the gateway's local compute_event_id against silent divergence.
 
-        empire-schemas ships a *divergent* duplicate compute_event_id that
-        stringifies Decimals as ``str(float(d))`` ("150.5") instead of this
-        module's ``str(d)`` ("150.50"). The gateway uses ONLY this local copy
-        today, so the duplication is inert — but any future "dedupe the
-        duplication" refactor that swaps to the shared impl would silently
-        change EVERY event_id and reset Heber's dedup bloom filter, flooding
-        duplicate Bronze rows. This pin (and the precision check below) makes
-        that swap fail loudly here instead. See project_gateway_frozen_contracts.
+        gateway/core/envelope.py is the canonical wire-contract impl; the
+        empire-schemas copy was byte-synced to it on 2026-07-23 (it had
+        diverged — float-based Decimal stringification, missing feed keys).
+        This pin guards the CANONICAL hash: any change to join order,
+        separator, digest size, or Decimal stringification silently changes
+        EVERY event_id and resets Heber's dedup, flooding duplicate Bronze
+        rows. The precision check below keeps the hash sensitive to the
+        str(Decimal) form. See project_gateway_frozen_contracts.
         """
         ts = datetime(2026, 6, 25, 14, 30, 0, tzinfo=UTC)
         fields = [Decimal("150.50"), Decimal("150.60"), 100, 200]

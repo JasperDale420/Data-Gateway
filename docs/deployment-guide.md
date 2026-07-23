@@ -71,7 +71,7 @@ Services started:
 
 Compose specifics:
 
-- `gateway` bind-mounts `./gateway` (source), `./config`, and `./logs` into the container. Committed code changes do **not** take effect until the container restarts — see *Deploying changes* below.
+- `gateway` runs a **baked image** (`data-gateway:${GATEWAY_IMAGE_TAG:-latest}`) — code ships only via `make deploy` (build → tag → recreate); the working tree is NOT production. Only `./config`, `./logs`, and `.env` are live-mounted operational data.
 - `redis` binds to `127.0.0.1:6379` only (the instance is unauthenticated); containers reach it via `host.docker.internal`.
 - Redis persistence: AOF enabled (`--appendonly yes --appendfsync everysec`) with named volume `data-gateway-redis-data` — RDB-only setups came back empty after the 2026-07-12 power outage.
 - Redis memory: `--maxmemory 4gb --maxmemory-policy volatile-lru` — TTL'd cache/dedup keys are evictable; the `heber:events*` streams and consumer groups are not. At-cap writes error into the sink failover buffer instead of silently evicting.
@@ -79,14 +79,14 @@ Compose specifics:
 
 ### Deploying changes (compose)
 
-Because source is bind-mounted, a restart is required to pick up committed changes:
+Code deploys are image builds — every deploy produces a dated, rollback-able tag:
 
 ```bash
-make deploy                  # scripts/deploy.sh → docker compose restart gateway
-BUILD=1 make deploy          # scripts/deploy.sh --build → docker compose up -d --build
+make deploy                  # scripts/deploy.sh → build data-gateway:YYYYMMDD-sha → tag latest → recreate gateway (--no-deps)
+RESTART=1 make deploy        # scripts/deploy.sh --restart → config-only reload, image unchanged
 ```
 
-`deploy.sh` polls the container healthcheck (up to 45×2s), prints the deployed git sha + subject, and exits non-zero if unhealthy.
+`deploy.sh` warns if Data-Gateway, `../empire-core`, or `../empire-schemas` have uncommitted changes (the image bakes those trees as-is), never recreates redis, polls the container healthcheck (up to 45×2s), prints the deployed tag + git sha, and exits non-zero if unhealthy.
 
 ### Runtime image notes
 - Base: `python:3.12-slim`
@@ -199,14 +199,14 @@ terminationGracePeriodSeconds: 90  # 30s drain + 60s budget for steps 4-7
 3. **Open PR**: CI runs `ci.yml` + `perf-guardrail.yml` + `release-readiness.yml`. All must pass.
 4. **Live smoke** (manual or scheduled): `python scripts/live_provider_smoke.py` against real keys; update `docs/audits/LIVE_PROVIDER_SMOKE_REPORT.md`.
 5. **Tag**: bump `CHANGELOG.md` (move `[Unreleased]` to a dated section).
-6. **Deploy** (compose host): `make deploy` — or `BUILD=1 make deploy` when deps/Dockerfile changed. Source is bind-mounted, so a restart is required for committed changes to take effect. Watch `/health/ready` and `gateway_sink_*` metrics.
+6. **Deploy** (compose host): `make deploy` — builds and ships a fresh `data-gateway:YYYYMMDD-sha` image (`RESTART=1 make deploy` for config-only reloads). Watch `/health/ready` and `gateway_sink_*` metrics.
 7. **Post-deploy** smoke: `curl /catalog/streams` against the new instance with a valid key; subscribe to a single feed via WS and assert events flow within 30s.
 
 ---
 
 ## 10. Rollback
 
-- **Image rollback** — redeploy previous image tag.
+- **Image rollback** — `docker image ls data-gateway` to find the previous tag, then `GATEWAY_IMAGE_TAG=<YYYYMMDD-sha> docker compose up -d --no-deps gateway`.
 - **Config rollback** — `config/clients.yaml` accepts SIGHUP reload; reverting and `kill -HUP` returns to the previous client/permission state without a process restart.
 - **Sink dependency rollback** — disable the sink with `GATEWAY_DATA_SINK_ENABLED=false` and a restart; gateway continues serving REST/WS without publishing to Heber.
 
@@ -216,7 +216,7 @@ terminationGracePeriodSeconds: 90  # 30s drain + 60s budget for steps 4-7
 
 | Pitfall | Fix |
 |---------|-----|
-| Committed fix has no effect in the running container | Source is bind-mounted (`./gateway`); the running process keeps the old code until restart. Run `make deploy` (this is why `scripts/deploy.sh` exists — the darkpool feed once stayed broken this way). |
+| Committed fix has no effect in the running container | Code ships only via the baked image — run `make deploy` to build + recreate (the darkpool feed once stayed broken exactly this way under the old bind-mount model). |
 | `ImportError: empire_core` in container | Dockerfile must be built from monorepo root, not `Data-Gateway/`. |
 | Gateway starts but `/health/ready` stuck | Inspect `checks` JSON — usually a missing provider key or unreachable Redis. |
 | WebSocket clients mass-disconnect under load | Confirm uvicorn flags `--ws-ping-interval 30 --ws-ping-timeout 90`. The Dockerfile sets these; bare-metal runs need to add them. |

@@ -635,6 +635,26 @@ async def get_feeds() -> dict[str, Any]:
             "channels": ["imbalances"],
             "description": "Auction imbalance data (opening/closing)",
         },
+        # Canonical short aliases — the wire envelope feed labels are accepted
+        # on the subscribe surface as equivalents of the stock_* names.
+        "bars": {
+            "stream": "stocks_sip",
+            "channels": ["bars"],
+            "description": "Alias of stock_bars (canonical wire feed label)",
+            "alias_of": "stock_bars",
+        },
+        "quotes": {
+            "stream": "stocks_sip",
+            "channels": ["quotes"],
+            "description": "Alias of stock_quotes (canonical wire feed label)",
+            "alias_of": "stock_quotes",
+        },
+        "trades": {
+            "stream": "stocks_sip",
+            "channels": ["trades"],
+            "description": "Alias of stock_trades (canonical wire feed label)",
+            "alias_of": "stock_trades",
+        },
         # Options feeds
         "option_bars": {
             "stream": "options_opra",

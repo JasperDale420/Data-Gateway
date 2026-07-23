@@ -3,7 +3,7 @@
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from alpaca.trading.client import TradingClient
@@ -41,7 +41,9 @@ def _install_session_default_timeout(session: Session, timeout_seconds: float) -
         kwargs.setdefault("timeout", timeout_seconds)
         return original_request(method, url, **kwargs)
 
-    session.request = request_with_default_timeout
+    # Any-cast keeps both typed (types-requests in CI) and untyped (local)
+    # requests stubs happy with the instance-level monkey-patch.
+    cast(Any, session).request = request_with_default_timeout
 
 
 class AlpacaBaseMixin(DataProvider):

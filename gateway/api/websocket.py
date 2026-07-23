@@ -16,6 +16,7 @@ from gateway.core.connections import ConnectionManager, is_benign_ws_close_error
 from gateway.core.flow_fanout import FLOW_FEED
 from gateway.core.logger import logger
 from gateway.core.security import get_input_validator
+from gateway.core.stream import canonical_feed_name
 
 router = APIRouter(tags=["websocket"])
 
@@ -448,7 +449,10 @@ async def _handle_message(
                 "error_code": "GW-E8001",
                 "message": "feeds must be a non-empty list",
             }
-        feeds = list(dict.fromkeys(feeds))
+        # Normalize client-facing aliases (bars/quotes/trades) to the canonical
+        # stock_* names before any permission, quota, or routing logic — past
+        # this point the alias and stock_* spellings are indistinguishable.
+        feeds = list(dict.fromkeys(canonical_feed_name(f) for f in feeds))
 
         symbols = message.get("symbols", [])
         if not isinstance(symbols, list):
@@ -725,7 +729,9 @@ async def _handle_message(
                 "error_code": "GW-E8001",
                 "message": "feeds must be a non-empty list",
             }
-        feeds = list(dict.fromkeys(feeds))
+        # Same alias normalization as subscribe, so a subscription opened under
+        # one spelling can be closed under the other.
+        feeds = list(dict.fromkeys(canonical_feed_name(f) for f in feeds))
         symbols = message.get("symbols", [])
         if not isinstance(symbols, list):
             return {
@@ -894,7 +900,9 @@ def _is_uw_flow_request(provider: str, feeds: list[str]) -> bool:
 
 
 def _has_feed_permission(client: Any, required_feed: str) -> bool:
-    allowed = set(client.permissions.feeds or [])
+    # Permission lists may use either spelling (e.g. "stock_bars" or "bars");
+    # normalize both sides to the same category before comparing.
+    allowed = {_normalize_feed_permission(f) for f in (client.permissions.feeds or [])}
     if not allowed:
         return True
     return required_feed in allowed

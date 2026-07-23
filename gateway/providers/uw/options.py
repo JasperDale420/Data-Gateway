@@ -3,7 +3,7 @@
 import re
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 from gateway.core.logger import logger
@@ -634,7 +634,9 @@ class UWOptionsMixin(_UWMixinBase):
             from unusualwhales.api import stock
 
             response = await self._call_sync(
-                stock.get_implied_volatility_surface.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                cast(
+                    Any, stock
+                ).get_implied_volatility_surface.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 client=self._client,
                 ticker=symbol.upper(),
             )
@@ -713,7 +715,7 @@ class UWOptionsMixin(_UWMixinBase):
             from unusualwhales.api import stock
 
             response = await self._call_sync(
-                stock.get_put_call_ratio.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                cast(Any, stock).get_put_call_ratio.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 client=self._client,
                 ticker=symbol.upper(),
             )
@@ -811,7 +813,7 @@ class UWOptionsMixin(_UWMixinBase):
             from unusualwhales.api import stock
 
             response = await self._call_sync(
-                stock.get_option_volume_levels.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                cast(Any, stock).get_option_volume_levels.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 client=self._client,
                 ticker=symbol.upper(),
             )
@@ -848,7 +850,7 @@ class UWOptionsMixin(_UWMixinBase):
             from unusualwhales.api import contract
 
             response = await self._call_sync(
-                contract.get_volume_profile.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                cast(Any, contract).get_volume_profile.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 client=self._client,
                 option_symbol=contract_id,
             )
