@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **WS clients can subscribe with the canonical feed names `bars`/`quotes`/`trades`** — the wire envelope labels are now accepted on the WebSocket subscribe surface as aliases of `stock_bars`/`stock_quotes`/`stock_trades`, which stay fully supported. Either spelling works for subscribe, unsubscribe, and client permission lists (a client authorized for `stock_bars` may subscribe via `bars` and vice versa); acks and subscription tracking always report the canonical `stock_*` name. `/catalog/feeds` advertises both spellings (`alias_of` marks the aliases), and unknown feed names are still rejected. Wire envelopes published to Redis are unchanged.
+
 ### Fixed
 
 - **mypy now checks the provider mixin layer for real — 863 grandfathered errors reduced to 0** (`gateway/providers/uw/`, `gateway/providers/alpaca/`, `pyproject.toml`, `ci/mypy_dirty_allowlist.txt`): the UW and Alpaca feature mixins had no base class, so the type checker could not see the shared helpers the composed providers supply at runtime — 831 of the 863 errors traced to that one gap. Each mixin now inherits a type-checking-only alias of its base mixin (plain `object` at runtime, so provider composition and MRO are unchanged), the router/provider `disable_error_code` override groups are gone from `[tool.mypy]`, all 32 residual errors are fixed, and the CI dirty-file allowlist shrinks 37 files → 0. The pass also surfaced (and documents in `docs/FOLLOW_UPS.md`, each with a targeted ignore) 13 latent runtime bugs: ten UW provider methods calling SDK operations the vendored v5.1 SDK does not ship, `get_portfolio_history`/`set_account_configurations` passing kwargs alpaca-py rejects, and an admin provider-reload endpoint that always 404s.

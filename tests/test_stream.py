@@ -58,6 +58,22 @@ class TestAlpacaStreamTypeRouting:
     def test_from_feed_unknown_defaults_to_stocks_sip(self) -> None:
         assert AlpacaStreamType.from_feed("totally_unknown") == AlpacaStreamType.STOCKS_SIP
 
+    def test_from_feed_accepts_canonical_stock_aliases(self) -> None:
+        """The wire envelope labels bars/quotes/trades alias the stock_* feeds."""
+        assert AlpacaStreamType.from_feed("bars") == AlpacaStreamType.STOCKS_SIP
+        assert AlpacaStreamType.from_feed("quotes") == AlpacaStreamType.STOCKS_SIP
+        assert AlpacaStreamType.from_feed("trades") == AlpacaStreamType.STOCKS_SIP
+
+    def test_canonical_feed_name_maps_aliases_and_passes_through(self) -> None:
+        assert stream_module.canonical_feed_name("bars") == "stock_bars"
+        assert stream_module.canonical_feed_name("quotes") == "stock_quotes"
+        assert stream_module.canonical_feed_name("trades") == "stock_trades"
+        # Canonical and unrelated names pass through unchanged.
+        assert stream_module.canonical_feed_name("stock_bars") == "stock_bars"
+        assert stream_module.canonical_feed_name("news") == "news"
+        assert stream_module.canonical_feed_name("crypto_bars") == "crypto_bars"
+        assert stream_module.canonical_feed_name("totally_unknown") == "totally_unknown"
+
     def test_endpoint_per_stream_type(self) -> None:
         assert AlpacaStreamType.OPTIONS.endpoint.endswith("/opra")
         assert "iex" in AlpacaStreamType.STOCKS_IEX.endpoint

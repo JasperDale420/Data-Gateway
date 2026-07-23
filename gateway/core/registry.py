@@ -228,14 +228,23 @@ class ProviderRegistry:
             "stock_bars": "supports_bars",
             "stock_quotes": "supports_quotes",
             "stock_trades": "supports_trades",
+            # Canonical wire feed labels double as capability aliases for the
+            # stock feeds (same subscribe-surface aliasing as the WS layer).
+            "bars": "supports_bars",
+            "quotes": "supports_quotes",
+            "trades": "supports_trades",
             "news": "supports_news",
         }
         attr_name = cap_map.get(capability, capability)
+        # Every capability name resolving to the same supports_* attribute is
+        # interchangeable (e.g. "bars" and "stock_bars"), so list-based
+        # provider declarations match under any equivalent spelling.
+        equivalent_names = {name for name, attr in cap_map.items() if attr == attr_name} | {capability, attr_name}
 
         def _supports_capability(provider_obj: DataProvider) -> bool:
             capabilities = provider_obj.capabilities
             if isinstance(capabilities, list | tuple | set):
-                return capability in capabilities or attr_name in capabilities
+                return not equivalent_names.isdisjoint(capabilities)
             return bool(getattr(capabilities, attr_name, False))
 
         candidates = []

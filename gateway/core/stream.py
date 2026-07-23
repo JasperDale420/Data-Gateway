@@ -125,6 +125,22 @@ class SequenceTracker:
         }
 
 
+# Client-facing aliases for the stock streaming feeds: the canonical wire
+# envelope labels ("bars"/"quotes"/"trades") are accepted on the subscribe
+# surface as equivalents of the stock_* feed names. Internal routing,
+# permission checks, and subscription tracking always use the stock_* form.
+STOCK_FEED_ALIASES: dict[str, str] = {
+    "bars": "stock_bars",
+    "quotes": "stock_quotes",
+    "trades": "stock_trades",
+}
+
+
+def canonical_feed_name(feed: str) -> str:
+    """Map a client-facing feed alias to its canonical subscribe name."""
+    return STOCK_FEED_ALIASES.get(feed, feed)
+
+
 class AlpacaStreamType(Enum):
     """Alpaca WebSocket stream types per PRD."""
 
@@ -136,7 +152,7 @@ class AlpacaStreamType(Enum):
 
     @classmethod
     def from_feed(cls, feed: str) -> "AlpacaStreamType":
-        """Convert feed name to stream type."""
+        """Convert feed name (canonical or aliased) to stream type."""
         mapping = {
             # Stocks
             "stock_bars": cls.STOCKS_SIP,
@@ -161,7 +177,7 @@ class AlpacaStreamType(Enum):
             # News
             "news": cls.NEWS,
         }
-        return mapping.get(feed, cls.STOCKS_SIP)
+        return mapping.get(canonical_feed_name(feed), cls.STOCKS_SIP)
 
     @property
     def endpoint(self) -> str:
