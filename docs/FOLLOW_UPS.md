@@ -1,7 +1,7 @@
 # Deferred Follow-Ups
 
 Items deliberately deferred by the 2026-07-19 repo-hygiene pass. Everything
-here either requires editing `gateway/`/`config/` (bind-mounted into the
+here either required editing `gateway/`/`config/` (formerly bind-mounted into the
 running container — needs a coordinated restart window) or lives in another
 repo.
 

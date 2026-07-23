@@ -35,6 +35,8 @@ uv run uvicorn gateway.main:app --host 0.0.0.0 --port 8080  # start server
 # Build from monorepo root (context needs empire-core + vendor SDK)
 docker build -f Data-Gateway/Dockerfile -t data-gateway .
 docker compose -f Data-Gateway/docker-compose.yml up
+# Code deploys are baked images: `make deploy` builds data-gateway:YYYYMMDD-sha
+# and recreates only the gateway container. The working tree is NOT production.
 ```
 
 ## Architecture
@@ -392,6 +394,8 @@ uv run python -m gateway.cli add-client <id>
 # Docker (build from monorepo root — context needs empire-core + vendor SDK)
 docker build -f Data-Gateway/Dockerfile -t data-gateway .
 docker compose -f Data-Gateway/docker-compose.yml up
+# Code deploys are baked images: `make deploy` builds data-gateway:YYYYMMDD-sha
+# and recreates only the gateway container. The working tree is NOT production.
 ```
 
 > **Important:** `uv sync` without `--extra local` uninstalls `unusualwhales-python-client`,
