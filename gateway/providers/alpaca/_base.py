@@ -41,7 +41,7 @@ def _install_session_default_timeout(session: Session, timeout_seconds: float) -
         kwargs.setdefault("timeout", timeout_seconds)
         return original_request(method, url, **kwargs)
 
-    session.request = request_with_default_timeout  # type: ignore[method-assign]
+    session.request = request_with_default_timeout
 
 
 class AlpacaBaseMixin(DataProvider):

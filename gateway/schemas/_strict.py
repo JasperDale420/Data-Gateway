@@ -286,7 +286,7 @@ class ResponseMeta(_ResponseMetaBase):
 
     # The Field(...) (no default) forces Pydantic to require the value
     # even though the parent class supplies a default.
-    provider: str  # type: ignore[assignment]
+    provider: str
 
 
 __all__ = [
