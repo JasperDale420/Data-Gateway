@@ -3,7 +3,7 @@
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from alpaca.trading.client import TradingClient
@@ -429,3 +429,15 @@ class AlpacaBaseMixin(DataProvider):
                 if not k.startswith("_")
             }
         return obj
+
+
+if TYPE_CHECKING:
+    # Feature mixins inherit this alias so type checkers can see the shared
+    # AlpacaBaseMixin surface (_client, _trading_client, _paginate, ...). It
+    # must have no runtime footprint: AlpacaProvider lists AlpacaBaseMixin LAST
+    # in its bases, so any real base with members here (including a Protocol
+    # with method stubs) would sit before AlpacaBaseMixin in the MRO and shadow
+    # the real implementations.
+    _AlpacaMixinBase = AlpacaBaseMixin
+else:
+    _AlpacaMixinBase = object

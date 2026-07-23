@@ -11,7 +11,7 @@ from gateway.schemas import (
     NormalizedMarketTide,
 )
 
-from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
+from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int, _UWMixinBase
 from .transient import _uw_error_context, is_transient_upstream_error
 
 _ET = ZoneInfo("America/New_York")
@@ -19,7 +19,7 @@ _ET = ZoneInfo("America/New_York")
 from gateway.core.logger import logger
 
 
-class UWFlowMixin:
+class UWFlowMixin(_UWMixinBase):
     """Mixin providing options flow, darkpool, tide, and greek flow endpoints."""
 
     async def _get_darkpool_recent_raw(

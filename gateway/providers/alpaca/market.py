@@ -9,11 +9,11 @@ import httpx
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
 from gateway.core.metrics import record_provider_quote_batch_size
-from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED
+from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, _AlpacaMixinBase
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
 
-class AlpacaMarketMixin:
+class AlpacaMarketMixin(_AlpacaMixinBase):
     """Stock/equity market data methods."""
 
     @http_retry

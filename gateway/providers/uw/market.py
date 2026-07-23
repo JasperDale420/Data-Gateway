@@ -7,7 +7,7 @@ from typing import Any
 
 from gateway.core.logger import logger
 
-from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
+from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int, _UWMixinBase
 
 
 def _compute_realized_vol(prices: list[float], window: int) -> Decimal | None:
@@ -38,7 +38,7 @@ def _compute_realized_vol(prices: list[float], window: int) -> Decimal | None:
     return Decimal(str(sigma))
 
 
-class UWMarketMixin:
+class UWMarketMixin(_UWMixinBase):
     """Shorts, volatility, seasonality, alerts, market info, sector, news, economic calendar."""
 
     # ─────────────────────────────────────────────────────────────────

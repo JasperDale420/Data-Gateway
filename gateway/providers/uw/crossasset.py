@@ -8,8 +8,10 @@ and FX historical/intraday/spot series, and US economic indicators.
 from typing import Any
 from urllib.parse import quote
 
+from ._base import _UWMixinBase
 
-class UWCrossAssetMixin:
+
+class UWCrossAssetMixin(_UWMixinBase):
     """Mixin providing UW cross-asset REST endpoints."""
 
     async def get_commodity_series(self, name: str, interval: str | None = None) -> Any:

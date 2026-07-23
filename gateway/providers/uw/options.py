@@ -9,7 +9,7 @@ from urllib.parse import quote
 from gateway.core.logger import logger
 from gateway.schemas import NormalizedIVRank
 
-from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_float, _safe_int
+from ._base import ERR_NOT_INITIALIZED, TZ_UTC_SUFFIX, _or_unset, _safe_float, _safe_int, _UWMixinBase
 from .transient import _uw_error_context, is_transient_upstream_error
 
 # OCC option symbol: the contract type (C/P) is the single char immediately
@@ -36,7 +36,7 @@ def _parse_uw_timestamp(value: Any) -> datetime:
     return timestamp.astimezone(UTC)
 
 
-class UWOptionsMixin:
+class UWOptionsMixin(_UWMixinBase):
     """Mixin providing options analytics, chains, contracts, greeks, and screener endpoints."""
 
     async def get_greek_exposure(self, symbol: str, date_str: str | None = None, timeframe: str | None = None) -> list:

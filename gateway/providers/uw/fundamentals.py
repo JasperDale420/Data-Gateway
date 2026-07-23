@@ -8,8 +8,10 @@ SDK (v5.1).
 from typing import Any
 from urllib.parse import quote
 
+from ._base import _UWMixinBase
 
-class UWFundamentalsMixin:
+
+class UWFundamentalsMixin(_UWMixinBase):
     """Mixin providing UW fundamentals REST endpoints."""
 
     async def get_ipo_calendar(self) -> Any:

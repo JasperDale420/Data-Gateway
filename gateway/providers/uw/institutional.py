@@ -5,10 +5,10 @@ from typing import Any
 
 from gateway.core.logger import logger
 
-from ._base import ERR_NOT_INITIALIZED, _safe_int
+from ._base import ERR_NOT_INITIALIZED, _safe_int, _UWMixinBase
 
 
-class UWInstitutionalMixin:
+class UWInstitutionalMixin(_UWMixinBase):
     """Institutional, insider, congress, ETF holdings, and politician endpoints."""
 
     # ─────────────────────────────────────────────────────────────────

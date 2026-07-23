@@ -33,7 +33,7 @@ from alpaca.trading.requests import (
 from fastapi import HTTPException
 
 from gateway.core.logger import logger
-from gateway.providers.alpaca._base import ERR_TRADING_CLIENT_NOT_INITIALIZED
+from gateway.providers.alpaca._base import ERR_TRADING_CLIENT_NOT_INITIALIZED, _AlpacaMixinBase
 
 # Alpaca error codes that indicate a terminal (non-retryable) state.
 # 40410000 — position does not exist (already closed/expired/never existed)
@@ -49,7 +49,7 @@ _POSITION_NOT_FOUND_CODES = {40410000}
 _BENIGN_CANCEL_RACE_CODES = {42210000}
 
 
-class AlpacaTradingMixin:
+class AlpacaTradingMixin(_AlpacaMixinBase):
     """Trading/account/order management methods."""
 
     @staticmethod

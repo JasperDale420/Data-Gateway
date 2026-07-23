@@ -4,10 +4,10 @@ from decimal import Decimal
 
 from gateway.core.logger import logger
 
-from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
+from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int, _UWMixinBase
 
 
-class UWEarningsMixin:
+class UWEarningsMixin(_UWMixinBase):
     """Mixin providing earnings calendar and stock screener endpoints."""
 
     async def get_earnings_premarket(self, date_str: str | None = None) -> list:
