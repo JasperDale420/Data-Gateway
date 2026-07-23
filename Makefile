@@ -49,8 +49,10 @@ run: setup
 ## bind-mounted, so a restart reloads committed code — committed fixes don't
 ## take effect until you run this. Use `make deploy BUILD=1` for dep/Dockerfile
 ## changes (rebuilds the image).
+## Build + deploy the current source as a baked image (RESTART=1 for a
+## config-only reload without rebuild). Never touches redis.
 deploy:
-	./scripts/deploy.sh $(if $(BUILD),--build,)
+	./scripts/deploy.sh $(if $(RESTART),--restart,)
 
 ## Remove cached / compiled artifacts.
 clean:

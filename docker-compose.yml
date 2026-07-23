@@ -1,6 +1,14 @@
 services:
   gateway:
     container_name: data-gateway
+    # Baked-image deploys (since 2026-07-23): gateway code ships ONLY via the
+    # built image — there is deliberately no ./gateway source mount, so the
+    # working tree is no longer production. Deploy with `make deploy`
+    # (scripts/deploy.sh: build → tag → recreate gateway only). Roll back by
+    # redeploying a previous tag:
+    #   GATEWAY_IMAGE_TAG=<YYYYMMDD-sha> docker compose up -d --no-deps gateway
+    # `config/`, `logs/`, and `.env` remain live-mounted operational data.
+    image: data-gateway:${GATEWAY_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: Data-Gateway/Dockerfile
@@ -53,7 +61,6 @@ services:
     env_file:
       - .env
     volumes:
-      - ./gateway:/app/gateway
       - ./config:/app/config
       # Persist /app/logs to host so daily-rotated empire_core log files
       # (data-gateway_YYYY-MM-DD.log + data-gateway_errors_YYYY-MM-DD.log)
