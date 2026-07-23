@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **WS clients can subscribe with the canonical feed names `bars`/`quotes`/`trades`** — the wire envelope labels are now accepted on the WebSocket subscribe surface as aliases of `stock_bars`/`stock_quotes`/`stock_trades`, which stay fully supported. Either spelling works for subscribe, unsubscribe, and client permission lists (a client authorized for `stock_bars` may subscribe via `bars` and vice versa); acks and subscription tracking always report the canonical `stock_*` name. `/catalog/feeds` advertises both spellings (`alias_of` marks the aliases), and unknown feed names are still rejected. Wire envelopes published to Redis are unchanged.
+
 ### Fixed
 
 - **empire-schemas' envelope module reconciled with the canonical gateway implementation** (`ci/empire_schemas`, empire-schemas repo): the shared package's dormant `compute_event_id`/`FEED_UNIQUE_FIELDS`/`make_instrument_key` had diverged (float-based Decimal stringification, missing dedup keys, naive crypto splitting) — it is now byte-parity-synced (verified against the pinned contract hash). The dead `gateway.schemas` envelope re-exports, which silently handed callers the divergent copy, are removed; `gateway.core.envelope` is the single implementation.

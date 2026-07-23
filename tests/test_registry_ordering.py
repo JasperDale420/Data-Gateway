@@ -88,3 +88,32 @@ def test_get_ordered_providers_default_priority():
     ordered = registry.get_ordered_providers("cap")
     assert len(ordered) == 1
     assert ordered[0].name == "p1"
+
+
+def test_get_ordered_providers_capability_aliases():
+    """Canonical short names (bars/quotes/trades) and stock_* are interchangeable."""
+    registry = ProviderRegistry()
+    registry._config = {
+        "providers": {
+            "p_stock": {"enabled": True, "priority": 10},
+            "p_short": {"enabled": True, "priority": 20},
+        }
+    }
+    registry._providers = {
+        "p_stock": MockProvider("p_stock", ["stock_bars", "stock_quotes", "stock_trades"]),
+        "p_short": MockProvider("p_short", ["bars", "quotes", "trades"]),
+    }
+
+    # Either spelling of the capability finds providers declared under either spelling.
+    for stock_name, short_name in [
+        ("stock_bars", "bars"),
+        ("stock_quotes", "quotes"),
+        ("stock_trades", "trades"),
+    ]:
+        via_stock = registry.get_ordered_providers(stock_name)
+        via_short = registry.get_ordered_providers(short_name)
+        assert [p.name for p in via_stock] == ["p_short", "p_stock"]
+        assert [p.name for p in via_short] == ["p_short", "p_stock"]
+
+    # Unknown capabilities still match nothing.
+    assert registry.get_ordered_providers("totally_unknown") == []

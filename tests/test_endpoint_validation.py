@@ -119,6 +119,18 @@ class TestCatalogEndpointsValidation:
         data = response.json()
         assert isinstance(data, dict)
 
+    def test_catalog_feeds_lists_canonical_aliases(self, client: TestClient, auth_headers: dict):
+        """GET /catalog/feeds advertises both stock_* names and their bars/quotes/trades aliases."""
+        response = client.get("/catalog/feeds", headers=auth_headers)
+        assert response.status_code == 200
+        feeds = response.json()["feeds"]
+        for alias, canonical in [("bars", "stock_bars"), ("quotes", "stock_quotes"), ("trades", "stock_trades")]:
+            assert canonical in feeds
+            assert alias in feeds
+            assert feeds[alias]["alias_of"] == canonical
+            # The alias routes to the same upstream stream as the canonical name.
+            assert feeds[alias]["stream"] == feeds[canonical]["stream"]
+
     def test_catalog_providers(self, client: TestClient, auth_headers: dict):
         """GET /catalog/providers returns valid response."""
         response = client.get("/catalog/providers", headers=auth_headers)
