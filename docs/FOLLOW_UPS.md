@@ -7,12 +7,32 @@ repo.
 
 ## Requires a deploy window (source edits)
 
-- **mypy stages 2–3**: shrink `ci/mypy_dirty_allowlist.txt` (37 files,
-  ~860 grandfathered errors — heaviest: `providers/uw/options.py`,
-  `providers/uw/market.py`, `providers/uw/institutional.py`,
-  `providers/uw/flow.py`, `providers/alpaca/trading.py`), then drop the
-  per-module `disable_error_code` overrides in `pyproject.toml` one module
-  at a time, and finally re-enable the pre-commit mypy hook.
+- ~~mypy stages 2–3~~ **DONE 2026-07-22** (branch `debt/mypy-protocols`):
+  feature mixins got a type-checking-only base, the router and provider
+  `disable_error_code` overrides were dropped, and the allowlist is empty
+  (863 → 0 errors). Remaining: legacy-core and stream-provider override
+  groups in `pyproject.toml` still disable codes for their modules.
+- **Latent runtime bugs surfaced by the 2026-07-22 mypy pass** — each site
+  carries a targeted `# type: ignore` with a comment; the code paths were
+  broken before and after that pass (they raise `ImportError`/
+  `AttributeError`/`TypeError` when hit). Fix or delete deliberately:
+  - Vendored UW SDK v5.1 lacks operations referenced by
+    `providers/uw/options.py` (`get_implied_volatility_surface`,
+    `get_put_call_ratio`, `get_option_volume_levels`, `get_volume_profile`),
+    `providers/uw/flow.py` (`get_greek_flow_expiry`, `get_net_flow_by_expiry`,
+    `get_top_net_premium`, and `get_full_tape.sync` — module only ships
+    `sync_detailed`), `providers/uw/market.py` (`get_sector_etfs`), and
+    `providers/uw/institutional.py` (`get_trader`). Port them to the
+    `_raw_get` primitive like the 2026-07 endpoint expansion did.
+  - `providers/alpaca/trading.py`: `get_portfolio_history` and
+    `set_account_configurations` pass kwargs that alpaca-py does not accept
+    (it takes `GetPortfolioHistoryRequest` / a full `AccountConfiguration`
+    model) — both endpoints TypeError on every call; tests mock the SDK
+    client so they never noticed.
+  - `api/admin.py` `admin_reload_provider`: calls
+    `registry.reload_provider(...)`, which does not exist on
+    `ProviderRegistry` — the `except AttributeError` turns every call into
+    a 404, so the admin reload endpoint has never worked.
 - **`heber:events` constant consolidation**: 9 duplicated topic literals
   (`gateway/main.py:210` + 6 pollers + `option_capture` + backfill +
   `api/middleware/envelope.py`) could share one constant. Value-neutral —

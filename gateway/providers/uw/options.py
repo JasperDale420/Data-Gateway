@@ -462,10 +462,10 @@ class UWOptionsMixin(_UWMixinBase):
                         call_oi_change=oi_diff if not is_put else 0,
                         put_oi_change=oi_diff if is_put else 0,
                         avg_price=(Decimal(str(get("avg_price"))) if get("avg_price") is not None else None),
-                        prev_oi=(int(float(get("last_oi"))) if get("last_oi") is not None else None),
+                        prev_oi=(int(float(get("last_oi") or 0)) if get("last_oi") is not None else None),
                         option_symbol=get("option_symbol"),
-                        volume=(int(float(get("volume"))) if get("volume") is not None else None),
-                        trades=(int(float(get("trades"))) if get("trades") is not None else None),
+                        volume=(int(float(get("volume") or 0)) if get("volume") is not None else None),
+                        trades=(int(float(get("trades") or 0)) if get("trades") is not None else None),
                         provider="unusual_whales",
                     )
                 )
@@ -634,7 +634,7 @@ class UWOptionsMixin(_UWMixinBase):
             from unusualwhales.api import stock
 
             response = await self._call_sync(
-                stock.get_implied_volatility_surface.sync,
+                stock.get_implied_volatility_surface.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 client=self._client,
                 ticker=symbol.upper(),
             )
@@ -712,7 +712,11 @@ class UWOptionsMixin(_UWMixinBase):
         try:
             from unusualwhales.api import stock
 
-            response = await self._call_sync(stock.get_put_call_ratio.sync, client=self._client, ticker=symbol.upper())
+            response = await self._call_sync(
+                stock.get_put_call_ratio.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                client=self._client,
+                ticker=symbol.upper(),
+            )
             data = self._get_data_safe(response)
             if not data:
                 return []
@@ -807,7 +811,9 @@ class UWOptionsMixin(_UWMixinBase):
             from unusualwhales.api import stock
 
             response = await self._call_sync(
-                stock.get_option_volume_levels.sync, client=self._client, ticker=symbol.upper()
+                stock.get_option_volume_levels.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                client=self._client,
+                ticker=symbol.upper(),
             )
             data = self._get_data_safe(response)
             if not data:
@@ -842,7 +848,9 @@ class UWOptionsMixin(_UWMixinBase):
             from unusualwhales.api import contract
 
             response = await self._call_sync(
-                contract.get_volume_profile.sync, client=self._client, option_symbol=contract_id
+                contract.get_volume_profile.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                client=self._client,
+                option_symbol=contract_id,
             )
             data = self._get_data_safe(response)
             if not data:

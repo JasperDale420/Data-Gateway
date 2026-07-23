@@ -976,7 +976,7 @@ class UWMarketMixin(_UWMixinBase):
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
-        from unusualwhales.api.market import get_sector_etfs
+        from unusualwhales.api.market import get_sector_etfs  # type: ignore[attr-defined]  # not in vendored SDK v5.1
 
         try:
             response = await self._call_sync(get_sector_etfs.sync, client=self._client)

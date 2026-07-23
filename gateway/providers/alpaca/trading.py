@@ -544,7 +544,7 @@ class AlpacaTradingMixin(_AlpacaMixinBase):
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
         try:
-            history = self._trading_client.get_portfolio_history(
+            history = self._trading_client.get_portfolio_history(  # type: ignore[call-arg]  # kwargs do not match alpaca-py signature (docs/FOLLOW_UPS.md)
                 period=period,
                 timeframe=timeframe,
                 date_start=start,
@@ -658,7 +658,7 @@ class AlpacaTradingMixin(_AlpacaMixinBase):
             raise RuntimeError(ERR_TRADING_CLIENT_NOT_INITIALIZED)
 
         try:
-            config = self._trading_client.set_account_configurations(
+            config = self._trading_client.set_account_configurations(  # type: ignore[call-arg]  # kwargs do not match alpaca-py signature (docs/FOLLOW_UPS.md)
                 dtbp_check=dtbp_check,
                 trade_confirm_email=trade_confirm_email,
                 suspend_trade=suspend_trade,

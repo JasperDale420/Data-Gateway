@@ -77,10 +77,11 @@ class UWInstitutionalMixin(_UWMixinBase):
             logger.warning("uw_client_not_initialized")
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
+        client = self._client
         try:
 
             def _request_recent_trades() -> Any:
-                response = self._client.get_httpx_client().request(
+                response = client.get_httpx_client().request(
                     "get",
                     "/api/congress/recent-trades",
                     params={"limit": limit},
@@ -734,7 +735,7 @@ class UWInstitutionalMixin(_UWMixinBase):
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
-        from unusualwhales.api.congress import get_trader
+        from unusualwhales.api.congress import get_trader  # type: ignore[attr-defined]  # not in vendored SDK v5.1
 
         try:
             response = await self._call_sync(
