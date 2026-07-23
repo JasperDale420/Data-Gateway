@@ -8,7 +8,7 @@ import httpx
 
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
-from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED
+from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, _AlpacaMixinBase
 
 
 def _derive_ex_date(action: dict[str, Any], *fallback_fields: str, action_type: str) -> str:
@@ -53,7 +53,7 @@ def _derive_ex_date(action: dict[str, Any], *fallback_fields: str, action_type: 
     return synth
 
 
-class AlpacaCorporateMixin:
+class AlpacaCorporateMixin(_AlpacaMixinBase):
     """Corporate action methods."""
 
     @http_retry

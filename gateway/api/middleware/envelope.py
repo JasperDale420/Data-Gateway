@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import json
 import re
+from typing import Any
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -202,7 +203,7 @@ class EventEnvelopeMiddleware:
                 return
 
             if message["type"] == "http.response.body":
-                if should_wrap:
+                if should_wrap and initial_message is not None:
                     body_chunks.append(message.get("body", b""))
                     if not message.get("more_body", False):
                         # Body complete — wrap in envelope
@@ -373,9 +374,11 @@ class EventEnvelopeMiddleware:
                 raise
             # Lenient (default): return original response with explicit
             # x-gateway-envelope: false so consumers can detect the unwrapped path.
-            new_headers: list[tuple[bytes, bytes]] = list(initial_message.get("headers", []))
-            new_headers.append((b"x-gateway-envelope", b"false"))
-            await send({"type": "http.response.start", "status": initial_message["status"], "headers": new_headers})
+            fallback_headers: list[tuple[bytes, bytes]] = list(initial_message.get("headers", []))
+            fallback_headers.append((b"x-gateway-envelope", b"false"))
+            await send(
+                {"type": "http.response.start", "status": initial_message["status"], "headers": fallback_headers}
+            )
             await send({"type": "http.response.body", "body": body})
 
     async def _publish_sink_batch(self, tasks: list, path: str) -> None:
@@ -392,7 +395,7 @@ class EventEnvelopeMiddleware:
     async def _publish_sink_envelope(
         self,
         *,
-        sink_registry: object,
+        sink_registry: Any,
         topic: str,
         envelope: dict,
         feed: str,
@@ -405,7 +408,7 @@ class EventEnvelopeMiddleware:
         await publish_all(topic, envelope)
 
     @staticmethod
-    def _publish_all_accepts_sink_labels(publish_all: object) -> bool:
+    def _publish_all_accepts_sink_labels(publish_all: Any) -> bool:
         """Return whether ``publish_all`` accepts Task 3 source/feed labels."""
         try:
             parameters = inspect.signature(publish_all).parameters.values()

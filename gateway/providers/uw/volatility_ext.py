@@ -8,8 +8,10 @@ plus market-wide anomaly & character tops and the VIX term structure.
 from typing import Any
 from urllib.parse import quote
 
+from ._base import _UWMixinBase
 
-class UWVolatilityExtMixin:
+
+class UWVolatilityExtMixin(_UWMixinBase):
     """Mixin providing UW volatility-analytics REST endpoints."""
 
     async def get_volatility_anomaly(self, symbol: str, date_str: str | None = None) -> Any:

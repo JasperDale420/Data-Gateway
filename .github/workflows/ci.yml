@@ -52,19 +52,34 @@ jobs:
         # ../empire-core path deps that only exist in the monorepo checkout;
         # the real freshness check runs in .githooks/pre-push). This guard
         # catches the common drift: a PR editing dependencies without
-        # relocking.
+        # relocking. Tool-config-only edits ([tool.mypy], [tool.ruff],
+        # [tool.pytest], ...) never affect resolution, so the gate only fires
+        # when the pyproject diff touches dependency-shaped lines: [project],
+        # [build-system], or [tool.uv] section headers, dependency arrays,
+        # requires lines, or version-pinned entries.
         if: github.event_name == 'pull_request'
         run: |
           git fetch origin "$GITHUB_BASE_REF"
           changed=$(git diff --name-only "origin/$GITHUB_BASE_REF"...HEAD)
           if echo "$changed" | grep -qx 'pyproject.toml' && ! echo "$changed" | grep -qx 'uv.lock'; then
-            echo "::error::pyproject.toml changed without uv.lock — run 'uv lock' and commit the result"
-            exit 1
+            dep_lines=$(git diff "origin/$GITHUB_BASE_REF"...HEAD -- pyproject.toml \
+              | grep -E '^[+-]' | grep -vE '^[+-]{3}' \
+              | grep -E '\[(project|build-system|tool\.uv)|dependencies|requires|[=<>~!]=' || true)
+            if [ -n "$dep_lines" ]; then
+              echo "::error::pyproject.toml dependency lines changed without uv.lock — run 'uv lock' and commit the result"
+              echo "$dep_lines"
+              exit 1
+            fi
+            echo "OK: pyproject.toml changed but only tool configuration — no relock needed"
+          else
+            echo "OK: pyproject.toml/uv.lock consistent"
           fi
-          echo "OK: pyproject.toml/uv.lock consistent"
 
       - name: Run pre-commit hooks
-        run: pre-commit run --all-files
+        # SKIP=mypy: the pre-commit mypy hook runs `uv run --no-sync` for local
+        # venv-version consistency; CI has no uv and gates mypy in its own
+        # dedicated step instead.
+        run: SKIP=mypy pre-commit run --all-files
 
       - name: Security scan (bandit)
         run: bandit -c pyproject.toml -r gateway/

@@ -286,7 +286,7 @@ class SubscriptionManager:
             self._subscriptions[client_id] = ClientSubscription(client_id=client_id)
         sub = self._subscriptions[client_id]
         feeds = {"bars": bars, "quotes": quotes, "trades": trades, "news": news}
-        return tuple(  # type: ignore[return-value]
+        return tuple(
             self._subscribe_feed(client_id, sub, name, syms) if syms else set() for name, syms in feeds.items()
         )
 
@@ -303,7 +303,7 @@ class SubscriptionManager:
             return set(), set(), set(), set()
         sub = self._subscriptions[client_id]
         feeds = {"bars": bars, "quotes": quotes, "trades": trades, "news": news}
-        return tuple(  # type: ignore[return-value]
+        return tuple(
             self._unsubscribe_feed(client_id, sub, name, syms) if syms else set() for name, syms in feeds.items()
         )
 
@@ -312,9 +312,7 @@ class SubscriptionManager:
         if client_id not in self._subscriptions:
             return set(), set(), set(), set()
         sub = self._subscriptions.pop(client_id)
-        return tuple(  # type: ignore[return-value]
-            self._remove_client_feed(client_id, sub, name) for name in _FEED_NAMES
-        )
+        return tuple(self._remove_client_feed(client_id, sub, name) for name in _FEED_NAMES)
 
     def get_clients_for_symbol(self, symbol: str, data_type: str) -> list[str]:
         """Get all clients subscribed to a symbol for a data type (returns copy)."""

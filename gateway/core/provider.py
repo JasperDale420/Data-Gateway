@@ -144,6 +144,7 @@ class DataProvider(ABC):
         symbols: list[str],
         start: datetime,
         end: datetime,
+        limit: int = 10000,
     ) -> list[NormalizedTrade]:
         """Fetch historical trades."""
         raise NotImplementedError("Provider does not support trades")

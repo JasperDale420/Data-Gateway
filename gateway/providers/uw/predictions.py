@@ -8,8 +8,10 @@ details / liquidity / positions, unusual markets, and user lookup / search.
 from typing import Any
 from urllib.parse import quote
 
+from ._base import _UWMixinBase
 
-class UWPredictionsMixin:
+
+class UWPredictionsMixin(_UWMixinBase):
     """Mixin providing UW prediction-market REST endpoints."""
 
     async def get_prediction_insiders(self) -> Any:

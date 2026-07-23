@@ -1,7 +1,7 @@
 """UW Flow mixin — flow alerts, darkpool, tide, greek flow, tape, net flow."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -11,7 +11,7 @@ from gateway.schemas import (
     NormalizedMarketTide,
 )
 
-from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int
+from ._base import ERR_NOT_INITIALIZED, _or_unset, _safe_int, _UWMixinBase
 from .transient import _uw_error_context, is_transient_upstream_error
 
 _ET = ZoneInfo("America/New_York")
@@ -19,7 +19,7 @@ _ET = ZoneInfo("America/New_York")
 from gateway.core.logger import logger
 
 
-class UWFlowMixin:
+class UWFlowMixin(_UWMixinBase):
     """Mixin providing options flow, darkpool, tide, and greek flow endpoints."""
 
     async def _get_darkpool_recent_raw(
@@ -396,7 +396,7 @@ class UWFlowMixin:
 
         try:
             response = await self._call_sync(
-                group_flow.get_greek_flow_expiry.sync,
+                cast(Any, group_flow).get_greek_flow_expiry.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 flow_group,
                 expiry,
                 client=self._client,
@@ -626,7 +626,10 @@ class UWFlowMixin:
         try:
             from unusualwhales.api import market
 
-            response = await self._call_sync(market.get_net_flow_by_expiry.sync, client=self._client)
+            response = await self._call_sync(
+                cast(Any, market).get_net_flow_by_expiry.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                client=self._client,
+            )
             data = self._get_data_safe(response)
             if not data:
                 return []
@@ -758,7 +761,10 @@ class UWFlowMixin:
         try:
             from unusualwhales.api import market
 
-            response = await self._call_sync(market.get_top_net_premium.sync, client=self._client)
+            response = await self._call_sync(
+                cast(Any, market).get_top_net_premium.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                client=self._client,
+            )
             data = self._get_data_safe(response)
             if not data:
                 return {"bullish": [], "bearish": []}
@@ -1002,7 +1008,10 @@ class UWFlowMixin:
         from unusualwhales.api.flow import get_full_tape
 
         try:
-            response = await self._call_sync(get_full_tape.sync, client=self._client)
+            response = await self._call_sync(
+                cast(Any, get_full_tape).sync,  # module only ships sync_detailed (docs/FOLLOW_UPS.md)
+                client=self._client,
+            )
             data = self._extract_data(response)
             result = data
             return result[:limit]

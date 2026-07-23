@@ -9,8 +9,10 @@ disclosures, v2 institutional activity, and v2 short-interest / short-screener.
 from typing import Any
 from urllib.parse import quote
 
+from ._base import _UWMixinBase
 
-class UWCongressExtMixin:
+
+class UWCongressExtMixin(_UWMixinBase):
     """Mixin providing UW congress-extension REST endpoints."""
 
     async def get_sliding_window_analytics(

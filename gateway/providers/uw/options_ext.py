@@ -10,8 +10,10 @@ per-ticker flow-per-expiry / flow-per-strike / GEX levels and spot exposures.
 from typing import Any
 from urllib.parse import quote
 
+from ._base import _UWMixinBase
 
-class UWOptionsExtMixin:
+
+class UWOptionsExtMixin(_UWMixinBase):
     """Mixin providing UW options-flow / greeks / GEX / options-pulse REST endpoints."""
 
     async def get_group_flow_greek_flow_by_expiry(
