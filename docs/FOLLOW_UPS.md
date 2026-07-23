@@ -42,15 +42,16 @@ repo.
   correct; `stock_bars` survives in capability names, the client-facing WS
   default, catalog metadata, and replay mock data. Renaming touches WS
   clients — coordinate with consumers if ever done.
-- **72 grandfathered semgrep findings** (`empire-no-bare-exception`,
-  `empire-no-return-none-for-failure`): these two rules had invalid
-  patterns upstream and never actually ran anywhere; fixed in the vendored
-  `.semgrep/empire-rules.yaml`, they surface 72 pre-existing violations in
-  `gateway/` (heaviest: `core/http_client.py` ×16). Excluded from the
-  blocking CI scan via `--exclude-rule` — clean them up in a deploy window,
-  then remove the excludes.
-- **`get_trades` severity split** (`gateway/providers/alpaca/market.py`):
-  logs all statuses at ERROR while `get_bars`/`get_quotes` split 4xx→WARNING.
+- ~~72 grandfathered semgrep findings~~ **DONE 2026-07-22** (branch
+  `debt/semgrep-exceptions`): all 76 findings paid down — real swallows
+  narrowed/logged (heaviest: the silent circuit-breaker pre-checks in
+  `core/data_sink.py`), legitimate boundaries annotated with justified
+  `nosemgrep` — and both rules are now blocking in CI (the `--exclude-rule`
+  flags are gone; semgrep pin bumped 1.157.0 → 1.170.0).
+- ~~`get_trades` severity split~~ **DONE 2026-07-22** (same branch): all six
+  market methods that logged every status at ERROR (`get_trades`,
+  `latest_bars`, `latest_trades`, `historical_quotes`, `snapshots`,
+  `auctions`) now split 4xx→WARNING / 5xx→ERROR like `get_bars`/`get_quotes`.
 
 ## Other repos
 
