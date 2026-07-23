@@ -191,6 +191,7 @@ class FlowFanout:
             return 0
         stream_cursor: str | None = None
         if self._replay_store is not None:
+            # nosemgrep: empire-no-bare-exception -- replay persistence failure disables fanout for this event; logged with exc_info
             try:
                 stream_cursor = await self._replay_store.append(envelope)
             except Exception:
@@ -257,6 +258,7 @@ class FlowFanout:
             if self._pending_replays.get(connection_id) is barrier:
                 self._pending_replays.pop(connection_id, None)
             return {"resume_supported": False}
+        # nosemgrep: empire-no-bare-exception -- resume falls back to non-replay mode; logged with exc_info
         try:
             high_watermark = await store.high_watermark()
         except Exception:

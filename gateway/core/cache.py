@@ -490,7 +490,8 @@ class RedisCache:
             if self._redis is None:
                 raise RuntimeError("Redis connection not established")
             return await self._redis.exists(f"{self.KEY_PREFIX}{key}") > 0
-        except Exception:
+        except Exception as e:
+            logger.warning("redis_cache_exists_error", key=key, error=str(e))
             return False
 
     @property
@@ -511,14 +512,14 @@ class RedisCache:
                     await self._redis.aclose()
                 else:
                     await self._redis.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("redis_cache_close_error", error=str(e))
             try:
                 pool = getattr(self._redis, "connection_pool", None)
                 if pool is not None:
                     await pool.disconnect()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("redis_cache_pool_disconnect_error", error=str(e))
             self._redis = None
             self._connected = False
 

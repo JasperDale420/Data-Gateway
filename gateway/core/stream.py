@@ -1046,6 +1046,7 @@ class StreamMultiplexer:
         retry cycle rather than a tight loop.
         """
         while self._running:
+            # nosemgrep: empire-no-bare-exception -- supervisor loop must survive any iteration failure; logged via logger.exception
             try:
                 await asyncio.sleep(STREAM_SUPERVISOR_INTERVAL_SECONDS)
                 await self._supervise_once()

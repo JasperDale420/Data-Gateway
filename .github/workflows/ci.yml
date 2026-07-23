@@ -85,20 +85,18 @@ jobs:
         run: bandit -c pyproject.toml -r gateway/
 
       - name: Semgrep (empire coding rules)
-        # Pinned: 1.170+ fails rule validation (PatternParseError) on the
-        # `except $EXCEPTION: return None` pattern in the vendored rules.
-        # Bump the pin together with a rule re-vendor/validation, not blind.
-        # The two except-clause rules are excluded from blocking: their
-        # upstream patterns never parsed (so they had never run anywhere);
-        # fixed in the vendored copy, they surface 72 pre-existing findings
-        # in gateway/ that need a deploy window to fix (docs/FOLLOW_UPS.md).
-        # Remove the excludes once those are cleaned up.
+        # All 10 vendored rules are blocking. The two except-clause rules
+        # (empire-no-bare-exception, empire-no-return-none-for-failure) never
+        # parsed upstream; the vendored copy fixed their patterns and the 76
+        # findings they surfaced were paid down (narrowed catches, added
+        # logging, or nosemgrep with a one-line justification), so the former
+        # --exclude-rule flags are gone. Pinned for reproducibility: 1.170.0
+        # validates the fixed vendored patterns (the old 1.157 pin predated
+        # the pattern fix). Bump the pin together with a local
+        # `semgrep scan --config .semgrep/empire-rules.yaml` check.
         run: |
-          pip install "semgrep==1.157.0"
-          semgrep scan --config .semgrep/empire-rules.yaml --error --metrics off \
-            --exclude-rule semgrep.empire-no-bare-exception \
-            --exclude-rule semgrep.empire-no-return-none-for-failure \
-            gateway/ tests/
+          pip install "semgrep==1.170.0"
+          semgrep scan --config .semgrep/empire-rules.yaml --error --metrics off gateway/ tests/
 
       - name: Architecture contracts (import-linter)
         run: lint-imports

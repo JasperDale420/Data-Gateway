@@ -231,6 +231,7 @@ class ProviderRateLimitManager:
         and GATEWAY_ALPACA_RATE_LIMIT_PER_SECOND environment variables.
         """
         # Apply config overrides for Alpaca limits and concurrency
+        # nosemgrep: empire-no-bare-exception -- boot boundary: settings unavailable (tests/import order) falls back to defaults; logged at debug
         try:
             from gateway.config import get_settings
 

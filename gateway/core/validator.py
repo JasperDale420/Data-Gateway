@@ -322,12 +322,12 @@ class DataValidator:
             try:
                 result = float(value)
                 return None if math.isnan(result) or math.isinf(result) else result
-            except Exception:
+            except (TypeError, ValueError):
                 return None
         try:
             result = float(value)
             return None if math.isnan(result) or math.isinf(result) else result
-        except Exception:
+        except (TypeError, ValueError):
             return None
 
     def _is_future_timestamp(self, timestamp: Any, *, now_utc: datetime) -> bool:

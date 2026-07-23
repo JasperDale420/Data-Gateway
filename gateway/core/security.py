@@ -670,8 +670,11 @@ class SecretsManager:
             try:
                 with open(file_path) as f:
                     return f.read().strip()
-            except Exception:
-                pass
+            except OSError as e:
+                # A secret file that exists but cannot be read (permissions,
+                # I/O) must be visible — silent fallback to env is a debugging
+                # trap for credential issues.
+                logger.warning("secret_file_read_failed", name=name, path=file_path, error=str(e))
         return None
 
     def _from_env(self, name: str) -> str | None:

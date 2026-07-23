@@ -37,6 +37,7 @@ async def get_quote(
             raise HTTPException(status_code=404, detail=f"No data for symbol: {symbol}")
         return quote
 
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -68,6 +69,7 @@ async def get_intraday(
     """Get intraday time series data."""
     normalized_outputsize = outputsize.lower()
     key = cache_key("av:intraday", symbol.upper(), interval, outputsize, max_points)
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -110,6 +112,7 @@ async def get_daily(
     """Get daily time series data."""
     normalized_outputsize = outputsize.lower()
     key = cache_key("av:daily", symbol.upper(), outputsize, str(adjusted), max_points)
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -150,6 +153,7 @@ async def get_weekly(
 ):
     """Get weekly time series data."""
     key = cache_key("av:weekly", symbol.upper(), str(adjusted), max_points)
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -188,6 +192,7 @@ async def get_monthly(
 ):
     """Get monthly time series data."""
     key = cache_key("av:monthly", symbol.upper(), str(adjusted), max_points)
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -221,6 +226,7 @@ async def search_symbols(
     """Search for symbols by keywords."""
     normalized_query = normalize_search_query(q)
     key = cache_key("av:search", normalized_query)
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,

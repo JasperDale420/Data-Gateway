@@ -333,11 +333,12 @@ class ConnectionManager:
         async with self._lock:
             targets = [conn for conn in self._connections.values() if conn.authenticated]
         for conn in targets:
+            # nosemgrep: empire-no-bare-exception -- one dead client must not abort the shutdown broadcast; logged at debug
             try:
                 await conn.websocket.send_json(message)
                 count += 1
             except Exception:
-                pass
+                logger.debug("shutdown_broadcast_send_failed", client_id=conn.client_id)
         return count
 
     async def close_all(self, code: int = 1001, reason: str = "Going Away") -> None:

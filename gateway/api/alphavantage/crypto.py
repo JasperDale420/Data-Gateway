@@ -27,6 +27,7 @@ async def get_crypto_rating(
 ):
     """Get crypto health rating (FCAS)."""
     key = cache_key("av:crypto-rating", symbol.upper())
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -56,6 +57,7 @@ async def get_crypto_daily(
 ):
     """Get daily crypto time series."""
     key = cache_key("av:crypto-daily", symbol.upper(), market.upper(), str(max_points))
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,

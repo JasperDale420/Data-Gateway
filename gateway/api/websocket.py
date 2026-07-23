@@ -178,6 +178,7 @@ async def _heartbeat_loop(
                     connection_id=connection_id,
                     send_failures=send_failures,
                 )
+                # nosemgrep: empire-no-bare-exception -- close on possibly-dead socket; failure is expected and logged at debug
                 try:
                     await websocket.close(code=4002, reason="Heartbeat timeout")
                 except Exception:
@@ -195,6 +196,7 @@ async def _heartbeat_loop(
                 silence_seconds=round(silence, 1),
                 max_silence_seconds=max_silence,
             )
+            # nosemgrep: empire-no-bare-exception -- close on possibly-dead socket; failure is expected and logged at debug
             try:
                 await websocket.close(code=4002, reason="Heartbeat timeout")
             except Exception:
@@ -204,6 +206,7 @@ async def _heartbeat_loop(
         # --- 3. Check idle timeout (ws_idle_timeout) ---
         if silence > settings.ws_idle_timeout:
             logger.info("ws_idle_disconnect", connection_id=connection_id, idle_seconds=round(silence, 1))
+            # nosemgrep: empire-no-bare-exception -- close on possibly-dead socket; failure is expected and logged at debug
             try:
                 await websocket.close(code=4003, reason="Idle timeout")
             except Exception:
@@ -334,6 +337,7 @@ async def _message_loop(
                         size=len(raw_text.encode("utf-8")),
                         max_bytes=max_bytes,
                     )
+                    # nosemgrep: empire-no-bare-exception -- best-effort error notice to a client we are about to disconnect; logged at debug
                     try:
                         await websocket.send_json(
                             {
@@ -343,13 +347,14 @@ async def _message_loop(
                             }
                         )
                     except Exception:
-                        pass
+                        logger.debug("ws_oversize_notify_failed", connection_id=connection_id)
                     # Close 1009 (Message Too Big) and terminate the loop so the
                     # client cannot retry oversize frames on the same connection.
+                    # nosemgrep: empire-no-bare-exception -- close on possibly-dead socket; failure is expected and logged at debug
                     try:
                         await websocket.close(code=1009, reason="Message too large")
                     except Exception:
-                        pass
+                        logger.debug("ws_oversize_close_failed", connection_id=connection_id)
                     return
                 message = json.loads(raw_text)
             elif raw.get("bytes") is not None:
@@ -361,6 +366,7 @@ async def _message_loop(
                         size=len(raw_bytes),
                         max_bytes=max_bytes,
                     )
+                    # nosemgrep: empire-no-bare-exception -- best-effort error notice to a client we are about to disconnect; logged at debug
                     try:
                         await websocket.send_json(
                             {
@@ -370,11 +376,12 @@ async def _message_loop(
                             }
                         )
                     except Exception:
-                        pass
+                        logger.debug("ws_oversize_notify_failed", connection_id=connection_id)
+                    # nosemgrep: empire-no-bare-exception -- close on possibly-dead socket; failure is expected and logged at debug
                     try:
                         await websocket.close(code=1009, reason="Message too large")
                     except Exception:
-                        pass
+                        logger.debug("ws_oversize_close_failed", connection_id=connection_id)
                     return
                 message = json.loads(raw_bytes.decode("utf-8"))
             else:

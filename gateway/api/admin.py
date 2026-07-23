@@ -744,6 +744,7 @@ async def get_status(
     if sink_registry is not None:
         get_backpressure_snapshot = getattr(sink_registry, "get_backpressure_snapshot", None)
         if callable(get_backpressure_snapshot):
+            # nosemgrep: empire-no-bare-exception -- optional diagnostics snapshot; logged via logger.exception
             try:
                 data_sink_backpressure = get_backpressure_snapshot()
             except Exception:

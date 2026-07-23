@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from gateway.api.deps import get_authenticator, get_endpoint_rate_limiter, require_api_key
 from gateway.config import get_settings
 from gateway.core.auth import ClientAuthenticator
+from gateway.core.logger import logger
 from gateway.core.rate_limiter import EndpointRateLimitExceeded
 from gateway.core.replay import (
     ReplayConfig,
@@ -425,9 +426,11 @@ async def replay_websocket(
 
     async def send_message(msg: dict[str, Any]) -> None:
         """Callback to send messages to WebSocket."""
+        # nosemgrep: empire-no-bare-exception -- any send failure means the client is gone; stop the replay and log at debug
         try:
             await websocket.send_json(msg)
         except Exception:
+            logger.debug("replay_ws_send_failed_stopping", session_id=session_id)
             session.stop()
 
     control_task: asyncio.Task[None] | None = None

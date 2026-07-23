@@ -30,6 +30,7 @@ async def get_earnings_calendar(
     """Get upcoming earnings calendar."""
     symbol_key = symbol.upper() if symbol else "all"
     key = cache_key("av:earnings-calendar", symbol_key, horizon)
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -57,6 +58,7 @@ async def get_ipo_calendar(
 ):
     """Get upcoming IPO calendar."""
     key = cache_key("av:ipo-calendar")
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -86,6 +88,7 @@ async def get_listing_status(
 ):
     """Get listing status (active stocks or delisted)."""
     key = cache_key("av:listing-status", state, date or "current")
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,

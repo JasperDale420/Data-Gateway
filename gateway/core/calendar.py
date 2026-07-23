@@ -49,6 +49,7 @@ def _get_nyse_calendar() -> Any | None:
     if not _XCALS_AVAILABLE:
         return None
     if _nyse_cal is None:
+        # nosemgrep: empire-no-bare-exception -- optional dependency load: logged via logger.exception, falls back to built-in calendar
         try:
             today = date.today()
             start = pd.Timestamp(date(today.year - 5, 1, 1))
@@ -110,8 +111,10 @@ def _resolve_holiday_name(cal: Any, ts: Any) -> str:
         for holiday_rule in getattr(cal, "adhoc_holidays", []):
             if hasattr(holiday_rule, "__iter__") and ts in holiday_rule:
                 return "Ad-hoc Holiday"
-    except Exception:
-        pass
+    except Exception as e:
+        # xcals holiday-rule internals vary by version; the generic label
+        # below is a safe cosmetic fallback.
+        logger.debug("holiday_name_lookup_failed", error=str(e))
     return "Market Holiday"
 
 

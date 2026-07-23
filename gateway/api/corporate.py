@@ -51,6 +51,7 @@ legacy_adjustments_router = APIRouter(
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
+    # nosemgrep: empire-no-return-none-for-failure -- documented Optional parse helper: unparseable provider date yields None
     try:
         return date.fromisoformat(value[:10])
     except ValueError:
@@ -75,6 +76,7 @@ def _parse_ratio(value: str | int | float | Decimal | None) -> float | None:
                     return num / den if den else None
                 except (TypeError, ValueError):
                     return None
+        # nosemgrep: empire-no-return-none-for-failure -- documented Optional parse helper: unparseable provider ratio yields None
         try:
             return float(value)
         except ValueError:

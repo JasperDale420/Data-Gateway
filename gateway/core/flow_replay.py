@@ -50,6 +50,7 @@ class RedisFlowReplayStore:
 
     async def initialize(self) -> bool:
         """Connect and prove Redis is usable before advertising replay."""
+        # nosemgrep: empire-no-bare-exception -- probe boundary: any failure marks the store unavailable; logged with exc_info
         try:
             import redis.asyncio as aioredis
 
@@ -66,6 +67,7 @@ class RedisFlowReplayStore:
     async def append(self, envelope: dict[str, Any]) -> str:
         if not self.available:
             raise RuntimeError("flow replay store is unavailable")
+        # nosemgrep: empire-no-bare-exception -- append failure disables the store and re-raises; logged with exc_info
         try:
             cursor = await self._redis.xadd(
                 self._stream,

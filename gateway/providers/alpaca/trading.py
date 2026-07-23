@@ -55,6 +55,7 @@ class AlpacaTradingMixin(_AlpacaMixinBase):
     @staticmethod
     def _extract_alpaca_error_code(exc: APIError) -> int | None:
         """Extract the numeric Alpaca error code from an APIError, or None if unparseable."""
+        # nosemgrep: empire-no-bare-exception,empire-no-return-none-for-failure -- documented Optional helper: SDK error internals vary; unparseable code yields None
         try:
             return exc.code
         except Exception:

@@ -325,6 +325,57 @@ async def test_get_bars_logs_4xx_as_warning_5xx_as_error(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "expected_level"), [(400, "warning"), (500, "error")])
+async def test_get_trades_logs_4xx_as_warning_5xx_as_error(
+    monkeypatch: pytest.MonkeyPatch, status: int, expected_level: str
+) -> None:
+    """Same severity-by-status convention as get_bars/get_quotes."""
+    import httpx
+
+    provider = AlpacaProvider()
+    provider._client = cast(Any, _FakeClient({}))
+
+    async def _raise(*_args: Any, **_kwargs: Any) -> Any:
+        request = httpx.Request("GET", "https://data.alpaca.markets/v2/stocks/trades")
+        response = httpx.Response(status_code=status, request=request)
+        raise httpx.HTTPStatusError(f"{status}", request=request, response=response)
+
+    monkeypatch.setattr(provider, "_paginate", _raise)
+    rec = _RecordingLogger()
+    monkeypatch.setattr("gateway.providers.alpaca.market.logger", rec)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.get_trades(
+            ["SPX"],
+            datetime(2026, 1, 14, tzinfo=UTC),
+            datetime(2026, 3, 5, tzinfo=UTC),
+        )
+
+    levels = {lvl for lvl, event in rec.calls if event == "alpaca_trades_error"}
+    assert levels == {expected_level}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "expected_level"), [(400, "warning"), (500, "error")])
+async def test_get_snapshots_logs_4xx_as_warning_5xx_as_error(
+    monkeypatch: pytest.MonkeyPatch, status: int, expected_level: str
+) -> None:
+    """Same severity-by-status convention as get_bars/get_quotes."""
+    import httpx
+
+    provider = AlpacaProvider()
+    provider._client = cast(Any, _HTTPErrorClient(status))
+    rec = _RecordingLogger()
+    monkeypatch.setattr("gateway.providers.alpaca.market.logger", rec)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.get_snapshots(["SPX"])
+
+    levels = {lvl for lvl, event in rec.calls if event == "alpaca_snapshots_error"}
+    assert levels == {expected_level}
+
+
+@pytest.mark.asyncio
 async def test_get_option_quotes_coerces_string_conditions_to_list() -> None:
     provider = AlpacaProvider()
     fake_client = _FakeClient(_option_quotes_payload_with_string_conditions())
