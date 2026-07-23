@@ -43,6 +43,7 @@ async def get_technical_indicator(
         series_type,
         str(max_points),
     )
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,

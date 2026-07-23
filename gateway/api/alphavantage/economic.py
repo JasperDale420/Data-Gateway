@@ -34,6 +34,7 @@ async def get_economic_indicator(
     UNEMPLOYMENT, NONFARM_PAYROLL
     """
     key = cache_key("av:economic", indicator.upper(), interval)
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,

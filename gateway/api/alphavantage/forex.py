@@ -28,6 +28,7 @@ async def get_forex_rate(
 ):
     """Get real-time exchange rate."""
     key = cache_key("av:forex-rate", from_currency.upper(), to_currency.upper())
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -57,6 +58,7 @@ async def get_forex_daily(
 ):
     """Get daily forex time series."""
     key = cache_key("av:forex-daily", from_symbol.upper(), to_symbol.upper(), str(max_points))
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,

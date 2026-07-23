@@ -35,6 +35,7 @@ async def get_company_overview(
             raise HTTPException(status_code=404, detail=f"No data for symbol: {symbol}")
         return data
 
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -62,6 +63,7 @@ async def get_earnings(
 ):
     """Get earnings data (annual and quarterly)."""
     key = cache_key("av:earnings", symbol.upper())
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -87,6 +89,7 @@ async def get_income_statement(
 ):
     """Get income statement data."""
     key = cache_key("av:income", symbol.upper())
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -112,6 +115,7 @@ async def get_balance_sheet(
 ):
     """Get balance sheet data."""
     key = cache_key("av:balance", symbol.upper())
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
@@ -137,6 +141,7 @@ async def get_cash_flow(
 ):
     """Get cash flow statement data."""
     key = cache_key("av:cashflow", symbol.upper())
+    # nosemgrep: empire-no-bare-exception -- route boundary: any provider failure maps to 502; logged with exc_info above the raise
     try:
         return await execute_av_cached(
             cache=cache,
