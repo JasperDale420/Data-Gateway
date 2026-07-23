@@ -20,9 +20,6 @@ follow-up task; until that lands, the gateway is the source of truth.
 
 # ── Re-export the empire_schemas models we do NOT shadow ──
 from empire_schemas import (
-    FEED_UNIQUE_FIELDS,
-    INSTRUMENT_KEY_PATTERNS,
-    SCHEMA_VERSION,
     Account,
     AccountConfigResponse,
     AccountConfigurations,
@@ -49,7 +46,6 @@ from empire_schemas import (
     CryptoSnapshotResponse,
     CryptoTradesResponse,
     ErrorResponse,
-    EventEnvelope,
     ExchangeCodesResponse,
     FixedIncomeResponse,
     ForexHistoricalResponse,
@@ -110,11 +106,6 @@ from empire_schemas import (
     Watchlist,
     WatchlistResponse,
     WatchlistsListResponse,
-    compute_event_id,
-    extract_unique_fields,
-    infer_instrument_type,
-    make_instrument_key,
-    validate_instrument_key,
 )
 
 # Auction is in empire_schemas.responses but also re-exported here for convenience
@@ -185,16 +176,6 @@ __all__ = [
     "NormalizedOrderbook",
     "NormalizedMostActive",
     "NormalizedMover",
-    # Envelope
-    "EventEnvelope",
-    "make_instrument_key",
-    "compute_event_id",
-    "extract_unique_fields",
-    "infer_instrument_type",
-    "FEED_UNIQUE_FIELDS",
-    # Instrument
-    "validate_instrument_key",
-    "INSTRUMENT_KEY_PATTERNS",
     # Responses
     "AuthMessage",
     "SubscribeMessage",
