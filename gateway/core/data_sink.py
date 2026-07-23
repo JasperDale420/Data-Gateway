@@ -395,8 +395,11 @@ class DataSinkRegistry:
                     if not sink.record_publish_metrics:
                         record_sink_publish(sink=sink.name, topic=topic, success=False)
                     continue
-            except Exception:
-                pass  # If breaker lookup fails, proceed with publish
+            except RuntimeError as e:
+                # Breaker registry is pure in-memory asyncio; lookup only fails
+                # on event-loop/lock teardown races (shutdown, cross-loop tests).
+                # Fail open — publish rather than drop — but leave a trace.
+                logger.debug("data_sink_breaker_precheck_failed", sink=sink.name, error=str(e))
 
             await self._enqueue_for_sink(sink, topic, data, source=source, feed=feed)
 
@@ -495,6 +498,7 @@ class DataSinkRegistry:
                 topic, data = item
                 self._publish_stats["scheduled"] += 1
                 self._sink_inflight[sink.name] = self._sink_inflight.get(sink.name, 0) + 1
+                # nosemgrep: empire-no-bare-exception -- worker boundary: logged via logger.exception below; a helper bug must not kill the worker
                 try:
                     await self._safe_publish(sink, topic, data)
                 except asyncio.CancelledError:
@@ -540,6 +544,7 @@ class DataSinkRegistry:
         """
         buffer = getattr(sink, "buffer_event", None)
         if callable(buffer):
+            # nosemgrep: empire-no-bare-exception -- salvage path: failure logged via logger.exception; loss log below must still run
             try:
                 # buffer_event returns True only if the event actually landed
                 # in a retry buffer. The ABC default returns False (no buffer),
@@ -609,9 +614,12 @@ class DataSinkRegistry:
                         for msg_topic, msg_data in messages:
                             sink.buffer_event(msg_topic, msg_data)
                     continue
-            except Exception:
-                pass
+            except RuntimeError as e:
+                # Breaker lookup only fails on event-loop/lock teardown races;
+                # fail open and publish rather than silently dropping the batch.
+                logger.debug("data_sink_breaker_precheck_failed", sink=sink.name, error=str(e))
             if hasattr(sink, "publish_batch_results"):
+                # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
                     sink_results = await sink.publish_batch_results(messages)
                 except Exception:
@@ -623,6 +631,7 @@ class DataSinkRegistry:
                     sink_results = []
                 total += sum(1 for ok in sink_results if ok)
             elif hasattr(sink, "publish_batch"):
+                # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
                     total += await sink.publish_batch(messages)
                 except Exception:
@@ -690,12 +699,15 @@ class DataSinkRegistry:
                             count=len(messages),
                         )
                     continue
-            except Exception:
-                pass  # If breaker lookup fails, proceed with publish
+            except RuntimeError as e:
+                # Breaker lookup only fails on event-loop/lock teardown races;
+                # fail open and publish rather than silently dropping the batch.
+                logger.debug("data_sink_breaker_precheck_failed", sink=sink.name, error=str(e))
 
             if hasattr(sink, "publish_batch_results"):
                 # Preferred path: sink returns per-message booleans, so
                 # partial failure is observable.
+                # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
                     sink_results = await sink.publish_batch_results(messages)
                 except Exception:
@@ -725,6 +737,7 @@ class DataSinkRegistry:
                 # preserves "no-event-lost" semantics is to mark every
                 # message as failed when count < len(messages), so callers
                 # can retry. When count == len(messages) all succeeded.
+                # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
                     count = await sink.publish_batch(messages)
                 except Exception:
@@ -809,10 +822,13 @@ class DataSinkRegistry:
                     # nothing landed for this sink — intersect to the empty set.
                     succeeded = set() if succeeded is None else (succeeded & set())
                     continue
-            except Exception:
-                pass  # If breaker lookup fails, proceed with publish
+            except RuntimeError as e:
+                # Breaker lookup only fails on event-loop/lock teardown races;
+                # fail open and publish rather than silently dropping the batch.
+                logger.debug("data_sink_breaker_precheck_failed", sink=sink.name, error=str(e))
 
             if hasattr(sink, "publish_batch_indexed"):
+                # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
                     sink_indices = await sink.publish_batch_indexed(messages)
                 except Exception:
@@ -831,6 +847,7 @@ class DataSinkRegistry:
                 # empty set), never optimistically passed through as all_indices.
                 # Marking/tapping an ambiguously-published event would break the
                 # per-event Heber/WS parity the indexed contract guarantees.
+                # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
                     count = await sink.publish_batch(messages)
                 except Exception:
@@ -915,6 +932,7 @@ class DataSinkRegistry:
         """Check health of all sinks."""
         results = {}
         for sink in self._sinks:
+            # nosemgrep: empire-no-bare-exception -- any sink/breaker error means unhealthy; logged at debug, health.py logs degradation throttled
             try:
                 breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
                 if breaker.state == CircuitState.OPEN:
@@ -922,6 +940,7 @@ class DataSinkRegistry:
                     continue
                 results[sink.name] = await sink.health_check()
             except Exception:
+                logger.debug("data_sink_health_check_error", sink=sink.name, exc_info=True)
                 results[sink.name] = False
         return results
 
