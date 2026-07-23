@@ -131,6 +131,7 @@ class LoopStallWatchdog:
 
     @staticmethod
     def _safe_call(callback: Callable[[float], None], value: float) -> None:
+        # nosemgrep: empire-no-bare-exception -- watchdog callbacks must never crash the watcher thread; logged with exc_info
         try:
             callback(value)
         except Exception:  # noqa: BLE001 — watchdog callbacks must never crash the watcher thread

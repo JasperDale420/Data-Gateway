@@ -45,6 +45,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     if isinstance(value, str):
+        # nosemgrep: empire-no-return-none-for-failure -- documented Optional parse helper: unparseable provider timestamp yields None
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
@@ -57,6 +58,7 @@ def _parse_date(value: Any) -> date | None:
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
     if isinstance(value, str):
+        # nosemgrep: empire-no-return-none-for-failure -- documented Optional parse helper: unparseable provider date yields None
         try:
             return date.fromisoformat(value)
         except ValueError:

@@ -118,6 +118,7 @@ async def execute_alpaca_provider_call[T](
 
     endpoint = getattr(provider_call, "__qualname__", None) or getattr(provider_call, "__name__", "<unknown>")
     log_fields = {**(log_context or {}), "endpoint": endpoint}
+    # nosemgrep: empire-no-bare-exception -- route boundary: unclassified provider failures map to 502; logged with exc_info
     try:
         await require_provider_rate_limit("alpaca", block=block)
         sem = get_rate_limiter().upstream_semaphore("alpaca") or nullcontext()

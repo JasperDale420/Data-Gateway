@@ -89,6 +89,7 @@ async def readiness(
     sink_registry = get_sink_registry()
     if sink_registry:
         checks["sinks"] = "ok"
+        # nosemgrep: empire-no-bare-exception -- readiness must report degraded, never 500; logged throttled via logger.exception
         try:
             sink_results = await sink_registry.health_check_all()
             if not all(sink_results.values()):
@@ -177,10 +178,12 @@ async def detailed_status(
         sink_backpressure: dict[str, Any] = {}
         get_backpressure_snapshot = getattr(sink_registry, "get_backpressure_snapshot", None)
         if callable(get_backpressure_snapshot):
+            # nosemgrep: empire-no-bare-exception -- optional diagnostics snapshot; logged via logger.exception
             try:
                 sink_backpressure = get_backpressure_snapshot()
             except Exception:
                 logger.exception("health_data_sink_backpressure_snapshot_failed")
+        # nosemgrep: empire-no-bare-exception -- health endpoint must report degraded, never 500; logged throttled via logger.exception
         try:
             sink_results = await sink_registry.health_check_all()
             all_healthy = all(sink_results.values())
@@ -190,6 +193,10 @@ async def detailed_status(
                 "backpressure": sink_backpressure,
             }
         except Exception:
+            global _LAST_SINK_ERROR_LOG
+            if _should_log(_LAST_SINK_ERROR_LOG):
+                _LAST_SINK_ERROR_LOG = time.time()
+                logger.exception("health_sink_check_failed")
             components["data_sink"] = {
                 "status": "degraded",
                 "backpressure": sink_backpressure,

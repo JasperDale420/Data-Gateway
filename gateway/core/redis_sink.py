@@ -248,8 +248,8 @@ class RedisStreamsSink(DataSink):
             if pool is not None:
                 await pool.disconnect()
             logger.debug("redis_sink_stale_client_closed")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("redis_sink_stale_pool_disconnect_error", error=str(e))
 
     def _create_client(self) -> Any:
         import redis.asyncio as aioredis

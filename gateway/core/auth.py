@@ -279,6 +279,7 @@ class ClientAuthenticator:
         self._clients = {}
         self._plaintext_keys = {}
         self._hashed_keys = {}
+        # nosemgrep: empire-no-bare-exception -- reload boundary: rolls back to last-good maps, logs with exc_info, and re-raises
         try:
             self._load_clients()
         except Exception:

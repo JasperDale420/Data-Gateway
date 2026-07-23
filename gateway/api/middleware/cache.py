@@ -220,7 +220,8 @@ class CacheMiddleware:
                 label = "memory"
             else:
                 label = cache.__class__.__name__.lower()
-        except Exception:
+        except ImportError:
+            # Metrics-label cosmetics only — fall back to the class name.
             label = cache.__class__.__name__.lower()
 
         self._cache_type_label = label

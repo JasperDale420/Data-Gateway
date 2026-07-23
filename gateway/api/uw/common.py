@@ -140,7 +140,11 @@ def decode_cursor(cursor: str | None, max_offset: int | None = None) -> int:
             )
             return max_offset
         return offset
-    except Exception:
+    except ValueError:
+        # Covers binascii.Error (bad base64), UnicodeDecodeError, and int()
+        # failures — all ValueError subclasses. An unparseable client-supplied
+        # cursor restarts pagination from the top.
+        logger.debug("uw_cursor_invalid", cursor=cursor)
         return 0
 
 

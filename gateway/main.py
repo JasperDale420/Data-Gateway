@@ -186,7 +186,10 @@ async def _on_stream_envelope(envelope: dict) -> None:
         # Pre-serialize once so the Redis sink doesn't have to re-encode.
         try:
             payload: dict | str = orjson.dumps(envelope, default=str).decode()
-        except Exception:
+        except Exception as e:
+            # Any pre-serialization failure must fall back to the raw dict —
+            # the sink serializes dicts itself — never drop the event.
+            logger.debug("stream_sink_preserialize_failed", error=str(e))
             payload = envelope
         await sink_registry.publish_all(STREAM_SINK_TOPIC, payload, source="poller", feed=envelope.get("feed"))
         record_stream_sink_dispatch_event("completed")
@@ -376,6 +379,7 @@ async def lifespan(app: FastAPI):
         # handler; the gateway keeps serving the previous config instead.
         from gateway.api.deps import get_authenticator
 
+        # nosemgrep: empire-no-bare-exception -- SIGHUP boundary: any reload failure keeps last-good config; logged with exc_info
         try:
             get_authenticator().reload()
             logger.info("config_reloaded")
