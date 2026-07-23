@@ -76,7 +76,10 @@ jobs:
           fi
 
       - name: Run pre-commit hooks
-        run: pre-commit run --all-files
+        # SKIP=mypy: the pre-commit mypy hook runs `uv run --no-sync` for local
+        # venv-version consistency; CI has no uv and gates mypy in its own
+        # dedicated step instead.
+        run: SKIP=mypy pre-commit run --all-files
 
       - name: Security scan (bandit)
         run: bandit -c pyproject.toml -r gateway/
