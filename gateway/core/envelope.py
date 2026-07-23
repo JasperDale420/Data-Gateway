@@ -234,6 +234,12 @@ FEED_UNIQUE_FIELDS: dict[str, list[tuple[str, str | None, Any]]] = {
     # EOD per-ticker UW feeds
     "greek_exposure": [("symbol", None, ""), ("call_gamma", None, 0)],
     "iv_rank": [("symbol", None, ""), ("iv_rank", None, 0)],
+    # One row per expiry of the SAME underlying (per-underlying analytics, not
+    # per-OCC-contract). The payload carries no date/timestamp, so ts_event falls
+    # back to now() — with no unique field, two expiries in one EOD run collide
+    # whenever their now() coincides, collapsing all but one at Bronze. expiry is
+    # the natural per-row key (mirrors historic_option_volume).
+    "iv_term_structure": [("symbol", None, ""), ("expiry", None, "")],
     # option_symbol distinguishes per-contract rows that share call_oi_change
     # (often 0) — without it most contracts collapsed to one event_id.
     "oi_change": [("option_symbol", None, ""), ("symbol", None, ""), ("date", None, ""), ("call_oi_change", None, 0)],

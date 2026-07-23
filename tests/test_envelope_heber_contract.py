@@ -142,6 +142,12 @@ REST_FEED_CASES: dict[str, tuple[dict, dict]] = {
     ),
     "greek_exposure": ({"symbol": "AAPL", "call_gamma": 0.5, "timestamp": _TS}, {}),
     "iv_rank": ({"symbol": "AAPL", "iv_rank": 0.4, "timestamp": _TS}, {}),
+    # One row per expiry of the same underlying -> equity overrides (same fix as
+    # analytics / historic_option_volume). No date/timestamp on the real payload.
+    "iv_term_structure": (
+        {"symbol": "AAPL", "expiry": "2025-03-21", "iv": 0.4, "days_to_expiry": 78},
+        {"instrument_type_override": "equity", "instrument_key_override": "equity:AAPL"},
+    ),
     "oi_change": ({"symbol": "AAPL", "date": "2025-01-02", "call_oi_change": 100, "timestamp": _TS}, {}),
     # Carries an expiry -> equity overrides (same fix as analytics).
     "historic_option_volume": (
@@ -258,3 +264,37 @@ def test_distinct_rows_get_distinct_event_ids(feed, base, field, val_a, val_b) -
 
     c = wrap_event(event={**base, field: val_a}, provider="unusual_whales", feed=feed, source="rest")
     assert a["event_id"] == c["event_id"]  # true duplicate still collapses
+
+
+def test_iv_term_structure_expiries_get_distinct_event_ids() -> None:
+    """Two expiries of the same ticker+date must not collapse to one event_id.
+
+    ``iv_term_structure`` emits one row per expiry of the *same* underlying and
+    carries no date/timestamp on the payload, so ``ts_event`` falls back to
+    ``now()``. Without ``expiry`` in FEED_UNIQUE_FIELDS the only event_id
+    discriminator is that timestamp -- so two expiries wrapped at the same
+    instant (or on republish) collide and all but one is dropped at Bronze. A
+    fixed ``ts_event_override`` here holds the EOD date constant so the test
+    isolates the expiry field as the sole discriminator (mirrors the
+    oi_change/historic_option_volume per-row key fix).
+    """
+    ts = datetime(2025, 3, 14, tzinfo=UTC)  # EOD date, held constant across calls
+    base = {"symbol": "AAPL", "iv": 0.42, "provider": "unusual_whales"}
+
+    def _wrap(expiry: str) -> dict:
+        return wrap_event(
+            event={**base, "expiry": expiry},
+            provider="unusual_whales",
+            feed="iv_term_structure",
+            source="rest",
+            ts_event_override=ts,
+            instrument_type_override="equity",
+            instrument_key_override="equity:AAPL",
+        )
+
+    near = _wrap("2025-03-21")
+    far = _wrap("2025-06-20")
+    assert near["event_id"] != far["event_id"]  # distinct expiries → distinct ids
+
+    dup = _wrap("2025-03-21")
+    assert near["event_id"] == dup["event_id"]  # true duplicate still collapses

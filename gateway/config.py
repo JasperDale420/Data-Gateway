@@ -324,6 +324,9 @@ class Settings(BaseSettings):
     # feed in {flow, flow_alerts}. Additive: inert unless a client subscribes,
     # and never touches the Alpaca multiplexer or the Redis heber:events publish.
     ws_flow_fanout_enabled: bool = True
+    ws_flow_replay_stream: str = "gateway:flow_alerts:replay"
+    ws_flow_replay_max_len: int = Field(default=100_000, ge=1_000)
+    ws_flow_replay_max_events_per_resume: int = Field(default=50_000, ge=100)
 
     # Alpaca quotes REST-fallback poller. Enable to publish quotes to Heber without
     # needing a WebSocket client to subscribe.

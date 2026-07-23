@@ -20,6 +20,7 @@ Subscriptions die with the socket via :meth:`client_disconnect`.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,7 @@ from gateway.core.logger import logger
 
 if TYPE_CHECKING:
     from gateway.core.connections import ConnectionManager
+    from gateway.core.flow_replay import FlowReplayStore
 
 # The wire ``feed`` label clients match on. Mirrors the UW poller's feed name so
 # the delivered message is indistinguishable from a Heber-bound flow envelope.
@@ -36,6 +38,17 @@ FLOW_FEED = "flow_alerts"
 # stall the UW poll loop (which also drives darkpool/tide/EOD), so each fan-out
 # broadcast is bounded by this timeout and scheduled off the poller's await.
 DELIVER_TIMEOUT_SECONDS = 2.0
+
+
+@dataclass
+class _ReplayBarrier:
+    """Connection-local handoff state while historical flow is replayed."""
+
+    symbols: list[str]
+    after: str
+    through: str | None = None
+    buffered: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    started: bool = False
 
 
 def _json_safe(value: Any) -> Any:
@@ -68,8 +81,9 @@ class FlowFanout:
     ``_by_connection`` so :meth:`client_disconnect` is O(symbols-for-that-conn).
     """
 
-    def __init__(self, connections: ConnectionManager):
+    def __init__(self, connections: ConnectionManager, replay_store: FlowReplayStore | None = None):
         self._connections = connections
+        self._replay_store = replay_store
         # symbol -> {connection_id}
         self._by_symbol: dict[str, set[str]] = {}
         # connection_ids subscribed to ALL flow (empty-symbol subscribe)
@@ -83,6 +97,8 @@ class FlowFanout:
         # Strong refs to in-flight delivery tasks so they aren't GC'd mid-send
         # (asyncio holds only weak refs to bare-created tasks).
         self._deliver_tasks: set[asyncio.Task[int]] = set()
+        self._replay_tasks: set[asyncio.Task[None]] = set()
+        self._pending_replays: dict[str, _ReplayBarrier] = {}
 
     @property
     def producer_wired(self) -> bool:
@@ -135,6 +151,7 @@ class FlowFanout:
 
     def client_disconnect(self, connection_id: str) -> None:
         """Drop all of a connection's flow subscriptions (socket closed)."""
+        self._pending_replays.pop(connection_id, None)
         self._all.discard(connection_id)
         conn_symbols = self._by_connection.pop(connection_id, None)
         if not conn_symbols:
@@ -172,6 +189,17 @@ class FlowFanout:
         """
         if not envelope:
             return 0
+        stream_cursor: str | None = None
+        if self._replay_store is not None:
+            try:
+                stream_cursor = await self._replay_store.append(envelope)
+            except Exception:
+                logger.error(
+                    "flow_fanout_replay_persist_failed_entries_disabled",
+                    event_id=envelope.get("event_id"),
+                    exc_info=True,
+                )
+                return 0
         symbol = str(envelope.get("symbol") or "")
         targets = self._targets(symbol)
         if not targets:
@@ -182,19 +210,160 @@ class FlowFanout:
         # raise on those and the whole push would silently drop. Coerce a COPY so
         # the original envelope (already published to Redis) stays byte-identical
         # — the event_id is a precomputed string and is not recomputed here.
-        wire_msg = {
+        wire_msg = self._wire_message(envelope, stream_cursor=stream_cursor)
+
+        live_targets: list[str] = []
+        for connection_id in targets:
+            barrier = self._pending_replays.get(connection_id)
+            if barrier is None:
+                live_targets.append(connection_id)
+            elif stream_cursor is not None:
+                barrier.buffered.append((stream_cursor, wire_msg))
+
+        if live_targets:
+            task = asyncio.create_task(self._deliver_bounded(wire_msg, live_targets, symbol))
+            self._deliver_tasks.add(task)
+            task.add_done_callback(self._deliver_tasks.discard)
+        return len(targets)
+
+    @staticmethod
+    def _wire_message(envelope: dict[str, Any], *, stream_cursor: str | None) -> dict[str, Any]:
+        message = {
             "type": "data",
             "feed": FLOW_FEED,
-            "symbol": symbol,
+            "symbol": str(envelope.get("symbol") or ""),
             "event_id": envelope.get("event_id"),
             "envelope": _json_safe(envelope),
             "data": _json_safe(envelope.get("payload")),
         }
+        if stream_cursor is not None:
+            message["stream_cursor"] = stream_cursor
+        return message
 
-        task = asyncio.create_task(self._deliver_bounded(wire_msg, targets, symbol))
-        self._deliver_tasks.add(task)
-        task.add_done_callback(self._deliver_tasks.discard)
-        return len(targets)
+    async def prepare_replay(
+        self,
+        connection_id: str,
+        symbols: list[str] | None,
+        *,
+        after_stream_id: str,
+    ) -> dict[str, Any]:
+        """Capture a replay high-water mark behind a live-delivery barrier."""
+        normalized = [symbol.upper() for symbol in (symbols or [])]
+        barrier = _ReplayBarrier(symbols=normalized, after=after_stream_id)
+        self._pending_replays[connection_id] = barrier
+        self.subscribe(connection_id, symbols)
+        store = self._replay_store
+        if store is None or not store.available:
+            if self._pending_replays.get(connection_id) is barrier:
+                self._pending_replays.pop(connection_id, None)
+            return {"resume_supported": False}
+        try:
+            high_watermark = await store.high_watermark()
+        except Exception:
+            if self._pending_replays.get(connection_id) is barrier:
+                self._pending_replays.pop(connection_id, None)
+            logger.error("flow_replay_high_watermark_failed", connection_id=connection_id, exc_info=True)
+            return {"resume_supported": False}
+        barrier.through = high_watermark
+        return {"resume_supported": True, "replay_high_watermark": high_watermark}
+
+    async def start_pending_replay(self, connection_id: str) -> None:
+        """Send the captured replay range followed by an explicit completion."""
+        barrier = self._pending_replays.get(connection_id)
+        store = self._replay_store
+        if barrier is None or store is None or barrier.through is None or barrier.started:
+            return
+        barrier.started = True
+        symbols = barrier.symbols
+        after = barrier.after
+        through = barrier.through
+        targets = [connection_id]
+        replayed_cursors: set[str] = set()
+        await self._connections.broadcast_to_connection_ids(
+            {"type": "replay_begin", "after_stream_id": after, "high_watermark": through}, targets
+        )
+        try:
+            entries = await store.read(after, through)
+            for entry in entries:
+                symbol = str(entry.envelope.get("symbol") or "").upper()
+                if symbols and symbol not in symbols:
+                    continue
+                await self._connections.broadcast_to_connection_ids(
+                    self._wire_message(entry.envelope, stream_cursor=entry.cursor), targets
+                )
+                replayed_cursors.add(entry.cursor)
+        except Exception as exc:
+            logger.error(
+                "flow_replay_failed_entries_disabled",
+                connection_id=connection_id,
+                after_stream_id=after,
+                high_watermark=through,
+                error=str(exc),
+                exc_info=True,
+            )
+            await self._connections.broadcast_to_connection_ids(
+                {
+                    "type": "replay_error",
+                    "after_stream_id": after,
+                    "high_watermark": through,
+                    "message": str(exc),
+                },
+                targets,
+            )
+            if self._pending_replays.get(connection_id) is barrier:
+                self.client_disconnect(connection_id)
+            return
+        await self._connections.broadcast_to_connection_ids(
+            {"type": "replay_complete", "high_watermark": through}, targets
+        )
+        await self._flush_replay_buffer(connection_id, barrier, replayed_cursors)
+
+    async def _flush_replay_buffer(
+        self,
+        connection_id: str,
+        barrier: _ReplayBarrier,
+        replayed_cursors: set[str],
+    ) -> None:
+        """Release post-snapshot live events only after replay completion."""
+        targets = [connection_id]
+        buffered_live_events = 0
+        replay_duplicates = 0
+        while self._pending_replays.get(connection_id) is barrier:
+            buffered = barrier.buffered
+            barrier.buffered = []
+            for cursor, message in buffered:
+                if cursor in replayed_cursors:
+                    replay_duplicates += 1
+                    continue
+                await self._connections.broadcast_to_connection_ids(message, targets)
+                buffered_live_events += 1
+            if not barrier.buffered:
+                self._pending_replays.pop(connection_id, None)
+                logger.info(
+                    "flow_replay_handoff_complete",
+                    connection_id=connection_id,
+                    replayed_events=len(replayed_cursors),
+                    buffered_live_events=buffered_live_events,
+                    replay_duplicates=replay_duplicates,
+                )
+                return
+
+    def launch_pending_replay(self, connection_id: str) -> None:
+        """Run replay after the subscription acknowledgement is on the wire."""
+        task = asyncio.create_task(self.start_pending_replay(connection_id))
+        self._replay_tasks.add(task)
+        task.add_done_callback(self._replay_tasks.discard)
+
+    async def drain(self) -> None:
+        """Wait for fan-out tasks; used by shutdown and deterministic tests."""
+        pending = [*self._deliver_tasks, *self._replay_tasks]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def close(self) -> None:
+        await self.drain()
+        if self._replay_store is not None:
+            await self._replay_store.close()
 
     async def _deliver_bounded(self, wire_msg: dict[str, Any], targets: list[str], symbol: str) -> int:
         """Broadcast ``wire_msg`` to ``targets`` under a hard timeout.

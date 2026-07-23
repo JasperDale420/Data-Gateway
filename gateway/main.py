@@ -399,10 +399,21 @@ async def lifespan(app: FastAPI):
     flow_fanout = None
     if settings.ws_flow_fanout_enabled:
         from gateway.core.flow_fanout import FlowFanout
+        from gateway.core.flow_replay import RedisFlowReplayStore
 
-        flow_fanout = FlowFanout(get_connection_manager())
+        replay_store = None
+        if settings.data_sink_redis_url:
+            candidate_replay_store = RedisFlowReplayStore(
+                settings.data_sink_redis_url,
+                stream=settings.ws_flow_replay_stream,
+                max_len=settings.ws_flow_replay_max_len,
+                max_replay_events=settings.ws_flow_replay_max_events_per_resume,
+            )
+            if await candidate_replay_store.initialize():
+                replay_store = candidate_replay_store
+        flow_fanout = FlowFanout(get_connection_manager(), replay_store=replay_store)
         set_flow_fanout(flow_fanout)
-        logger.info("flow_fanout_initialized")
+        logger.info("flow_fanout_initialized", replay_available=replay_store is not None)
 
     # Start UW background poller (if data sink is enabled)
     uw_poller = None
@@ -621,6 +632,9 @@ async def lifespan(app: FastAPI):
         from gateway.core.uw_poller import stop_uw_poller
 
         await stop_uw_poller()
+
+    if flow_fanout is not None:
+        await flow_fanout.close()
 
     # Clear the flow fan-out global so a subsequent in-process restart rebuilds
     # it against the fresh connection manager.

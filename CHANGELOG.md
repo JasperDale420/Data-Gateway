@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`iv_term_structure` expiries no longer risk collapsing to one row** (`gateway/core/envelope.py`): the feed emits one row per expiry of the same underlying, but it had no `FEED_UNIQUE_FIELDS` entry, so every expiry's `event_id` was derived from `provider|feed|instrument_key|ts_event` alone. With no per-row discriminator, two expiries wrapped at the same instant (the payload carries no date/timestamp, so `ts_event` is `now()`) hashed to the identical `event_id` and all but one was dropped at Heber's Bronze dedup. `expiry` is now part of the `event_id` (mirroring `oi_change`/`historic_option_volume`), so every expiry stays distinct. Regression test in `tests/test_envelope_heber_contract.py`.
+
+- **Per-ticker darkpool fetches no longer silently return 0 rows** (`gateway/providers/uw/flow.py`): the SDK's typed `DarkpoolTradeResponse` carries rows in `.data` with an empty `additional_properties`, but `get_darkpool_ticker` only read the latter — every REST `/uw/darkpool/{symbol}` call and every date-targeted darkpool backfill quietly returned nothing. Now parsed via the shared `_extract_data` (both shapes).
+
+### Added
+
+- **`--days` on the UW backfill driver** (`scripts/uw_backfill_driver.py`): tier3 recovery can target explicit ISO dates (e.g. re-fetching days lost to stream eviction) instead of being limited to the universe-asof-derived window.
+
+- **The 16:30 ET EOD run no longer publishes into the live event stream** (`gateway/core/uw_poller.py`): all EOD snapshot polls (greek_exposure, iv_rank, iv_term_structure, oi_change, historic_option_volume, short_interest, short_volume, ftds, congress_trades, insider_trades) now publish to the dedicated backfill stream (`heber:events:backfill`, 1M cap, isolated consumer) instead of `heber:events` (500K cap, market-hours firehose). On 2026-07-20 and again on 2026-07-21 the ~300K-event EOD burst was MAXLEN-evicted unread while the live consumer lagged, permanently losing oi_change, iv_rank, iv_term_structure and historic_option_volume for the day and truncating greek_exposure. EOD data is bulk re-runnable by date — exactly what the backfill stream exists for. Tests in `tests/test_uw_eod_stream_routing.py`.
+
+### Added
+
+- UW `flow_alerts` WebSocket subscriptions can now resume from a Redis stream cursor. The Gateway durably records every published flow envelope before live fan-out, marks each live message with its transport cursor, replays only through a captured high-water mark after reconnect, and explicitly refuses resumability when retained history or replay storage cannot prove a complete handoff.
+
+- Synced `CLAUDE.md` and `AGENTS.md` into one shared instruction set.
+
 ### Added
 
 - **Alpaca trading provider test coverage 47% → 99%** (`tests/test_alpaca_trading_provider_methods.py`): 109 new SDK-boundary-mocked tests covering order submission variants (bracket, stop, stop-limit, notional, extended hours, position intent), replace/cancel incl. the benign-cancel-race classifier, positions (incl. the full-close DELETE regression guard), portfolio history, assets, clock/calendar, account configurations, and all watchlist operations — success and error branches. The CI money-path floor for this file rises 45 → 95.
@@ -12,6 +30,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Resumable `flow_alerts` subscriptions now start their prepared replay immediately after the subscription acknowledgement reaches the client. A misplaced replay-launch hook previously left authenticated Kairos connections waiting forever without `replay_begin` or `replay_complete`.
+- Resumed `flow_alerts` connections now remain behind a per-connection handoff barrier until historical replay completes. Events captured inside the replay high-water mark are emitted exactly once by replay, while newer live events are buffered and released only after `replay_complete`, preventing reconnect-time reordering, duplicates, and loss.
+- **The backfill stream gets its own MAXLEN — a bulk job can no longer self-evict** (`gateway/core/redis_sink.py`): all streams shared one 500K cap, so the 2026-07-19 976K-record bars backfill evicted the un-read UW feeds published just before it on the very stream (#35) built to isolate eviction. `heber:events:backfill` now caps at `GATEWAY_BACKFILL_STREAM_MAX_LEN` (default 1M ≈ 3GB at ~3KB/entry, sized against the 4GB instance); live `heber:events` stays at the shared cap. Jobs beyond the cap must pace (publish → drain → publish). Tests in `tests/test_redis_sink.py`.
+- **Sink Redis eviction policy: `allkeys-lru` → `volatile-lru`** (`docker-compose.yml`): cache/dedup keys all carry TTLs (2,983/3,000 sampled) and stay evictable; the persistent keys — both heber streams, consumer groups, and `heber:watch:*` live watch state — are no longer silently evictable under memory pressure. At-cap writes with only persistent keys left now error into the sink's failover buffer instead of eating data.
 - **`iv_term_structure` no longer stores 0/null IVs on every row** (`gateway/providers/uw/market.py`): the UW term-structure endpoint returns the ATM IV in `volatility`, but the mapper looked for `iv`/`implied_volatility` (never present) — so every Silver row carried `iv=0` and 100%-null `call_iv`/`put_iv` (~1.4k null-warnings/day in Heber). `volatility` is now the primary source; `call_iv`/`put_iv` stay `None` honestly (the endpoint has no per-side IVs).
 - **Delisted MATIC/USD dropped from the default crypto pairs** (`gateway/core/crypto_poller.py`): Alpaca's latest-bar endpoint forever re-serves MATIC's final 2023-06-23 bar, which minted bogus `dt=2023-06-23` partitions in Heber whenever consumer dedupe rotated.
 - **CI type checking actually runs now** (`pyproject.toml`): the CI mypy step had failed with `mypy: command not found` on every run — silently masked by `continue-on-error` — because the dev dependencies shipped `pyright` (which nothing invoked) instead of `mypy`. The dev extra now installs `mypy>=1.19`; the unused pyright dependency is removed (the `[tool.pyright]` editor config stays).
