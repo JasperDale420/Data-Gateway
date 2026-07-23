@@ -3,7 +3,7 @@
 import math
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from gateway.core.logger import logger
 
@@ -976,10 +976,11 @@ class UWMarketMixin(_UWMixinBase):
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
-        from unusualwhales.api.market import get_sector_etfs  # type: ignore[attr-defined]  # not in vendored SDK v5.1
+        # get_sector_etfs is not in the vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+        from unusualwhales.api import market
 
         try:
-            response = await self._call_sync(get_sector_etfs.sync, client=self._client)
+            response = await self._call_sync(cast(Any, market).get_sector_etfs.sync, client=self._client)
             data = self._extract_data(response)
             return data
         except Exception as e:

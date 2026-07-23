@@ -1,7 +1,7 @@
 """UW Institutional mixin — institutions, insiders, congress, ETF, politician methods."""
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from gateway.core.logger import logger
 
@@ -735,11 +735,12 @@ class UWInstitutionalMixin(_UWMixinBase):
         if not self._initialized:
             raise RuntimeError(ERR_NOT_INITIALIZED)
 
-        from unusualwhales.api.congress import get_trader  # type: ignore[attr-defined]  # not in vendored SDK v5.1
+        # get_trader is not in the vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+        from unusualwhales.api import congress
 
         try:
             response = await self._call_sync(
-                get_trader.sync,
+                cast(Any, congress).get_trader.sync,
                 client=self._client,
                 name=name,
                 ticker=ticker,

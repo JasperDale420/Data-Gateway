@@ -1,7 +1,7 @@
 """UW Flow mixin — flow alerts, darkpool, tide, greek flow, tape, net flow."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -396,7 +396,7 @@ class UWFlowMixin(_UWMixinBase):
 
         try:
             response = await self._call_sync(
-                group_flow.get_greek_flow_expiry.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                cast(Any, group_flow).get_greek_flow_expiry.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 flow_group,
                 expiry,
                 client=self._client,
@@ -627,7 +627,7 @@ class UWFlowMixin(_UWMixinBase):
             from unusualwhales.api import market
 
             response = await self._call_sync(
-                market.get_net_flow_by_expiry.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                cast(Any, market).get_net_flow_by_expiry.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 client=self._client,
             )
             data = self._get_data_safe(response)
@@ -762,7 +762,7 @@ class UWFlowMixin(_UWMixinBase):
             from unusualwhales.api import market
 
             response = await self._call_sync(
-                market.get_top_net_premium.sync,  # type: ignore[attr-defined]  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
+                cast(Any, market).get_top_net_premium.sync,  # not in vendored UW SDK v5.1 (docs/FOLLOW_UPS.md)
                 client=self._client,
             )
             data = self._get_data_safe(response)
@@ -1009,7 +1009,7 @@ class UWFlowMixin(_UWMixinBase):
 
         try:
             response = await self._call_sync(
-                get_full_tape.sync,  # type: ignore[attr-defined]  # module only ships sync_detailed (docs/FOLLOW_UPS.md)
+                cast(Any, get_full_tape).sync,  # module only ships sync_detailed (docs/FOLLOW_UPS.md)
                 client=self._client,
             )
             data = self._extract_data(response)
