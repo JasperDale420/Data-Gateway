@@ -217,6 +217,15 @@ groups:
           summary: "Feed {{ $labels.provider }}/{{ $labels.feed }} produced zero envelopes during market hours"
           description: "No EventEnvelopes created for {{ $labels.provider }}/{{ $labels.feed }} over the last 15 minutes while the market is open. The upstream endpoint may be failing, the poller may be stalled, or every record may be dropped during normalization. Check the poller logs and the UW upstream."
 
+      - alert: KairosReplayIntakeBlocked
+        expr: gateway_replay_blocked == 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kairos intake is blocked for replay {{ $labels.scope }}"
+          description: "Feed {{ $labels.provider }}/{{ $labels.feed }} is not verified: {{ $labels.reason }}. Keep Kairos blocked; restore the date-bounded provider/Heber commit path and require a matching durable Heber acknowledgement before retrying."
+
   - name: gateway_slo
     rules:
       # SLO: 99.9% availability

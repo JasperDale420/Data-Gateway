@@ -150,6 +150,15 @@ RATE_LIMIT_EXCEEDED = Counter(
     ["client_id"],
 )
 
+# Durable replay verification gate. Alertmanager deduplicates a stable labelset;
+# the helper clears the previous reason for a scope and resolves only on verified.
+REPLAY_BLOCKED = Gauge(
+    "gateway_replay_blocked",
+    "Durable replay is not verified and Kairos intake must remain blocked",
+    ["provider", "feed", "scope", "reason"],
+)
+_REPLAY_ALERT_LABEL_BY_SCOPE: dict[tuple[str, str, str], str] = {}
+
 # Process metrics
 PROCESS_MEMORY_BYTES = Gauge(
     "gateway_process_memory_bytes",
@@ -1168,6 +1177,44 @@ def record_option_capture_ws_update(*, added: int = 0, removed: int = 0) -> None
         if isinstance(websocket, dict):
             websocket["unsubscribe_calls"] = int(websocket.get("unsubscribe_calls", 0)) + 1
             websocket["contracts_removed"] = int(websocket.get("contracts_removed", 0)) + removed
+
+
+def set_replay_verification_state(
+    *,
+    verified: bool,
+    provider: str,
+    feed: str,
+    scope: str,
+    reason: str,
+) -> None:
+    """Keep one deduplicated blocked alert per replay scope."""
+    scope_key = (provider, feed, scope)
+    previous_reason = _REPLAY_ALERT_LABEL_BY_SCOPE.get(scope_key)
+    if verified:
+        if previous_reason is not None:
+            REPLAY_BLOCKED.labels(
+                provider=provider,
+                feed=feed,
+                scope=scope,
+                reason=previous_reason,
+            ).set(0)
+        REPLAY_BLOCKED.labels(
+            provider=provider,
+            feed=feed,
+            scope=scope,
+            reason=reason,
+        ).set(0)
+        _REPLAY_ALERT_LABEL_BY_SCOPE.pop(scope_key, None)
+        return
+    if previous_reason is not None:
+        return
+    REPLAY_BLOCKED.labels(
+        provider=provider,
+        feed=feed,
+        scope=scope,
+        reason=reason,
+    ).set(1)
+    _REPLAY_ALERT_LABEL_BY_SCOPE[scope_key] = reason
 
 
 def get_option_capture_snapshot() -> dict[str, Any]:

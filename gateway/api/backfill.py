@@ -25,10 +25,14 @@ def _job_response(job: Any) -> dict[str, Any]:
         "symbols_complete": job.symbols_complete,
         "progress": job.progress,
         "records_published": job.records_published,
+        "manifest_hash": job.manifest_hash,
+        "blocked_reason": job.blocked_reason,
         "errors": job.errors[:20],  # Limit error list in response
         "created_at": job.created_at.isoformat(),
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "gateway_completed_at": job.gateway_completed_at.isoformat() if job.gateway_completed_at else None,
+        "ingestion_verified_at": (job.ingestion_verified_at.isoformat() if job.ingestion_verified_at else None),
         "eta_seconds": job.eta_seconds,
     }
 
@@ -46,7 +50,7 @@ async def submit_backfill(
     engine = get_backfill_engine()
 
     try:
-        job = engine.submit(request)
+        job = await engine.submit(request)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -62,7 +66,7 @@ async def cancel_all_backfills(
 ) -> dict[str, Any]:
     """Cancel all running or queued backfill jobs."""
     engine = get_backfill_engine()
-    cancelled_count = engine.cancel_all()
+    cancelled_count = await engine.cancel_all()
     return {
         "success": True,
         "meta": {"cancelled": cancelled_count},
@@ -73,9 +77,9 @@ async def cancel_all_backfills(
 async def flush_backfills(
     _client: Any = Depends(require_api_key),
 ) -> dict[str, Any]:
-    """Flush all completed jobs from history."""
+    """Refuse unbounded deletion of durable replay evidence."""
     engine = get_backfill_engine()
-    purged_count = engine.flush()
+    purged_count = await engine.flush()
     return {
         "success": True,
         "meta": {"purged": purged_count},
@@ -144,6 +148,7 @@ async def get_backfill_status(
         }
         for sym, sp in job.symbols_progress.items()
     }
+    response["chunks"] = {chunk_id: chunk.model_dump(mode="json") for chunk_id, chunk in job.chunks.items()}
 
     return {
         "success": True,
@@ -163,7 +168,7 @@ async def cancel_backfill(
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
-    if not engine.cancel(job_id):
+    if not await engine.cancel(job_id):
         raise HTTPException(
             status_code=409,
             detail=f"Job cannot be cancelled (status: {job.status.value})",

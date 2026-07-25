@@ -5,6 +5,8 @@ and publish results through the DataSinkRegistry -> Redis Streams -> Heber pipel
 """
 
 import asyncio
+import hashlib
+import json
 import os
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -13,8 +15,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from gateway.core.backfill_manifest import (
+    HeberChunkAcknowledgement,
+)
+from gateway.core.calendar import US_HOLIDAYS, TradingCalendar
 from gateway.core.envelope import wrap_event
 from gateway.core.logger import logger
+from gateway.core.metrics import set_replay_verification_state
 from gateway.core.rate_limiter import ProviderRateLimitManager, get_rate_limiter
 from gateway.core.security import InputValidator
 
@@ -48,8 +55,8 @@ DEFAULT_LIGHTWEIGHT_CONCURRENCY = 5
 DEFAULT_HEAVYWEIGHT_CONCURRENCY = 2
 ALPACA_CRYPTO_FEEDS = frozenset({"crypto_bars", "crypto_trades"})
 
-# Auto-expire completed/failed/cancelled jobs after this duration (seconds)
-JOB_EXPIRY_SECONDS = 3600
+DEFAULT_ACK_WAIT_SECONDS = 60.0
+ACK_POLL_SECONDS = 1.0
 
 # Per-underlying UW analytics feeds whose rows carry an ``expiry`` field. Without
 # an equity override, ``_infer_instrument_type`` sees ``expiry`` and tags every
@@ -64,9 +71,33 @@ class BackfillStatus(str, Enum):
 
     QUEUED = "queued"
     RUNNING = "running"
-    COMPLETED = "completed"
+    AWAITING_ACK = "awaiting_ack"
+    PARTIAL = "partial"
     FAILED = "failed"
+    VERIFIED = "verified"
+    UNRECOVERABLE = "unrecoverable"
     CANCELLED = "cancelled"
+
+
+class ReplayCapability(str, Enum):
+    """Historical truth supported by one provider/feed pair."""
+
+    DATE_BOUNDED = "date_bounded"
+    UNPROVEN = "unproven"
+    UNRECOVERABLE = "unrecoverable"
+
+
+class ReplayFeedCapability(BaseModel):
+    capability: ReplayCapability
+    reason: str | None = None
+
+
+class ReplayValidationError(ValueError):
+    """Provider or acknowledgement evidence violated the replay contract."""
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
 
 
 class BackfillRequest(BaseModel):
@@ -88,6 +119,10 @@ class BackfillRequest(BaseModel):
         le=30,
         description="Days per fetch chunk",
     )
+    canary: bool = Field(
+        default=False,
+        description="Require exactly one symbol and one completed market day",
+    )
 
 
 class SymbolProgress(BaseModel):
@@ -101,18 +136,43 @@ class SymbolProgress(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class ChunkResult(BaseModel):
+    """Durable evidence for one symbol/date chunk."""
+
+    chunk_id: str
+    symbol: str
+    requested_start: datetime
+    requested_end: datetime
+    status: str = "pending"
+    returned_start: datetime | None = None
+    returned_end: datetime | None = None
+    record_count: int = 0
+    records_published: int = 0
+    event_ids_sha256: str | None = None
+    records_sha256: str | None = None
+    published_at: datetime | None = None
+    acknowledged: bool = False
+    heber_commit_id: str | None = None
+    error: str | None = None
+
+
 class BackfillJob(BaseModel):
     """Tracks state and progress of a backfill job."""
 
     job_id: str = Field(default_factory=lambda: f"bf-{uuid.uuid4().hex[:12]}")
+    manifest_hash: str = ""
     request: BackfillRequest
     status: BackfillStatus = BackfillStatus.QUEUED
     symbols_progress: dict[str, SymbolProgress] = Field(default_factory=dict)
+    chunks: dict[str, ChunkResult] = Field(default_factory=dict)
     records_published: int = 0
     errors: list[str] = Field(default_factory=list)
+    blocked_reason: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    gateway_completed_at: datetime | None = None
+    ingestion_verified_at: datetime | None = None
 
     @property
     def symbols_complete(self) -> int:
@@ -159,6 +219,65 @@ def _date_chunks(start: date, end: date, chunk_days: int) -> list[tuple[datetime
         chunks.append((dt_start, dt_end))
         cursor = chunk_end + timedelta(days=1)
     return chunks
+
+
+def _chunk_id(
+    job_id: str,
+    symbol: str,
+    chunk_start: datetime,
+    chunk_end: datetime,
+) -> str:
+    raw = f"{job_id}|{symbol}|{chunk_start.isoformat()}|{chunk_end.isoformat()}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:20]
+
+
+def _manifest_hash(request: BackfillRequest) -> str:
+    canonical = json.dumps(
+        request.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _manifest_structure_valid(job: BackfillJob) -> bool:
+    manifest_hash = _manifest_hash(job.request)
+    expected_chunks = {
+        _chunk_id(job.job_id, symbol, chunk_start, chunk_end): (
+            symbol,
+            chunk_start,
+            chunk_end,
+        )
+        for symbol in job.request.symbols
+        for chunk_start, chunk_end in _date_chunks(
+            job.request.start,
+            job.request.end,
+            job.request.chunk_days,
+        )
+    }
+    return (
+        bool(expected_chunks)
+        and job.manifest_hash == manifest_hash
+        and job.job_id == f"bf-{manifest_hash[:32]}"
+        and set(job.chunks) == set(expected_chunks)
+        and all(
+            chunk.chunk_id == chunk_id
+            and (chunk.symbol, chunk.requested_start, chunk.requested_end) == expected_chunks[chunk_id]
+            for chunk_id, chunk in job.chunks.items()
+        )
+    )
+
+
+def _publication_evidence_complete(job: BackfillJob) -> bool:
+    return bool(job.chunks) and all(
+        chunk.status in {"published", "verified"}
+        and chunk.record_count > 0
+        and chunk.records_published == chunk.record_count
+        and bool(chunk.event_ids_sha256)
+        and bool(chunk.records_sha256)
+        and chunk.published_at is not None
+        for chunk in job.chunks.values()
+    )
 
 
 # Dispatch table: (provider, feed) -> async callable(provider_instance, symbol, start, end, **kwargs) -> list[dict|BaseModel]
@@ -306,6 +425,57 @@ BACKFILL_DISPATCH: dict[tuple[str, str], Any] = {
     ("unusual_whales", "sector_tide"): _uw_sector_tide,
 }
 
+_UNPROVEN_COVERAGE = ReplayFeedCapability(
+    capability=ReplayCapability.UNPROVEN,
+    reason="provider_complete_coverage_not_proven",
+)
+BACKFILL_CAPABILITIES: dict[tuple[str, str], ReplayFeedCapability] = {
+    **dict.fromkeys(BACKFILL_DISPATCH, _UNPROVEN_COVERAGE),
+    ("unusual_whales", "flow_alerts"): ReplayFeedCapability(
+        capability=ReplayCapability.UNRECOVERABLE,
+        reason="provider_has_no_date_bounded_flow_alerts_contract",
+    ),
+    ("unusual_whales", "ticker_flow"): ReplayFeedCapability(
+        capability=ReplayCapability.UNRECOVERABLE,
+        reason="provider_date_fallback_can_drop_bounds",
+    ),
+    ("unusual_whales", "darkpool"): ReplayFeedCapability(
+        capability=ReplayCapability.UNRECOVERABLE,
+        reason="provider_returns_recent_snapshot_without_date_bounds",
+    ),
+    ("unusual_whales", "darkpool_ticker"): ReplayFeedCapability(
+        capability=ReplayCapability.UNPROVEN,
+        reason="provider_historical_bounds_not_proven",
+    ),
+    ("unusual_whales", "congress_trades"): ReplayFeedCapability(
+        capability=ReplayCapability.UNRECOVERABLE,
+        reason="snapshot_only_source",
+    ),
+    ("unusual_whales", "insider_trades"): ReplayFeedCapability(
+        capability=ReplayCapability.UNRECOVERABLE,
+        reason="snapshot_only_source",
+    ),
+    ("unusual_whales", "institutions"): ReplayFeedCapability(
+        capability=ReplayCapability.UNRECOVERABLE,
+        reason="snapshot_only_source",
+    ),
+    ("unusual_whales", "iv_term_structure"): ReplayFeedCapability(
+        capability=ReplayCapability.UNRECOVERABLE,
+        reason="snapshot_only_source",
+    ),
+    **{
+        ("unusual_whales", feed): ReplayFeedCapability(
+            capability=ReplayCapability.UNRECOVERABLE,
+            reason="snapshot_only_source",
+        )
+        for feed in ("short_interest", "short_volume", "ftds")
+    },
+    ("unusual_whales", "earnings"): ReplayFeedCapability(
+        capability=ReplayCapability.UNPROVEN,
+        reason="provider_historical_bounds_not_proven",
+    ),
+}
+
 
 class BackfillEngine:
     """Manages backfill jobs: queuing, execution, rate limiting, progress tracking.
@@ -320,17 +490,23 @@ class BackfillEngine:
         symbol_concurrency: int = DEFAULT_SYMBOL_CONCURRENCY,
         lightweight_concurrency: int = DEFAULT_LIGHTWEIGHT_CONCURRENCY,
         heavyweight_concurrency: int = DEFAULT_HEAVYWEIGHT_CONCURRENCY,
+        ack_wait_seconds: float = DEFAULT_ACK_WAIT_SECONDS,
+        capabilities: dict[tuple[str, str], ReplayFeedCapability] | None = None,
     ) -> None:
         self._jobs: dict[str, BackfillJob] = {}
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
+        self._submission_locks: dict[str, asyncio.Lock] = {}
         # Separate semaphores per provider per weight class
         self._lightweight_semaphores: dict[str, asyncio.Semaphore] = {}
         self._heavyweight_semaphores: dict[str, asyncio.Semaphore] = {}
         self._sink_registry: Any = None
         self._provider_registry: Any = None
+        self._manifest_store: Any = None
         self._symbol_concurrency = symbol_concurrency
         self._lightweight_concurrency = max(1, lightweight_concurrency)
         self._heavyweight_concurrency = max(1, heavyweight_concurrency)
+        self._ack_wait_seconds = max(0.0, ack_wait_seconds)
+        self._capabilities = capabilities or BACKFILL_CAPABILITIES
         self._instance_id = uuid.uuid4().hex[:8]
         logger.info("backfill_engine_init", instance_id=self._instance_id)
 
@@ -338,10 +514,79 @@ class BackfillEngine:
         self,
         provider_registry: Any,
         sink_registry: Any,
+        manifest_store: Any,
     ) -> None:
         """Wire in registries during app startup."""
         self._provider_registry = provider_registry
         self._sink_registry = sink_registry
+        self._manifest_store = manifest_store
+
+    async def start(self) -> None:
+        """Restore durable blocked state and automatic acknowledgement checks."""
+        if self._manifest_store is None:
+            return
+        for payload in await self._manifest_store.load_jobs():
+            job = BackfillJob.model_validate(payload)
+            self._jobs[job.job_id] = job
+            if not _manifest_structure_valid(job):
+                job.status = BackfillStatus.FAILED
+                job.blocked_reason = "durable_manifest_invalid"
+                job.completed_at = datetime.now(UTC)
+                await self._save_job(job)
+                self._set_verification_alert(job)
+                continue
+            if job.status == BackfillStatus.VERIFIED:
+                if not _publication_evidence_complete(job):
+                    job.status = BackfillStatus.PARTIAL
+                    job.blocked_reason = "durable_manifest_publication_evidence_incomplete"
+                    job.ingestion_verified_at = None
+                    job.completed_at = datetime.now(UTC)
+                    await self._save_job(job)
+                else:
+                    job.status = BackfillStatus.AWAITING_ACK
+                    job.blocked_reason = "missing_heber_acknowledgement"
+                    job.ingestion_verified_at = None
+                    job.completed_at = None
+                    await self._save_job(job)
+            elif job.status in {BackfillStatus.QUEUED, BackfillStatus.RUNNING}:
+                job.status = BackfillStatus.FAILED
+                job.blocked_reason = "gateway_restart_interrupted_before_publication"
+                job.completed_at = datetime.now(UTC)
+                await self._save_job(job)
+            elif job.status == BackfillStatus.AWAITING_ACK and job.blocked_reason is None:
+                job.blocked_reason = "missing_heber_acknowledgement"
+                await self._save_job(job)
+            self._set_verification_alert(job)
+            if (
+                job.gateway_completed_at is not None
+                and job.status in {BackfillStatus.AWAITING_ACK, BackfillStatus.PARTIAL}
+                and job.blocked_reason
+                in {
+                    None,
+                    "missing_heber_acknowledgement",
+                    "heber_acknowledgement_invalid",
+                    "heber_acknowledgement_mismatch",
+                }
+            ):
+                if not _publication_evidence_complete(job):
+                    job.status = BackfillStatus.PARTIAL
+                    job.blocked_reason = "durable_manifest_publication_evidence_incomplete"
+                    job.completed_at = datetime.now(UTC)
+                    await self._save_job(job)
+                    self._set_verification_alert(job)
+                    continue
+                job.status = BackfillStatus.AWAITING_ACK
+                self._start_task(job, self._verify_heber_acknowledgements(job))
+
+    def _start_task(self, job: BackfillJob, coroutine: Any) -> None:
+        task = asyncio.create_task(coroutine)
+        self._running_tasks[job.job_id] = task
+
+        def remove_completed(completed: asyncio.Task[None]) -> None:
+            if self._running_tasks.get(job.job_id) is completed:
+                self._running_tasks.pop(job.job_id, None)
+
+        task.add_done_callback(remove_completed)
 
     def _get_semaphore(self, provider: str, feed: str) -> asyncio.Semaphore:
         """Get the appropriate semaphore based on feed weight."""
@@ -354,13 +599,22 @@ class BackfillEngine:
         return self._lightweight_semaphores[provider]
 
     @property
-    def supported_feeds(self) -> list[dict[str, str]]:
-        """List supported (provider, feed) pairs."""
-        return [{"provider": p, "feed": f} for p, f in BACKFILL_DISPATCH]
+    def supported_feeds(self) -> list[dict[str, str | None]]:
+        """List provider/feed capability truth, including blocked feeds."""
+        return [
+            {
+                "provider": provider,
+                "feed": feed,
+                "capability": capability.capability.value,
+                "reason": capability.reason,
+            }
+            for (provider, feed), capability in self._capabilities.items()
+        ]
 
-    def submit(self, request: BackfillRequest) -> BackfillJob:
-        """Validate and queue a new backfill job, then start it in the background."""
-        self._prune_stale_jobs()
+    async def submit(self, request: BackfillRequest) -> BackfillJob:
+        """Persist and queue a replay job only after capability validation."""
+        if self._manifest_store is None:
+            raise ValueError("BackfillEngine not configured: missing durable manifest store")
 
         # Validate provider
         if not self._provider_registry:
@@ -369,12 +623,17 @@ class BackfillEngine:
         if provider is None:
             raise ValueError(f"Unknown provider: {request.provider}")
 
-        # Validate dispatch key
         dispatch_key = (request.provider, request.feed)
-        if dispatch_key not in BACKFILL_DISPATCH:
+        capability = self._capabilities.get(dispatch_key)
+        if dispatch_key not in BACKFILL_DISPATCH and capability is None:
             supported = [f for (p, f) in BACKFILL_DISPATCH if p == request.provider]
             raise ValueError(
                 f"Unsupported feed '{request.feed}' for provider '{request.provider}'. Supported: {supported}"
+            )
+        if capability is None:
+            capability = ReplayFeedCapability(
+                capability=ReplayCapability.UNPROVEN,
+                reason="provider_historical_bounds_not_proven",
             )
 
         # Validate date range
@@ -409,6 +668,14 @@ class BackfillEngine:
         if not normalized_symbols:
             raise ValueError("symbols must include at least one valid symbol")
 
+        if request.canary:
+            if len(normalized_symbols) != 1:
+                raise ValueError("canary replay requires exactly one symbol")
+            if request.start != request.end:
+                raise ValueError("canary replay requires exactly one completed market day")
+            if not _is_completed_market_day(request.end):
+                raise ValueError("canary replay requires one completed market day")
+
         if request.provider == "alpaca" and request.feed in ALPACA_CRYPTO_FEEDS:
             invalid_crypto_symbols = [
                 symbol
@@ -430,24 +697,119 @@ class BackfillEngine:
 
         request.symbols = normalized_symbols
 
-        # Build job
-        chunks = _date_chunks(request.start, request.end, request.chunk_days)
-        symbols_progress = {
-            sym: SymbolProgress(
-                symbol=sym,
-                chunks_total=len(chunks),
-            )
-            for sym in request.symbols
-        }
+        manifest_hash = _manifest_hash(request)
+        job_id = f"bf-{manifest_hash[:32]}"
 
-        job = BackfillJob(request=request, symbols_progress=symbols_progress)
+        lock = self._submission_locks.setdefault(job_id, asyncio.Lock())
+        async with lock:
+            return await self._submit_locked(
+                request=request,
+                capability=capability,
+                manifest_hash=manifest_hash,
+                job_id=job_id,
+            )
+
+    async def _submit_locked(
+        self,
+        *,
+        request: BackfillRequest,
+        capability: ReplayFeedCapability,
+        manifest_hash: str,
+        job_id: str,
+    ) -> BackfillJob:
+        running_task = self._running_tasks.get(job_id)
+        if running_task is not None and not running_task.done():
+            return self._jobs[job_id]
+
+        persisted = await self._manifest_store.load_job(job_id)
+        if persisted:
+            job = BackfillJob.model_validate(persisted)
+            if job.manifest_hash != manifest_hash or job.request != request:
+                raise ValueError(f"Durable manifest mismatch for {job_id}")
+            self._jobs[job_id] = job
+            if not _manifest_structure_valid(job):
+                await self._block_job(job, BackfillStatus.FAILED, "durable_manifest_invalid")
+                return job
+            if job.status == BackfillStatus.UNRECOVERABLE:
+                return job
+            if job.status == BackfillStatus.VERIFIED:
+                if not _publication_evidence_complete(job):
+                    await self._block_job(
+                        job,
+                        BackfillStatus.PARTIAL,
+                        "durable_manifest_publication_evidence_incomplete",
+                    )
+                    return job
+                job.status = BackfillStatus.AWAITING_ACK
+                job.blocked_reason = "missing_heber_acknowledgement"
+                job.ingestion_verified_at = None
+                job.completed_at = None
+                await self._save_job(job)
+                self._set_verification_alert(job)
+                self._start_task(job, self._verify_heber_acknowledgements(job))
+                return job
+            job.status = BackfillStatus.QUEUED
+            job.blocked_reason = None
+            job.started_at = None
+            job.completed_at = None
+            job.gateway_completed_at = None
+            job.ingestion_verified_at = None
+            job.errors.clear()
+            job.records_published = 0
+            for progress in job.symbols_progress.values():
+                progress.status = "pending"
+                progress.chunks_complete = 0
+                progress.records_published = 0
+                progress.errors.clear()
+        else:
+            job = BackfillJob(
+                job_id=job_id,
+                manifest_hash=manifest_hash,
+                request=request,
+            )
+
+        chunks = _date_chunks(request.start, request.end, request.chunk_days)
+        if not job.symbols_progress:
+            job.symbols_progress = {
+                sym: SymbolProgress(symbol=sym, chunks_total=len(chunks)) for sym in request.symbols
+            }
+        for sym in request.symbols:
+            for chunk_start, chunk_end in chunks:
+                chunk_id = _chunk_id(job_id, sym, chunk_start, chunk_end)
+                job.chunks.setdefault(
+                    chunk_id,
+                    ChunkResult(
+                        chunk_id=chunk_id,
+                        symbol=sym,
+                        requested_start=chunk_start,
+                        requested_end=chunk_end,
+                    ),
+                )
+
         self._jobs[job.job_id] = job
+        if capability.capability != ReplayCapability.DATE_BOUNDED:
+            job.status = BackfillStatus.UNRECOVERABLE
+            job.blocked_reason = capability.reason or "provider_historical_bounds_not_proven"
+            job.completed_at = datetime.now(UTC)
+            await self._save_job(job)
+            self._set_verification_alert(job)
+            logger.warning(
+                "backfill_unrecoverable",
+                job_id=job.job_id,
+                provider=request.provider,
+                feed=request.feed,
+                scope=self._scope(job),
+                reason=job.blocked_reason,
+                kairos_intake_blocked=True,
+                safe_next_action="add and prove a genuinely date-bounded provider contract",
+            )
+            return job
+
+        await self._save_job(job)
         logger.info("backfill_job_created", instance_id=self._instance_id, job_id=job.job_id, job_obj_id=id(job))
 
         # Kick off in background
-        task = asyncio.create_task(self._run_job(job))
-        self._running_tasks[job.job_id] = task
-        task.add_done_callback(lambda t: self._running_tasks.pop(job.job_id, None))
+        self._start_task(job, self._run_job(job))
 
         logger.info(
             "backfill_job_submitted",
@@ -459,6 +821,35 @@ class BackfillEngine:
         )
 
         return job
+
+    async def wait(self, job_id: str) -> BackfillJob | None:
+        """Wait for the current automatic fetch/verification attempt."""
+        task = self._running_tasks.get(job_id)
+        if task is not None:
+            await task
+        return self._jobs.get(job_id)
+
+    async def _save_job(self, job: BackfillJob) -> None:
+        await self._manifest_store.save_job(
+            job_id=job.job_id,
+            payload=job.model_dump(mode="json"),
+            status=job.status.value,
+            created_at=job.created_at,
+        )
+
+    @staticmethod
+    def _scope(job: BackfillJob) -> str:
+        symbols = ",".join(job.request.symbols)
+        return f"{job.job_id}:{symbols}:{job.request.start.isoformat()}:{job.request.end.isoformat()}"
+
+    def _set_verification_alert(self, job: BackfillJob) -> None:
+        set_replay_verification_state(
+            verified=job.status == BackfillStatus.VERIFIED,
+            provider=job.request.provider,
+            feed=job.request.feed,
+            scope=self._scope(job),
+            reason=job.blocked_reason or "none",
+        )
 
     def get_job(self, job_id: str) -> BackfillJob | None:
         job = self._jobs.get(job_id)
@@ -477,7 +868,7 @@ class BackfillEngine:
     def list_jobs(self) -> list[BackfillJob]:
         return list(self._jobs.values())
 
-    def cancel(self, job_id: str) -> bool:
+    async def cancel(self, job_id: str) -> bool:
         """Cancel a running job. Returns True if cancellation was successful."""
         job = self._jobs.get(job_id)
         if not job or job.status not in (BackfillStatus.QUEUED, BackfillStatus.RUNNING):
@@ -489,50 +880,55 @@ class BackfillEngine:
 
         job.status = BackfillStatus.CANCELLED
         job.completed_at = datetime.now(UTC)
+        job.blocked_reason = "cancelled"
+        await self._save_job(job)
+        self._set_verification_alert(job)
         logger.info("backfill_job_cancelled", job_id=job_id)
         return True
 
-    def cancel_all(self) -> int:
+    async def cancel_all(self) -> int:
         """Cancel all running and queued jobs. Returns count of cancelled jobs."""
         cancelled = 0
-        for job_id in self._jobs:
-            if self.cancel(job_id):
+        for job_id in list(self._jobs):
+            if await self.cancel(job_id):
                 cancelled += 1
         logger.info("backfill_cancel_all", cancelled=cancelled)
         return cancelled
 
-    def flush(self) -> int:
-        """Cancel all jobs and purge job history. Returns count of removed jobs."""
-        self.cancel_all()
-        count = len(self._jobs)
-        self._jobs.clear()
-        self._running_tasks.clear()
-        logger.info("backfill_flushed", purged=count)
-        return count
-
-    def _prune_stale_jobs(self) -> None:
-        """Remove completed/failed/cancelled jobs older than JOB_EXPIRY_SECONDS."""
-        now = datetime.now(UTC)
-        terminal_statuses = {BackfillStatus.COMPLETED, BackfillStatus.FAILED, BackfillStatus.CANCELLED}
-        stale_ids = [
-            jid
-            for jid, job in self._jobs.items()
-            if job.status in terminal_statuses
-            and job.completed_at
-            and (now - job.completed_at).total_seconds() > JOB_EXPIRY_SECONDS
-        ]
-        for jid in stale_ids:
-            del self._jobs[jid]
-        if stale_ids:
-            logger.info("backfill_stale_jobs_pruned", count=len(stale_ids))
+    async def flush(self) -> int:
+        """Refuse unbounded deletion of durable replay evidence."""
+        logger.warning(
+            "backfill_flush_refused",
+            reason="durable replay evidence requires bounded retention policy",
+        )
+        return 0
 
     async def _run_job(self, job: BackfillJob) -> None:
         """Execute a backfill job, respecting feed-weighted concurrency limits."""
         semaphore = self._get_semaphore(job.request.provider, job.request.feed)
 
         async with semaphore:
+            try:
+                readiness = await self._manifest_store.read_heber_readiness()
+            except Exception:
+                logger.error(
+                    "backfill_heber_readiness_invalid",
+                    job_id=job.job_id,
+                    exc_info=True,
+                )
+                await self._block_job(job, BackfillStatus.FAILED, "heber_readiness_invalid")
+                return
+            if readiness is None:
+                await self._block_job(job, BackfillStatus.FAILED, "heber_readiness_missing")
+                return
+            readiness_failure = readiness.failure_reason()
+            if readiness_failure:
+                await self._block_job(job, BackfillStatus.FAILED, readiness_failure)
+                return
+
             job.status = BackfillStatus.RUNNING
             job.started_at = datetime.now(UTC)
+            await self._save_job(job)
 
             logger.info(
                 "backfill_job_started",
@@ -547,11 +943,15 @@ class BackfillEngine:
                 await self._execute_job(job)
             except asyncio.CancelledError:
                 job.status = BackfillStatus.CANCELLED
+                job.blocked_reason = "cancelled"
+                job.completed_at = datetime.now(UTC)
+                await self._save_job(job)
+                self._set_verification_alert(job)
                 logger.info("backfill_job_cancelled_during_execution", job_id=job.job_id)
                 raise
             except Exception as e:
-                job.status = BackfillStatus.FAILED
                 job.errors.append(str(e))
+                await self._block_job(job, BackfillStatus.FAILED, "backfill_execution_failed")
                 logger.error(
                     "backfill_job_failed",
                     job_id=job.job_id,
@@ -560,26 +960,119 @@ class BackfillEngine:
                 )
                 return
 
-            # Determine final status
             failed_symbols = [sp.symbol for sp in job.symbols_progress.values() if sp.status == "failed"]
-
             if failed_symbols:
-                if len(failed_symbols) == len(job.symbols_progress):
-                    job.status = BackfillStatus.FAILED
-                else:
-                    # Partial success still marked as completed; errors are trackable
-                    job.status = BackfillStatus.COMPLETED
-            else:
-                job.status = BackfillStatus.COMPLETED
+                status = (
+                    BackfillStatus.FAILED
+                    if len(failed_symbols) == len(job.symbols_progress)
+                    else BackfillStatus.PARTIAL
+                )
+                await self._block_job(
+                    job,
+                    status,
+                    job.blocked_reason or "partial_chunk_failure",
+                )
+                return
 
-            job.completed_at = datetime.now(UTC)
+            job.gateway_completed_at = datetime.now(UTC)
+            job.status = BackfillStatus.AWAITING_ACK
+            await self._save_job(job)
             logger.info(
-                "backfill_job_completed",
+                "backfill_gateway_publication_completed",
                 job_id=job.job_id,
                 status=job.status.value,
                 records_published=job.records_published,
                 errors=len(job.errors),
             )
+            await self._verify_heber_acknowledgements(job)
+
+    async def _block_job(
+        self,
+        job: BackfillJob,
+        status: BackfillStatus,
+        reason: str,
+    ) -> None:
+        job.status = status
+        job.blocked_reason = reason
+        job.completed_at = datetime.now(UTC)
+        await self._save_job(job)
+        self._set_verification_alert(job)
+        logger.warning(
+            "backfill_verification_blocked",
+            job_id=job.job_id,
+            status=status.value,
+            reason=reason,
+            provider=job.request.provider,
+            feed=job.request.feed,
+            scope=self._scope(job),
+            kairos_intake_blocked=True,
+            safe_next_action=_safe_next_action(reason),
+        )
+
+    async def _verify_heber_acknowledgements(self, job: BackfillJob) -> None:
+        if not _manifest_structure_valid(job) or not _publication_evidence_complete(job):
+            await self._block_job(
+                job,
+                BackfillStatus.PARTIAL,
+                "durable_manifest_publication_evidence_incomplete",
+            )
+            return
+        deadline = asyncio.get_running_loop().time() + self._ack_wait_seconds
+        reason = "missing_heber_acknowledgement"
+        alerted = job.status == BackfillStatus.PARTIAL
+        while True:
+            all_verified = True
+            for chunk in job.chunks.values():
+                try:
+                    acknowledgement = await self._manifest_store.read_ack(
+                        job.job_id,
+                        chunk.chunk_id,
+                    )
+                except Exception:
+                    logger.error(
+                        "backfill_heber_acknowledgement_invalid",
+                        job_id=job.job_id,
+                        chunk_id=chunk.chunk_id,
+                        exc_info=True,
+                    )
+                    reason = "heber_acknowledgement_invalid"
+                    all_verified = False
+                    acknowledgement = None
+                mismatch = _ack_mismatch(job, chunk, acknowledgement)
+                if mismatch:
+                    all_verified = False
+                    if reason != "heber_acknowledgement_invalid":
+                        reason = mismatch
+                    continue
+                assert acknowledgement is not None
+                chunk.acknowledged = True
+                chunk.heber_commit_id = acknowledgement.commit_id
+                chunk.status = "verified"
+
+            if all_verified:
+                job.status = BackfillStatus.VERIFIED
+                job.blocked_reason = None
+                job.ingestion_verified_at = datetime.now(UTC)
+                job.completed_at = job.ingestion_verified_at
+                await self._save_job(job)
+                self._set_verification_alert(job)
+                logger.info(
+                    "backfill_ingestion_verified",
+                    job_id=job.job_id,
+                    provider=job.request.provider,
+                    feed=job.request.feed,
+                    scope=self._scope(job),
+                    chunks=len(job.chunks),
+                    records=job.records_published,
+                    kairos_intake_blocked=False,
+                )
+                return
+            if not alerted and asyncio.get_running_loop().time() >= deadline:
+                await self._block_job(job, BackfillStatus.PARTIAL, reason)
+                alerted = True
+                if self._ack_wait_seconds == 0:
+                    return
+            await asyncio.sleep(ACK_POLL_SECONDS)
 
     async def _execute_job(self, job: BackfillJob) -> None:
         """Fetch and publish data for all symbols, iterating date-first.
@@ -634,6 +1127,8 @@ class BackfillEngine:
                 if isinstance(result, Exception):
                     error_msg = f"{sym}: unhandled error in chunk {chunk_start.date()}: {result}"
                     job.errors.append(error_msg)
+                    job.symbols_progress[sym].errors.append(error_msg)
+                    job.blocked_reason = "backfill_execution_failed"
                     logger.error(
                         "backfill_symbol_unhandled_error",
                         job_id=job.job_id,
@@ -695,6 +1190,13 @@ class BackfillEngine:
         rate_limiter: ProviderRateLimitManager,
     ) -> None:
         """Fetch and publish a single date chunk for a symbol."""
+        chunk_id = _chunk_id(job.job_id, sym, chunk_start, chunk_end)
+        chunk = job.chunks[chunk_id]
+        if chunk.acknowledged:
+            sp.chunks_complete += 1
+            sp.records_published += chunk.records_published
+            job.records_published += chunk.records_published
+            return
         try:
             await rate_limiter.acquire(job.request.provider, block=True)
             results = await dispatch_fn(
@@ -705,35 +1207,100 @@ class BackfillEngine:
                 timeframe=job.request.timeframe,
             )
             if not results:
-                sp.chunks_complete += 1
-                return
+                raise ReplayValidationError(
+                    "provider_empty_coverage",
+                    f"{sym} returned no records for required chunk",
+                )
 
             items = await asyncio.to_thread(_normalize_results, results)
-            published = await self._publish_items(
-                items=items,
+            timestamps = _validate_returned_items(
+                items,
+                symbol=sym,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                feed=job.request.feed,
+            )
+            messages = await asyncio.to_thread(
+                self._wrap_items,
+                items,
+                job.request.provider,
+                job.request.feed,
+                job.job_id,
+                chunk_id,
+                job.manifest_hash,
+            )
+            event_ids = sorted(envelope["event_id"] for _topic, envelope in messages)
+            event_ids_sha256 = hashlib.sha256("\n".join(event_ids).encode()).hexdigest()
+            records_sha256 = hashlib.sha256(
+                json.dumps(
+                    sorted(
+                        (
+                            {
+                                "event_id": envelope["event_id"],
+                                "payload": envelope["payload"],
+                            }
+                            for _topic, envelope in messages
+                        ),
+                        key=lambda record: record["event_id"],
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode()
+            ).hexdigest()
+            if chunk.event_ids_sha256 and (
+                chunk.event_ids_sha256 != event_ids_sha256 or chunk.records_sha256 != records_sha256
+            ):
+                raise ReplayValidationError(
+                    "provider_record_identity_changed",
+                    f"{sym} returned different stable record identities on retry",
+                )
+
+            chunk.returned_start = min(timestamps)
+            chunk.returned_end = max(timestamps)
+            chunk.record_count = len(messages)
+            chunk.event_ids_sha256 = event_ids_sha256
+            chunk.records_sha256 = records_sha256
+            chunk.status = "validated"
+            await self._save_job(job)
+
+            chunk.published_at = datetime.now(UTC)
+            results_by_message = await self._publish_messages(
+                messages=messages,
                 provider=job.request.provider,
                 feed=job.request.feed,
                 job_id=job.job_id,
             )
-            # Surface a sink shortfall in the job result so a partial publish is
-            # a detectable, re-runnable gap rather than a silent undercount.
-            if published < len(items):
+            published = sum(1 for published_ok in results_by_message if published_ok)
+            if published < len(messages):
                 shortfall = (
                     f"{sym} chunk {chunk_start.date()}-{chunk_end.date()}: "
-                    f"sink published {published}/{len(items)} (partial failure)"
+                    f"sink published {published}/{len(messages)} (partial failure)"
                 )
                 sp.errors.append(shortfall)
                 job.errors.append(shortfall)
+                job.blocked_reason = "stream_publication_partial"
+                chunk.error = shortfall
+                chunk.status = "partial"
+            else:
+                chunk.status = "published"
             sp.records_published += published
             job.records_published += published
+            chunk.records_published = published
             sp.chunks_complete += 1
+            await self._save_job(job)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             error_msg = f"{sym} chunk {chunk_start.date()}-{chunk_end.date()}: {e}"
             sp.errors.append(error_msg)
             job.errors.append(error_msg)
+            reason = e.reason if isinstance(e, ReplayValidationError) else _exception_reason(e)
+            job.blocked_reason = reason
+            chunk.error = error_msg
+            chunk.status = "failed"
             sp.chunks_complete += 1
+            await self._save_job(job)
             logger.warning(
                 "backfill_chunk_failed",
                 job_id=job.job_id,
@@ -741,6 +1308,7 @@ class BackfillEngine:
                 chunk_start=str(chunk_start.date()),
                 chunk_end=str(chunk_end.date()),
                 error=str(e),
+                reason=reason,
                 exc_info=True,
             )
 
@@ -765,7 +1333,14 @@ class BackfillEngine:
         }
 
     @staticmethod
-    def _wrap_items(items: list[dict[str, Any]], provider: str, feed: str) -> list[tuple[str, dict[str, Any]]]:
+    def _wrap_items(
+        items: list[dict[str, Any]],
+        provider: str,
+        feed: str,
+        job_id: str = "",
+        chunk_id: str = "",
+        manifest_hash: str = "",
+    ) -> list[tuple[str, dict[str, Any]]]:
         """Sort items by timestamp and wrap each in an envelope.
 
         Pure/synchronous so it can run via ``asyncio.to_thread`` off the loop.
@@ -773,41 +1348,38 @@ class BackfillEngine:
         partitions Silver by date, so this means fewer, larger partition flushes.
         """
         items.sort(key=lambda x: x.get("timestamp") or x.get("t") or "")
-        return [
-            (
-                HEBER_EVENTS_TOPIC,
-                wrap_event(
-                    event=item,
-                    provider=provider,
-                    feed=feed,
-                    source="backfill",
-                    **BackfillEngine._equity_overrides(item, provider, feed),
-                ),
+        messages: list[tuple[str, dict[str, Any]]] = []
+        for item in items:
+            envelope = wrap_event(
+                event=item,
+                provider=provider,
+                feed=feed,
+                source="backfill",
+                **BackfillEngine._equity_overrides(item, provider, feed),
             )
-            for item in items
-        ]
+            if job_id:
+                envelope["lineage"].update(
+                    {
+                        "backfill_job_id": job_id,
+                        "backfill_chunk_id": chunk_id,
+                        "backfill_manifest_hash": manifest_hash,
+                    }
+                )
+            messages.append((HEBER_EVENTS_TOPIC, envelope))
+        return messages
 
-    async def _publish_items(
+    async def _publish_messages(
         self,
-        items: list[dict[str, Any]],
+        messages: list[tuple[str, dict[str, Any]]],
         provider: str,
         feed: str,
         job_id: str,
-    ) -> int:
-        """Wrap items in envelopes and publish to sink. Returns count published."""
+    ) -> list[bool]:
+        """Publish already-validated envelopes and return exact Redis acceptance."""
         if not self._sink_registry:
             logger.warning("backfill_publish_skipped", reason="no sink registry", job_id=job_id)
-            return 0
+            return [False] * len(messages)
 
-        # Sort + wrap up to a full chunk of records (model-free wrap + BLAKE2b)
-        # off the event loop — on a large backfill chunk this blocks the loop the
-        # same way the UW darkpool build did. The publish stays async on-loop.
-        messages = await asyncio.to_thread(self._wrap_items, items, provider, feed)
-
-        # Prefer the per-message results API: publish_all_batch returns only an
-        # aggregate count, which under a partial Redis pipeline failure can't
-        # tell which events landed — so the chunk was marked complete with an
-        # undercount and the missing rows became an undetectable hole in Heber.
         if hasattr(self._sink_registry, "publish_all_batch_results"):
             results = await self._sink_registry.publish_all_batch_results(messages)
             published = sum(1 for ok in results if ok)
@@ -824,14 +1396,27 @@ class BackfillEngine:
                     "re-run this chunk to fill the gap (unless the sink was circuit-open, "
                     "in which case buffered events drain on reconnect)",
                 )
-            return published
+            return results
 
-        # Fallback: individual publishes for registries without batch support
-        published = 0
-        for topic, envelope in messages:
-            await self._sink_registry.publish_all(topic, envelope)
-            published += 1
-        return published
+        logger.error(
+            "backfill_exact_publish_results_unavailable",
+            job_id=job_id,
+            provider=provider,
+            feed=feed,
+        )
+        return [False] * len(messages)
+
+    async def _publish_items(
+        self,
+        items: list[dict[str, Any]],
+        provider: str,
+        feed: str,
+        job_id: str,
+    ) -> int:
+        """Compatibility helper for tests; durable jobs use ``_publish_messages``."""
+        messages = await asyncio.to_thread(self._wrap_items, items, provider, feed)
+        results = await self._publish_messages(messages, provider, feed, job_id)
+        return sum(1 for ok in results if ok)
 
     async def shutdown(self) -> None:
         """Cancel all running jobs on engine shutdown."""
@@ -844,6 +1429,155 @@ class BackfillEngine:
         if self._running_tasks:
             await asyncio.gather(*self._running_tasks.values(), return_exceptions=True)
         self._running_tasks.clear()
+        if self._manifest_store is not None:
+            await self._manifest_store.close()
+
+
+def _validate_returned_items(
+    items: list[dict[str, Any]],
+    *,
+    symbol: str,
+    chunk_start: datetime,
+    chunk_end: datetime,
+    feed: str,
+) -> list[datetime]:
+    """Reject the entire provider response if scope or time evidence is incomplete."""
+    timestamps: list[datetime] = []
+    market_wide = feed in {"market_tide", "sector_tide"}
+    for item in items:
+        raw_timestamp = next(
+            (
+                item.get(field)
+                for field in (
+                    "timestamp",
+                    "t",
+                    "published_at",
+                    "datetime",
+                    "date",
+                    "transaction_date",
+                    "filing_date",
+                    "report_date",
+                    "effective_date",
+                    "period_end_date",
+                    "fiscal_date_ending",
+                )
+                if item.get(field) is not None
+            ),
+            None,
+        )
+        timestamp = _strict_timestamp(raw_timestamp)
+        if timestamp is None:
+            raise ReplayValidationError(
+                "provider_timestamp_missing",
+                "provider record has no parseable source timestamp",
+            )
+        if timestamp < chunk_start or timestamp > chunk_end:
+            raise ReplayValidationError(
+                "provider_date_out_of_range",
+                f"provider returned {timestamp.isoformat()} outside requested chunk",
+            )
+        if not market_wide:
+            returned_symbol = str(
+                item.get("symbol") or item.get("ticker") or item.get("underlying") or item.get("S") or ""
+            ).upper()
+            if returned_symbol != symbol.upper():
+                raise ReplayValidationError(
+                    "provider_symbol_mismatch",
+                    f"provider returned symbol {returned_symbol or '<missing>'} for {symbol}",
+                )
+        timestamps.append(timestamp)
+    return timestamps
+
+
+def _strict_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        timestamp = value
+    elif isinstance(value, date):
+        timestamp = datetime(value.year, value.month, value.day, tzinfo=UTC)
+    elif isinstance(value, int | float):
+        seconds = float(value)
+        if seconds > 10_000_000_000:
+            seconds /= 1000
+        try:
+            timestamp = datetime.fromtimestamp(seconds, tz=UTC)
+        except (OSError, OverflowError, ValueError):
+            return None
+    elif isinstance(value, str) and value.strip():
+        normalized = value.strip().replace("Z", "+00:00")
+        try:
+            timestamp = datetime.fromisoformat(normalized)
+        except ValueError:
+            try:
+                parsed_date = date.fromisoformat(normalized)
+            except ValueError:
+                return None
+            timestamp = datetime(
+                parsed_date.year,
+                parsed_date.month,
+                parsed_date.day,
+                tzinfo=UTC,
+            )
+    else:
+        return None
+    if timestamp.tzinfo is None:
+        return None
+    return timestamp.astimezone(UTC)
+
+
+def _is_completed_market_day(day: date) -> bool:
+    if day >= date.today() or day.weekday() >= 5:
+        return False
+    if 2024 <= day.year <= 2026:
+        return day not in US_HOLIDAYS
+    try:
+        return TradingCalendar().is_trading_day(day)
+    except Exception:
+        logger.warning(
+            "backfill_canary_calendar_unavailable",
+            day=day.isoformat(),
+            exc_info=True,
+        )
+        return False
+
+
+def _ack_mismatch(
+    job: BackfillJob,
+    chunk: ChunkResult,
+    acknowledgement: HeberChunkAcknowledgement | None,
+) -> str | None:
+    if acknowledgement is None:
+        return "missing_heber_acknowledgement"
+    if (
+        acknowledgement.status != "committed"
+        or acknowledgement.job_id != job.job_id
+        or acknowledgement.chunk_id != chunk.chunk_id
+        or acknowledgement.manifest_hash != job.manifest_hash
+        or acknowledgement.record_count != chunk.record_count
+        or acknowledgement.event_ids_sha256 != chunk.event_ids_sha256
+        or acknowledgement.records_sha256 != chunk.records_sha256
+        or not acknowledgement.commit_id
+        or acknowledgement.committed_at.tzinfo is None
+        or chunk.published_at is None
+        or acknowledgement.committed_at < chunk.published_at
+    ):
+        return "heber_acknowledgement_mismatch"
+    return None
+
+
+def _exception_reason(error: Exception) -> str:
+    if type(error).__name__ == "RateLimitExceeded":
+        return "provider_rate_limit"
+    return "provider_request_failed"
+
+
+def _safe_next_action(reason: str) -> str:
+    if reason.startswith("heber_") or reason == "missing_heber_acknowledgement":
+        return "restore Heber consumer/writer health and durable post-commit acknowledgements, then retry"
+    if reason.startswith("provider_"):
+        return "fix or prove the provider date-bounded contract, then retry the same manifest"
+    if reason == "stream_publication_partial":
+        return "restore the Redis backfill stream and retry the same manifest"
+    return "inspect the durable manifest; keep Kairos blocked and retry only after the cause is fixed"
 
 
 def _normalize_results(results: Any) -> list[dict[str, Any]]:

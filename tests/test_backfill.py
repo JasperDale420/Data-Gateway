@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,6 +15,8 @@ from gateway.core.backfill import (
     BackfillJob,
     BackfillRequest,
     BackfillStatus,
+    ReplayCapability,
+    ReplayFeedCapability,
     SymbolProgress,
     _date_chunks,
     _normalize_results,
@@ -23,6 +25,10 @@ from gateway.core.backfill import (
     _uw_iv_term_structure,
     _uw_oi_change,
     get_backfill_engine,
+)
+from gateway.core.backfill_manifest import (
+    HeberReadiness,
+    InMemoryBackfillManifestStore,
 )
 
 # ── date chunking ──────────────────────────────────────────────────────
@@ -135,20 +141,38 @@ def test_job_eta_returns_none_before_start() -> None:
 
 def _make_engine() -> BackfillEngine:
     """Create a BackfillEngine with mock registries."""
-    engine = BackfillEngine()
+    capabilities = {key: ReplayFeedCapability(capability=ReplayCapability.DATE_BOUNDED) for key in BACKFILL_DISPATCH}
+    engine = BackfillEngine(ack_wait_seconds=0, capabilities=capabilities)
     provider_registry = MagicMock()
     provider_registry.get.return_value = MagicMock()
     sink_registry = MagicMock()
     sink_registry.publish_all = AsyncMock()
     sink_registry.publish_all_batch = AsyncMock(return_value=1)
     sink_registry.publish_all_batch_results = AsyncMock(side_effect=lambda messages: [True] * len(messages))
-    engine.configure(provider_registry=provider_registry, sink_registry=sink_registry)
+    manifest_store = InMemoryBackfillManifestStore()
+    manifest_store.readiness = HeberReadiness(
+        consumer_healthy=True,
+        writer_healthy=True,
+        ack_store_ready=True,
+        protocol_version=1,
+        observed_at=datetime.now(UTC),
+    )
+    engine.configure(
+        provider_registry=provider_registry,
+        sink_registry=sink_registry,
+        manifest_store=manifest_store,
+    )
     return engine
 
 
-def test_submit_validates_provider() -> None:
+@pytest.mark.asyncio
+async def test_submit_validates_provider() -> None:
     engine = BackfillEngine()
-    engine.configure(provider_registry=MagicMock(), sink_registry=MagicMock())
+    engine.configure(
+        provider_registry=MagicMock(),
+        sink_registry=MagicMock(),
+        manifest_store=InMemoryBackfillManifestStore(),
+    )
     engine._provider_registry.get.return_value = None
 
     req = BackfillRequest(
@@ -159,10 +183,11 @@ def test_submit_validates_provider() -> None:
         end=date(2025, 1, 1),
     )
     with pytest.raises(ValueError, match="Unknown provider"):
-        engine.submit(req)
+        await engine.submit(req)
 
 
-def test_submit_validates_feed() -> None:
+@pytest.mark.asyncio
+async def test_submit_validates_feed() -> None:
     engine = _make_engine()
     req = BackfillRequest(
         provider="alpaca",
@@ -172,10 +197,11 @@ def test_submit_validates_feed() -> None:
         end=date(2025, 1, 1),
     )
     with pytest.raises(ValueError, match="Unsupported feed"):
-        engine.submit(req)
+        await engine.submit(req)
 
 
-def test_submit_validates_date_range() -> None:
+@pytest.mark.asyncio
+async def test_submit_validates_date_range() -> None:
     engine = _make_engine()
     req = BackfillRequest(
         provider="alpaca",
@@ -185,10 +211,11 @@ def test_submit_validates_date_range() -> None:
         end=date(2025, 1, 1),
     )
     with pytest.raises(ValueError, match="start must be <= end"):
-        engine.submit(req)
+        await engine.submit(req)
 
 
-def test_submit_rejects_wildcard_symbol() -> None:
+@pytest.mark.asyncio
+async def test_submit_rejects_wildcard_symbol() -> None:
     engine = _make_engine()
     req = BackfillRequest(
         provider="alpaca",
@@ -202,10 +229,11 @@ def test_submit_rejects_wildcard_symbol() -> None:
         patch("gateway.core.backfill.asyncio.create_task", return_value=fake_task),
         pytest.raises(ValueError, match="Wildcard symbol"),
     ):
-        engine.submit(req)
+        await engine.submit(req)
 
 
-def test_submit_rejects_stock_symbols_for_alpaca_crypto_feed() -> None:
+@pytest.mark.asyncio
+async def test_submit_rejects_stock_symbols_for_alpaca_crypto_feed() -> None:
     engine = _make_engine()
     req = BackfillRequest(
         provider="alpaca",
@@ -225,10 +253,11 @@ def test_submit_rejects_stock_symbols_for_alpaca_crypto_feed() -> None:
         patch("gateway.core.backfill.asyncio.create_task", side_effect=_fake_create_task),
         pytest.raises(ValueError, match="Invalid symbols for alpaca feed 'crypto_bars'"),
     ):
-        engine.submit(req)
+        await engine.submit(req)
 
 
-def test_submit_accepts_valid_crypto_symbols_for_alpaca_crypto_feed() -> None:
+@pytest.mark.asyncio
+async def test_submit_accepts_valid_crypto_symbols_for_alpaca_crypto_feed() -> None:
     engine = _make_engine()
     req = BackfillRequest(
         provider="alpaca",
@@ -245,11 +274,11 @@ def test_submit_accepts_valid_crypto_symbols_for_alpaca_crypto_feed() -> None:
         return fake_task
 
     with patch("gateway.core.backfill.asyncio.create_task", side_effect=_fake_create_task):
-        job = engine.submit(req)
+        job = await engine.submit(req)
     assert job.request.symbols == ["BTC/USD", "ETH/USDT"]
 
     # Cleanup: cancel the background task
-    engine.cancel(job.job_id)
+    await engine.cancel(job.job_id)
 
 
 @pytest.mark.asyncio
@@ -263,7 +292,7 @@ async def test_submit_creates_job_with_correct_structure() -> None:
         end=date(2025, 1, 3),
         chunk_days=1,
     )
-    job = engine.submit(req)
+    job = await engine.submit(req)
 
     assert job.job_id.startswith("bf-")
     assert job.status == BackfillStatus.QUEUED
@@ -272,7 +301,7 @@ async def test_submit_creates_job_with_correct_structure() -> None:
     assert job.symbols_progress["AAPL"].chunks_total == 3
 
     # Cleanup: cancel the background task
-    engine.cancel(job.job_id)
+    await engine.cancel(job.job_id)
 
 
 def test_get_job_returns_none_for_unknown() -> None:
@@ -290,9 +319,9 @@ async def test_list_jobs() -> None:
         start=date(2025, 1, 1),
         end=date(2025, 1, 1),
     )
-    job = engine.submit(req)
+    job = await engine.submit(req)
     assert len(engine.list_jobs()) == 1
-    engine.cancel(job.job_id)
+    await engine.cancel(job.job_id)
 
 
 @pytest.mark.asyncio
@@ -305,14 +334,15 @@ async def test_cancel_running_job() -> None:
         start=date(2025, 1, 1),
         end=date(2025, 1, 1),
     )
-    job = engine.submit(req)
-    assert engine.cancel(job.job_id)
+    job = await engine.submit(req)
+    assert await engine.cancel(job.job_id)
     assert job.status == BackfillStatus.CANCELLED
 
 
-def test_cancel_nonexistent_job_returns_false() -> None:
+@pytest.mark.asyncio
+async def test_cancel_nonexistent_job_returns_false() -> None:
     engine = _make_engine()
-    assert engine.cancel("nonexistent") is False
+    assert await engine.cancel("nonexistent") is False
 
 
 def test_supported_feeds() -> None:
@@ -322,10 +352,14 @@ def test_supported_feeds() -> None:
     assert len(feeds) > 0
     assert all("provider" in f and "feed" in f for f in feeds)
     # Verify alpaca bars is in the list
-    assert {"provider": "alpaca", "feed": "bars"} in feeds
+    assert any(
+        feed["provider"] == "alpaca" and feed["feed"] == "bars" and feed["capability"] == "date_bounded"
+        for feed in feeds
+    )
 
 
-def test_submit_without_config_raises() -> None:
+@pytest.mark.asyncio
+async def test_submit_without_config_raises() -> None:
     engine = BackfillEngine()
     req = BackfillRequest(
         provider="alpaca",
@@ -335,7 +369,7 @@ def test_submit_without_config_raises() -> None:
         end=date(2025, 1, 1),
     )
     with pytest.raises(ValueError, match="not configured"):
-        engine.submit(req)
+        await engine.submit(req)
 
 
 # ── Full job execution ─────────────────────────────────────────────────
@@ -359,7 +393,7 @@ async def test_job_executes_and_publishes() -> None:
         ),
         patch(
             "gateway.core.backfill.wrap_event",
-            return_value={"event_id": "test", "payload": mock_data[0]},
+            return_value={"event_id": "test", "payload": mock_data[0], "lineage": {}},
         ),
     ):
         req = BackfillRequest(
@@ -369,12 +403,13 @@ async def test_job_executes_and_publishes() -> None:
             start=date(2025, 1, 1),
             end=date(2025, 1, 1),
         )
-        job = engine.submit(req)
+        job = await engine.submit(req)
+        await engine.wait(job.job_id)
 
-        # Wait for background task
-        await asyncio.sleep(0.5)
-
-        assert job.status == BackfillStatus.COMPLETED
+        assert job.status == BackfillStatus.PARTIAL
+        assert job.blocked_reason == "missing_heber_acknowledgement"
+        assert job.gateway_completed_at is not None
+        assert job.ingestion_verified_at is None
         assert job.records_published == 1
         assert job.symbols_progress["AAPL"].status == "complete"
         engine._sink_registry.publish_all_batch_results.assert_called()
@@ -401,12 +436,10 @@ async def test_job_handles_provider_error_gracefully() -> None:
             start=date(2025, 1, 1),
             end=date(2025, 1, 1),
         )
-        job = engine.submit(req)
+        job = await engine.submit(req)
+        await engine.wait(job.job_id)
 
-        await asyncio.sleep(0.5)
-
-        # Job completes despite errors (partial failure tracking)
-        assert job.status in (BackfillStatus.COMPLETED, BackfillStatus.FAILED)
+        assert job.status == BackfillStatus.FAILED
         assert len(job.errors) > 0
         assert job.symbols_progress["AAPL"].status == "failed"
 
@@ -437,7 +470,7 @@ async def test_engine_shutdown_cancels_running_tasks() -> None:
             start=date(2025, 1, 1),
             end=date(2025, 1, 1),
         )
-        engine.submit(req)
+        await engine.submit(req)
         await asyncio.sleep(0.1)
 
         await engine.shutdown()
@@ -458,7 +491,7 @@ def test_backfill_api_submit(client, test_api_key) -> None:
         ),
     )
     mock_engine = MagicMock()
-    mock_engine.submit.return_value = mock_job
+    mock_engine.submit = AsyncMock(return_value=mock_job)
 
     with patch("gateway.api.backfill.get_backfill_engine", return_value=mock_engine):
         response = client.post(
@@ -547,7 +580,19 @@ async def test_lightweight_not_blocked_by_heavyweight() -> None:
     provider_registry.get.return_value = MagicMock()
     sink_registry = MagicMock()
     sink_registry.publish_all = AsyncMock()
-    engine.configure(provider_registry=provider_registry, sink_registry=sink_registry)
+    manifest_store = InMemoryBackfillManifestStore()
+    manifest_store.readiness = HeberReadiness(
+        consumer_healthy=True,
+        writer_healthy=True,
+        ack_store_ready=True,
+        protocol_version=1,
+        observed_at=datetime.now(UTC),
+    )
+    engine.configure(
+        provider_registry=provider_registry,
+        sink_registry=sink_registry,
+        manifest_store=manifest_store,
+    )
 
     # Acquire the heavyweight semaphore to simulate a running trades job
     heavyweight_sem = engine._get_semaphore("alpaca", "trades")
@@ -575,17 +620,17 @@ async def test_cancel_all_cancels_running_jobs() -> None:
         start=date(2025, 1, 1),
         end=date(2025, 1, 1),
     )
-    job1 = engine.submit(req)
-    job2 = engine.submit(req)
+    job1 = await engine.submit(req)
+    job2 = await engine.submit(req.model_copy(update={"symbols": ["MSFT"]}))
 
-    cancelled = engine.cancel_all()
+    cancelled = await engine.cancel_all()
     assert cancelled == 2
     assert job1.status == BackfillStatus.CANCELLED
     assert job2.status == BackfillStatus.CANCELLED
 
 
 @pytest.mark.asyncio
-async def test_flush_purges_job_history() -> None:
+async def test_flush_refuses_unbounded_durable_history_deletion() -> None:
     engine = _make_engine()
     req = BackfillRequest(
         provider="alpaca",
@@ -594,16 +639,18 @@ async def test_flush_purges_job_history() -> None:
         start=date(2025, 1, 1),
         end=date(2025, 1, 1),
     )
-    engine.submit(req)
-    engine.submit(req)
+    await engine.submit(req)
+    await engine.submit(req.model_copy(update={"symbols": ["MSFT"]}))
     assert len(engine.list_jobs()) == 2
 
-    purged = engine.flush()
-    assert purged == 2
-    assert len(engine.list_jobs()) == 0
+    purged = await engine.flush()
+    assert purged == 0
+    assert len(engine.list_jobs()) == 2
+    await engine.cancel_all()
 
 
-def test_stale_job_auto_expiry() -> None:
+@pytest.mark.asyncio
+async def test_manifest_history_survives_unbounded_flush() -> None:
     engine = _make_engine()
     req = BackfillRequest(
         provider="alpaca",
@@ -612,41 +659,44 @@ def test_stale_job_auto_expiry() -> None:
         start=date(2025, 1, 1),
         end=date(2025, 1, 1),
     )
-    # Manually add a stale completed job (completed 2 hours ago)
-    from gateway.core.backfill import JOB_EXPIRY_SECONDS
-
-    job = BackfillJob(request=req)
-    job.status = BackfillStatus.COMPLETED
-    job.completed_at = datetime.now(UTC) - timedelta(seconds=JOB_EXPIRY_SECONDS + 60)
+    job = BackfillJob(job_id="bf-old", request=req, status=BackfillStatus.VERIFIED)
     engine._jobs[job.job_id] = job
-
-    # Add a fresh completed job (should NOT be pruned)
-    fresh_job = BackfillJob(request=req)
-    fresh_job.status = BackfillStatus.COMPLETED
-    fresh_job.completed_at = datetime.now(UTC)
-    engine._jobs[fresh_job.job_id] = fresh_job
-
-    assert len(engine.list_jobs()) == 2
-
-    # Trigger prune via submit
-    engine._prune_stale_jobs()
-
+    await engine._save_job(job)
     assert len(engine.list_jobs()) == 1
-    assert engine.get_job(fresh_job.job_id) is not None
-    assert engine.get_job(job.job_id) is None
+    assert await engine._manifest_store.load_job(job.job_id) is not None
+
+    assert await engine.flush() == 0
+    assert await engine._manifest_store.load_job(job.job_id) is not None
 
 
 @pytest.mark.asyncio
 async def test_concurrent_symbol_processing() -> None:
     """Symbols within a job should be processed concurrently (up to semaphore limit)."""
-    engine = BackfillEngine(symbol_concurrency=3)
+    capabilities = {key: ReplayFeedCapability(capability=ReplayCapability.DATE_BOUNDED) for key in BACKFILL_DISPATCH}
+    engine = BackfillEngine(
+        symbol_concurrency=3,
+        ack_wait_seconds=0,
+        capabilities=capabilities,
+    )
     provider_registry = MagicMock()
     provider_registry.get.return_value = MagicMock()
     sink_registry = MagicMock()
     sink_registry.publish_all = AsyncMock()
     sink_registry.publish_all_batch = AsyncMock(return_value=1)
     sink_registry.publish_all_batch_results = AsyncMock(side_effect=lambda messages: [True] * len(messages))
-    engine.configure(provider_registry=provider_registry, sink_registry=sink_registry)
+    manifest_store = InMemoryBackfillManifestStore()
+    manifest_store.readiness = HeberReadiness(
+        consumer_healthy=True,
+        writer_healthy=True,
+        ack_store_ready=True,
+        protocol_version=1,
+        observed_at=datetime.now(UTC),
+    )
+    engine.configure(
+        provider_registry=provider_registry,
+        sink_registry=sink_registry,
+        manifest_store=manifest_store,
+    )
 
     # Track concurrent execution
     active_count = 0
@@ -661,7 +711,13 @@ async def test_concurrent_symbol_processing() -> None:
         await asyncio.sleep(0.1)
         async with lock:
             active_count -= 1
-        return [{"data": "value"}]
+        return [
+            {
+                "symbol": args[1],
+                "timestamp": "2025-01-01T00:00:00Z",
+                "data": "value",
+            }
+        ]
 
     with (
         patch.dict(
@@ -674,7 +730,7 @@ async def test_concurrent_symbol_processing() -> None:
         ),
         patch(
             "gateway.core.backfill.wrap_event",
-            return_value={"event_id": "test", "payload": {}},
+            return_value={"event_id": "test", "payload": {}, "lineage": {}},
         ),
     ):
         req = BackfillRequest(
@@ -684,10 +740,10 @@ async def test_concurrent_symbol_processing() -> None:
             start=date(2025, 1, 1),
             end=date(2025, 1, 1),
         )
-        job = engine.submit(req)
-        await asyncio.sleep(1.5)
+        job = await engine.submit(req)
+        await engine.wait(job.job_id)
 
-        assert job.status == BackfillStatus.COMPLETED
+        assert job.status == BackfillStatus.PARTIAL
         # With concurrency=3, we should see at most 3 symbols running at once
         assert max_concurrent <= 3
         # But more than 1 (proving concurrency works)
@@ -699,7 +755,7 @@ async def test_concurrent_symbol_processing() -> None:
 
 def test_backfill_api_cancel_all(client, test_api_key) -> None:
     mock_engine = MagicMock()
-    mock_engine.cancel_all.return_value = 3
+    mock_engine.cancel_all = AsyncMock(return_value=3)
 
     with patch("gateway.api.backfill.get_backfill_engine", return_value=mock_engine):
         response = client.post(
@@ -715,7 +771,7 @@ def test_backfill_api_cancel_all(client, test_api_key) -> None:
 
 def test_backfill_api_flush(client, test_api_key) -> None:
     mock_engine = MagicMock()
-    mock_engine.flush.return_value = 5
+    mock_engine.flush = AsyncMock(return_value=5)
 
     with patch("gateway.api.backfill.get_backfill_engine", return_value=mock_engine):
         response = client.delete(
@@ -766,7 +822,7 @@ def test_uw_eod_feeds_in_supported_feeds() -> None:
     engine = _make_engine()
     feeds = engine.supported_feeds
     for feed in _UW_EOD_FEEDS:
-        assert {"provider": "unusual_whales", "feed": feed} in feeds
+        assert any(item["provider"] == "unusual_whales" and item["feed"] == feed for item in feeds)
 
 
 @pytest.mark.asyncio

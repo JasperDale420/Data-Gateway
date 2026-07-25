@@ -357,6 +357,7 @@ async def lifespan(app: FastAPI):
 
     # Configure backfill engine with provider and sink registries
     from gateway.core.backfill import get_backfill_engine
+    from gateway.core.backfill_manifest import RedisBackfillManifestStore
 
     backfill_engine = get_backfill_engine(
         lightweight_concurrency=settings.backfill_lightweight_concurrency,
@@ -365,7 +366,11 @@ async def lifespan(app: FastAPI):
     backfill_engine.configure(
         provider_registry=registry,
         sink_registry=sink_registry,
+        manifest_store=(
+            RedisBackfillManifestStore(settings.data_sink_redis_url) if settings.data_sink_redis_url else None
+        ),
     )
+    await backfill_engine.start()
     logger.info("backfill_engine_configured")
 
     # SIGHUP handler for hot config reload (PRD 6.5.4)
