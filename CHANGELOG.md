@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - **Documentation refreshed to the Empire standard** (`docs/RUNBOOK.md`, `README.md`, `DEPENDENCIES.md`, `docs/README.md`, `TESTING.md`, `CONTRIBUTING.md`, new `docs/DATA_CONTRACTS.md`): fixed admin endpoint paths in the runbook that were missing the `/admin/` segment (`/api/v1/logs` → `/api/v1/admin/logs/recent`, and similarly for errors/summary, rate-limits, and providers enable/disable), corrected the `MemoryPressure` alert's metric name, removed runbook/env-template guidance for a memory-target/GC-pressure throttle and a 24h WebSocket session cap that don't exist in the code, corrected two remaining `fail_under = 58` coverage-floor references to the current `60`, and added `docs/DATA_CONTRACTS.md` documenting the `EventEnvelope` wire contract and `Normalized*` schema catalog for downstream consumers.
+- **Corrected a factual error in `CLAUDE.md`/`AGENTS.md` about how streaming events get their ID** (`CLAUDE.md`, `AGENTS.md`): the docs wrongly said the WebSocket fast path (`fast_wrap_streaming_event()`) uses "a random event_id for speed." It doesn't — both wrapper paths compute the same content-derived BLAKE2b hash, which is required for Heber's dedup to work. The docs now match `gateway/core/envelope.py` and `docs/DATA_CONTRACTS.md`.
 
 ### Added
 

@@ -146,7 +146,7 @@ All use `Decimal` for prices/sizes. Timestamps are timezone-aware `datetime`.
 Every outbound event is wrapped in an `EventEnvelope` (`gateway/core/envelope.py`) before publishing:
 - **Fields**: event_id (BLAKE2b idempotency hash), provider, feed, source, instrument_type, instrument_key, symbol, ts_event, ts_ingest, schema_version, lineage, quality_flags, payload
 - **Instrument keys**: `equity:AAPL`, `option:OCC:AAPL250117C00200000`, `crypto:BTC-USD`, `forex:EUR-USD`
-- **Two paths**: `wrap_event()` (REST/batch, full validation) and `fast_wrap_streaming_event()` (WebSocket, skips Pydantic, uses random event_id for speed)
+- **Two paths**: `wrap_event()` (REST/batch, full validation) and `fast_wrap_streaming_event()` (WebSocket, skips Pydantic for speed) — both compute the same content-derived BLAKE2b `event_id`, never a random one, since Heber's three-layer dedup keys on it (see `docs/DATA_CONTRACTS.md`)
 - **Feed-specific dedup**: `FEED_UNIQUE_FIELDS` maps each feed type to fields used in event_id hashing
 
 #### Gotcha: `_infer_instrument_type` and per-underlying analytics
