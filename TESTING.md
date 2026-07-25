@@ -26,7 +26,7 @@ pytest tests/test_auth.py -v
 # Single test
 pytest tests/test_auth.py::test_authenticate_valid_key -v
 
-# Coverage summary (fails the run if total coverage drops below 58% —
+# Coverage summary (fails the run if total coverage drops below 60% —
 # `fail_under` in pyproject.toml [tool.coverage.report]; ratchet up as coverage improves)
 pytest --cov=gateway --cov-report=term-missing
 ```

@@ -69,15 +69,14 @@ Full defaults live in `gateway/config.py`; see `.env.example` for a commented te
 
 | Variable                                   | Default   | Purpose                              |
 |--------------------------------------------|-----------|--------------------------------------|
-| `GATEWAY_LOG_LEVEL`                        | `INFO`    | Root log level                       |
+| `EMPIRE_LOG_LEVEL`                        | `INFO`    | Root log level (read by `empire_core.logger`; not a `GATEWAY_`-prefixed var) |
 | `GATEWAY_CACHE_DEFAULT_TTL`               | `300`     | Default cache TTL (seconds)          |
 | `GATEWAY_CACHE_MAX_SIZE`                  | `10000`   | Max in-memory cache entries          |
 | `GATEWAY_RATE_LIMIT_DEFAULT`              | `600`     | Default rate limit (req/min)         |
 | `GATEWAY_WS_MAX_CLIENTS`                  | `1000`    | Max concurrent WebSocket clients     |
 | `GATEWAY_WS_IDLE_TIMEOUT`                 | `300`     | WS idle disconnect (seconds)         |
 | `GATEWAY_STREAM_USE_IEX`                  | `false`   | Use IEX feed instead of SIP          |
-| `GATEWAY_MEMORY_TARGET_MB`                | `512`     | Memory target before GC pressure     |
-| `GATEWAY_MEMORY_HARD_LIMIT_MB`            | `1024`    | Hard memory ceiling                  |
+| `GATEWAY_ALLOW_LIVE_TRADING`              | `false`   | Live-trading opt-in. Paper is the fail-safe default — flipping this still requires a recognized live `APCA_API_BASE_URL` before real-money orders can route. |
 | `GATEWAY_SHUTDOWN_DRAIN_SECONDS`          | `30`      | Graceful shutdown drain period       |
 | `GATEWAY_DATA_SINK_ENABLED`              | `false`   | Enable Redis Streams data sink       |
 | `GATEWAY_DATA_SINK_REDIS_URL`            | —         | Redis URL for data sink              |
@@ -93,6 +92,10 @@ Full defaults live in `gateway/config.py`; see `.env.example` for a commented te
 | `GATEWAY_UW_DYNAMIC_TICKER_COUNT`       | `20`      | Dynamic tickers from UW screener     |
 | `GATEWAY_UW_EOD_CONCURRENCY`            | `5`       | Max concurrent ticker polls          |
 | `GATEWAY_UW_POLLER_PUBLISH_MAX_INFLIGHT`| `16`      | Max in-flight poller publishes       |
+
+> There is no memory-target / GC-pressure auto-throttle in this codebase. Process
+> memory is only *observed* (the `gateway_process_memory_percent` metric, § 3.2)
+> and mitigated manually — see § 6.3.
 
 ### 2.3  Config Files
 
@@ -132,19 +135,19 @@ Alerting rules live in `config/prometheus_alerts.yml`. The on-call-relevant aler
 | `SinkBufferNearCapacity`    | warning  | `gateway_sink_buffer_size > 9000` (1m)               | Retry buffer > 90% full; eviction imminent (see § 6.7) |
 | `HighErrorRate`             | warning  | 5xx error ratio > 5% for 5m                          | Elevated server errors |
 | `ProviderUnhealthy`         | warning  | `gateway_provider_healthy == 0` for 2m               | One provider down |
-| `MemoryPressure`            | warning  | `gateway_memory_pressure > 80` for 5m                | Memory above target (see § 6.3) |
+| `MemoryPressure`            | warning  | `gateway_process_memory_percent > 80` for 5m         | Process memory above 80% of system memory (see § 6.3) |
 
 ### 3.3  Admin Endpoints (require API key)
 
-| Endpoint                             | Method | Purpose                            |
-|--------------------------------------|--------|------------------------------------|
-| `/api/v1/status`                     | GET    | System status + connected clients  |
-| `/api/v1/logs`                       | GET    | Recent error logs (in-memory)      |
-| `/api/v1/errors/summary`            | GET    | Error code counts (last hour)      |
-| `/api/v1/rate-limits`               | GET    | Provider rate-limit status         |
-| `/api/v1/providers`                  | GET    | List all providers + health        |
-| `/api/v1/providers/{name}/enable`   | POST   | Enable a provider at runtime       |
-| `/api/v1/providers/{name}/disable`  | POST   | Disable a provider at runtime      |
+| Endpoint                                   | Method | Purpose                            |
+|--------------------------------------------|--------|------------------------------------|
+| `/api/v1/status`                           | GET    | System status + connected clients  |
+| `/api/v1/admin/logs/recent`               | GET    | Recent error logs (in-memory)      |
+| `/api/v1/admin/errors/summary`            | GET    | Error code counts (last hour)      |
+| `/api/v1/admin/rate-limits`               | GET    | Provider rate-limit status         |
+| `/api/v1/admin/providers`                  | GET    | List all providers + health        |
+| `/api/v1/admin/providers/{name}/enable`   | POST   | Enable a provider at runtime       |
+| `/api/v1/admin/providers/{name}/disable`  | POST   | Disable a provider at runtime      |
 
 ---
 
@@ -188,11 +191,11 @@ Restart the gateway for changes to take effect.
 ```bash
 # Disable finnhub without restart
 curl -X POST -H "X-Gateway-Key: <key>" \
-  http://localhost:8080/api/v1/providers/finnhub/disable
+  http://localhost:8080/api/v1/admin/providers/finnhub/disable
 
 # Re-enable
 curl -X POST -H "X-Gateway-Key: <key>" \
-  http://localhost:8080/api/v1/providers/finnhub/enable
+  http://localhost:8080/api/v1/admin/providers/finnhub/enable
 ```
 
 ### 4.5  Enable the Heber data sink
@@ -242,7 +245,6 @@ async with websockets.connect("ws://localhost:8080/ws") as ws:
 |-------------------------------|---------|-----------------------------------|
 | Auth timeout                  | 10s     | Client must auth within this window |
 | Idle timeout                  | 5 min   | Disconnects idle clients          |
-| Max connection duration       | 24h     | Hard session limit                |
 | Heartbeat interval            | 30s     | Server → client ping              |
 | Max message size              | 64 KB   | Per WebSocket frame               |
 
@@ -283,9 +285,14 @@ async with websockets.connect("ws://localhost:8080/ws") as ws:
 
 ### 6.3  High memory
 
-1. Check current memory: `GET /metrics` → `process_resident_memory_bytes`
-2. If above `GATEWAY_MEMORY_TARGET_MB`, the GC pressure loop should kick in.
-3. If approaching `GATEWAY_MEMORY_HARD_LIMIT_MB`, consider:
+There is no automatic memory throttle (no GC-pressure loop, no configurable
+target/hard-limit) — the gateway only *observes* memory and pages on it.
+
+1. Check current memory: `GET /metrics` → `gateway_process_memory_percent`
+   (percent of system memory) or `gateway_process_memory_bytes` (RSS).
+2. The `MemoryPressure` alert fires at `gateway_process_memory_percent > 80`
+   for 5m (§ 3.2).
+3. If memory keeps climbing, consider:
    - Reducing `GATEWAY_CACHE_MAX_SIZE`
    - Lowering `GATEWAY_WS_MAX_CLIENTS`
    - Restarting the service
@@ -479,13 +486,13 @@ curl localhost:8080/health
 curl localhost:8080/health/ready
 
 # Provider status
-curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/api/v1/providers
+curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/api/v1/admin/providers
 
 # Rate limit status
-curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/api/v1/rate-limits
+curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/api/v1/admin/rate-limits
 
 # Recent errors
-curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/api/v1/logs
+curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/api/v1/admin/logs/recent
 
 # Prometheus metrics
 curl -H "X-Gateway-Key: $GW_KEY" localhost:8080/metrics

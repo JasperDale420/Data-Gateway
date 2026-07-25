@@ -200,6 +200,7 @@ curl -H "X-Gateway-Key: <your-gateway-api-key>" http://localhost:8080/catalog/fe
 
 See [docs/api-reference.md](docs/api-reference.md) for complete documentation.
 Provider route contracts are generated from live routes in [PROVIDER_ENDPOINT_CONTRACT.md](PROVIDER_ENDPOINT_CONTRACT.md) via `python scripts/generate_provider_contract.py`.
+See [docs/DATA_CONTRACTS.md](docs/DATA_CONTRACTS.md) for the `EventEnvelope` / `Normalized*` schema contract published to downstream consumers.
 
 ## WebSocket Streaming
 

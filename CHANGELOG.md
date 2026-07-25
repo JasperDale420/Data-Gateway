@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Documentation refreshed to the Empire standard** (`docs/RUNBOOK.md`, `README.md`, `DEPENDENCIES.md`, `docs/README.md`, `TESTING.md`, `CONTRIBUTING.md`, new `docs/DATA_CONTRACTS.md`): fixed admin endpoint paths in the runbook that were missing the `/admin/` segment (`/api/v1/logs` → `/api/v1/admin/logs/recent`, and similarly for errors/summary, rate-limits, and providers enable/disable), corrected the `MemoryPressure` alert's metric name, removed runbook/env-template guidance for a memory-target/GC-pressure throttle and a 24h WebSocket session cap that don't exist in the code, corrected two remaining `fail_under = 58` coverage-floor references to the current `60`, and added `docs/DATA_CONTRACTS.md` documenting the `EventEnvelope` wire contract and `Normalized*` schema catalog for downstream consumers.
+
 ### Added
 
 - **WS clients can subscribe with the canonical feed names `bars`/`quotes`/`trades`** — the wire envelope labels are now accepted on the WebSocket subscribe surface as aliases of `stock_bars`/`stock_quotes`/`stock_trades`, which stay fully supported. Either spelling works for subscribe, unsubscribe, and client permission lists (a client authorized for `stock_bars` may subscribe via `bars` and vice versa); acks and subscription tracking always report the canonical `stock_*` name. `/catalog/feeds` advertises both spellings (`alias_of` marks the aliases), and unknown feed names are still rejected. Wire envelopes published to Redis are unchanged.

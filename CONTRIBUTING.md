@@ -89,7 +89,7 @@ pytest tests/test_websocket.py -v
 
 ### Test Requirements
 
-- **Unit tests**: keep overall coverage above the CI floor (`fail_under = 58` in pyproject.toml, ratcheted up as coverage improves); aim to fully cover new code
+- **Unit tests**: keep overall coverage above the CI floor (`fail_under = 60` in pyproject.toml, ratcheted up as coverage improves); aim to fully cover new code
 - **Integration tests**: Mock upstream providers
 - **WebSocket tests**: Use `TestClient.websocket_connect()`
 

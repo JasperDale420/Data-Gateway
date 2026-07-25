@@ -26,6 +26,7 @@ hand-edit it.
 | Doc | Covers |
 |---|---|
 | [RUNBOOK.md](RUNBOOK.md) | Incident response / operations runbook |
+| [DATA_CONTRACTS.md](DATA_CONTRACTS.md) | `EventEnvelope` + `Normalized*` schema reference for downstream consumers |
 | [AUDIT_LOGGING.md](AUDIT_LOGGING.md) | Audit-logging design |
 | [CONSUMER_GUIDE.md](CONSUMER_GUIDE.md) | Downstream consumer integration guide |
 | [CONSUMER_AUDIT.md](CONSUMER_AUDIT.md) | Consumer audit notes |

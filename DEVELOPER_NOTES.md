@@ -63,5 +63,6 @@ python scripts/generate_provider_contract.py --check
 - `docs/system-architecture.md`: system architecture and data flow.
 - `docs/RUNBOOK.md`: operations and troubleshooting.
 - `docs/api-reference.md`: endpoint and stream contract reference.
+- `docs/DATA_CONTRACTS.md`: `EventEnvelope` + `Normalized*` schema reference for downstream consumers.
 - `PROVIDER_ENDPOINT_CONTRACT.md`: generated live-route contract snapshot.
 - `docs/audits/`: performance reports, audits, and smoke-check artifacts.

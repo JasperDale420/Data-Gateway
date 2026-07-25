@@ -433,6 +433,7 @@ docker compose -f Data-Gateway/docker-compose.yml up
 - `docs/system-architecture.md`: deep technical design and data flow.
 - `docs/RUNBOOK.md`: on-call and operations procedures.
 - `docs/api-reference.md`: endpoint and stream contract reference.
+- `docs/DATA_CONTRACTS.md`: `EventEnvelope` + `Normalized*` schema reference for downstream consumers.
 - `config/providers.yaml`: provider registry and capabilities.
 - `config/clients.yaml`: API key permissions and limits.
 - `gateway/main.py`: app startup, middleware registration, lifespan hooks.

@@ -20,7 +20,7 @@
 
 ### Schemas (shared via `empire-schemas`)
 
-Canonical schema definitions live in the shared `empire-schemas` package (`../empire-schemas`), which other repos import directly. `gateway/schemas/__init__.py` re-exports them and adds gateway-strict subclasses (`gateway/schemas/_strict.py`) with extra validation; the wire `EventEnvelope` actually published to Redis is the gateway-local class in `gateway/core/envelope.py`.
+Canonical schema definitions live in the shared `empire-schemas` package (`../empire-schemas`), which other repos import directly. `gateway/schemas/__init__.py` re-exports them and adds gateway-strict subclasses (`gateway/schemas/_strict.py`) with extra validation; the wire `EventEnvelope` actually published to Redis is the gateway-local class in `gateway/core/envelope.py`. See [docs/DATA_CONTRACTS.md](docs/DATA_CONTRACTS.md) for the full field-level contract reference.
 
 - `NormalizedBar` — OHLCV bar data
 - `NormalizedQuote` — Bid/ask/last quote
