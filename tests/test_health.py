@@ -95,6 +95,29 @@ async def test_readiness_treats_sink_failures_as_degraded_not_not_ready(
 
 
 @pytest.mark.asyncio
+async def test_readiness_fails_when_durable_sink_is_unhealthy(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cache = MagicMock()
+    cache.set = AsyncMock(return_value=None)
+    cache.get = AsyncMock(return_value=True)
+    cache.delete = AsyncMock(return_value=True)
+    connections = MagicMock()
+
+    class _UnhealthyDurableSinkRegistry:
+        has_durable_admission = True
+
+        async def health_check_all(self) -> dict[str, bool]:
+            return {"durable_outbox": False}
+
+    monkeypatch.setattr(health_module, "get_sink_registry", lambda: _UnhealthyDurableSinkRegistry())
+
+    response = await health_module.readiness(cache=cache, connections=connections)
+
+    assert response.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_status_includes_data_sink_when_registry_configured(
     monkeypatch: pytest.MonkeyPatch,
 ):

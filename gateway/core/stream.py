@@ -66,6 +66,10 @@ MESSAGE_TYPE_TO_DATA_TYPE = {
 _VALIDATABLE_FEEDS = frozenset({"bars", "quotes", "trades"})
 
 
+class StreamTransportFatalError(RuntimeError):
+    """Raised when continuing the upstream stream would create durable gaps."""
+
+
 def _orjson_default(obj: Any) -> str:
     """Fallback serializer for orjson.dumps.
 
@@ -960,6 +964,11 @@ class StreamMultiplexer:
         self._fanout_semaphore = asyncio.Semaphore(self._fanout_max_inflight)
         self._validator: Any | None = None
         self._seq_tracker = SequenceTracker()
+        self._transport_failed = False
+
+    @property
+    def transport_failed(self) -> bool:
+        return self._transport_failed
 
     def _track_task(self, task: asyncio.Task) -> None:
         """Track a stream task and auto-remove it on completion.
@@ -1096,10 +1105,36 @@ class StreamMultiplexer:
         the auth ACK. Used by the readiness probe to distinguish "Gateway process
         up" from "Gateway can actually deliver streaming data right now."
         """
+        if self._transport_failed:
+            return False
         conn = self._connections.get(stream_type)
         if conn is None:
             return False
         return bool(conn.is_connected)
+
+    async def _fail_transport(
+        self,
+        stream_type: AlpacaStreamType,
+        envelope: dict[str, Any],
+        error: Exception,
+    ) -> None:
+        """Stop every upstream after durable admission fails."""
+        self._transport_failed = True
+        self._running = False
+        if self._supervisor_task is not None and not self._supervisor_task.done():
+            self._supervisor_task.cancel()
+        for connection in self._connections.values():
+            connection._running = False
+        await asyncio.gather(
+            *(connection._close_ws() for connection in self._connections.values()),
+            return_exceptions=True,
+        )
+        logger.critical(
+            "stream_transport_failed_closed",
+            stream=stream_type.value,
+            event_id=envelope.get("event_id", "unknown"),
+            error=str(error),
+        )
 
     async def stop(self) -> None:
         """Stop all upstream connections with aggressive cleanup.
@@ -1162,6 +1197,8 @@ class StreamMultiplexer:
         competing reconnect loops on the same Alpaca endpoint.  The lock
         plus the post-acquire double-check serialises this.
         """
+        if self._transport_failed:
+            return False
         conn = self._get_connection(stream_type)
         if not conn:
             return False
@@ -1309,6 +1346,8 @@ class StreamMultiplexer:
 
     async def _handle_message(self, stream_type: AlpacaStreamType, message: dict[str, Any]) -> None:
         """Route incoming message to subscribed clients."""
+        if self._transport_failed:
+            return
         msg_type = message.get("T", "")
 
         data_type = MESSAGE_TYPE_TO_DATA_TYPE.get(msg_type)
@@ -1445,6 +1484,9 @@ class StreamMultiplexer:
                 await self._on_envelope(envelope)
             except asyncio.CancelledError:
                 raise
+            except StreamTransportFatalError as exc:
+                await self._fail_transport(stream_type, envelope, exc)
+                return
             except Exception as e:
                 logger.warning(
                     "stream_on_envelope_failed",

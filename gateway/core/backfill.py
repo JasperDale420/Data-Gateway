@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from gateway.core.backfill_manifest import (
     HeberChunkAcknowledgement,
+    HeberReadinessBinding,
 )
 from gateway.core.calendar import US_HOLIDAYS, TradingCalendar
 from gateway.core.envelope import wrap_event
@@ -57,6 +58,25 @@ ALPACA_CRYPTO_FEEDS = frozenset({"crypto_bars", "crypto_trades"})
 
 DEFAULT_ACK_WAIT_SECONDS = 60.0
 ACK_POLL_SECONDS = 1.0
+DEFAULT_MAX_CHUNK_RECORDS = 5_000
+
+
+def expected_heber_backfill_binding(settings: Any) -> HeberReadinessBinding:
+    """Return the exact Heber binding required by the selected backfill lane."""
+    if settings.jetstream_enabled and settings.jetstream_lanes in {"backfill", "both"}:
+        return HeberReadinessBinding(
+            transport="jetstream",
+            lane="backfill",
+            stream="HEBER_BACKFILL",
+            durable_consumer=settings.jetstream_backfill_durable_name,
+        )
+    return HeberReadinessBinding(
+        transport="redis",
+        lane="backfill",
+        stream=HEBER_EVENTS_TOPIC,
+        durable_consumer=settings.redis_backfill_consumer_group,
+    )
+
 
 # Per-underlying UW analytics feeds whose rows carry an ``expiry`` field. Without
 # an equity override, ``_infer_instrument_type`` sees ``expiry`` and tags every
@@ -238,6 +258,34 @@ def _manifest_hash(request: BackfillRequest) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _backfill_chunk_proof(envelopes: list[dict[str, Any]]) -> tuple[str, str]:
+    """Return order-independent event and payload proofs for one replay chunk."""
+    records = sorted(
+        (
+            str(envelope["event_id"]),
+            hashlib.sha256(
+                json.dumps(
+                    envelope["payload"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode()
+            ).hexdigest(),
+        )
+        for envelope in envelopes
+    )
+    if len({event_id for event_id, _payload_hash in records}) != len(records):
+        raise ReplayValidationError(
+            "provider_duplicate_event_identity",
+            "backfill chunk contains duplicate event_id values",
+        )
+    event_ids_sha256 = hashlib.sha256("\n".join(event_id for event_id, _ in records).encode()).hexdigest()
+    records_sha256 = hashlib.sha256(
+        "\n".join(f"{event_id}:{payload_hash}" for event_id, payload_hash in records).encode()
+    ).hexdigest()
+    return event_ids_sha256, records_sha256
 
 
 def _manifest_structure_valid(job: BackfillJob) -> bool:
@@ -491,6 +539,7 @@ class BackfillEngine:
         lightweight_concurrency: int = DEFAULT_LIGHTWEIGHT_CONCURRENCY,
         heavyweight_concurrency: int = DEFAULT_HEAVYWEIGHT_CONCURRENCY,
         ack_wait_seconds: float = DEFAULT_ACK_WAIT_SECONDS,
+        max_chunk_records: int = DEFAULT_MAX_CHUNK_RECORDS,
         capabilities: dict[tuple[str, str], ReplayFeedCapability] | None = None,
     ) -> None:
         self._jobs: dict[str, BackfillJob] = {}
@@ -506,7 +555,14 @@ class BackfillEngine:
         self._lightweight_concurrency = max(1, lightweight_concurrency)
         self._heavyweight_concurrency = max(1, heavyweight_concurrency)
         self._ack_wait_seconds = max(0.0, ack_wait_seconds)
+        self._max_chunk_records = max(1, int(max_chunk_records))
         self._capabilities = capabilities or BACKFILL_CAPABILITIES
+        self._expected_heber_binding = HeberReadinessBinding(
+            transport="redis",
+            lane="backfill",
+            stream=HEBER_EVENTS_TOPIC,
+            durable_consumer="heber-backfill-writers",
+        )
         self._instance_id = uuid.uuid4().hex[:8]
         logger.info("backfill_engine_init", instance_id=self._instance_id)
 
@@ -515,11 +571,14 @@ class BackfillEngine:
         provider_registry: Any,
         sink_registry: Any,
         manifest_store: Any,
+        expected_heber_binding: HeberReadinessBinding | None = None,
     ) -> None:
         """Wire in registries during app startup."""
         self._provider_registry = provider_registry
         self._sink_registry = sink_registry
         self._manifest_store = manifest_store
+        if expected_heber_binding is not None:
+            self._expected_heber_binding = expected_heber_binding
 
     async def start(self) -> None:
         """Restore durable blocked state and automatic acknowledgement checks."""
@@ -921,7 +980,7 @@ class BackfillEngine:
             if readiness is None:
                 await self._block_job(job, BackfillStatus.FAILED, "heber_readiness_missing")
                 return
-            readiness_failure = readiness.failure_reason()
+            readiness_failure = readiness.failure_reason(expected=self._expected_heber_binding)
             if readiness_failure:
                 await self._block_job(job, BackfillStatus.FAILED, readiness_failure)
                 return
@@ -1213,6 +1272,11 @@ class BackfillEngine:
                 )
 
             items = await asyncio.to_thread(_normalize_results, results)
+            if len(items) > self._max_chunk_records:
+                raise ReplayValidationError(
+                    "provider_chunk_too_large",
+                    f"{sym} returned {len(items)} records; maximum is {self._max_chunk_records}",
+                )
             timestamps = _validate_returned_items(
                 items,
                 symbol=sym,
@@ -1229,25 +1293,21 @@ class BackfillEngine:
                 chunk_id,
                 job.manifest_hash,
             )
-            event_ids = sorted(envelope["event_id"] for _topic, envelope in messages)
-            event_ids_sha256 = hashlib.sha256("\n".join(event_ids).encode()).hexdigest()
-            records_sha256 = hashlib.sha256(
-                json.dumps(
-                    sorted(
-                        (
-                            {
-                                "event_id": envelope["event_id"],
-                                "payload": envelope["payload"],
-                            }
-                            for _topic, envelope in messages
-                        ),
-                        key=lambda record: record["event_id"],
-                    ),
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    default=str,
-                ).encode()
-            ).hexdigest()
+            if len(messages) > self._max_chunk_records:
+                raise ReplayValidationError(
+                    "provider_chunk_too_large",
+                    f"{sym} produced {len(messages)} envelopes; maximum is {self._max_chunk_records}",
+                )
+            envelopes = [envelope for _topic, envelope in messages]
+            event_ids_sha256, records_sha256 = _backfill_chunk_proof(envelopes)
+            for envelope in envelopes:
+                envelope["lineage"].update(
+                    {
+                        "backfill_expected_record_count": len(envelopes),
+                        "backfill_expected_event_ids_sha256": event_ids_sha256,
+                        "backfill_expected_records_sha256": records_sha256,
+                    }
+                )
             if chunk.event_ids_sha256 and (
                 chunk.event_ids_sha256 != event_ids_sha256 or chunk.records_sha256 != records_sha256
             ):
@@ -1379,6 +1439,29 @@ class BackfillEngine:
         if not self._sink_registry:
             logger.warning("backfill_publish_skipped", reason="no sink registry", job_id=job_id)
             return [False] * len(messages)
+
+        durable_for_topic = getattr(self._sink_registry, "has_durable_admission_for", None)
+        is_durable = (
+            bool(durable_for_topic(HEBER_EVENTS_TOPIC))
+            if callable(durable_for_topic)
+            else bool(getattr(self._sink_registry, "has_durable_admission", False))
+        )
+        if is_durable:
+            can_accept = getattr(self._sink_registry, "can_accept_low_priority", None)
+            admission_kwargs: dict[str, Any] = {"max_utilization": 0.70}
+            if callable(durable_for_topic):
+                admission_kwargs["topic"] = HEBER_EVENTS_TOPIC
+            if callable(can_accept) and not can_accept("redis_streams", **admission_kwargs):
+                logger.warning(
+                    "backfill_paused_durable_outbox_pressure",
+                    job_id=job_id,
+                    provider=provider,
+                    feed=feed,
+                )
+                raise ReplayValidationError(
+                    "durable_outbox_pressure",
+                    "durable outbox is above the backfill admission threshold",
+                )
 
         if hasattr(self._sink_registry, "publish_all_batch_results"):
             results = await self._sink_registry.publish_all_batch_results(messages)
@@ -1618,6 +1701,7 @@ _engine: BackfillEngine | None = None
 def get_backfill_engine(
     lightweight_concurrency: int = DEFAULT_LIGHTWEIGHT_CONCURRENCY,
     heavyweight_concurrency: int = DEFAULT_HEAVYWEIGHT_CONCURRENCY,
+    max_chunk_records: int = DEFAULT_MAX_CHUNK_RECORDS,
 ) -> BackfillEngine:
     """Get or create the singleton BackfillEngine.
 
@@ -1630,5 +1714,6 @@ def get_backfill_engine(
         _engine = BackfillEngine(
             lightweight_concurrency=lightweight_concurrency,
             heavyweight_concurrency=heavyweight_concurrency,
+            max_chunk_records=max_chunk_records,
         )
     return _engine

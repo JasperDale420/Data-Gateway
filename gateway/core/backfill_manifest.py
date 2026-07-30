@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
 
@@ -15,6 +15,15 @@ PROTOCOL_VERSION = 1
 READINESS_MAX_AGE_SECONDS = 60
 
 
+class HeberReadinessBinding(BaseModel):
+    """Exact transport identity a backfill consumer must be bound to."""
+
+    transport: Literal["redis", "jetstream"]
+    lane: Literal["backfill"]
+    stream: str
+    durable_consumer: str
+
+
 class HeberReadiness(BaseModel):
     """Machine-verifiable readiness written by the Heber backfill consumer."""
 
@@ -22,6 +31,10 @@ class HeberReadiness(BaseModel):
     writer_healthy: bool
     ack_store_ready: bool
     protocol_version: int
+    transport: Literal["redis", "jetstream"] | None = None
+    lane: Literal["live", "backfill"] | None = None
+    stream: str | None = None
+    durable_consumer: str | None = None
     observed_at: datetime
 
     @field_validator("observed_at")
@@ -31,7 +44,12 @@ class HeberReadiness(BaseModel):
             raise ValueError("observed_at must be timezone-aware")
         return value
 
-    def failure_reason(self, now: datetime | None = None) -> str | None:
+    def failure_reason(
+        self,
+        now: datetime | None = None,
+        *,
+        expected: HeberReadinessBinding | None = None,
+    ) -> str | None:
         now = now or datetime.now(UTC)
         if abs((now - self.observed_at).total_seconds()) > READINESS_MAX_AGE_SECONDS:
             return "heber_readiness_stale"
@@ -43,6 +61,17 @@ class HeberReadiness(BaseModel):
             return "heber_writer_unhealthy"
         if not self.ack_store_ready:
             return "heber_ack_store_unavailable"
+        if None in (self.transport, self.lane, self.stream, self.durable_consumer):
+            return "heber_readiness_identity_missing"
+        if expected is not None:
+            if self.transport != expected.transport:
+                return "heber_transport_mismatch"
+            if self.lane != expected.lane:
+                return "heber_lane_mismatch"
+            if self.stream != expected.stream:
+                return "heber_stream_mismatch"
+            if self.durable_consumer != expected.durable_consumer:
+                return "heber_durable_consumer_mismatch"
         return None
 
 

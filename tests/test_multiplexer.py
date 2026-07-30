@@ -3,13 +3,14 @@
 import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
 import gateway.core.stream as stream_module
 from gateway.core.auth import Client, ClientPermissions
 from gateway.core.connections import ConnectionManager
-from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
+from gateway.core.stream import AlpacaStreamType, StreamMultiplexer, StreamTransportFatalError
 from gateway.core.stream import SubscriptionManager as StreamSubscriptionManager
 
 
@@ -1233,6 +1234,57 @@ async def test_on_envelope_cancellation_propagates(
             AlpacaStreamType.STOCKS_SIP,
             {"T": "b", "S": "AAPL", "t": "2026-05-21T13:30:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1},
         )
+
+
+@pytest.mark.asyncio
+async def test_fatal_sink_admission_stops_all_later_stream_processing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Validator:
+        def validate_bar(self, _message: dict[str, str]) -> SimpleNamespace:
+            return SimpleNamespace(valid=True, error_codes=[])
+
+    monkeypatch.setattr(stream_module, "get_validator", lambda: _Validator())
+    envelope_calls = 0
+    broadcasts: list[bytes] = []
+
+    async def _fatal_on_envelope(_envelope: dict) -> None:
+        nonlocal envelope_calls
+        envelope_calls += 1
+        raise StreamTransportFatalError("outbox full")
+
+    async def _broadcast(payload: bytes, _clients: list[str]) -> int:
+        broadcasts.append(payload)
+        return 1
+
+    multiplexer = StreamMultiplexer(
+        api_key="test-key",  # pragma: allowlist secret
+        api_secret="test-secret",  # pragma: allowlist secret
+        on_data=lambda *_args: asyncio.sleep(0),
+        on_broadcast=_broadcast,
+        on_envelope=_fatal_on_envelope,
+    )
+    for connection in multiplexer._connections.values():
+        connection._running = True
+        connection._close_ws = AsyncMock()  # type: ignore[method-assign]
+
+    message = {
+        "T": "b",
+        "S": "AAPL",
+        "t": "2026-05-21T13:30:00Z",
+        "o": 10,
+        "h": 10,
+        "l": 10,
+        "c": 10,
+        "v": 1,
+    }
+    await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, message)
+    await multiplexer._handle_message(AlpacaStreamType.STOCKS_SIP, message)
+
+    assert envelope_calls == 1
+    assert broadcasts == []
+    assert multiplexer.transport_failed is True
+    assert all(not connection._running for connection in multiplexer._connections.values())
 
 
 @pytest.mark.asyncio

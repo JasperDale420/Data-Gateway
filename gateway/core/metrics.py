@@ -273,6 +273,11 @@ SINK_QUEUE_UTILIZATION = Gauge(
     ["sink"],
 )
 
+DURABLE_OUTBOX_UTILIZATION = Gauge(
+    "gateway_durable_outbox_utilization",
+    "Pending durable-outbox bytes divided by the configured backlog budget",
+)
+
 SINK_PRODUCER_TIMEOUT_DROPS = Counter(
     "gateway_sink_producer_timeout_drops_total",
     "Events dropped because the producer-side queue-put timed out — emergency-only",
@@ -881,6 +886,11 @@ def record_sink_buffer_eviction(sink: str) -> None:
 def set_sink_buffer_size(sink: str, size: int) -> None:
     """Update the current failed-event buffer size for ``sink``."""
     SINK_BUFFER_SIZE.labels(sink=sink).set(max(0, size))
+
+
+def set_durable_outbox_utilization(utilization: float) -> None:
+    """Expose bounded outbox pressure for shedding and alerting."""
+    DURABLE_OUTBOX_UTILIZATION.set(min(max(utilization, 0.0), 1.0))
 
 
 def set_sink_queue_size(sink: str, size: int) -> None:

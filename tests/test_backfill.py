@@ -155,6 +155,10 @@ def _make_engine() -> BackfillEngine:
         writer_healthy=True,
         ack_store_ready=True,
         protocol_version=1,
+        transport="redis",
+        lane="backfill",
+        stream="heber:events:backfill",
+        durable_consumer="heber-backfill-writers",
         observed_at=datetime.now(UTC),
     )
     engine.configure(
@@ -586,6 +590,10 @@ async def test_lightweight_not_blocked_by_heavyweight() -> None:
         writer_healthy=True,
         ack_store_ready=True,
         protocol_version=1,
+        transport="redis",
+        lane="backfill",
+        stream="heber:events:backfill",
+        durable_consumer="heber-backfill-writers",
         observed_at=datetime.now(UTC),
     )
     engine.configure(
@@ -690,6 +698,10 @@ async def test_concurrent_symbol_processing() -> None:
         writer_healthy=True,
         ack_store_ready=True,
         protocol_version=1,
+        transport="redis",
+        lane="backfill",
+        stream="heber:events:backfill",
+        durable_consumer="heber-backfill-writers",
         observed_at=datetime.now(UTC),
     )
     engine.configure(

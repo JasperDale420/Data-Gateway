@@ -19,15 +19,19 @@ from gateway.core.backfill import (
     ChunkResult,
     ReplayCapability,
     ReplayFeedCapability,
+    ReplayValidationError,
     SymbolProgress,
     _ack_mismatch,
+    _backfill_chunk_proof,
     _chunk_id,
     _date_chunks,
     _manifest_hash,
+    expected_heber_backfill_binding,
 )
 from gateway.core.backfill_manifest import (
     HeberChunkAcknowledgement,
     HeberReadiness,
+    HeberReadinessBinding,
     InMemoryBackfillManifestStore,
     RedisBackfillManifestStore,
 )
@@ -58,6 +62,10 @@ def _ready_store() -> InMemoryBackfillManifestStore:
         writer_healthy=True,
         ack_store_ready=True,
         protocol_version=1,
+        transport="redis",
+        lane="backfill",
+        stream="heber:events:backfill",
+        durable_consumer="heber-backfill-writers",
         observed_at=datetime.now(UTC),
     )
     return store
@@ -83,6 +91,77 @@ def test_heber_evidence_timestamps_must_be_timezone_aware() -> None:
             commit_id="commit",
             committed_at=datetime(2026, 7, 23),
         )
+
+
+def test_stale_heber_readiness_fails_closed() -> None:
+    readiness = HeberReadiness(
+        consumer_healthy=True,
+        writer_healthy=True,
+        ack_store_ready=True,
+        protocol_version=1,
+        observed_at=datetime.now(UTC) - timedelta(seconds=61),
+    )
+
+    assert readiness.failure_reason() == "heber_readiness_stale"
+
+
+def test_heber_readiness_identity_is_required_and_exact() -> None:
+    expected = HeberReadinessBinding(
+        transport="jetstream",
+        lane="backfill",
+        stream="HEBER_BACKFILL",
+        durable_consumer="heber-backfill-writers",
+    )
+    missing = HeberReadiness(
+        consumer_healthy=True,
+        writer_healthy=True,
+        ack_store_ready=True,
+        protocol_version=1,
+        observed_at=datetime.now(UTC),
+    )
+    wrong_transport = missing.model_copy(
+        update={
+            "transport": "redis",
+            "lane": "backfill",
+            "stream": "heber:events:backfill",
+            "durable_consumer": "heber-backfill-writers",
+        }
+    )
+    wrong_stream = wrong_transport.model_copy(update={"transport": "jetstream", "stream": "WRONG"})
+    wrong_durable = wrong_stream.model_copy(update={"stream": "HEBER_BACKFILL", "durable_consumer": "wrong"})
+
+    assert missing.failure_reason(expected=expected) == "heber_readiness_identity_missing"
+    assert wrong_transport.failure_reason(expected=expected) == "heber_transport_mismatch"
+    assert wrong_stream.failure_reason(expected=expected) == "heber_stream_mismatch"
+    assert wrong_durable.failure_reason(expected=expected) == "heber_durable_consumer_mismatch"
+
+
+def test_gateway_selects_expected_backfill_binding_from_transport_settings() -> None:
+    redis_settings = MagicMock(
+        jetstream_enabled=False,
+        jetstream_lanes="backfill",
+        redis_backfill_consumer_group="redis-group",
+        jetstream_backfill_durable_name="js-durable",
+    )
+    jetstream_settings = MagicMock(
+        jetstream_enabled=True,
+        jetstream_lanes="backfill",
+        redis_backfill_consumer_group="redis-group",
+        jetstream_backfill_durable_name="js-durable",
+    )
+
+    assert expected_heber_backfill_binding(redis_settings) == HeberReadinessBinding(
+        transport="redis",
+        lane="backfill",
+        stream="heber:events:backfill",
+        durable_consumer="redis-group",
+    )
+    assert expected_heber_backfill_binding(jetstream_settings) == HeberReadinessBinding(
+        transport="jetstream",
+        lane="backfill",
+        stream="HEBER_BACKFILL",
+        durable_consumer="js-durable",
+    )
 
 
 def test_heber_acknowledgement_must_match_committed_payload_digest() -> None:
@@ -116,11 +195,49 @@ def test_heber_acknowledgement_must_match_committed_payload_digest() -> None:
     assert _ack_mismatch(job, chunk, acknowledgement) == ("heber_acknowledgement_mismatch")
 
 
+def test_backfill_chunk_proof_is_order_independent_and_payload_sensitive() -> None:
+    first = [
+        {"event_id": "event-b", "payload": {"price": "2", "nested": {"b": 2, "a": 1}}},
+        {"event_id": "event-a", "payload": {"price": "1"}},
+    ]
+    reordered = list(reversed(first))
+
+    assert _backfill_chunk_proof(first) == _backfill_chunk_proof(reordered)
+    assert _backfill_chunk_proof(first) != _backfill_chunk_proof([{**first[0], "payload": {"price": "3"}}, first[1]])
+
+
+@pytest.mark.asyncio
+async def test_durable_outbox_pressure_blocks_backfill_before_admission() -> None:
+    sink_registry = MagicMock()
+    sink_registry.has_durable_admission = True
+    sink_registry.can_accept_low_priority.return_value = False
+    sink_registry.publish_all_batch_results = AsyncMock()
+    engine = BackfillEngine()
+    engine._sink_registry = sink_registry
+
+    with pytest.raises(ReplayValidationError) as exc_info:
+        await engine._publish_messages(
+            messages=[("heber:events:backfill", {"event_id": "event-a"})],
+            provider="alpaca",
+            feed="bars",
+            job_id="bf-job",
+        )
+
+    assert exc_info.value.reason == "durable_outbox_pressure"
+    sink_registry.can_accept_low_priority.assert_called_once_with(
+        "redis_streams",
+        max_utilization=0.70,
+        topic="heber:events:backfill",
+    )
+    sink_registry.publish_all_batch_results.assert_not_awaited()
+
+
 def _engine(
     provider: object,
     store: InMemoryBackfillManifestStore,
     *,
     publish_results: list[bool] | None = None,
+    expected_binding: HeberReadinessBinding | None = None,
 ) -> BackfillEngine:
     provider_registry = MagicMock()
     provider_registry.get.return_value = provider
@@ -135,6 +252,7 @@ def _engine(
         provider_registry=provider_registry,
         sink_registry=sink_registry,
         manifest_store=store,
+        expected_heber_binding=expected_binding,
     )
     return engine
 
@@ -187,6 +305,62 @@ async def test_missing_heber_readiness_blocks_before_fetch_or_publication() -> N
 
     assert job.status == BackfillStatus.FAILED
     assert job.blocked_reason == "heber_readiness_missing"
+    provider.get_bars.assert_not_called()
+    engine._sink_registry.publish_all_batch_results.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("readiness_update", "reason"),
+    [
+        (
+            {
+                "transport": "redis",
+                "stream": "heber:events:backfill",
+                "durable_consumer": "heber-backfill-writers",
+            },
+            "heber_transport_mismatch",
+        ),
+        (
+            {
+                "transport": "jetstream",
+                "stream": "WRONG",
+                "durable_consumer": "heber-backfill-writers",
+            },
+            "heber_stream_mismatch",
+        ),
+        (
+            {
+                "transport": "jetstream",
+                "stream": "HEBER_BACKFILL",
+                "durable_consumer": "wrong",
+            },
+            "heber_durable_consumer_mismatch",
+        ),
+    ],
+)
+async def test_jetstream_canary_rejects_wrong_heber_binding_before_publication(
+    readiness_update: dict[str, str],
+    reason: str,
+) -> None:
+    provider = MagicMock()
+    provider.get_bars = AsyncMock()
+    store = _ready_store()
+    assert store.readiness is not None
+    store.readiness = store.readiness.model_copy(update=readiness_update)
+    expected = HeberReadinessBinding(
+        transport="jetstream",
+        lane="backfill",
+        stream="HEBER_BACKFILL",
+        durable_consumer="heber-backfill-writers",
+    )
+    engine = _engine(provider, store, expected_binding=expected)
+
+    job = await engine.submit(_request(canary=True))
+    await engine.wait(job.job_id)
+
+    assert job.status == BackfillStatus.FAILED
+    assert job.blocked_reason == reason
     provider.get_bars.assert_not_called()
     engine._sink_registry.publish_all_batch_results.assert_not_called()
 
@@ -263,6 +437,23 @@ async def test_invalid_provider_rows_reject_whole_chunk_before_publish(
 
 
 @pytest.mark.asyncio
+async def test_oversized_provider_chunk_rejects_before_publication() -> None:
+    row = {"symbol": "AAPL", "timestamp": "2026-07-23T14:00:00Z"}
+    provider = MagicMock()
+    provider.get_bars = AsyncMock(return_value=[row, row])
+    store = _ready_store()
+    engine = _engine(provider, store)
+    engine._max_chunk_records = 1
+
+    job = await engine.submit(_request())
+    await engine.wait(job.job_id)
+
+    assert job.status == BackfillStatus.FAILED
+    assert job.blocked_reason == "provider_chunk_too_large"
+    engine._sink_registry.publish_all_batch_results.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_redis_acceptance_without_heber_ack_is_partial_not_verified() -> None:
     provider = MagicMock()
     provider.get_bars = AsyncMock(
@@ -335,8 +526,14 @@ async def test_exact_post_commit_ack_is_the_only_path_to_verified() -> None:
         envelopes = [envelope for _topic, envelope in messages]
         lineage = envelopes[0]["lineage"]
         event_ids = sorted(envelope["event_id"] for envelope in envelopes)
+        assert all(envelope["lineage"] == lineage for envelope in envelopes)
+        assert lineage["backfill_expected_record_count"] == len(envelopes)
         manifest = await store.load_job(lineage["backfill_job_id"])
         records_sha256 = manifest["chunks"][lineage["backfill_chunk_id"]]["records_sha256"]
+        assert (
+            lineage["backfill_expected_event_ids_sha256"] == hashlib.sha256("\n".join(event_ids).encode()).hexdigest()
+        )
+        assert lineage["backfill_expected_records_sha256"] == records_sha256
         await store.acknowledge(
             job_id=lineage["backfill_job_id"],
             chunk_id=lineage["backfill_chunk_id"],

@@ -144,6 +144,24 @@ groups:
           summary: "Sink {{ $labels.sink }} queue utilization is above 70%"
           description: "Sink {{ $labels.sink }} has sustained high dispatch utilization. REST low-priority publishing may shed and producer-timeout drops may follow if Redis workers cannot catch up."
 
+      - alert: DurableOutboxPressure
+        expr: gateway_durable_outbox_utilization > 0.60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable Gateway outbox is filling"
+          description: "The durable outbox is {{ $value | humanizePercentage }} full. Investigate JetStream or Heber drain throughput before producers are paused."
+
+      - alert: DurableOutboxNearCapacity
+        expr: gateway_durable_outbox_utilization > 0.90
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Durable Gateway outbox is near capacity"
+          description: "The durable outbox is {{ $value | humanizePercentage }} full. Admission fails closed at 100%; no events are evicted."
+
       # Low-priority REST sink shedding is intentional protection, but it is
       # still a pressure signal that the live Heber stream is near saturation.
       - alert: LowPriorityRestSinkShedding

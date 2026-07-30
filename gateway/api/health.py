@@ -87,15 +87,20 @@ async def readiness(
 
     # Verify sink health (including circuit breaker state)
     sink_registry = get_sink_registry()
+    sinks_ok = True
+    durable_sink = False
     if sink_registry:
+        durable_sink = bool(getattr(sink_registry, "has_durable_admission", False))
         checks["sinks"] = "ok"
         # nosemgrep: empire-no-bare-exception -- readiness must report degraded, never 500; logged throttled via logger.exception
         try:
             sink_results = await sink_registry.health_check_all()
             if not all(sink_results.values()):
                 checks["sinks"] = "degraded"
+                sinks_ok = False
         except Exception:
             checks["sinks"] = "degraded"
+            sinks_ok = False
             global _LAST_SINK_ERROR_LOG
             if _should_log(_LAST_SINK_ERROR_LOG):
                 _LAST_SINK_ERROR_LOG = time.time()
@@ -135,8 +140,9 @@ async def readiness(
 
     streams_ok = all(s == "ok" for s in streams_status.values()) if streams_status else True
 
-    # Cache + connection + eager-stream readiness gate request serving; sink failures are degraded.
-    all_ok = checks["cache"] == "ok" and checks["connections"] == "ok" and streams_ok
+    # Redis sink failures remain degraded; durable admission failures must
+    # remove readiness because continuing would create permanent gaps.
+    all_ok = checks["cache"] == "ok" and checks["connections"] == "ok" and streams_ok and (sinks_ok or not durable_sink)
 
     payload = {
         "status": "ready" if all_ok else "not_ready",

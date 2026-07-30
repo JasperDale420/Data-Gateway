@@ -237,6 +237,64 @@ def test_fake_sink_registry_without_pressure_hook_still_publishes_eligible_rest_
     assert sink_registry.published[0][1]["feed"] == "trades"
 
 
+def test_durable_sink_admission_finishes_before_rest_response(monkeypatch):
+    order: list[str] = []
+
+    class _DurableSinkRegistry:
+        has_durable_admission = True
+
+        async def publish_all(self, topic: str, data: dict, **_labels) -> None:
+            order.append("admitted")
+
+    monkeypatch.setenv("GATEWAY_REST_SINK_EXCLUDED_FEEDS", "")
+    from gateway.config import get_settings
+
+    get_settings.cache_clear()
+    previous_sink = deps_module.get_sink_registry()
+    deps_module.set_sink_registry(_DurableSinkRegistry())
+    middleware = EventEnvelopeMiddleware(app=lambda scope, receive, send: None)
+    body = json.dumps(
+        {
+            "success": True,
+            "data": {
+                "symbol": "SPY",
+                "trades": [
+                    {
+                        "timestamp": "2026-06-12T13:30:00Z",
+                        "price": "500.25",
+                        "size": 100,
+                        "trade_id": "t1",
+                    }
+                ],
+            },
+        }
+    ).encode()
+    initial = {
+        "type": "http.response.start",
+        "status": 200,
+        "headers": [(b"content-type", b"application/json")],
+    }
+
+    async def send(_message: dict) -> None:
+        order.append("sent")
+
+    try:
+        asyncio.run(
+            middleware._wrap_and_send(
+                path="/api/v1/alpaca/stocks/SPY/trades",
+                body=body,
+                initial_message=initial,
+                send=send,
+            )
+        )
+    finally:
+        deps_module.set_sink_registry(previous_sink)
+        get_settings.cache_clear()
+
+    assert order[0] == "admitted"
+    assert order[1:] == ["sent", "sent"]
+
+
 def test_excluded_feed_skip_logs_reason_for_uw_rest_feed(monkeypatch, caplog):
     class _FakeSinkRegistry:
         async def publish_all(self, topic: str, data: dict) -> None:
