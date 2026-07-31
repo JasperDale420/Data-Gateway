@@ -174,6 +174,32 @@ async def test_status_data_sink_shows_degraded_when_unhealthy(
 
 
 @pytest.mark.asyncio
+async def test_status_marks_broker_outage_as_degraded_durable_buffering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = MagicMock()
+    cache.get_stats_dict.return_value = {}
+    connections = MagicMock()
+    connections.get_stats.return_value = {}
+
+    class _BufferingRegistry:
+        async def health_check_all(self) -> dict[str, bool]:
+            return {"durable_outbox": True}
+
+        def get_backpressure_snapshot(self) -> dict[str, object]:
+            return {}
+
+        def get_transport_status(self) -> dict[str, object]:
+            return {"durable_outbox": {"status": "degraded_durable_buffering"}}
+
+    monkeypatch.setattr(health_module, "get_sink_registry", lambda: _BufferingRegistry())
+
+    response = await health_module.detailed_status(cache=cache, connections=connections)
+
+    assert response["components"]["data_sink"]["status"] == "degraded_durable_buffering"
+
+
+@pytest.mark.asyncio
 async def test_readiness_marks_cache_as_warming_up_when_redis_is_loading(
     monkeypatch: pytest.MonkeyPatch,
 ):

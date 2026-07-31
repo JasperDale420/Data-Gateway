@@ -124,6 +124,17 @@ def test_prometheus_alerts_include_task3_sink_diagnostics() -> None:
     assert "LowPriorityRestSinkShedding" in alerts
     assert "gateway_rest_low_priority_shed_total" in alerts
     assert "gateway_sink_producer_timeout_drops_total" in alerts
+    assert "DurableOutboxOldestEventWarning" in alerts
+    assert 'gateway_durable_outbox_oldest_event_age_seconds{lane=~"live|backfill|watch"} > 60' in alerts
+    assert "DurableOutboxOldestEventCritical" in alerts
+    assert 'gateway_durable_outbox_oldest_event_age_seconds{lane=~"live|backfill|watch"} > 300' in alerts
+    assert "DurableOutboxBrokerDisconnected" in alerts
+    assert "gateway_durable_outbox_broker_connected == 0" in alerts
+    assert "DurableOutboxLaneDeliveryDegraded" in alerts
+    assert 'gateway_durable_outbox_delivery_healthy{lane=~"live|backfill|watch"} == 0' in alerts
+    broker_alert = alerts.split("- alert: DurableOutboxBrokerDisconnected", maxsplit=1)[1].split("- alert:", 1)[0]
+    assert "for: 60s" in broker_alert
+    assert "severity: critical" in broker_alert
 
 
 async def test_metrics_endpoint_calls_throttled_updater(monkeypatch) -> None:

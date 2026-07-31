@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import yaml
@@ -32,6 +33,7 @@ def test_jetstream_settings_are_bounded_and_disabled_by_default() -> None:
     assert settings.durable_outbox_enabled is False
     assert settings.durable_outbox_max_bytes == 20 * 1024**3
     assert settings.backfill_max_chunk_records == 5_000
+    assert "jetstream_watch_max_age_seconds" not in Settings.model_fields
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None, jetstream_live_max_bytes=0)
@@ -118,13 +120,13 @@ def test_build_stream_configs_separates_authoritative_and_watch_traffic() -> Non
     assert configs["HEBER_BACKFILL"].max_bytes == 20_000
 
     assert configs["HEBER_WATCH"].subjects == ["heber.watch.>"]
-    assert configs["HEBER_WATCH"].retention.value == "limits"
-    assert configs["HEBER_WATCH"].discard.value == "old"
-    assert configs["HEBER_WATCH"].max_age == 86_400
+    assert configs["HEBER_WATCH"].retention.value == "workqueue"
+    assert configs["HEBER_WATCH"].discard.value == "new"
+    assert configs["HEBER_WATCH"].max_age == 0
     assert configs["HEBER_WATCH"].max_bytes == 3_000
 
 
-async def test_ensure_streams_creates_missing_streams_and_updates_existing_ones() -> None:
+async def test_ensure_streams_creates_missing_streams_without_rewriting_existing_contracts() -> None:
     manager = AsyncMock()
     manager.stream_info.side_effect = [NotFoundError(), object(), object()]
     configs = build_stream_configs(Settings(_env_file=None))
@@ -133,7 +135,7 @@ async def test_ensure_streams_creates_missing_streams_and_updates_existing_ones(
 
     assert manager.stream_info.await_count == 3
     manager.add_stream.assert_awaited_once_with(config=configs[0])
-    assert [call.kwargs["config"] for call in manager.update_stream.await_args_list] == list(configs[1:])
+    manager.update_stream.assert_not_awaited()
 
 
 def _entry(topic: str, feed: str = "trade/condition") -> OutboxEntry:
@@ -155,14 +157,21 @@ def test_subject_mapping_keeps_live_and_backfill_work_queues_separate() -> None:
         "heber.backfill.trade_condition",
         "HEBER_BACKFILL",
     )
+    assert subject_for_entry(_entry("heber:watch", feed="flow_alerts")) == (
+        "heber.watch.flow_alerts",
+        "HEBER_WATCH",
+    )
 
 
 async def test_outbox_publisher_waits_for_matching_jetstream_puback() -> None:
     jetstream = AsyncMock()
-    jetstream.publish.return_value = SimpleNamespace(stream="HEBER_LIVE")
+    puback = asyncio.get_running_loop().create_future()
+    puback.set_result(SimpleNamespace(stream="HEBER_LIVE"))
+    jetstream.publish_async.return_value = puback
+    jetstream_context = Mock(return_value=jetstream)
     connection = SimpleNamespace(
         is_closed=False,
-        jetstream=lambda: jetstream,
+        jetstream=jetstream_context,
         drain=AsyncMock(),
     )
     connector = AsyncMock(return_value=connection)
@@ -181,12 +190,101 @@ async def test_outbox_publisher_waits_for_matching_jetstream_puback() -> None:
     assert await publisher(entry) is True
 
     connector.assert_awaited_once()
-    jetstream.publish.assert_awaited_once_with(
+    jetstream_context.assert_called_once_with(publish_async_max_pending=32)
+    jetstream.publish_async.assert_awaited_once_with(
         "heber.live.trades",
         entry.payload,
         stream="HEBER_LIVE",
         headers={"Nats-Msg-Id": "evt-1"},
     )
+    jetstream.publish.assert_not_awaited()
+    await publisher.close()
+
+
+@pytest.mark.parametrize("result_stream", ["HEBER_BACKFILL", None])
+async def test_outbox_publisher_rejects_missing_or_mismatched_async_puback(result_stream: str | None) -> None:
+    jetstream = AsyncMock()
+    puback = asyncio.get_running_loop().create_future()
+    puback.set_result(SimpleNamespace(stream=result_stream))
+    jetstream.publish_async.return_value = puback
+    connection = SimpleNamespace(
+        is_closed=False,
+        jetstream=lambda **_kwargs: jetstream,
+        drain=AsyncMock(),
+    )
+    publisher = JetStreamOutboxPublisher(
+        Settings(
+            _env_file=None,
+            data_sink_enabled=True,
+            durable_outbox_enabled=True,
+            GATEWAY_DATA_SINK_REDIS_URL="redis://localhost:6379/0",
+            jetstream_enabled=True,
+            jetstream_username="gateway",
+            jetstream_password="secret",  # pragma: allowlist secret
+        ),
+        connector=AsyncMock(return_value=connection),
+    )
+
+    assert await publisher(_entry("heber:events", feed="trades")) is False
+    await publisher.close()
+
+
+async def test_outbox_publisher_propagates_async_puback_failure() -> None:
+    jetstream = AsyncMock()
+    puback = asyncio.get_running_loop().create_future()
+    puback.set_exception(TimeoutError("ambiguous PubAck"))
+    jetstream.publish_async.return_value = puback
+    connection = SimpleNamespace(
+        is_closed=False,
+        jetstream=lambda **_kwargs: jetstream,
+        drain=AsyncMock(),
+    )
+    publisher = JetStreamOutboxPublisher(
+        Settings(
+            _env_file=None,
+            data_sink_enabled=True,
+            durable_outbox_enabled=True,
+            GATEWAY_DATA_SINK_REDIS_URL="redis://localhost:6379/0",
+            jetstream_enabled=True,
+            jetstream_username="gateway",
+            jetstream_password="secret",  # pragma: allowlist secret
+        ),
+        connector=AsyncMock(return_value=connection),
+    )
+
+    with pytest.raises(TimeoutError, match="ambiguous PubAck"):
+        await publisher(_entry("heber:events", feed="trades"))
+    await publisher.close()
+
+
+async def test_outbox_publisher_reports_disconnect_and_reconnect_callbacks() -> None:
+    jetstream = AsyncMock()
+    connection = SimpleNamespace(
+        is_closed=False,
+        jetstream=lambda **_kwargs: jetstream,
+        drain=AsyncMock(),
+    )
+    connector = AsyncMock(return_value=connection)
+    settings = Settings(
+        _env_file=None,
+        data_sink_enabled=True,
+        durable_outbox_enabled=True,
+        GATEWAY_DATA_SINK_REDIS_URL="redis://localhost:6379/0",
+        jetstream_enabled=True,
+        jetstream_username="gateway",
+        jetstream_password="secret",  # pragma: allowlist secret
+    )
+    publisher = JetStreamOutboxPublisher(settings, connector=connector)
+
+    await publisher._connect()
+    callbacks = connector.await_args.kwargs
+    assert publisher.transport_status()["broker_connection"] == "connected"
+
+    await callbacks["disconnected_cb"]()
+    assert publisher.transport_status()["broker_connection"] == "disconnected"
+
+    await callbacks["reconnected_cb"]()
+    assert publisher.transport_status()["broker_connection"] == "connected"
     await publisher.close()
 
 
@@ -195,14 +293,16 @@ async def test_stream_bootstrap_failure_discards_connection_before_retry() -> No
     failing_jetstream.stream_info.side_effect = RuntimeError("permission denied")
     failing_connection = SimpleNamespace(
         is_closed=False,
-        jetstream=lambda: failing_jetstream,
+        jetstream=lambda **_kwargs: failing_jetstream,
         close=AsyncMock(),
     )
     healthy_jetstream = AsyncMock()
-    healthy_jetstream.publish.return_value = SimpleNamespace(stream="HEBER_LIVE")
+    healthy_puback = asyncio.get_running_loop().create_future()
+    healthy_puback.set_result(SimpleNamespace(stream="HEBER_LIVE"))
+    healthy_jetstream.publish_async.return_value = healthy_puback
     healthy_connection = SimpleNamespace(
         is_closed=False,
-        jetstream=lambda: healthy_jetstream,
+        jetstream=lambda **_kwargs: healthy_jetstream,
         drain=AsyncMock(),
     )
     connector = AsyncMock(side_effect=[failing_connection, healthy_connection])
@@ -225,6 +325,43 @@ async def test_stream_bootstrap_failure_discards_connection_before_retry() -> No
     assert connector.await_count == 2
     failing_connection.close.assert_awaited_once()
     await publisher.close()
+
+
+async def test_startup_verification_rejects_an_existing_stream_contract_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        data_sink_enabled=True,
+        durable_outbox_enabled=True,
+        GATEWAY_DATA_SINK_REDIS_URL="redis://localhost:6379/0",
+        jetstream_enabled=True,
+        jetstream_username="gateway",
+        jetstream_password="secret",  # pragma: allowlist secret
+    )
+    expected = {config.name: config for config in build_stream_configs(settings)}["HEBER_BACKFILL"]
+    jetstream = SimpleNamespace(
+        stream_info=AsyncMock(
+            return_value=SimpleNamespace(
+                config=SimpleNamespace(
+                    subjects=["heber.live.>"],
+                    storage=expected.storage,
+                    num_replicas=expected.num_replicas,
+                    retention=expected.retention,
+                    discard=expected.discard,
+                    max_age=expected.max_age,
+                    max_bytes=expected.max_bytes,
+                    max_msg_size=expected.max_msg_size,
+                )
+            )
+        )
+    )
+    publisher = JetStreamOutboxPublisher(settings)
+
+    monkeypatch.setattr(publisher, "_connect", AsyncMock(return_value=jetstream))
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        await publisher.verify_startup("backfill")
 
 
 def test_compose_jetstream_is_authenticated_internal_and_host_persisted() -> None:

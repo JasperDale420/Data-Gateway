@@ -35,6 +35,38 @@ def test_admit_persists_events_in_sequence_order(tmp_path: Path) -> None:
     assert pending[0].sequence < pending[1].sequence
 
 
+def test_summary_reports_pending_oldest_age_and_failed_publish_attempts(tmp_path: Path) -> None:
+    with SQLiteOutbox(tmp_path / "outbox.sqlite3") as outbox:
+        outbox.admit("heber:events", _event("evt-1"))
+        outbox.admit("heber:events", _event("evt-2"))
+        outbox.record_failure(outbox.pending(limit=1)[0].sequence, "broker unavailable")
+
+        summary = outbox.summary()
+
+    assert summary.pending_count == 2
+    assert summary.publish_failure_count == 1
+    assert summary.oldest_event_age_seconds >= 0
+
+
+def test_lane_summaries_do_not_merge_live_backfill_and_watch_backlogs(tmp_path: Path) -> None:
+    with SQLiteOutbox(tmp_path / "outbox.sqlite3") as outbox:
+        outbox.admit("heber:events", _event("live"))
+        outbox.admit("heber:events:backfill", _event("backfill"))
+        outbox.admit("heber:watch", _event("watch"))
+        watch = next(entry for entry in outbox.pending() if entry.event_id == "watch")
+        outbox.record_failure(watch.sequence, "watch unavailable")
+
+        summaries = outbox.lane_summaries()
+
+    assert {lane: summary.pending_count for lane, summary in summaries.items()} == {
+        "live": 1,
+        "backfill": 1,
+        "watch": 1,
+    }
+    assert summaries["watch"].publish_failure_count == 1
+    assert summaries["live"].publish_failure_count == 0
+
+
 def test_exact_duplicate_is_a_no_op(tmp_path: Path) -> None:
     with SQLiteOutbox(tmp_path / "outbox.sqlite3") as outbox:
         event = _event("evt-1")
@@ -133,6 +165,49 @@ def test_record_failure_tracks_attempts_and_last_error(tmp_path: Path) -> None:
         assert failed.attempts == 2
         assert failed.last_error == "publish timed out"
         assert outbox.record_failure(999_999, "missing") is False
+
+
+def test_settle_publications_deletes_only_puback_successes_and_records_failures(tmp_path: Path) -> None:
+    with SQLiteOutbox(tmp_path / "outbox.sqlite3") as outbox:
+        for event_id in ("success-1", "failure", "success-2"):
+            outbox.admit("heber.live.trades", _event(event_id))
+        success_1, failure, success_2 = outbox.pending()
+
+        assert outbox.settle_publications(
+            [success_1.sequence, success_2.sequence],
+            [(failure.sequence, "broker timeout")],
+        ) == (2, 1)
+
+        assert [entry.event_id for entry in outbox.pending()] == ["failure"]
+        assert outbox.pending()[0].attempts == 1
+        assert outbox.pending()[0].last_error == "broker timeout"
+
+
+def test_settle_publications_rolls_back_deletes_when_failure_update_fails(
+    tmp_path: Path,
+) -> None:
+    with SQLiteOutbox(tmp_path / "outbox.sqlite3") as outbox:
+        outbox.admit("heber.live.trades", _event("success"))
+        outbox.admit("heber.live.trades", _event("failure"))
+        success, failure = outbox.pending()
+        outbox._connection.execute(
+            """
+            CREATE TRIGGER fail_failure_update
+            BEFORE UPDATE OF attempts ON outbox
+            BEGIN
+                SELECT RAISE(ABORT, 'simulated cleanup failure');
+            END
+            """
+        )
+        outbox._connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError, match="cleanup failure"):
+            outbox.settle_publications(
+                [success.sequence],
+                [(failure.sequence, "broker timeout")],
+            )
+
+        assert [entry.event_id for entry in outbox.pending()] == ["success", "failure"]
 
 
 def test_pending_limit_preserves_oldest_first_order(tmp_path: Path) -> None:

@@ -154,6 +154,45 @@ async def test_router_health_checks_only_active_delegates_and_closes_both() -> N
 
 
 @pytest.mark.asyncio
+async def test_backfill_canary_exposes_selected_redis_live_lane_failure() -> None:
+    durable = _Sink("durable")
+    redis = _Sink("redis")
+    redis.health_check.return_value = False
+    sink = LaneRoutedSink(durable, redis, lanes="backfill")
+
+    assert await sink.health_check() is False
+    status = sink.transport_status()
+
+    assert status["lanes"]["backfill"]["transport"] == "durable"
+    assert status["lanes"]["live"] == {"transport": "redis", "health": "degraded"}
+
+
+@pytest.mark.asyncio
+async def test_live_durable_route_exposes_watch_as_its_own_delivery_lane() -> None:
+    durable = _Sink("durable")
+    redis = _Sink("redis")
+    durable.transport_status = lambda: {
+        "lanes": {
+            "live": {"admission": "ok", "delivery": "ok"},
+            "backfill": {"admission": "ok", "delivery": "ok"},
+            "watch": {"admission": "ok", "delivery": "degraded"},
+        }
+    }
+    sink = LaneRoutedSink(durable, redis, lanes="live")
+
+    await sink.health_check()
+    status = sink.transport_status()
+
+    assert status["lanes"]["live"]["transport"] == "durable"
+    assert status["lanes"]["watch"] == {
+        "transport": "durable",
+        "health": "ok",
+        "admission": "ok",
+        "delivery": "degraded",
+    }
+
+
+@pytest.mark.asyncio
 async def test_registry_backfill_canary_queues_and_deduplicates_live_redis() -> None:
     durable = _ControlledSink("durable")
     redis = _ControlledSink("redis_streams")

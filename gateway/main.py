@@ -275,6 +275,12 @@ async def _initialize_data_sink(settings):
             failed_buffer_capacity=settings.data_sink_failed_buffer_capacity,
         )
         sink = LaneRoutedSink(durable_sink, redis_sink, lanes=settings.jetstream_lanes)
+        try:
+            await publisher.verify_startup(settings.jetstream_lanes)
+        except Exception:
+            await durable_sink.close()
+            await publisher.close()
+            raise
         sink_registry.register(sink)
         if not sink.durable_admission:
             sink_registry.set_dedup_cache(_create_data_sink_dedup_cache(settings))

@@ -162,6 +162,42 @@ groups:
           summary: "Durable Gateway outbox is near capacity"
           description: "The durable outbox is {{ $value | humanizePercentage }} full. Admission fails closed at 100%; no events are evicted."
 
+      - alert: DurableOutboxOldestEventWarning
+        expr: gateway_durable_outbox_oldest_event_age_seconds{lane=~"live|backfill|watch"} > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable Gateway outbox has an event pending for over one minute"
+          description: "The oldest durable outbox event has been waiting {{ $value }} seconds for JetStream acknowledgement. Gateway is retaining data, but Heber delivery is delayed."
+
+      - alert: DurableOutboxOldestEventCritical
+        expr: gateway_durable_outbox_oldest_event_age_seconds{lane=~"live|backfill|watch"} > 300
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Durable Gateway outbox has an event pending for over five minutes"
+          description: "The oldest durable outbox event has been waiting {{ $value }} seconds. Investigate JetStream and Heber before the durable disk budget is exhausted."
+
+      - alert: DurableOutboxBrokerDisconnected
+        expr: gateway_durable_outbox_broker_connected == 0
+        for: 60s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway durable-outbox broker is disconnected"
+          description: "JetStream is disconnected. Gateway is retaining events in SQLite, but delivery to Heber is paused."
+
+      - alert: DurableOutboxLaneDeliveryDegraded
+        expr: gateway_durable_outbox_delivery_healthy{lane=~"live|backfill|watch"} == 0
+        for: 60s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway durable-outbox delivery is degraded for {{ $labels.lane }}"
+          description: "The {{ $labels.lane }} lane is retaining events while its broker delivery state is degraded."
+
       # Low-priority REST sink shedding is intentional protection, but it is
       # still a pressure signal that the live Heber stream is near saturation.
       - alert: LowPriorityRestSinkShedding

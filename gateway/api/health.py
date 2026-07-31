@@ -2,8 +2,9 @@
 
 import inspect
 import time
+from collections.abc import Awaitable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -74,7 +75,7 @@ async def readiness(
             checks["cache"] = "error"
         delete_result = cache.delete("__health_check__")
         if inspect.isawaitable(delete_result):
-            await delete_result
+            await cast(Awaitable[Any], delete_result)
     except Exception as e:
         checks["cache"] = "warming_up" if _is_redis_loading_error(e) else "error"
         global _LAST_CACHE_ERROR_LOG
@@ -186,17 +187,32 @@ async def detailed_status(
         if callable(get_backpressure_snapshot):
             # nosemgrep: empire-no-bare-exception -- optional diagnostics snapshot; logged via logger.exception
             try:
-                sink_backpressure = get_backpressure_snapshot()
+                sink_backpressure = cast(dict[str, Any], get_backpressure_snapshot())
             except Exception:
                 logger.exception("health_data_sink_backpressure_snapshot_failed")
+        transport_status: dict[str, Any] = {}
+        get_transport_status = getattr(sink_registry, "get_transport_status", None)
+        if callable(get_transport_status):
+            try:
+                transport_status = cast(dict[str, Any], get_transport_status())
+            except Exception:
+                logger.exception("health_data_sink_transport_status_failed")
         # nosemgrep: empire-no-bare-exception -- health endpoint must report degraded, never 500; logged throttled via logger.exception
         try:
             sink_results = await sink_registry.health_check_all()
             all_healthy = all(sink_results.values())
+            durable_buffering = any(
+                status.get("status") == "degraded_durable_buffering"
+                for status in transport_status.values()
+                if isinstance(status, dict)
+            )
             components["data_sink"] = {
-                "status": "ok" if all_healthy else "degraded",
+                "status": (
+                    "degraded" if not all_healthy else "degraded_durable_buffering" if durable_buffering else "ok"
+                ),
                 "sinks": {name: "ok" if healthy else "degraded" for name, healthy in sink_results.items()},
                 "backpressure": sink_backpressure,
+                "transport": transport_status,
             }
         except Exception:
             global _LAST_SINK_ERROR_LOG
@@ -206,6 +222,7 @@ async def detailed_status(
             components["data_sink"] = {
                 "status": "degraded",
                 "backpressure": sink_backpressure,
+                "transport": transport_status,
             }
 
     return {

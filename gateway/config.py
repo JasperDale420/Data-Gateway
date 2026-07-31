@@ -205,7 +205,6 @@ class Settings(BaseSettings):
     jetstream_backfill_max_bytes: int = Field(default=256 * 1024**3, ge=1024)
     jetstream_watch_max_bytes: int = Field(default=8 * 1024**3, ge=1024)
     jetstream_max_message_bytes: int = Field(default=8 * 1024**2, ge=1024, le=8 * 1024**2)
-    jetstream_watch_max_age_seconds: int = Field(default=86_400, ge=60)
     durable_outbox_enabled: bool = False
     durable_outbox_path: Path = Path("state/outbox/events.sqlite3")
     durable_outbox_max_bytes: int = Field(default=20 * 1024**3, ge=1024**2)

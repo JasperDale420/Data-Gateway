@@ -278,6 +278,41 @@ DURABLE_OUTBOX_UTILIZATION = Gauge(
     "Pending durable-outbox bytes divided by the configured backlog budget",
 )
 
+DURABLE_OUTBOX_DELIVERY_HEALTH = Gauge(
+    "gateway_durable_outbox_delivery_healthy",
+    "Whether the last broker delivery result for a durable-outbox lane was acknowledged",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_RETAINED = Counter(
+    "gateway_durable_outbox_retained_total",
+    "Durable-outbox rows retained after a broker failure or ambiguous PubAck",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_PENDING_EVENTS = Gauge(
+    "gateway_durable_outbox_pending_events",
+    "Current number of event rows awaiting a broker acknowledgement",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_OLDEST_EVENT_AGE_SECONDS = Gauge(
+    "gateway_durable_outbox_oldest_event_age_seconds",
+    "Age in seconds of the oldest event row awaiting a broker acknowledgement",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_PUBLISH_FAILURES = Gauge(
+    "gateway_durable_outbox_publish_failures",
+    "Total broker publish failures retained in the current durable backlog",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_BROKER_CONNECTED = Gauge(
+    "gateway_durable_outbox_broker_connected",
+    "Whether the durable-outbox JetStream connection is currently connected",
+)
+
 SINK_PRODUCER_TIMEOUT_DROPS = Counter(
     "gateway_sink_producer_timeout_drops_total",
     "Events dropped because the producer-side queue-put timed out — emergency-only",
@@ -891,6 +926,34 @@ def set_sink_buffer_size(sink: str, size: int) -> None:
 def set_durable_outbox_utilization(utilization: float) -> None:
     """Expose bounded outbox pressure for shedding and alerting."""
     DURABLE_OUTBOX_UTILIZATION.set(min(max(utilization, 0.0), 1.0))
+
+
+def set_durable_outbox_delivery_health(lane: str, healthy: bool) -> None:
+    """Expose broker delivery separately from durable admission health."""
+    DURABLE_OUTBOX_DELIVERY_HEALTH.labels(lane=lane).set(1 if healthy else 0)
+
+
+def record_durable_outbox_retained(lane: str) -> None:
+    """Count a row intentionally retained for a later deterministic retry."""
+    DURABLE_OUTBOX_RETAINED.labels(lane=lane).inc()
+
+
+def set_durable_outbox_summary(
+    *,
+    lane: str,
+    pending_count: int,
+    oldest_event_age_seconds: float,
+    publish_failure_count: int,
+) -> None:
+    """Set current durable-backlog gauges from one SQLite status snapshot."""
+    DURABLE_OUTBOX_PENDING_EVENTS.labels(lane=lane).set(max(pending_count, 0))
+    DURABLE_OUTBOX_OLDEST_EVENT_AGE_SECONDS.labels(lane=lane).set(max(oldest_event_age_seconds, 0.0))
+    DURABLE_OUTBOX_PUBLISH_FAILURES.labels(lane=lane).set(max(publish_failure_count, 0))
+
+
+def set_durable_outbox_broker_connected(connected: bool) -> None:
+    """Set broker-connection state independently from durable admission health."""
+    DURABLE_OUTBOX_BROKER_CONNECTED.set(1 if connected else 0)
 
 
 def set_sink_queue_size(sink: str, size: int) -> None:

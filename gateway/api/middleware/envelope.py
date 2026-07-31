@@ -4,7 +4,8 @@ import asyncio
 import inspect
 import json
 import re
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -310,22 +311,42 @@ class EventEnvelopeMiddleware:
                     payload=payload,
                 )
                 if sink_envelopes:
-                    tasks = [
-                        self._publish_sink_envelope(sink_registry=sink_registry, topic=topic, envelope=se, feed=feed)
-                        for se in sink_envelopes
-                    ]
                     durable_for_topic = getattr(sink_registry, "has_durable_admission_for", None)
                     durable_admission = (
                         bool(durable_for_topic(topic))
                         if callable(durable_for_topic)
                         else bool(getattr(sink_registry, "has_durable_admission", False))
                     )
-                    if durable_admission:
-                        await self._publish_sink_batch(tasks, path=path)
+                    publish_flow_with_watch = getattr(sink_registry, "publish_flow_with_watch_batch_indexed", None)
+                    if durable_admission and feed == "flow_alerts":
+                        if not callable(publish_flow_with_watch):
+                            raise RuntimeError("durable REST flow sink lacks atomic writer/watch admission")
+                        atomic_publish = cast(
+                            Callable[[list[tuple[str, dict[str, Any]]]], Awaitable[set[int]]],
+                            publish_flow_with_watch,
+                        )
+                        accepted = await atomic_publish([(topic, se) for se in sink_envelopes])
+                        if accepted != set(range(len(sink_envelopes))):
+                            raise RuntimeError(
+                                "durable REST flow atomic writer/watch admission failed "
+                                f"for {len(sink_envelopes) - len(accepted)} envelope(s)"
+                            )
                     else:
-                        task = asyncio.create_task(self._publish_sink_batch(tasks, path=path))
-                        self._background_tasks.add(task)
-                        task.add_done_callback(self._background_tasks.discard)
+                        tasks = [
+                            self._publish_sink_envelope(
+                                sink_registry=sink_registry,
+                                topic=topic,
+                                envelope=se,
+                                feed=feed,
+                            )
+                            for se in sink_envelopes
+                        ]
+                        if durable_admission:
+                            await self._publish_sink_batch(tasks, path=path)
+                        else:
+                            task = asyncio.create_task(self._publish_sink_batch(tasks, path=path))
+                            self._background_tasks.add(task)
+                            task.add_done_callback(self._background_tasks.discard)
                 else:
                     logger.debug("rest_envelope_sink_publish_empty", path=path, feed=feed)
             elif sink_registry and sink_skip_reason:

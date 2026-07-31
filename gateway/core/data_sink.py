@@ -24,7 +24,8 @@ silent drops per minute around opening bell with no recovery path.
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from gateway.core.circuit_breaker import CircuitOpenError, CircuitState, get_circuit_breaker
 from gateway.core.log_throttle import LogThrottle
@@ -348,6 +349,15 @@ class DataSinkRegistry:
                 "by_source_feed": {key: value.copy() for key, value in self._publish_stats_by_source_feed.items()},
             },
         }
+
+    def get_transport_status(self) -> dict[str, Any]:
+        """Expose durable admission separately from asynchronous broker delivery."""
+        statuses: dict[str, Any] = {}
+        for sink in self._sinks:
+            snapshot = getattr(sink, "transport_status", None)
+            if callable(snapshot):
+                statuses[sink.name] = snapshot()
+        return statuses
 
     def can_accept_low_priority(
         self,
@@ -937,6 +947,29 @@ class DataSinkRegistry:
         # only fire-and-forget publish fallbacks), fall back to optimistic
         # all-indices so callers don't drop everything.
         return succeeded if succeeded is not None else all_indices
+
+    async def publish_flow_with_watch_batch_indexed(
+        self,
+        messages: list[tuple[str, dict[str, Any]]],
+    ) -> set[int]:
+        """Atomically admit flow writer and watch copies for durable live lanes."""
+        if not self._enabled or not self._sinks or not messages:
+            return set()
+        succeeded: set[int] | None = None
+        for sink in self._sinks:
+            publish = getattr(sink, "publish_flow_with_watch_batch_results", None)
+            if not callable(publish):
+                continue
+            publish_flow = cast(
+                Callable[[list[tuple[str, dict[str, Any]]]], Awaitable[list[bool]]],
+                publish,
+            )
+            results = await publish_flow(messages)
+            if len(results) != len(messages):
+                raise RuntimeError("flow writer/watch admission returned an invalid result length")
+            indices = {index for index, accepted in enumerate(results) if accepted}
+            succeeded = indices if succeeded is None else succeeded & indices
+        return succeeded or set()
 
     async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish with error handling."""

@@ -47,6 +47,15 @@ class OutboxStorageSize:
         return self.database_bytes + self.wal_bytes
 
 
+@dataclass(frozen=True, slots=True)
+class OutboxSummary:
+    """Current durable backlog values for operational status and alerting."""
+
+    pending_count: int
+    oldest_event_age_seconds: float
+    publish_failure_count: int
+
+
 class SQLiteOutbox:
     """A small SQLite outbox with durable commits and FIFO reads."""
 
@@ -210,16 +219,26 @@ class SQLiteOutbox:
                     inserted.append(True)
         return inserted
 
-    def pending(self, *, limit: int = 1000) -> list[OutboxEntry]:
-        """Return the oldest pending entries in admission order."""
+    def pending(self, *, limit: int = 1000, lane: str | None = None) -> list[OutboxEntry]:
+        """Return the oldest pending entries in one lane's admission order."""
         if limit < 1:
             raise ValueError("pending limit must be at least 1")
+        if lane not in {None, "live", "backfill", "watch"}:
+            raise ValueError("lane must be live, backfill, watch, or None")
+        where = ""
+        if lane == "backfill":
+            where = "WHERE topic = 'heber:events:backfill'"
+        elif lane == "watch":
+            where = "WHERE topic = 'heber:watch'"
+        elif lane == "live":
+            where = "WHERE topic NOT IN ('heber:events:backfill', 'heber:watch')"
         with self._lock:
             rows = self._connection.execute(
-                """
+                f"""
                 SELECT sequence, topic, event_id, payload, payload_digest,
                        attempts, last_error, created_at
                 FROM outbox
+                {where}
                 ORDER BY sequence
                 LIMIT ?
                 """,
@@ -261,6 +280,43 @@ class SQLiteOutbox:
             )
         return cursor.rowcount == 1
 
+    def settle_publications(
+        self,
+        acknowledged_sequences: Sequence[int],
+        failures: Sequence[tuple[int, str]],
+    ) -> tuple[int, int]:
+        """Atomically delete PubAck-confirmed rows and retain failed rows."""
+        acknowledged = list(acknowledged_sequences)
+        failed = list(failures)
+        acknowledged_set = set(acknowledged)
+        failed_sequences = [sequence for sequence, _error in failed]
+        if len(acknowledged_set) != len(acknowledged) or len(set(failed_sequences)) != len(failed_sequences):
+            raise ValueError("publication settlement contains duplicate sequences")
+        if acknowledged_set.intersection(failed_sequences):
+            raise ValueError("publication settlement cannot acknowledge and fail the same sequence")
+
+        with self._lock, self._connection:
+            deleted = 0
+            if acknowledged:
+                placeholders = ",".join("?" for _sequence in acknowledged)
+                cursor = self._connection.execute(
+                    f"DELETE FROM outbox WHERE sequence IN ({placeholders})",
+                    acknowledged,
+                )
+                deleted = cursor.rowcount
+            retained = 0
+            for sequence, error in failed:
+                cursor = self._connection.execute(
+                    """
+                    UPDATE outbox
+                    SET attempts = attempts + 1, last_error = ?
+                    WHERE sequence = ?
+                    """,
+                    (error, sequence),
+                )
+                retained += cursor.rowcount
+        return deleted, retained
+
     def storage_size(self) -> OutboxStorageSize:
         """Return physical database and WAL file sizes."""
 
@@ -286,6 +342,45 @@ class SQLiteOutbox:
             return 0.0
         with self._lock:
             return min(self._pending_bytes() / self._max_bytes, 1.0)
+
+    def summary(self) -> OutboxSummary:
+        """Read the backlog's count, oldest age, and retained failure attempts."""
+        summaries = self.lane_summaries()
+        return OutboxSummary(
+            pending_count=sum(summary.pending_count for summary in summaries.values()),
+            oldest_event_age_seconds=max(summary.oldest_event_age_seconds for summary in summaries.values()),
+            publish_failure_count=sum(summary.publish_failure_count for summary in summaries.values()),
+        )
+
+    def lane_summaries(self) -> dict[str, OutboxSummary]:
+        """Read isolated live, backfill, and watch backlog summaries in one query."""
+        summaries = {
+            lane: OutboxSummary(pending_count=0, oldest_event_age_seconds=0.0, publish_failure_count=0)
+            for lane in ("live", "backfill", "watch")
+        }
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT
+                    CASE
+                        WHEN topic = 'heber:events:backfill' THEN 'backfill'
+                        WHEN topic = 'heber:watch' THEN 'watch'
+                        ELSE 'live'
+                    END AS lane,
+                    COUNT(*),
+                    COALESCE((julianday('now') - julianday(MIN(created_at))) * 86400.0, 0.0),
+                    COALESCE(SUM(attempts), 0)
+                FROM outbox
+                GROUP BY lane
+                """
+            ).fetchall()
+        for lane, pending_count, oldest_age, publish_failure_count in rows:
+            summaries[lane] = OutboxSummary(
+                pending_count=int(pending_count),
+                oldest_event_age_seconds=max(float(oldest_age), 0.0),
+                publish_failure_count=int(publish_failure_count),
+            )
+        return summaries
 
     def _pending_bytes(self) -> int:
         row = self._connection.execute("SELECT COALESCE(SUM(length(payload) + 512), 0) FROM outbox").fetchone()
