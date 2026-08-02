@@ -54,7 +54,6 @@ Canonical schema definitions live in the shared `empire-schemas` package (`../em
 | Cerberus | REST API (bars, quotes, options) |
 | Kairos | REST API (UW options flow, IV data) |
 | Orbit | REST API (bars, quotes, options flow, flow alerts) |
-| WhaleHunter | REST API (UW flow data, darkpool) — no client key provisioned in `config/clients.yaml` |
 | Orion | WebSocket streams, REST API |
 | EmpireUI | REST API (status, quotes, snapshots) — no client key provisioned in `config/clients.yaml` |
 | Atlas | REST API (historical data) |
