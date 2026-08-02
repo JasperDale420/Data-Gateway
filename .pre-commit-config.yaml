@@ -1,8 +1,3 @@
-# trading-bot/ is a separate sub-project that lives in this repo root.
-# Its code is not part of the gateway package and has its own (inconsistent)
-# style conventions — exclude it from all hooks to keep CI green.
-exclude: '^trading-bot/'
-
 repos:
   # ---------------------------------------------------------------------------
   # Ruff: Fast Python linter + formatter
