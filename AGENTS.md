@@ -110,7 +110,7 @@ gateway/
     corporate.py       # /api/corporate/* + /api/adjustments/*
     catalog.py         # /api/catalog/* (data catalog)
     metrics.py         # /metrics (Prometheus)
-    middleware.py      # CORS, RateLimit, GlobalRateLimit, Cache, EventEnvelope, InputValidation, SecurityHeaders, RequestMetrics
+    middleware/        # Middleware package: ratelimit, global_ratelimit, cache, envelope, validation, metrics, security_headers, correlation
     deps.py            # FastAPI dependency injection (registry, cache, auth, connections, sink)
     errors.py          # Structured error handler
   types/
@@ -252,10 +252,10 @@ Pydantic Settings with `GATEWAY_` env prefix. Key variables:
 | Marker | Description |
 |--------|-------------|
 | `perf` | Benchmark/performance tests, excluded by default |
-| `unit` | Fast, isolated tests with no I/O or network (reserved for future use) |
-| `integration` | Tests with real DB, file I/O, or component interactions (reserved for future use) |
-| `e2e` | Full system flow tests (reserved for future use) |
-| `slow` | Tests exceeding 1s (reserved for future use) |
+| `unit` | Fast, isolated tests with no I/O or network (currently applied in one file) |
+| `integration` | Real-Redis integration tests in `tests/integration/`; skip gracefully when Redis is unreachable; excluded by `make test`, included by bare `pytest` |
+| `e2e` | Full system flow tests (no tests use this marker yet) |
+| `slow` | Tests exceeding 1s (no tests use this marker yet) |
 
 Tests use `pytest-asyncio` with `asyncio_mode = "auto"`. TestClient from FastAPI with fixtures in `tests/conftest.py`. Test API key loaded from `config/clients.yaml` (client id: `test`).
 
