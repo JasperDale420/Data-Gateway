@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,21 @@ import pytest
 from gateway.config import Settings
 from gateway.core.backfill_manifest import RedisBackfillManifestStore
 from gateway.main import _initialize_data_sink
+
+
+@pytest.fixture(autouse=True)
+def _isolate_gateway_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip GATEWAY_* out of the process environment for this module.
+
+    ``gateway.main`` calls ``load_dotenv()`` at import time, so the developer's
+    ``.env`` is already in ``os.environ`` by the time a test runs. ``_env_file=None``
+    only disables pydantic-settings' own dotenv read, not the environment, so
+    without this fixture these tests assert against local config instead of the
+    declared defaults.
+    """
+    for key in list(os.environ):
+        if key.startswith("GATEWAY_"):
+            monkeypatch.delenv(key, raising=False)
 
 
 @pytest.mark.asyncio
