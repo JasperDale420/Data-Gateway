@@ -44,8 +44,9 @@ RUN pip install --no-cache-dir --no-deps .
 # Copy config files
 COPY Data-Gateway/config/ config/
 
-# Create logs directory writable by gateway user
-RUN mkdir -p /app/logs && chown gateway:gateway /app/logs
+# Create runtime directories writable by gateway user. Named volumes inherit
+# these permissions on first creation.
+RUN mkdir -p /app/logs /app/state/outbox && chown -R gateway:gateway /app/logs /app/state
 
 # Switch to non-root user
 USER gateway

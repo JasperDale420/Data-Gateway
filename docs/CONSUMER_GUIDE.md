@@ -659,22 +659,6 @@ LLM-driven options strategies need:
 - [x] **Historical bars** -- Alpaca daily/weekly bars for context
 - [x] **Order execution** -- Alpaca orders API (options orders)
 
-### WhaleHunter (Flow Analysis)
-
-Options flow + dark pool pattern mining need:
-
-- [x] **Options flow** -- UW `flow/all`, `flow/{symbol}` (primary data source)
-- [x] **Dark pool trades** -- UW `darkpool/all`, `darkpool/{symbol}`
-- [x] **GEX data** -- UW `gex/{symbol}`, by strike, by expiry
-- [x] **OI / volume analysis** -- UW `stock/{symbol}/volume-oi-by-expiry`, `option-volume-by-price`
-- [x] **Flow per strike** -- UW `stock/{symbol}/flow-per-strike-intraday`
-- [x] **Greek flow** -- UW `stock/{symbol}/greek-flow-by-expiry/{expiry}`
-- [x] **Spot exposures** -- UW `stock/{symbol}/spot-exposures`, by expiry/strike
-- [x] **Insider trades** -- UW insider endpoints
-- [x] **Institutional activity** -- UW institutions endpoints
-- [x] **Short data** -- UW shorts endpoints (interest, FTDs, volume)
-- [x] **Screener** -- UW `screener/options` for hottest chains
-
 ### Orion (Real-Time Data Lake)
 
 Signal engine + data lake need:
@@ -687,22 +671,6 @@ Signal engine + data lake need:
 - [x] **Crypto data** -- Alpaca crypto endpoints
 - [x] **Forex rates** -- Alpaca forex endpoints
 - [x] **Market-wide data** -- UW `market/tide`, screeners
-
-### TheOracle / TheOracleMeta (GARP Analysis)
-
-Quantitative GARP analysis needs:
-
-- [x] **Company fundamentals** -- Finnhub profile/financials, AV overview
-- [x] **Financial statements** -- AV income-statement, balance-sheet, cash-flow
-- [x] **Earnings data** -- Finnhub earnings, AV earnings
-- [x] **Analyst estimates** -- Finnhub EPS/revenue/EBIT/EBITDA estimates
-- [x] **Price target** -- Finnhub price target
-- [x] **Valuation metrics** -- Finnhub `fundamentals/metrics/{symbol}?category=valuation`
-- [x] **SEC filings** -- SEC filings, XBRL facts/concepts
-- [x] **Historical prices** -- Alpaca or AV daily bars
-- [x] **Peer comparison** -- Finnhub `fundamentals/peers/{symbol}`
-- [x] **Institutional ownership** -- UW/Finnhub ownership data
-- [x] **ESG/sustainability** -- yFinance `{ticker}/sustainability`
 
 ### Atlas (Research Loop)
 

@@ -68,6 +68,82 @@ class _TrackingNoMetricsSink(_TrackingSink):
         return False
 
 
+class _DurableAdmissionSink(_TrackingSink):
+    """Sink whose publish call is the durable producer admission boundary."""
+
+    @property
+    def durable_admission(self) -> bool:
+        return True
+
+
+class TestDurableAdmission:
+    def test_durable_sink_controls_low_priority_admission_for_legacy_alias(self) -> None:
+        class _PressuredDurableSink(_DurableAdmissionSink):
+            def can_accept_low_priority(self, *, max_utilization: float) -> bool:
+                return max_utilization > 0.8
+
+        registry = DataSinkRegistry()
+        registry.register(_PressuredDurableSink("durable-outbox"))
+
+        assert registry.can_accept_low_priority("redis_streams", max_utilization=0.7) is False
+        assert registry.can_accept_low_priority("redis_streams", max_utilization=0.9) is True
+
+    @pytest.mark.asyncio
+    async def test_durable_sink_bypasses_volatile_queue_and_open_transport_circuit(self) -> None:
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:durable")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = 9999999999.0
+
+        sink = _DurableAdmissionSink("durable")
+        registry = DataSinkRegistry(queue_size=1, worker_count=1)
+        registry.register(sink)
+
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            await registry.publish_all("heber:events", {"event_id": "evt-1"})
+
+        assert sink.published == [("heber:events", {"event_id": "evt-1"})]
+        assert "durable" not in registry._sink_queues
+
+    @pytest.mark.asyncio
+    async def test_durable_admission_failure_propagates_to_producer(self) -> None:
+        class _RejectingDurableSink(_DurableAdmissionSink):
+            async def publish(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
+                return False
+
+        registry = DataSinkRegistry()
+        registry.register(_RejectingDurableSink("durable-reject"))
+
+        with pytest.raises(RuntimeError, match="durable_sink_admission_failed"):
+            await registry.publish_all("heber:events", {"event_id": "evt-2"})
+
+    @pytest.mark.asyncio
+    async def test_durable_batch_admission_bypasses_open_transport_circuit(self) -> None:
+        class _BatchDurableSink(_DurableAdmissionSink):
+            async def publish_batch_results(self, messages: list[tuple[str, dict[str, Any]]]) -> list[bool]:
+                self.published.extend(messages)
+                return [True] * len(messages)
+
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:durable-batch")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = 9999999999.0
+
+        sink = _BatchDurableSink("durable-batch")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+        messages = [
+            ("heber:events", {"event_id": "evt-3"}),
+            ("heber:events", {"event_id": "evt-4"}),
+        ]
+
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            results = await registry.publish_all_batch_results(messages)
+
+        assert results == [True, True]
+        assert sink.published == messages
+
+
 # ── Dispatch-Time Circuit Check Tests ────────────────────────────────
 
 

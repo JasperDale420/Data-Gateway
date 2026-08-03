@@ -20,6 +20,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "redis>=5.0",
+    "nats-py==2.15.0",
     "prometheus-client>=0.20",
     "psutil>=5.9",
     "yfinance>=0.2",
@@ -116,15 +117,22 @@ warn_unused_ignores = true
 ignore_missing_imports = true
 check_untyped_defs = true
 plugins = ["pydantic.mypy"]
+# vendor/ and ci/ hold vendored SDK copies for Docker/CI builds; both contain a
+# duplicate `unusualwhales` package that breaks module resolution under `mypy .`.
+# tests/ and scripts/ carry pre-existing type errors and are not part of the
+# enforced type gate (CI and pre-commit check `mypy gateway/`); excluding them
+# keeps `mypy .` equivalent to the enforced policy. Explicit paths still work
+# (e.g. `mypy tests/test_foo.py`) since exclude only filters discovery.
+exclude = ["^vendor/", "^ci/", "^tests/", "^scripts/"]
 
 # Core modules with pre-existing type issues
 [[tool.mypy.overrides]]
-module = ["gateway.core.labels", "gateway.core.symbology", "gateway.core.ring_buffer", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream"]
+module = ["gateway.core.symbology", "gateway.core.calendar", "gateway.core.adjustments", "gateway.core.dedup", "gateway.core.connections", "gateway.api.deps", "gateway.core.security", "gateway.core.registry", "gateway.core.stream"]
 disable_error_code = ["assignment", "union-attr", "var-annotated", "index", "operator", "return-value", "arg-type", "attr-defined", "call-overload", "dict-item"]
 
 # Provider modules with complex dynamic typing
 [[tool.mypy.overrides]]
-module = ["gateway.providers.alpaca_stream", "gateway.providers.finnhub"]
+module = ["gateway.providers.finnhub"]
 disable_error_code = ["list-item", "return-value", "assignment", "union-attr", "dict-item", "override"]
 
 # Tests - don't need strict typing

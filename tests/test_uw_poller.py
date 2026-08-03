@@ -228,6 +228,71 @@ async def test_publish_envelopes_marks_exact_indexed_successes() -> None:
     assert delivered == ["i1"]
 
 
+@pytest.mark.asyncio
+async def test_flow_envelopes_use_atomic_writer_and_watch_admission_when_live_is_durable() -> None:
+    poller = UWPoller()
+    poller._redis_dedupe = None
+
+    class _DurableFlowSink:
+        def __init__(self) -> None:
+            self.messages: list[tuple[str, dict]] = []
+
+        def has_durable_admission_for(self, topic: str) -> bool:
+            return topic == HEBER_STREAM
+
+        async def publish_flow_with_watch_batch_indexed(self, messages: list[tuple[str, dict]]) -> set[int]:
+            self.messages.extend(messages)
+            return set(range(len(messages)))
+
+    sink = _DurableFlowSink()
+    envelopes = [{"event_id": "flow-1", "feed": "flow_alerts"}]
+
+    published, duplicates = await poller._publish_envelopes(
+        sink_registry=sink,
+        envelopes=envelopes,
+        dedupe_prefix="uw:flow",
+        missing_event_log="uw_flow_missing_event_id",
+        on_published=lambda _envelope: asyncio.sleep(0),
+    )
+
+    assert (published, duplicates) == (1, 0)
+    assert sink.messages == [(HEBER_STREAM, envelopes[0])]
+
+
+@pytest.mark.asyncio
+async def test_durable_live_flow_writes_watch_copy_without_a_websocket_tap() -> None:
+    poller = UWPoller()
+    poller._redis_dedupe = None
+
+    class _DurableFlowSink:
+        def __init__(self) -> None:
+            self.messages: list[tuple[str, dict]] = []
+
+        def has_durable_admission_for(self, topic: str) -> bool:
+            return topic == HEBER_STREAM
+
+        async def publish_flow_with_watch_batch_indexed(self, messages: list[tuple[str, dict]]) -> set[int]:
+            self.messages.extend(messages)
+            return set(range(len(messages)))
+
+        async def publish_all_batch_indexed(self, _messages: list[tuple[str, dict]]) -> set[int]:
+            raise AssertionError("durable flow must use atomic writer-and-watch admission")
+
+    sink = _DurableFlowSink()
+    envelopes = [{"event_id": "flow-without-ws", "feed": "flow_alerts"}]
+
+    published, duplicates = await poller._publish_envelopes(
+        sink_registry=sink,
+        envelopes=envelopes,
+        dedupe_prefix="uw:flow",
+        missing_event_log="uw_flow_missing_event_id",
+        on_published=None,
+    )
+
+    assert (published, duplicates) == (1, 0)
+    assert sink.messages == [(HEBER_STREAM, envelopes[0])]
+
+
 def test_build_feed_envelopes_skips_malformed_record_without_dropping_batch() -> None:
     """Strict envelope failures skip only that UW item, not the whole poll batch."""
     poller = UWPoller()

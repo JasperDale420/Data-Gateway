@@ -110,7 +110,7 @@ gateway/
     corporate.py       # /api/corporate/* + /api/adjustments/*
     catalog.py         # /api/catalog/* (data catalog)
     metrics.py         # /metrics (Prometheus)
-    middleware.py      # CORS, RateLimit, GlobalRateLimit, Cache, EventEnvelope, InputValidation, SecurityHeaders, RequestMetrics
+    middleware/        # Middleware package: ratelimit, global_ratelimit, cache, envelope, validation, metrics, security_headers, correlation
     deps.py            # FastAPI dependency injection (registry, cache, auth, connections, sink)
     errors.py          # Structured error handler
   types/
@@ -252,10 +252,10 @@ Pydantic Settings with `GATEWAY_` env prefix. Key variables:
 | Marker | Description |
 |--------|-------------|
 | `perf` | Benchmark/performance tests, excluded by default |
-| `unit` | Fast, isolated tests with no I/O or network (reserved for future use) |
-| `integration` | Tests with real DB, file I/O, or component interactions (reserved for future use) |
-| `e2e` | Full system flow tests (reserved for future use) |
-| `slow` | Tests exceeding 1s (reserved for future use) |
+| `unit` | Fast, isolated tests with no I/O or network (currently applied in one file) |
+| `integration` | Real-Redis integration tests in `tests/integration/`; skip gracefully when Redis is unreachable; excluded by `make test`, included by bare `pytest` |
+| `e2e` | Full system flow tests (no tests use this marker yet) |
+| `slow` | Tests exceeding 1s (no tests use this marker yet) |
 
 Tests use `pytest-asyncio` with `asyncio_mode = "auto"`. TestClient from FastAPI with fixtures in `tests/conftest.py`. Test API key loaded from `config/clients.yaml` (client id: `test`).
 
@@ -345,12 +345,21 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Data Analysis Review
 
-Any data analysis presented as a conclusion — backtest results, strategy performance claims, Optuna/WFO output, dataset QA findings, or other statistical/quantitative findings — must be adversarially reviewed before being presented to the user. Use one of:
+Any data-analysis conclusion — backtest results, strategy-performance claims, Optuna/WFO output, dataset QA, or other statistical/quantitative findings — must be adversarially reviewed before it reaches the user. Challenge the methodology: overfitting, look-ahead/leakage, cherry-picked windows, confounds, unsupported causal claims. Not a proofread pass.
 
-- **An Opus subagent** (`Agent` with `model: "opus"`), explicitly instructed to challenge the methodology — look for overfitting, look-ahead/leakage, cherry-picked windows, confounds, and unsupported causal claims. Not a proofread pass.
-- **A Codex adversarial review** (`/codex:adversarial-review`, or the `codex` skill run in review mode) using the strongest available GPT model (currently `gpt-5.6-terra`) at high/xhigh reasoning effort.
+**Reviewer:** `/codex:adversarial-review` with `gpt-5.6-terra` at high reasoning effort, run synchronously with the claim plus its method/data scope. **Fallback** on rate-limit, timeout, auth error, or empty/errored output: `glm-5.2` via opencode (`opencode run -m zai-coding-plan/glm-5.2`), same instructions. These ids are approved policy — don't substitute them; if one is deprecated or unreachable, stop and ask the user, never swap silently. This reviewer + fallback is the single source of truth for both blocks. **If every reviewer is unavailable, do not present the conclusion — stop and surface it to the user. Never silently skip.**
 
-Report the adversarial review's findings alongside the analysis itself, not as a separate follow-up step.
+Report the review's findings verbatim alongside the analysis, with your disposition on each — the user, not you, judges what is "material." Withhold or qualify any conclusion the review invalidates.
+
+## Adversarial Review of Code Changes & Plans
+
+Same reviewer, fallback, and "all reviewers down" rule as Data Analysis Review. Run it synchronously and read the result before continuing (overrides any "spawn then stop" default). Give the reviewer the task/acceptance criteria AND the artifact — a concrete plan or the exact diff; if the tool only sees the diff, paste the requirement in so it reviews intent, not just lines.
+
+**Required** (reviewed once, at the highest-leverage point — the plan for multi-step work, the diff otherwise): changes to logic, control flow, schemas, cross-repo contracts, any edit beyond a truly trivial one, any multi-step plan before executing it, and anything safety-critical — order submission, risk limits, position sizing, paper/live toggles, credentials, kill switches, broker auth/cancel paths (non-exhaustive). Safety-critical always requires it.
+
+**Exempt / don't loop:** comment-, doc-, or format-only edits, renames, single-line non-logic changes. Don't re-review the reviewer's own output — but divergence from a reviewed plan is re-reviewable, and new issues a fix introduces are reviewable. A reviewer you believe is wrong gets escalated to the user, not silently overridden.
+
+**Then act on it:** rank findings by severity and report all of them verbatim with your disposition. Critical/high findings must be fixed or stop the work; never commit a safety-critical change carrying an unresolved finding, and never self-classify a safety-critical finding as immaterial — escalate it. The user judges "material."
 
 ## Additional repository guidance
 

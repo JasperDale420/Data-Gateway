@@ -144,6 +144,60 @@ groups:
           summary: "Sink {{ $labels.sink }} queue utilization is above 70%"
           description: "Sink {{ $labels.sink }} has sustained high dispatch utilization. REST low-priority publishing may shed and producer-timeout drops may follow if Redis workers cannot catch up."
 
+      - alert: DurableOutboxPressure
+        expr: gateway_durable_outbox_utilization > 0.60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable Gateway outbox is filling"
+          description: "The durable outbox is {{ $value | humanizePercentage }} full. Investigate JetStream or Heber drain throughput before producers are paused."
+
+      - alert: DurableOutboxNearCapacity
+        expr: gateway_durable_outbox_utilization > 0.90
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Durable Gateway outbox is near capacity"
+          description: "The durable outbox is {{ $value | humanizePercentage }} full. Admission fails closed at 100%; no events are evicted."
+
+      - alert: DurableOutboxOldestEventWarning
+        expr: gateway_durable_outbox_oldest_event_age_seconds{lane=~"live|backfill|watch"} > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable Gateway outbox has an event pending for over one minute"
+          description: "The oldest durable outbox event has been waiting {{ $value }} seconds for JetStream acknowledgement. Gateway is retaining data, but Heber delivery is delayed."
+
+      - alert: DurableOutboxOldestEventCritical
+        expr: gateway_durable_outbox_oldest_event_age_seconds{lane=~"live|backfill|watch"} > 300
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Durable Gateway outbox has an event pending for over five minutes"
+          description: "The oldest durable outbox event has been waiting {{ $value }} seconds. Investigate JetStream and Heber before the durable disk budget is exhausted."
+
+      - alert: DurableOutboxBrokerDisconnected
+        expr: gateway_durable_outbox_broker_connected == 0
+        for: 60s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway durable-outbox broker is disconnected"
+          description: "JetStream is disconnected. Gateway is retaining events in SQLite, but delivery to Heber is paused."
+
+      - alert: DurableOutboxLaneDeliveryDegraded
+        expr: gateway_durable_outbox_delivery_healthy{lane=~"live|backfill|watch"} == 0
+        for: 60s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway durable-outbox delivery is degraded for {{ $labels.lane }}"
+          description: "The {{ $labels.lane }} lane is retaining events while its broker delivery state is degraded."
+
       # Low-priority REST sink shedding is intentional protection, but it is
       # still a pressure signal that the live Heber stream is near saturation.
       - alert: LowPriorityRestSinkShedding
@@ -216,6 +270,15 @@ groups:
         annotations:
           summary: "Feed {{ $labels.provider }}/{{ $labels.feed }} produced zero envelopes during market hours"
           description: "No EventEnvelopes created for {{ $labels.provider }}/{{ $labels.feed }} over the last 15 minutes while the market is open. The upstream endpoint may be failing, the poller may be stalled, or every record may be dropped during normalization. Check the poller logs and the UW upstream."
+
+      - alert: KairosReplayIntakeBlocked
+        expr: gateway_replay_blocked == 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kairos intake is blocked for replay {{ $labels.scope }}"
+          description: "Feed {{ $labels.provider }}/{{ $labels.feed }} is not verified: {{ $labels.reason }}. Keep Kairos blocked; restore the date-bounded provider/Heber commit path and require a matching durable Heber acknowledgement before retrying."
 
   - name: gateway_slo
     rules:

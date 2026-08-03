@@ -37,6 +37,8 @@ Canonical schema definitions live in the shared `empire-schemas` package (`../em
 ### Redis Streams
 
 - Publishes EventEnvelope-wrapped events to the Redis Stream topic `heber:events` (frozen contract with Heber)
+- Publishes accepted replay envelopes to `heber:events:backfill`. Replay manifests are non-expiring hashes at `gateway:backfill:manifest:<job_id>` and include `backfill_job_id`, `backfill_chunk_id`, and `backfill_manifest_hash` in envelope lineage.
+- Reads Heber protocol-v1 readiness from `gateway:backfill:heber:readiness:v1` and exact post-commit chunk acknowledgements from `gateway:backfill:ack:<job_id>:<chunk_id>`. Heber must write acknowledgements only after durable Bronze and Silver commits, with matching `job_id`, `chunk_id`, `manifest_hash`, `record_count`, `event_ids_sha256`, `records_sha256`, a non-empty `commit_id`, timezone-aware `committed_at`, and `status=committed`.
 
 ## Imports (What This Repo Consumes)
 
@@ -52,7 +54,6 @@ Canonical schema definitions live in the shared `empire-schemas` package (`../em
 | Cerberus | REST API (bars, quotes, options) |
 | Kairos | REST API (UW options flow, IV data) |
 | Orbit | REST API (bars, quotes, options flow, flow alerts) |
-| WhaleHunter | REST API (UW flow data, darkpool) — no client key provisioned in `config/clients.yaml` |
 | Orion | WebSocket streams, REST API |
 | EmpireUI | REST API (status, quotes, snapshots) — no client key provisioned in `config/clients.yaml` |
 | Atlas | REST API (historical data) |
@@ -66,4 +67,5 @@ Provisioned REST clients are defined in `config/clients.yaml` (cerberus, 3roses,
 - **EventEnvelope** changes in `gateway/core/envelope.py` break Heber and Orion ingestion
 - **API endpoint path changes** break EmpireUI and all trading systems
 - **Redis topic name changes** (`heber:events`) break Heber watcher and Orion subscribers
+- **Replay manifest/readiness/acknowledgement changes** require coordinated Heber consumer and Kairos intake-gate updates; Redis acceptance or stream XACK alone is never proof of a durable Heber write
 - **Provider interface changes** in `gateway/core/provider.py` affect all provider implementations

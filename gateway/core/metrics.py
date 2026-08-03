@@ -150,6 +150,15 @@ RATE_LIMIT_EXCEEDED = Counter(
     ["client_id"],
 )
 
+# Durable replay verification gate. Alertmanager deduplicates a stable labelset;
+# the helper clears the previous reason for a scope and resolves only on verified.
+REPLAY_BLOCKED = Gauge(
+    "gateway_replay_blocked",
+    "Durable replay is not verified and Kairos intake must remain blocked",
+    ["provider", "feed", "scope", "reason"],
+)
+_REPLAY_ALERT_LABEL_BY_SCOPE: dict[tuple[str, str, str], str] = {}
+
 # Process metrics
 PROCESS_MEMORY_BYTES = Gauge(
     "gateway_process_memory_bytes",
@@ -262,6 +271,46 @@ SINK_QUEUE_UTILIZATION = Gauge(
     "gateway_sink_queue_utilization",
     "Current sink dispatch utilization including queued plus worker-in-flight events",
     ["sink"],
+)
+
+DURABLE_OUTBOX_UTILIZATION = Gauge(
+    "gateway_durable_outbox_utilization",
+    "Pending durable-outbox bytes divided by the configured backlog budget",
+)
+
+DURABLE_OUTBOX_DELIVERY_HEALTH = Gauge(
+    "gateway_durable_outbox_delivery_healthy",
+    "Whether the last broker delivery result for a durable-outbox lane was acknowledged",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_RETAINED = Counter(
+    "gateway_durable_outbox_retained_total",
+    "Durable-outbox rows retained after a broker failure or ambiguous PubAck",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_PENDING_EVENTS = Gauge(
+    "gateway_durable_outbox_pending_events",
+    "Current number of event rows awaiting a broker acknowledgement",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_OLDEST_EVENT_AGE_SECONDS = Gauge(
+    "gateway_durable_outbox_oldest_event_age_seconds",
+    "Age in seconds of the oldest event row awaiting a broker acknowledgement",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_PUBLISH_FAILURES = Gauge(
+    "gateway_durable_outbox_publish_failures",
+    "Total broker publish failures retained in the current durable backlog",
+    ["lane"],
+)
+
+DURABLE_OUTBOX_BROKER_CONNECTED = Gauge(
+    "gateway_durable_outbox_broker_connected",
+    "Whether the durable-outbox JetStream connection is currently connected",
 )
 
 SINK_PRODUCER_TIMEOUT_DROPS = Counter(
@@ -874,6 +923,39 @@ def set_sink_buffer_size(sink: str, size: int) -> None:
     SINK_BUFFER_SIZE.labels(sink=sink).set(max(0, size))
 
 
+def set_durable_outbox_utilization(utilization: float) -> None:
+    """Expose bounded outbox pressure for shedding and alerting."""
+    DURABLE_OUTBOX_UTILIZATION.set(min(max(utilization, 0.0), 1.0))
+
+
+def set_durable_outbox_delivery_health(lane: str, healthy: bool) -> None:
+    """Expose broker delivery separately from durable admission health."""
+    DURABLE_OUTBOX_DELIVERY_HEALTH.labels(lane=lane).set(1 if healthy else 0)
+
+
+def record_durable_outbox_retained(lane: str) -> None:
+    """Count a row intentionally retained for a later deterministic retry."""
+    DURABLE_OUTBOX_RETAINED.labels(lane=lane).inc()
+
+
+def set_durable_outbox_summary(
+    *,
+    lane: str,
+    pending_count: int,
+    oldest_event_age_seconds: float,
+    publish_failure_count: int,
+) -> None:
+    """Set current durable-backlog gauges from one SQLite status snapshot."""
+    DURABLE_OUTBOX_PENDING_EVENTS.labels(lane=lane).set(max(pending_count, 0))
+    DURABLE_OUTBOX_OLDEST_EVENT_AGE_SECONDS.labels(lane=lane).set(max(oldest_event_age_seconds, 0.0))
+    DURABLE_OUTBOX_PUBLISH_FAILURES.labels(lane=lane).set(max(publish_failure_count, 0))
+
+
+def set_durable_outbox_broker_connected(connected: bool) -> None:
+    """Set broker-connection state independently from durable admission health."""
+    DURABLE_OUTBOX_BROKER_CONNECTED.set(1 if connected else 0)
+
+
 def set_sink_queue_size(sink: str, size: int) -> None:
     """Update the current dispatch-queue depth for ``sink``."""
     SINK_QUEUE_SIZE.labels(sink=sink).set(max(0, size))
@@ -1168,6 +1250,44 @@ def record_option_capture_ws_update(*, added: int = 0, removed: int = 0) -> None
         if isinstance(websocket, dict):
             websocket["unsubscribe_calls"] = int(websocket.get("unsubscribe_calls", 0)) + 1
             websocket["contracts_removed"] = int(websocket.get("contracts_removed", 0)) + removed
+
+
+def set_replay_verification_state(
+    *,
+    verified: bool,
+    provider: str,
+    feed: str,
+    scope: str,
+    reason: str,
+) -> None:
+    """Keep one deduplicated blocked alert per replay scope."""
+    scope_key = (provider, feed, scope)
+    previous_reason = _REPLAY_ALERT_LABEL_BY_SCOPE.get(scope_key)
+    if verified:
+        if previous_reason is not None:
+            REPLAY_BLOCKED.labels(
+                provider=provider,
+                feed=feed,
+                scope=scope,
+                reason=previous_reason,
+            ).set(0)
+        REPLAY_BLOCKED.labels(
+            provider=provider,
+            feed=feed,
+            scope=scope,
+            reason=reason,
+        ).set(0)
+        _REPLAY_ALERT_LABEL_BY_SCOPE.pop(scope_key, None)
+        return
+    if previous_reason is not None:
+        return
+    REPLAY_BLOCKED.labels(
+        provider=provider,
+        feed=feed,
+        scope=scope,
+        reason=reason,
+    ).set(1)
+    _REPLAY_ALERT_LABEL_BY_SCOPE[scope_key] = reason
 
 
 def get_option_capture_snapshot() -> dict[str, Any]:

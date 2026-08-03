@@ -11,8 +11,6 @@ import socket
 import sys
 from contextlib import asynccontextmanager, suppress
 
-import orjson
-
 # uvloop removed — incompatible with container environment (causes deadlocks).
 # Standard asyncio event loop is used instead.
 from empire_core.logger import setup_logging
@@ -106,7 +104,7 @@ from gateway.core.metrics import (
     update_uptime,
 )
 from gateway.core.registry import ProviderRegistry
-from gateway.core.stream import StreamMultiplexer
+from gateway.core.stream import StreamMultiplexer, StreamTransportFatalError
 
 attach_error_buffer_handler()
 
@@ -183,26 +181,32 @@ async def _on_stream_envelope(envelope: dict) -> None:
         return
     record_stream_sink_dispatch_event("scheduled")
     try:
-        # Pre-serialize once so the Redis sink doesn't have to re-encode.
-        try:
-            payload: dict | str = orjson.dumps(envelope, default=str).decode()
-        except Exception as e:
-            # Any pre-serialization failure must fall back to the raw dict —
-            # the sink serializes dicts itself — never drop the event.
-            logger.debug("stream_sink_preserialize_failed", error=str(e))
-            payload = envelope
-        await sink_registry.publish_all(STREAM_SINK_TOPIC, payload, source="poller", feed=envelope.get("feed"))
+        await sink_registry.publish_all(
+            STREAM_SINK_TOPIC,
+            envelope,
+            source="websocket",
+            feed=envelope.get("feed"),
+        )
         record_stream_sink_dispatch_event("completed")
     except asyncio.CancelledError:
         record_stream_sink_dispatch_event("cancelled")
         raise
     except Exception as exc:
         record_stream_sink_dispatch_event("failed")
-        logger.warning(
+        durable_for_topic = getattr(sink_registry, "has_durable_admission_for", None)
+        durable_admission = (
+            bool(durable_for_topic(STREAM_SINK_TOPIC))
+            if callable(durable_for_topic)
+            else bool(getattr(sink_registry, "has_durable_admission", False))
+        )
+        log = logger.critical if durable_admission else logger.warning
+        log(
             "stream_sink_publish_failed",
             event_id=envelope.get("event_id", "unknown"),
             error=str(exc),
         )
+        if durable_admission:
+            raise StreamTransportFatalError(str(exc)) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -231,6 +235,84 @@ def _create_data_sink_dedup_cache(settings):
         worker_count=settings.data_sink_worker_count,
         operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
     )
+
+
+async def _initialize_data_sink(settings):
+    """Build the configured Heber sink and its matching manifest store."""
+    if not settings.data_sink_enabled:
+        return None, None, None
+
+    from gateway.core.data_sink import DataSinkRegistry
+
+    sink_registry = DataSinkRegistry(
+        queue_size=settings.data_sink_queue_size,
+        worker_count=settings.data_sink_worker_count,
+        producer_block_timeout_seconds=settings.data_sink_producer_block_timeout_seconds,
+    )
+
+    if settings.durable_outbox_enabled:
+        from gateway.core.backfill_manifest import RedisBackfillManifestStore
+        from gateway.core.durable_outbox import SQLiteOutbox
+        from gateway.core.durable_outbox_sink import DurableOutboxSink, LaneRoutedSink
+        from gateway.core.jetstream import JetStreamOutboxPublisher
+        from gateway.core.redis_sink import RedisStreamsSink
+
+        publisher = JetStreamOutboxPublisher(settings)
+        durable_sink = DurableOutboxSink(
+            SQLiteOutbox(
+                settings.durable_outbox_path,
+                max_bytes=settings.durable_outbox_max_bytes,
+            ),
+            publisher,
+            retry_delay_seconds=settings.durable_outbox_retry_seconds,
+        )
+        redis_sink = RedisStreamsSink(
+            redis_url=settings.data_sink_redis_url,
+            max_len=settings.data_sink_max_stream_len,
+            operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
+            pool_size=settings.data_sink_redis_pool_size,
+            worker_count=settings.data_sink_worker_count,
+            failed_buffer_capacity=settings.data_sink_failed_buffer_capacity,
+        )
+        sink = LaneRoutedSink(durable_sink, redis_sink, lanes=settings.jetstream_lanes)
+        try:
+            await publisher.verify_startup(settings.jetstream_lanes)
+        except Exception:
+            await durable_sink.close()
+            await publisher.close()
+            raise
+        sink_registry.register(sink)
+        if not sink.durable_admission:
+            sink_registry.set_dedup_cache(_create_data_sink_dedup_cache(settings))
+        await durable_sink.start()
+        logger.info(
+            "data_sink_initialized",
+            sink=sink.name,
+            jetstream_lanes=settings.jetstream_lanes,
+            outbox_path=str(settings.durable_outbox_path),
+            outbox_max_bytes=settings.durable_outbox_max_bytes,
+        )
+        return sink_registry, publisher, RedisBackfillManifestStore(settings.data_sink_redis_url)
+
+    if not settings.data_sink_redis_url:
+        logger.warning("data_sink_skipped", reason="Missing GATEWAY_DATA_SINK_REDIS_URL")
+        return None, None, None
+
+    from gateway.core.backfill_manifest import RedisBackfillManifestStore
+    from gateway.core.redis_sink import RedisStreamsSink
+
+    redis_sink = RedisStreamsSink(
+        redis_url=settings.data_sink_redis_url,
+        max_len=settings.data_sink_max_stream_len,
+        operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
+        pool_size=settings.data_sink_redis_pool_size,
+        worker_count=settings.data_sink_worker_count,
+        failed_buffer_capacity=settings.data_sink_failed_buffer_capacity,
+    )
+    sink_registry.register(redis_sink)
+    sink_registry.set_dedup_cache(_create_data_sink_dedup_cache(settings))
+    logger.info("data_sink_initialized", sink=redis_sink.name, dedup_enabled=True)
+    return sink_registry, None, RedisBackfillManifestStore(settings.data_sink_redis_url)
 
 
 @asynccontextmanager
@@ -289,6 +371,14 @@ async def lifespan(app: FastAPI):
     await registry.load_from_config(settings.providers_config_path, strict_required=not settings.debug)
     set_registry(registry)
 
+    # Establish durable admission before any eager upstream can emit events.
+    sink_registry, jetstream_publisher, manifest_store = await _initialize_data_sink(settings)
+    if sink_registry is not None:
+        from gateway.core.globals import set_sink_registry
+
+        set_sink_registry(sink_registry)
+        _set_stream_sink_registry(sink_registry)
+
     # Initialize stream multiplexer (only if credentials are set)
     multiplexer = None
     if settings.alpaca_api_key and settings.alpaca_secret_key:
@@ -321,51 +411,24 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("multiplexer_skipped", reason="Missing Alpaca credentials")
 
-    # Initialize data sink for Heber integration
-    sink_registry = None
-    if settings.data_sink_enabled and settings.data_sink_redis_url:
-        from gateway.core.data_sink import DataSinkRegistry
-        from gateway.core.globals import set_sink_registry
-        from gateway.core.redis_sink import RedisStreamsSink
-
-        sink_registry = DataSinkRegistry(
-            queue_size=settings.data_sink_queue_size,
-            worker_count=settings.data_sink_worker_count,
-            producer_block_timeout_seconds=settings.data_sink_producer_block_timeout_seconds,
-        )
-        redis_sink = RedisStreamsSink(
-            redis_url=settings.data_sink_redis_url,
-            max_len=settings.data_sink_max_stream_len,
-            operation_timeout_seconds=settings.data_sink_operation_timeout_seconds,
-            pool_size=settings.data_sink_redis_pool_size,
-            # Tie the XADD pool to the worker count so a worker_count set above
-            # pool_size can't serialize the workers on connection acquisition.
-            worker_count=settings.data_sink_worker_count,
-            failed_buffer_capacity=settings.data_sink_failed_buffer_capacity,
-        )
-        sink_registry.register(redis_sink)
-
-        # Enable dedup cache to prevent duplicate events in Heber
-        dedup_cache = _create_data_sink_dedup_cache(settings)
-        sink_registry.set_dedup_cache(dedup_cache)
-
-        set_sink_registry(sink_registry)
-        _set_stream_sink_registry(sink_registry)
-        logger.info("data_sink_initialized", sink="redis_streams", dedup_enabled=True)
-    elif settings.data_sink_enabled:
-        logger.warning("data_sink_skipped", reason="Missing GATEWAY_DATA_SINK_REDIS_URL")
-
     # Configure backfill engine with provider and sink registries
-    from gateway.core.backfill import get_backfill_engine
+    from gateway.core.backfill import (
+        expected_heber_backfill_binding,
+        get_backfill_engine,
+    )
 
     backfill_engine = get_backfill_engine(
         lightweight_concurrency=settings.backfill_lightweight_concurrency,
         heavyweight_concurrency=settings.backfill_heavyweight_concurrency,
+        max_chunk_records=settings.backfill_max_chunk_records,
     )
     backfill_engine.configure(
         provider_registry=registry,
         sink_registry=sink_registry,
+        manifest_store=manifest_store,
+        expected_heber_binding=expected_heber_backfill_binding(settings),
     )
+    await backfill_engine.start()
     logger.info("backfill_engine_configured")
 
     # SIGHUP handler for hot config reload (PRD 6.5.4)
@@ -421,7 +484,7 @@ async def lifespan(app: FastAPI):
 
     # Start UW background poller (if data sink is enabled)
     uw_poller = None
-    if settings.data_sink_enabled and settings.data_sink_redis_url:
+    if sink_registry is not None:
         from gateway.core.uw_poller import start_uw_poller
 
         uw_poller = await start_uw_poller(
@@ -450,7 +513,7 @@ async def lifespan(app: FastAPI):
 
     # Start Treasury yield background poller (if data sink is enabled and AlphaVantage is ready)
     treasury_poller = None
-    if settings.data_sink_enabled and settings.data_sink_redis_url:
+    if sink_registry is not None:
         av_provider = registry.get("alphavantage")
         av_api_key: str = getattr(av_provider, "_api_key", "") if av_provider is not None else ""
         if av_provider is not None and av_api_key:
@@ -473,7 +536,7 @@ async def lifespan(app: FastAPI):
     # Start Alpaca quotes REST-fallback poller (ensures equity quotes flow to Heber
     # without requiring a WebSocket client to subscribe).
     quotes_poller = None
-    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.quotes_poller_enabled:
+    if sink_registry is not None and settings.quotes_poller_enabled:
         if registry.get("alpaca") is not None:
             from gateway.core.quotes_poller import start_quotes_poller
 
@@ -491,7 +554,7 @@ async def lifespan(app: FastAPI):
 
     # Start Alpaca trades REST-fallback poller (same rationale as quotes_poller).
     trades_poller = None
-    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.trades_poller_enabled:
+    if sink_registry is not None and settings.trades_poller_enabled:
         if registry.get("alpaca") is not None:
             from gateway.core.trades_poller import start_trades_poller
 
@@ -509,7 +572,7 @@ async def lifespan(app: FastAPI):
 
     # Start Alpaca crypto poller (24/7 — no market-hours gate).
     crypto_poller = None
-    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.crypto_poller_enabled:
+    if sink_registry is not None and settings.crypto_poller_enabled:
         if registry.get("alpaca") is not None:
             from gateway.core.crypto_poller import start_crypto_poller
 
@@ -527,7 +590,7 @@ async def lifespan(app: FastAPI):
 
     # Start Alpaca news poller (REST-based; news WS only delivers when a client subscribes).
     news_poller = None
-    if settings.data_sink_enabled and settings.data_sink_redis_url and settings.news_poller_enabled:
+    if sink_registry is not None and settings.news_poller_enabled:
         if registry.get("alpaca") is not None:
             from gateway.core.news_poller import start_news_poller
 
@@ -658,6 +721,8 @@ async def lifespan(app: FastAPI):
     # the bounded queue and tear down workers without losing tail events.
     if sink_registry:
         await sink_registry.close_all()
+    if jetstream_publisher is not None:
+        await jetstream_publisher.close()
 
     if loop_watchdog is not None:
         await loop_watchdog.stop()
