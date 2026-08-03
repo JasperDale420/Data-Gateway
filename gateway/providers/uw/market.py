@@ -298,7 +298,10 @@ class UWMarketMixin(_UWMixinBase):
             prices: list[float] = []
             for row in rows:
                 price = row.get("price")
-                if price in (None, ""):
+                # Vendor rows are untyped JSON: accept only scalars float()
+                # actually converts, so a nested object or null is skipped
+                # instead of reaching float() as an unvalidated value.
+                if not isinstance(price, int | float | str | Decimal) or price == "":
                     continue
                 try:
                     prices.append(float(price))
