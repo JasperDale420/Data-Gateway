@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,15 +15,51 @@ from gateway.api.alpaca import trading
 from gateway.api.alpaca.common import ALPACA_ROUTER_PREFIX
 from gateway.config import Settings
 from gateway.core.cache import InMemoryCache
+from gateway.core.order_ownership import BrokerSymbolState, OrderOwnershipGuard, OwnershipConflict
 from gateway.core.registry import ProviderRegistry
 
 
+class _AllowAllOwnershipGuard:
+    async def freeze(self, _symbol: str, _reason: str) -> None:
+        return None
+
+    async def acquire_fence(self, _symbol: str) -> str:
+        return "test-fence"
+
+    async def renew_fence(self, _symbol: str, _token: str) -> None:
+        return None
+
+    async def release_fence(self, _symbol: str, _token: str) -> None:
+        return None
+
+    async def authorize_submission(self, **_kwargs: Any) -> None:
+        return None
+
+    async def authorize_close(self, **_kwargs: Any) -> None:
+        return None
+
+    async def begin_mutation(self, **_kwargs: Any) -> str:
+        return "test-mutation"
+
+    async def complete_mutation(self, **_kwargs: Any) -> None:
+        return None
+
+    async def verify_reconciliation(self, **_kwargs: Any) -> None:
+        return None
+
+
 @pytest.fixture(autouse=True)
-def _reset_trading_inflight_sem():
+def _reset_trading_inflight_sem(monkeypatch: pytest.MonkeyPatch):
     """Each test gets a fresh event loop — reset the lazy semaphore so it
     binds to the new loop (asyncio.Semaphore in 3.10+ is loop-bound on first
     use) and so per-test settings overrides take effect."""
     trading._reset_trading_inflight_sem_for_tests()
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: _AllowAllOwnershipGuard())
+
+    async def _empty_broker_state(*_args: Any, **_kwargs: Any) -> BrokerSymbolState:
+        return BrokerSymbolState(has_position=False, order_owners=frozenset())
+
+    monkeypatch.setattr(trading, "_reconcile_broker_symbol_state", _empty_broker_state)
     yield
     trading._reset_trading_inflight_sem_for_tests()
 
@@ -36,6 +73,82 @@ class _FakeRegistry:
 
 
 _DEFAULT_TEST_CLIENT_ID = "test-client"
+
+
+class _MemoryRedis:
+    """In-memory stand-in that re-implements the guard's Lua scripts in Python.
+
+    Same caveat as ``_FakeRedis`` in tests/test_order_ownership.py: the Lua
+    never runs here, so this fake must be kept in sync with it by hand.
+    """
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, *, nx: bool = False, px: int | None = None) -> bool | None:
+        if nx and key in self.values:
+            return None
+        self.values[key] = value
+        return True
+
+    async def sadd(self, _key: str, _value: str) -> int:
+        return 1
+
+    async def srem(self, _key: str, _value: str) -> int:
+        return 1
+
+    async def eval(self, script: str, _keys: int, key: str, *args: str | int) -> int:
+        extra_keys = args[: _keys - 1]
+        argv = args[_keys - 1 :]
+        if "-- begin_mutation" in script:
+            raw = self.values.get(key)
+            if raw is None:
+                return 0
+            claim = json.loads(raw)
+            if claim.get("mutation_pending"):
+                return 0
+            claim["mutation_pending"] = str(argv[0])
+            self.values[key] = json.dumps(claim, separators=(",", ":"), sort_keys=True)
+            return 1
+        if "-- complete_mutation" in script:
+            raw = self.values.get(key)
+            if raw is None:
+                return 0
+            claim = json.loads(raw)
+            if claim.get("mutation_pending") != str(argv[0]):
+                return 0
+            del claim["mutation_pending"]
+            self.values[key] = json.dumps(claim, separators=(",", ":"), sort_keys=True)
+            return 1
+        if "SADD" in script:
+            _index_key = extra_keys[0]
+            value, _symbol = argv
+            if key in self.values:
+                return 0
+            self.values[key] = str(value)
+            return 1
+        if "PEXPIRE" in script:
+            return 1 if self.values.get(key) == str(argv[0]) else 0
+        if "-- release_claim" in script:
+            # Mirrors the Lua: match on the decoded owner, never on raw bytes.
+            raw = self.values.get(key)
+            if raw is None:
+                return 0
+            claim = json.loads(raw)
+            if claim.get("owner") != str(argv[0]):
+                return 0
+            if claim.get("mutation_pending") or claim.get("frozen_reason"):
+                return 0
+            del self.values[key]
+            return 1
+        expected = str(argv[0])
+        if self.values.get(key) != expected:
+            return 0
+        del self.values[key]
+        return 1
 
 
 def _owned_coid(client_id: str = _DEFAULT_TEST_CLIENT_ID, suffix: str = "fake") -> str:
@@ -90,6 +203,7 @@ class _FakeProvider:
         return {
             "id": order_id,
             "client_order_id": _owned_coid(self._owner_client_id, order_id),
+            "symbol": "AAPL",
         }
 
     def cancel_order(self, order_id: str) -> bool:
@@ -838,6 +952,125 @@ async def test_create_order_auto_generates_client_order_id_when_caller_omits(
 
 
 @pytest.mark.asyncio
+async def test_create_order_freezes_manual_broker_state_before_provider_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: OrderOwnershipGuard(_MemoryRedis()))
+
+    async def _manual_broker_state(*_args: Any, **_kwargs: Any) -> BrokerSymbolState:
+        return BrokerSymbolState(has_position=False, order_owners=frozenset({None}))
+
+    monkeypatch.setattr(trading, "_reconcile_broker_symbol_state", _manual_broker_state)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "GW-E4301"
+
+
+@pytest.mark.asyncio
+async def test_post_write_reconciliation_conflict_freezes_before_releasing_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    redis = _MemoryRedis()
+
+    class _PostWriteConflictGuard(OrderOwnershipGuard):
+        async def verify_reconciliation(self, **_kwargs: Any) -> None:
+            raise OwnershipConflict("post_write_drift")
+
+    ownership_guard = _PostWriteConflictGuard(redis)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 409
+    assert "may have completed" in exc.value.detail["message"]
+    claim = json.loads(redis.values[ownership_guard.claim_key("AAPL")])
+    assert claim["frozen_reason"] == "post_write_reconciliation_post_write_drift"
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_reads_open_orders_before_positions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ordering is a safety property, not a style choice.
+
+    A fill moves a symbol out of the open-order list and into the position
+    list. Reading positions first leaves a window where a filling order is in
+    neither result, which would present a live owner's symbol as flat and let
+    another client take the claim and flatten it.
+    """
+    calls: list[str] = []
+
+    class _OrderTrackingProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            calls.append("orders")
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            calls.append("positions")
+            return []
+
+    # The autouse fixture stubs out _reconcile_broker_symbol_state; drop that
+    # so this test exercises the real reconciliation.
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_OrderTrackingProvider(), "AAPL")
+
+    assert calls == ["orders", "positions"]
+    assert state.has_position is False
+    assert state.order_owners == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_create_order_submits_the_canonical_occ_contract_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _CapturingProvider(_FakeProvider):
+        def create_order(self, **kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"id": "order-1"}
+
+    provider = _CapturingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: OrderOwnershipGuard(_MemoryRedis()))
+
+    response = await trading.create_order(
+        symbol="aapl 2026-01-16 $200 call",
+        side="buy",
+        qty=1,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert captured["symbol"] == "AAPL260116C00200000"
+    assert response["meta"]["symbol"] == "AAPL260116C00200000"
+
+
+@pytest.mark.asyncio
 async def test_create_order_passes_order_context_to_failure_logger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1102,20 +1335,18 @@ async def test_create_order_value_error_path_does_not_surface_504_detail(
 
 # ---------------------------------------------------------------------------
 # close_position idempotency — Alpaca's ClosePositionRequest does not accept
-# client_order_id, so the retry contract surfaced in the 504 body must point
-# the caller at GET /positions/<symbol> instead of a Alpaca-side dedup key.
+# client_order_id, so a timeout must freeze and direct the caller to broker
+# reconciliation instead of treating a position GET as proof that retry is safe.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_close_position_504_timeout_includes_get_position_retry_hint(
+async def test_close_position_504_timeout_requires_broker_reconciliation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Critical retry contract: when close_position times out, the caller
-    needs the symbol and a pointer to GET /positions/<symbol> so they can
-    resolve "did the close actually happen?" before retrying. Without this
-    the caller is flying blind — they might leave a position open thinking
-    the close failed, or double-close if the position was still partial."""
+    needs broker reconciliation instructions. A position GET alone cannot
+    distinguish a pending or partial close, so retry is deliberately frozen."""
 
     class _SlowProvider:
         def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> dict[str, Any]:
@@ -1161,12 +1392,13 @@ async def test_close_position_504_timeout_includes_get_position_retry_hint(
     assert detail["code"] == "GW-E5004"
     # Symbol is upper-cased so the caller's follow-up GET hits the same key.
     assert detail["symbol"] == "AAPL"
-    assert detail["retry_with"] == "get_position"
+    assert detail["retry_with"] == "broker_reconciliation"
     # The retry hint must point at the ACTUAL mounted prefix
     # (``/api/v1/alpaca``) — see test_retry_hint_uses_actual_router_prefix
     # for the static-vs-dynamic guard against drift.
     assert f"GET {ALPACA_ROUTER_PREFIX}/positions/AAPL" in detail["retry_hint"]
-    assert "404 means" in detail["retry_hint"]
+    assert f"GET {ALPACA_ROUTER_PREFIX}/orders?status=open&symbols=AAPL" in detail["retry_hint"]
+    assert "do not retry" in detail["retry_hint"]
 
 
 @pytest.mark.asyncio
@@ -1201,7 +1433,7 @@ async def test_close_position_success_meta_includes_symbol(
     # Provider sees the un-uppercased value — its own normalization layer
     # handles that (see AlpacaTradingMixin.close_position which calls
     # ``symbol.upper()`` before hitting the SDK).
-    assert captured["symbol"] == "msft"
+    assert captured["symbol"] == "MSFT"
 
 
 @pytest.mark.asyncio
@@ -1344,8 +1576,7 @@ async def test_create_order_504_retry_hint_uses_actual_router_prefix(
 async def test_close_position_504_retry_hint_uses_actual_router_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mirror of the create_order variant — the close_position hint must
-    point at GET ``{ALPACA_ROUTER_PREFIX}/positions/<symbol>``."""
+    """The close-position hint must use the mounted broker-reconciliation URLs."""
 
     class _SlowProvider:
         def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> dict[str, Any]:
@@ -1601,6 +1832,30 @@ async def test_close_position_non_timeout_5xx_preserves_symbol_in_detail(
 
     provider = _BoomProvider()
     route_registry = _FakeRegistry({"alpaca": provider})
+    redis = _MemoryRedis()
+
+    class _ReleaseObservingGuard(OrderOwnershipGuard):
+        def __init__(self) -> None:
+            super().__init__(redis)
+            self.release_saw_frozen_claim = False
+
+        async def release_fence(self, symbol: str, token: str) -> None:
+            claim = json.loads(redis.values[self.claim_key(symbol)])
+            self.release_saw_frozen_claim = "frozen_reason" in claim
+            await super().release_fence(symbol, token)
+
+    ownership_guard = _ReleaseObservingGuard()
+    await ownership_guard.authorize_submission(
+        client_id="test-client",
+        symbol="MSFT",
+        broker_state=BrokerSymbolState(has_position=False, order_owners=frozenset()),
+    )
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    async def _open_position(*_args: Any, **_kwargs: Any) -> BrokerSymbolState:
+        return BrokerSymbolState(has_position=True, order_owners=frozenset())
+
+    monkeypatch.setattr(trading, "_reconcile_broker_symbol_state", _open_position)
 
     from gateway.api.alpaca import common as _common
 
@@ -1628,8 +1883,15 @@ async def test_close_position_non_timeout_5xx_preserves_symbol_in_detail(
     detail = exc.value.detail
     assert isinstance(detail, dict)
     assert detail["symbol"] == "MSFT"
-    assert detail["retry_with"] == "get_position"
+    assert detail["retry_with"] == "broker_reconciliation"
     assert f"GET {ALPACA_ROUTER_PREFIX}/positions/MSFT" in detail["retry_hint"]
+    assert ownership_guard.release_saw_frozen_claim is True
+    with pytest.raises(OwnershipConflict, match="claim_frozen_after_ambiguous_broker_mutation"):
+        await ownership_guard.authorize_close(
+            client_id="test-client",
+            symbol="MSFT",
+            broker_state=BrokerSymbolState(has_position=True, order_owners=frozenset()),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2087,7 +2349,7 @@ async def test_replace_order_non_timeout_5xx_preserves_client_order_id_in_detail
         def get_order(self, order_id: str) -> dict[str, Any]:
             # Ownership pre-check sees an order owned by ``test-client``
             # — passes through to the replace call which then 503s.
-            return {"id": order_id, "client_order_id": f"c-test-client-{order_id}"}
+            return {"id": order_id, "client_order_id": f"c-test-client-{order_id}", "symbol": "AAPL"}
 
         def replace_order(self, order_id: str, **kwargs: Any) -> Any:
             request = httpx.Request("PATCH", f"https://api.alpaca.markets/v2/orders/{order_id}")
@@ -2224,7 +2486,7 @@ def test_replace_order_504_via_http_layer_contains_correct_retry_hint_url(
     # owned by ``test-trader`` so the pre-check passes and the test
     # reaches the slow-replace timeout path.
     def _owned_get_order(order_id: str) -> dict[str, Any]:
-        return {"id": order_id, "client_order_id": f"c-test-trader-{order_id}"}
+        return {"id": order_id, "client_order_id": f"c-test-trader-{order_id}", "symbol": "AAPL"}
 
     test_registry.get.return_value.replace_order = _slow_replace
     test_registry.get.return_value.get_order = _owned_get_order
@@ -2546,7 +2808,9 @@ def _stub_trading_provider(test_registry) -> Any:
     # and verifies its client_order_id prefix. The granted authz client is
     # ``m04-granted-trader``, so return an order it owns or the pre-check 404s
     # before the operation under test runs.
-    provider.get_order = MagicMock(return_value={"id": "ord-m04", "client_order_id": "c-m04-granted-trader-dg-stub"})
+    provider.get_order = MagicMock(
+        return_value={"id": "ord-m04", "client_order_id": "c-m04-granted-trader-dg-stub", "symbol": "AAPL"}
+    )
     return provider
 
 
@@ -3356,7 +3620,7 @@ async def test_replace_order_idempotent_retry_does_not_double_prefix_already_own
     class _CapturingProvider(_FakeProvider):
         def get_order(self, order_id: str) -> dict[str, Any]:
             # Order owned by cerberus so the pre-check passes.
-            return {"id": order_id, "client_order_id": f"c-cerberus-{order_id}"}
+            return {"id": order_id, "client_order_id": f"c-cerberus-{order_id}", "symbol": "AAPL"}
 
         def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
             captured.update(kwargs)
@@ -3435,7 +3699,7 @@ async def test_replace_order_rejects_foreign_prefixed_caller_key(
 
     class _CountingProvider(_FakeProvider):
         def get_order(self, order_id: str) -> dict[str, Any]:
-            return {"id": order_id, "client_order_id": f"c-cerberus-{order_id}"}
+            return {"id": order_id, "client_order_id": f"c-cerberus-{order_id}", "symbol": "AAPL"}
 
         def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
             replace_calls.append((order_id, kwargs))
