@@ -280,8 +280,7 @@ def test_http_timeout_cap_stays_below_the_fence_ttl() -> None:
 
     fence_ttl_seconds = OrderOwnershipGuard._FENCE_TTL_MS / 1000.0
     assert fence_ttl_seconds > _MAX_TRADING_HTTP_TIMEOUT_SECONDS, (
-        f"HTTP timeout cap {_MAX_TRADING_HTTP_TIMEOUT_SECONDS}s must stay below "
-        f"the fence TTL {fence_ttl_seconds}s"
+        f"HTTP timeout cap {_MAX_TRADING_HTTP_TIMEOUT_SECONDS}s must stay below the fence TTL {fence_ttl_seconds}s"
     )
     # Margin big enough that a write dispatched just before expiry still settles.
     assert fence_ttl_seconds - _MAX_TRADING_HTTP_TIMEOUT_SECONDS >= 5.0
