@@ -298,7 +298,7 @@ class UWMarketMixin(_UWMixinBase):
             prices: list[float] = []
             for row in rows:
                 price = row.get("price")
-                if price in (None, ""):
+                if price is None or price == "":
                     continue
                 try:
                     prices.append(float(price))
