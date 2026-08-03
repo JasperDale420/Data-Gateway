@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gateway.main import app
+from gateway.schemas import NormalizedIVRank
 
 # Sample data for mocking provider responses
 MOCK_BAR = {
@@ -267,18 +268,30 @@ class TestUWEndpointsValidation:
         response = client.get("/api/v1/uw/AAPL/spot-exposures", headers=auth_headers)
         assert response.status_code != 500, f"Got 500: {response.text}"
 
-    def test_uw_iv_rank(self, client: TestClient, auth_headers: dict, mock_uw_provider):
-        """GET /api/v1/uw/{symbol}/iv-rank returns valid response."""
-        response = client.get("/api/v1/uw/AAPL/iv-rank", headers=auth_headers)
-        # 404 is valid (no data), 500 is not
-        assert response.status_code != 500, f"Got 500: {response.text}"
+    def test_uw_iv_rank(
+        self,
+        client: TestClient,
+        auth_headers: dict,
+        mock_uw_provider,
+        test_authenticator,
+    ):
+        """Both IV-rank aliases preserve official UW provenance fields."""
+        test_authenticator.get_client("test").permissions.providers.append("unusual_whales")
+        mock_uw_provider.get_iv_rank = AsyncMock(
+            return_value=NormalizedIVRank(
+                symbol="AAPL",
+                iv_rank=Decimal("42.0"),
+                date="2026-07-31",
+                updated_at="2026-07-31T22:35:24.143985Z",
+                provider="unusual_whales",
+            )
+        )
 
-    def test_uw_iv_rank_options_alias(self, client: TestClient, auth_headers: dict, mock_uw_provider):
-        """GET /api/v1/uw/options/{symbol}/iv-rank resolves to the IV rank handler."""
-        mock_uw_provider.get_iv_rank = AsyncMock(return_value={"symbol": "AAPL", "iv_rank": 42.0})
-        response = client.get("/api/v1/uw/options/AAPL/iv-rank", headers=auth_headers)
-        assert response.status_code != 404, f"Got {response.status_code}: {response.text}"
-        assert response.status_code in (200, 403), f"Got {response.status_code}: {response.text}"
+        for path in ("/api/v1/uw/AAPL/iv-rank", "/api/v1/uw/options/AAPL/iv-rank"):
+            response = client.get(path, headers=auth_headers)
+            assert response.status_code == 200, f"Got {response.status_code}: {response.text}"
+            assert response.json()["data"]["date"] == "2026-07-31"
+            assert response.json()["data"]["updated_at"] == "2026-07-31T22:35:24.143985Z"
 
     def test_uw_stock_info(self, client: TestClient, auth_headers: dict, mock_uw_provider):
         """GET /api/v1/uw/stock/{symbol}/info returns valid response."""

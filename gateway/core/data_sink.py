@@ -24,7 +24,8 @@ silent drops per minute around opening bell with no recovery path.
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from gateway.core.circuit_breaker import CircuitOpenError, CircuitState, get_circuit_breaker
 from gateway.core.log_throttle import LogThrottle
@@ -81,6 +82,16 @@ class DataSink(ABC):
     def record_publish_metrics(self) -> bool:
         """Whether the sink records publish metrics internally."""
         return False
+
+    @property
+    def durable_admission(self) -> bool:
+        """Whether ``publish`` durably admits data before returning."""
+        return False
+
+    def is_durable_topic(self, topic: str) -> bool:
+        """Whether this topic must commit before producer success."""
+        del topic
+        return self.durable_admission
 
     def buffer_event(self, topic: str, data: dict[str, Any] | str | bytes) -> bool:
         """Spill an undeliverable event into a retry buffer.
@@ -177,8 +188,21 @@ class DataSinkRegistry:
     def register(self, sink: DataSink) -> None:
         """Register a data sink."""
         self._sinks.append(sink)
-        self._ensure_workers(sink)
+        if not self._is_durable(sink):
+            self._ensure_workers(sink)
         logger.info("data_sink_registered", sink=sink.name)
+
+    @staticmethod
+    def _is_durable(sink: DataSink) -> bool:
+        """Keep capability detection compatible with existing duck-typed sinks."""
+        return bool(getattr(sink, "durable_admission", False))
+
+    @classmethod
+    def _is_durable_for(cls, sink: DataSink, topic: str) -> bool:
+        checker = getattr(sink, "is_durable_topic", None)
+        if callable(checker):
+            return bool(checker(topic))
+        return cls._is_durable(sink)
 
     def _ensure_workers(self, sink: DataSink) -> None:
         """Lazily create the per-sink queue and worker pool."""
@@ -212,6 +236,15 @@ class DataSinkRegistry:
     def sink_count(self) -> int:
         """Return number of registered sinks."""
         return len(self._sinks)
+
+    @property
+    def has_durable_admission(self) -> bool:
+        """Return whether any registered sink commits before returning."""
+        return any(self._is_durable(sink) for sink in self._sinks)
+
+    def has_durable_admission_for(self, topic: str) -> bool:
+        """Return whether ``topic`` commits before returning."""
+        return any(self._is_durable_for(sink, topic) for sink in self._sinks)
 
     def get_dedup_stats(self) -> dict[str, int]:
         """Return deduplication statistics."""
@@ -317,9 +350,39 @@ class DataSinkRegistry:
             },
         }
 
-    def can_accept_low_priority(self, sink_name: str, *, max_utilization: float) -> bool:
+    def get_transport_status(self) -> dict[str, Any]:
+        """Expose durable admission separately from asynchronous broker delivery."""
+        statuses: dict[str, Any] = {}
+        for sink in self._sinks:
+            snapshot = getattr(sink, "transport_status", None)
+            if callable(snapshot):
+                statuses[sink.name] = snapshot()
+        return statuses
+
+    def can_accept_low_priority(
+        self,
+        sink_name: str,
+        *,
+        max_utilization: float,
+        topic: str | None = None,
+    ) -> bool:
         """Return whether a low-priority publish may enter ``sink_name``'s queue."""
-        if not self._enabled or not self._sinks or sink_name not in self._sink_queues:
+        if not self._enabled or not self._sinks:
+            return False
+        durable_sink = next(
+            (
+                candidate
+                for candidate in self._sinks
+                if (self._is_durable_for(candidate, topic) if topic is not None else self._is_durable(candidate))
+            ),
+            None,
+        )
+        if durable_sink is not None:
+            capacity_check = getattr(durable_sink, "can_accept_low_priority", None)
+            if callable(capacity_check):
+                return bool(capacity_check(max_utilization=max_utilization))
+            return True
+        if sink_name not in self._sink_queues:
             return False
         return self.get_queue_utilization(sink_name) < max_utilization
 
@@ -342,8 +405,13 @@ class DataSinkRegistry:
         if not self._enabled or not self._sinks:
             return
 
+        # Durable sinks own exact idempotency in their on-disk admission
+        # store. Redis-backed best-effort dedup must never skip an event before
+        # that durable boundary.
+        has_durable_sink = any(self._is_durable_for(sink, topic) for sink in self._sinks)
+
         # Dedup check: skip if event_id already published (only for dicts)
-        if isinstance(data, dict):
+        if isinstance(data, dict) and not has_durable_sink:
             event_id = data.get("event_id")
             if event_id and self._dedup_cache:
                 self._dedup_stats["checked"] += 1
@@ -372,6 +440,17 @@ class DataSinkRegistry:
                     )
 
         for sink in self._sinks:
+            if self._is_durable_for(sink, topic):
+                accepted = await sink.publish(topic, data)
+                if not accepted:
+                    raise RuntimeError(f"durable_sink_admission_failed:{sink.name}")
+                self._publish_stats["scheduled"] += 1
+                self._publish_stats["queued"] += 1
+                self._record_partitioned_publish_stat("queued", data, source=source, feed=feed)
+                if not sink.record_publish_metrics:
+                    record_sink_publish(sink=sink.name, topic=topic, success=True)
+                continue
+
             # Check circuit state BEFORE enqueueing. Otherwise events queued
             # during a burst would still be picked up by workers that
             # immediately hit CircuitOpenError, wasting queue capacity and
@@ -607,46 +686,68 @@ class DataSinkRegistry:
         # existing callers (option_capture, backfill) rely on.
         total = 0
         for sink in self._sinks:
-            try:
-                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
-                if breaker.state == CircuitState.OPEN:
-                    if hasattr(sink, "buffer_event"):
-                        for msg_topic, msg_data in messages:
-                            sink.buffer_event(msg_topic, msg_data)
-                    continue
-            except RuntimeError as e:
-                # Breaker lookup only fails on event-loop/lock teardown races;
-                # fail open and publish rather than silently dropping the batch.
-                logger.debug("data_sink_breaker_precheck_failed", sink=sink.name, error=str(e))
+            indexed_messages = await self._batch_candidates(sink, messages)
+            if not indexed_messages:
+                continue
+            sink_messages = [message for _, message in indexed_messages]
             if hasattr(sink, "publish_batch_results"):
                 # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
-                    sink_results = await sink.publish_batch_results(messages)
+                    sink_results = await sink.publish_batch_results(sink_messages)
                 except Exception:
                     logger.exception(
                         "data_sink_batch_publish_failed",
                         sink=sink.name,
-                        count=len(messages),
+                        count=len(sink_messages),
                     )
                     sink_results = []
                 total += sum(1 for ok in sink_results if ok)
             elif hasattr(sink, "publish_batch"):
                 # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
-                    total += await sink.publish_batch(messages)
+                    total += await sink.publish_batch(sink_messages)
                 except Exception:
                     logger.exception(
                         "data_sink_batch_publish_failed",
                         sink=sink.name,
-                        count=len(messages),
+                        count=len(sink_messages),
                     )
             else:
-                for topic, data in messages:
+                for _index, (topic, data) in indexed_messages:
                     task = asyncio.create_task(self._safe_publish(sink, topic, data))
                     self._background_tasks.add(task)
                     task.add_done_callback(self._background_tasks.discard)
                     total += 1  # Optimistic
         return total
+
+    async def _batch_candidates(
+        self,
+        sink: DataSink,
+        messages: list[tuple[str, dict[str, Any]]],
+    ) -> list[tuple[int, tuple[str, dict[str, Any]]]]:
+        """Filter only volatile messages when their shared circuit is open."""
+        indexed = list(enumerate(messages))
+        volatile = [item for item in indexed if not self._is_durable_for(sink, item[1][0])]
+        if not volatile:
+            return indexed
+        try:
+            breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
+            if breaker.state != CircuitState.OPEN:
+                return indexed
+        except RuntimeError as e:
+            logger.debug("data_sink_breaker_precheck_failed", sink=sink.name, error=str(e))
+            return indexed
+
+        buffer = getattr(sink, "buffer_event", None)
+        if callable(buffer):
+            for _index, (topic, data) in volatile:
+                buffer(topic, data)
+        logger.warning(
+            "data_sink_batch_circuit_open_buffered" if callable(buffer) else "data_sink_batch_circuit_open",
+            sink=sink.name,
+            count=len(volatile),
+        )
+        return [item for item in indexed if self._is_durable_for(sink, item[1][0])]
 
     async def publish_all_batch_results(
         self,
@@ -680,56 +781,41 @@ class DataSinkRegistry:
         any_success = [False] * len(messages)
 
         for sink in self._sinks:
-            # Check circuit state before any publish attempt
-            try:
-                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
-                if breaker.state == CircuitState.OPEN:
-                    if hasattr(sink, "buffer_event"):
-                        for msg_topic, msg_data in messages:
-                            sink.buffer_event(msg_topic, msg_data)
-                        logger.warning(
-                            "data_sink_batch_circuit_open_buffered",
-                            sink=sink.name,
-                            count=len(messages),
-                        )
-                    else:
-                        logger.warning(
-                            "data_sink_batch_circuit_open",
-                            sink=sink.name,
-                            count=len(messages),
-                        )
-                    continue
-            except RuntimeError as e:
-                # Breaker lookup only fails on event-loop/lock teardown races;
-                # fail open and publish rather than silently dropping the batch.
-                logger.debug("data_sink_breaker_precheck_failed", sink=sink.name, error=str(e))
+            indexed_messages = await self._batch_candidates(sink, messages)
+            if not indexed_messages:
+                continue
+            sink_messages = [message for _, message in indexed_messages]
 
             if hasattr(sink, "publish_batch_results"):
                 # Preferred path: sink returns per-message booleans, so
                 # partial failure is observable.
                 # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
-                    sink_results = await sink.publish_batch_results(messages)
+                    sink_results = await sink.publish_batch_results(sink_messages)
                 except Exception:
                     logger.exception(
                         "data_sink_batch_publish_failed",
                         sink=sink.name,
-                        count=len(messages),
+                        count=len(sink_messages),
                     )
-                    sink_results = [False] * len(messages)
-                if len(sink_results) != len(messages):
+                    sink_results = [False] * len(sink_messages)
+                if len(sink_results) != len(sink_messages):
                     logger.error(
                         "data_sink_batch_results_length_mismatch",
                         sink=sink.name,
-                        expected=len(messages),
+                        expected=len(sink_messages),
                         actual=len(sink_results),
                     )
                     # Defensive: treat any missing entries as failure
-                    sink_results = list(sink_results) + [False] * (len(messages) - len(sink_results))
-                    sink_results = sink_results[: len(messages)]
-                for i, ok in enumerate(sink_results):
+                    sink_results = list(sink_results) + [False] * (len(sink_messages) - len(sink_results))
+                    sink_results = sink_results[: len(sink_messages)]
+                for (original_index, _message), ok in zip(
+                    indexed_messages,
+                    sink_results,
+                    strict=True,
+                ):
                     if ok:
-                        any_success[i] = True
+                        any_success[original_index] = True
             elif hasattr(sink, "publish_batch"):
                 # Legacy path: only an aggregate count is available.
                 # Approximating per-message success from a count is unsafe
@@ -739,17 +825,17 @@ class DataSinkRegistry:
                 # can retry. When count == len(messages) all succeeded.
                 # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
-                    count = await sink.publish_batch(messages)
+                    count = await sink.publish_batch(sink_messages)
                 except Exception:
                     logger.exception(
                         "data_sink_batch_publish_failed",
                         sink=sink.name,
-                        count=len(messages),
+                        count=len(sink_messages),
                     )
                     count = 0
-                if count == len(messages):
-                    for i in range(len(messages)):
-                        any_success[i] = True
+                if count == len(sink_messages):
+                    for original_index, _message in indexed_messages:
+                        any_success[original_index] = True
                 elif count > 0:
                     # Partial failure surfaced as an opaque count -- we
                     # cannot tell which messages succeeded. Refuse to mark
@@ -760,7 +846,7 @@ class DataSinkRegistry:
                     logger.warning(
                         "data_sink_batch_partial_failure_opaque",
                         sink=sink.name,
-                        expected=len(messages),
+                        expected=len(sink_messages),
                         published=count,
                     )
             else:
@@ -768,11 +854,11 @@ class DataSinkRegistry:
                 # (background); the legacy semantics were "optimistic" --
                 # preserve that for back-compat callers that explicitly
                 # request per-message results from a non-batch sink.
-                for i, (topic, data) in enumerate(messages):
+                for original_index, (topic, data) in indexed_messages:
                     task = asyncio.create_task(self._safe_publish(sink, topic, data))
                     self._background_tasks.add(task)
                     task.add_done_callback(self._background_tasks.discard)
-                    any_success[i] = True
+                    any_success[original_index] = True
 
         return any_success
 
@@ -800,42 +886,25 @@ class DataSinkRegistry:
         succeeded: set[int] | None = None
 
         for sink in self._sinks:
-            # Check circuit state before any publish attempt.
-            try:
-                breaker = await get_circuit_breaker(f"data_sink:{sink.name}")
-                if breaker.state == CircuitState.OPEN:
-                    if hasattr(sink, "buffer_event"):
-                        for msg_topic, msg_data in messages:
-                            sink.buffer_event(msg_topic, msg_data)
-                        logger.warning(
-                            "data_sink_batch_circuit_open_buffered",
-                            sink=sink.name,
-                            count=len(messages),
-                        )
-                    else:
-                        logger.warning(
-                            "data_sink_batch_circuit_open",
-                            sink=sink.name,
-                            count=len(messages),
-                        )
-                    # Circuit-open buffering is not a confirmed Redis write, so
-                    # nothing landed for this sink — intersect to the empty set.
-                    succeeded = set() if succeeded is None else (succeeded & set())
-                    continue
-            except RuntimeError as e:
-                # Breaker lookup only fails on event-loop/lock teardown races;
-                # fail open and publish rather than silently dropping the batch.
-                logger.debug("data_sink_breaker_precheck_failed", sink=sink.name, error=str(e))
+            indexed_messages = await self._batch_candidates(sink, messages)
+            candidate_indices = {index for index, _message in indexed_messages}
+            succeeded = candidate_indices if succeeded is None else (succeeded & candidate_indices)
+            if not indexed_messages:
+                continue
+            sink_messages = [message for _, message in indexed_messages]
 
             if hasattr(sink, "publish_batch_indexed"):
                 # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
-                    sink_indices = await sink.publish_batch_indexed(messages)
+                    relative_indices = await sink.publish_batch_indexed(sink_messages)
+                    sink_indices = {
+                        indexed_messages[index][0] for index in relative_indices if 0 <= index < len(indexed_messages)
+                    }
                 except Exception:
                     logger.exception(
                         "data_sink_batch_publish_failed",
                         sink=sink.name,
-                        count=len(messages),
+                        count=len(sink_messages),
                     )
                     sink_indices = set()
                 succeeded = sink_indices if succeeded is None else (succeeded & sink_indices)
@@ -849,27 +918,27 @@ class DataSinkRegistry:
                 # per-event Heber/WS parity the indexed contract guarantees.
                 # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with explicit failed-result fallback
                 try:
-                    count = await sink.publish_batch(messages)
+                    count = await sink.publish_batch(sink_messages)
                 except Exception:
                     logger.exception(
                         "data_sink_batch_publish_failed",
                         sink=sink.name,
-                        count=len(messages),
+                        count=len(sink_messages),
                     )
                     count = 0
-                if count >= len(messages):
-                    confirmed = all_indices
+                if count >= len(sink_messages):
+                    confirmed = candidate_indices
                 else:
                     confirmed = set()
                     logger.warning(
                         "data_sink_count_only_partial_unconfirmed",
                         sink=sink.name,
                         published=count,
-                        total=len(messages),
+                        total=len(sink_messages),
                     )
                 succeeded = confirmed if succeeded is None else (succeeded & confirmed)
             else:
-                for topic, data in messages:
+                for _index, (topic, data) in indexed_messages:
                     task = asyncio.create_task(self._safe_publish(sink, topic, data))
                     self._background_tasks.add(task)
                     task.add_done_callback(self._background_tasks.discard)
@@ -878,6 +947,29 @@ class DataSinkRegistry:
         # only fire-and-forget publish fallbacks), fall back to optimistic
         # all-indices so callers don't drop everything.
         return succeeded if succeeded is not None else all_indices
+
+    async def publish_flow_with_watch_batch_indexed(
+        self,
+        messages: list[tuple[str, dict[str, Any]]],
+    ) -> set[int]:
+        """Atomically admit flow writer and watch copies for durable live lanes."""
+        if not self._enabled or not self._sinks or not messages:
+            return set()
+        succeeded: set[int] | None = None
+        for sink in self._sinks:
+            publish = getattr(sink, "publish_flow_with_watch_batch_results", None)
+            if not callable(publish):
+                continue
+            publish_flow = cast(
+                Callable[[list[tuple[str, dict[str, Any]]]], Awaitable[list[bool]]],
+                publish,
+            )
+            results = await publish_flow(messages)
+            if len(results) != len(messages):
+                raise RuntimeError("flow writer/watch admission returned an invalid result length")
+            indices = {index for index, accepted in enumerate(results) if accepted}
+            succeeded = indices if succeeded is None else succeeded & indices
+        return succeeded or set()
 
     async def _safe_publish(self, sink: DataSink, topic: str, data: dict[str, Any] | str | bytes) -> None:
         """Publish with error handling."""

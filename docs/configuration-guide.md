@@ -81,7 +81,7 @@ Cache keys include the `X-Gateway-Key` client id (per-client scoping prevents cr
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GATEWAY_DATA_SINK_ENABLED` | `false` | Master switch for Redis Streams sink |
+| `GATEWAY_DATA_SINK_ENABLED` | `false` | Master switch for Heber event egress |
 | `GATEWAY_DATA_SINK_REDIS_URL` | — | Redis URL for the sink (often the same Redis as the cache) |
 | `GATEWAY_DATA_SINK_REDIS_POOL_SIZE` | `32` | Redis connection pool size; must be >= `GATEWAY_DATA_SINK_WORKER_COUNT` |
 | `GATEWAY_DATA_SINK_MAX_STREAM_LEN` | `100000` | `heber:events` MAXLEN trim cap (compose runs `500000`; move in lockstep with Redis `maxmemory`) |
@@ -95,8 +95,25 @@ Cache keys include the `X-Gateway-Key` client id (per-client scoping prevents cr
 | `GATEWAY_REST_SINK_EXCLUDED_FEEDS` | `greek_exposure,iv_rank,iv_term_structure,short_data,ftd,flow_alerts,darkpool` | Feeds NOT published to the live Heber stream via REST (prevents duplicates with pollers) |
 | `GATEWAY_REST_SINK_LOW_PRIORITY_MAX_QUEUE_UTILIZATION` | `0.70` | Shed low-priority REST publishes above this queue utilization |
 | `GATEWAY_STRICT_ENVELOPES` | `false` | Raise on envelope-wrap failure (default: log and continue) |
+| `GATEWAY_DURABLE_OUTBOX_ENABLED` | `false` | Use the SQLite admission outbox and JetStream instead of the Redis event stream |
+| `GATEWAY_DURABLE_OUTBOX_PATH` | `state/outbox/events.sqlite3` | Persistent SQLite outbox path |
+| `GATEWAY_DURABLE_OUTBOX_MAX_BYTES` | `21474836480` | Pending-backlog budget; admission fails closed and never evicts at the limit |
+| `GATEWAY_DURABLE_OUTBOX_RETRY_SECONDS` | `1.0` | Delay before retrying the oldest broker-unacknowledged row |
+| `GATEWAY_JETSTREAM_ENABLED` | `false` | Enable JetStream stream provisioning and publication |
+| `GATEWAY_JETSTREAM_LANES` | `backfill` | Route `backfill`, `live`, or `both` lanes through the durable outbox; other lanes stay on Redis |
+| `GATEWAY_JETSTREAM_URL` | `nats://jetstream:4222` | NATS server URL |
+| `GATEWAY_JETSTREAM_USERNAME` / `GATEWAY_JETSTREAM_PASSWORD` | — | Required JetStream credentials |
+| `GATEWAY_REDIS_BACKFILL_CONSUMER_GROUP` | `heber-backfill-writers` | Exact Redis consumer group required in Heber's backfill readiness record |
+| `GATEWAY_JETSTREAM_BACKFILL_DURABLE_NAME` | `heber-backfill-writers` | Exact JetStream durable consumer required in Heber's backfill readiness record |
+| `GATEWAY_BACKFILL_MAX_CHUNK_RECORDS` | `5000` | Reject a provider chunk before publication when its record/envelope count exceeds this bound |
 
 See [system-architecture.md §6](system-architecture.md#6-data-sink-heber-integration) for the failure model. On producer timeout the event is **spilled to the sink's failover buffer** (recoverable, logged WARNING with `spilled_to_buffer=True`) rather than dropped outright; only a buffer refusal counts as true loss (CRITICAL, `producer_timeout_loss`). Drops surface as `gateway_sink_producer_timeout_drops_total{sink}` (alert: `SinkProducerTimeoutDrops`). Buffer evictions surface as `gateway_sink_buffer_evictions_total{sink}` (alert: `SinkBufferEvictionsActive`).
+
+The durable path is opt-in. Producers wait only for the local SQLite commit;
+JetStream outages build a bounded on-disk backlog instead of an in-memory
+buffer. `gateway_durable_outbox_utilization` warns at 60%, sheds low-priority
+work at 70%, and pages at 90%; 100% rejects new admission without deleting old
+events.
 
 **Backfill stream isolation:** backfill-engine publishes and all UW EOD per-ticker feeds route to `heber:events:backfill` with their own MAXLEN cap; live 5-min feeds (flow_alerts, darkpool, market/sector tide) stay on `heber:events`. (Added after a 976K-record backfill overran the shared cap on 2026-07-19 and self-evicted un-read UW feeds.)
 

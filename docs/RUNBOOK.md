@@ -211,6 +211,43 @@ curl http://localhost:8080/health/ready
 # "sinks": "ok" should appear in checks
 ```
 
+For a JetStream canary, leave Redis available for the small backfill-proof
+control plane and set matching credentials in Gateway, the broker, and Heber:
+
+```env
+GATEWAY_DURABLE_OUTBOX_ENABLED=true
+GATEWAY_JETSTREAM_ENABLED=true
+GATEWAY_JETSTREAM_LANES=backfill
+GATEWAY_JETSTREAM_USERNAME=gateway
+GATEWAY_JETSTREAM_PASSWORD=<secret>
+NATS_USER=gateway
+NATS_PASSWORD=<secret>
+```
+
+Start the broker with `docker compose --profile jetstream up -d jetstream`,
+then recreate Gateway. In Heber, switch only the backfill consumer:
+
+```bash
+HEBER_LIVE_INGEST_TRANSPORT=redis \
+HEBER_BACKFILL_INGEST_TRANSPORT=jetstream \
+docker compose up -d heber-consumer heber-backfill-consumer
+```
+
+This keeps `heber:events` live traffic on Redis while only
+`heber:events:backfill` enters the durable outbox. Promote live traffic later
+by setting `GATEWAY_JETSTREAM_LANES=both` and
+`HEBER_LIVE_INGEST_TRANSPORT=jetstream`.
+
+Gateway admits a replay only when Heber's readiness hash identifies the exact
+selected backfill binding: transport, `backfill` lane, stream, and durable
+consumer. Missing fields or a Redis/JetStream, stream, or consumer mismatch
+fail closed before provider fetch or publication.
+
+Roll back by restoring `HEBER_BACKFILL_INGEST_TRANSPORT=redis`, setting
+`GATEWAY_DURABLE_OUTBOX_ENABLED=false` and `GATEWAY_JETSTREAM_ENABLED=false`,
+then recreating the two services. Leave the outbox volume intact for
+investigation; never delete pending rows.
+
 ---
 
 ## 5  WebSocket Operations

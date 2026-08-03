@@ -2,8 +2,9 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -190,6 +191,39 @@ class Settings(BaseSettings):
     data_sink_redis_url: str = Field(default="", alias="GATEWAY_DATA_SINK_REDIS_URL")
     data_sink_max_stream_len: int = Field(default=100_000, ge=1000)
     data_sink_operation_timeout_seconds: float = Field(default=5.0, ge=0.5)
+    redis_backfill_consumer_group: str = "heber-backfill-writers"
+
+    # JetStream transport. Disabled until the durable outbox and Heber consumer
+    # are wired; these bounds are enforced server-side when streams are bootstrapped.
+    jetstream_enabled: bool = False
+    jetstream_lanes: Literal["backfill", "live", "both"] = "backfill"
+    jetstream_url: str = "nats://jetstream:4222"
+    jetstream_username: str = ""
+    jetstream_password: SecretStr = SecretStr("")
+    jetstream_backfill_durable_name: str = "heber-backfill-writers"
+    jetstream_live_max_bytes: int = Field(default=256 * 1024**3, ge=1024)
+    jetstream_backfill_max_bytes: int = Field(default=256 * 1024**3, ge=1024)
+    jetstream_watch_max_bytes: int = Field(default=8 * 1024**3, ge=1024)
+    jetstream_max_message_bytes: int = Field(default=8 * 1024**2, ge=1024, le=8 * 1024**2)
+    durable_outbox_enabled: bool = False
+    durable_outbox_path: Path = Path("state/outbox/events.sqlite3")
+    durable_outbox_max_bytes: int = Field(default=20 * 1024**3, ge=1024**2)
+    durable_outbox_retry_seconds: float = Field(default=1.0, ge=0.05, le=60.0)
+
+    @model_validator(mode="after")
+    def _require_jetstream_credentials_when_enabled(self) -> "Settings":
+        if self.jetstream_enabled and (not self.jetstream_username or not self.jetstream_password.get_secret_value()):
+            raise ValueError("JetStream requires GATEWAY_JETSTREAM_USERNAME and GATEWAY_JETSTREAM_PASSWORD")
+        if self.durable_outbox_enabled and not self.jetstream_enabled:
+            raise ValueError("durable outbox requires JetStream")
+        if self.jetstream_enabled and not self.durable_outbox_enabled:
+            raise ValueError("JetStream requires the durable outbox")
+        if (self.jetstream_enabled or self.durable_outbox_enabled) and not self.data_sink_enabled:
+            raise ValueError("JetStream and durable outbox require the data sink to be enabled")
+        if self.durable_outbox_enabled and not self.data_sink_redis_url:
+            raise ValueError("durable outbox requires GATEWAY_DATA_SINK_REDIS_URL for the Redis control-plane URL")
+        return self
+
     # Pool size cap raised from 32 → 128. The previous cap left the redis_sink-
     # layer min(64, ...) clamp dead and capped operators at half the available
     # connection capacity. 128 connections is well within typical Redis defaults
@@ -259,6 +293,7 @@ class Settings(BaseSettings):
     # Backfill concurrency (per-provider, split by feed weight)
     backfill_lightweight_concurrency: int = Field(default=5, ge=1)
     backfill_heavyweight_concurrency: int = Field(default=2, ge=1)
+    backfill_max_chunk_records: int = Field(default=5_000, ge=1)
 
     # Bulk Jobs
     bulk_results_max_in_memory: int = Field(default=25_000, ge=100)

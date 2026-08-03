@@ -237,6 +237,188 @@ def test_fake_sink_registry_without_pressure_hook_still_publishes_eligible_rest_
     assert sink_registry.published[0][1]["feed"] == "trades"
 
 
+def test_durable_sink_admission_finishes_before_rest_response(monkeypatch):
+    order: list[str] = []
+
+    class _DurableSinkRegistry:
+        has_durable_admission = True
+
+        async def publish_all(self, topic: str, data: dict, **_labels) -> None:
+            order.append("admitted")
+
+    monkeypatch.setenv("GATEWAY_REST_SINK_EXCLUDED_FEEDS", "")
+    from gateway.config import get_settings
+
+    get_settings.cache_clear()
+    previous_sink = deps_module.get_sink_registry()
+    deps_module.set_sink_registry(_DurableSinkRegistry())
+    middleware = EventEnvelopeMiddleware(app=lambda scope, receive, send: None)
+    body = json.dumps(
+        {
+            "success": True,
+            "data": {
+                "symbol": "SPY",
+                "trades": [
+                    {
+                        "timestamp": "2026-06-12T13:30:00Z",
+                        "price": "500.25",
+                        "size": 100,
+                        "trade_id": "t1",
+                    }
+                ],
+            },
+        }
+    ).encode()
+    initial = {
+        "type": "http.response.start",
+        "status": 200,
+        "headers": [(b"content-type", b"application/json")],
+    }
+
+    async def send(_message: dict) -> None:
+        order.append("sent")
+
+    try:
+        asyncio.run(
+            middleware._wrap_and_send(
+                path="/api/v1/alpaca/stocks/SPY/trades",
+                body=body,
+                initial_message=initial,
+                send=send,
+            )
+        )
+    finally:
+        deps_module.set_sink_registry(previous_sink)
+        get_settings.cache_clear()
+
+    assert order[0] == "admitted"
+    assert order[1:] == ["sent", "sent"]
+
+
+def test_durable_rest_flow_atomically_admits_writer_and_watch_copies(monkeypatch, caplog):
+    class _DurableSinkRegistry:
+        def __init__(self) -> None:
+            self.admitted: list[list[tuple[str, dict]]] = []
+            self.accepted_indices: set[int] | None = None
+
+        def has_durable_admission_for(self, topic: str) -> bool:
+            assert topic == "heber:events"
+            return True
+
+        async def publish_flow_with_watch_batch_indexed(
+            self,
+            messages: list[tuple[str, dict]],
+        ) -> set[int]:
+            self.admitted.append(messages)
+            return self.accepted_indices if self.accepted_indices is not None else set(range(len(messages)))
+
+        async def publish_all(self, topic: str, data: dict, **_labels) -> None:
+            raise AssertionError("durable flow must use atomic writer/watch admission")
+
+    monkeypatch.setenv("GATEWAY_REST_SINK_EXCLUDED_FEEDS", "")
+    from gateway.config import get_settings
+
+    get_settings.cache_clear()
+    sink_registry = _DurableSinkRegistry()
+    previous_sink = deps_module.get_sink_registry()
+    deps_module.set_sink_registry(sink_registry)
+    middleware = EventEnvelopeMiddleware(app=lambda scope, receive, send: None)
+
+    try:
+        messages = asyncio.run(
+            _wrap_response(
+                middleware,
+                path="/api/v1/uw/flow/SPY",
+                payload={
+                    "success": True,
+                    "data": [
+                        {"ticker": "SPY", "option_chain": "SPY260619C00500000", "alert_id": "flow-1"},
+                        {"ticker": "SPY", "option_chain": "SPY260619P00500000", "alert_id": "flow-2"},
+                    ],
+                },
+            )
+        )
+    finally:
+        deps_module.set_sink_registry(previous_sink)
+        get_settings.cache_clear()
+
+    assert json.loads(messages[-1]["body"])["envelope"]["feed"] == "flow_alerts"
+    assert len(sink_registry.admitted) == 1
+    assert [topic for topic, _envelope in sink_registry.admitted[0]] == ["heber:events", "heber:events"]
+    assert [envelope["feed"] for _topic, envelope in sink_registry.admitted[0]] == [
+        "flow_alerts",
+        "flow_alerts",
+    ]
+
+    sink_registry.accepted_indices = {0}
+    deps_module.set_sink_registry(sink_registry)
+    try:
+        caplog.set_level(logging.WARNING)
+        asyncio.run(
+            _wrap_response(
+                middleware,
+                path="/api/v1/uw/flow/SPY",
+                payload={
+                    "success": True,
+                    "data": [
+                        {"ticker": "SPY", "option_chain": "SPY260619C00500000", "alert_id": "flow-1"},
+                        {"ticker": "SPY", "option_chain": "SPY260619P00500000", "alert_id": "flow-2"},
+                    ],
+                },
+            )
+        )
+    finally:
+        deps_module.set_sink_registry(previous_sink)
+    assert "atomic writer/watch admission failed" in caplog.text
+
+
+def test_redis_rest_flow_keeps_legacy_writer_publish(monkeypatch):
+    class _RedisSinkRegistry:
+        def __init__(self) -> None:
+            self.published: list[tuple[str, dict]] = []
+
+        def has_durable_admission_for(self, topic: str) -> bool:
+            assert topic == "heber:events"
+            return False
+
+        async def publish_flow_with_watch_batch_indexed(
+            self,
+            messages: list[tuple[str, dict]],
+        ) -> set[int]:
+            raise AssertionError("Redis flow must keep the legacy writer-only path")
+
+        async def publish_all(self, topic: str, data: dict, **_labels) -> None:
+            self.published.append((topic, data))
+
+    monkeypatch.setenv("GATEWAY_REST_SINK_EXCLUDED_FEEDS", "")
+    from gateway.config import get_settings
+
+    get_settings.cache_clear()
+    sink_registry = _RedisSinkRegistry()
+    previous_sink = deps_module.get_sink_registry()
+    deps_module.set_sink_registry(sink_registry)
+    middleware = EventEnvelopeMiddleware(app=lambda scope, receive, send: None)
+
+    try:
+        asyncio.run(
+            _wrap_response(
+                middleware,
+                path="/api/v1/uw/flow/SPY",
+                payload={
+                    "success": True,
+                    "data": [{"ticker": "SPY", "option_chain": "SPY260619C00500000", "alert_id": "flow-1"}],
+                },
+            )
+        )
+    finally:
+        deps_module.set_sink_registry(previous_sink)
+        get_settings.cache_clear()
+
+    assert len(sink_registry.published) == 1
+    assert sink_registry.published[0][0] == "heber:events"
+    assert sink_registry.published[0][1]["feed"] == "flow_alerts"
+
+
 def test_excluded_feed_skip_logs_reason_for_uw_rest_feed(monkeypatch, caplog):
     class _FakeSinkRegistry:
         async def publish_all(self, topic: str, data: dict) -> None:

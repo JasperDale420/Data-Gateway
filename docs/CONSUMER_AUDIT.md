@@ -1,5 +1,10 @@
 # Data-Gateway Consumer Audit
 
+> **ARCHIVED (2026-08-02):** This is a point-in-time snapshot from 2026-03-10 and is
+> retained for historical reference only. Several systems audited here no longer exist
+> or are no longer maintained (whalehunter is gone from the monorepo; TheOracle and
+> TheOracleMeta are dead/archived). Do not use this document to plan current work.
+
 > Generated: 2026-03-10
 > Scope: All 11 downstream systems in the Empire monorepo
 

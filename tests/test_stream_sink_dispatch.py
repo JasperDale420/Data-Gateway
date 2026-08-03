@@ -11,6 +11,7 @@ import asyncio
 import pytest
 
 import gateway.main as main_mod
+from gateway.core.stream import StreamTransportFatalError
 from gateway.main import _on_stream_envelope
 
 
@@ -47,6 +48,8 @@ async def test_dispatch_publishes_to_frozen_topic_with_feed(dispatch_events):
     call = registry.calls[0]
     assert call["topic"] == "heber:events"  # FROZEN — do not change without Heber
     assert call["feed"] == "quotes"  # feed forwarded for downstream routing
+    assert call["payload"] == {"event_id": "e1", "feed": "quotes", "payload": {}}
+    assert call["source"] == "websocket"
     assert dispatch_events == ["scheduled", "completed"]
 
 
@@ -69,6 +72,17 @@ async def test_dispatch_swallows_publish_failure(dispatch_events):
     assert dispatch_events == ["scheduled", "failed"]
 
 
+async def test_durable_dispatch_failure_is_fatal(dispatch_events):
+    registry = _FakeRegistry(raise_exc=RuntimeError("outbox full"))
+    registry.has_durable_admission = True
+    main_mod._set_stream_sink_registry(registry)
+
+    with pytest.raises(StreamTransportFatalError, match="outbox full"):
+        await _on_stream_envelope({"event_id": "e1", "feed": "trades"})
+
+    assert dispatch_events == ["scheduled", "failed"]
+
+
 async def test_dispatch_reraises_cancellation(dispatch_events):
     """CancelledError must propagate (records cancelled, re-raises)."""
     registry = _FakeRegistry(raise_exc=asyncio.CancelledError())
@@ -78,20 +92,3 @@ async def test_dispatch_reraises_cancellation(dispatch_events):
         await _on_stream_envelope({"event_id": "e1", "feed": "news"})
 
     assert dispatch_events == ["scheduled", "cancelled"]
-
-
-async def test_dispatch_falls_back_to_raw_envelope_on_serialize_error(dispatch_events, monkeypatch):
-    """If pre-serialization fails, the raw envelope dict is published instead of dropping."""
-    registry = _FakeRegistry()
-    main_mod._set_stream_sink_registry(registry)
-
-    def _boom(*_a, **_k):
-        raise ValueError("unserializable")
-
-    monkeypatch.setattr(main_mod.orjson, "dumps", _boom)
-
-    envelope = {"event_id": "e1", "feed": "flow"}
-    await _on_stream_envelope(envelope)
-
-    assert registry.calls[0]["payload"] is envelope  # raw dict, not dropped
-    assert dispatch_events == ["scheduled", "completed"]

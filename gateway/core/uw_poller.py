@@ -10,12 +10,13 @@ Features:
 """
 
 import asyncio
+import inspect
 import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, time
 from pathlib import Path
 from time import monotonic as _monotonic
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 from gateway.config import get_settings
@@ -321,9 +322,27 @@ class UWPoller(DedupMixin, BasePoller):
         published_indices: set[int] | None
         published: int
         try:
-            if hasattr(sink_registry, "publish_all_batch_indexed"):
-                published_indices = await sink_registry.publish_all_batch_indexed(messages)
-                published = len(published_indices)
+            durable_live = getattr(sink_registry, "has_durable_admission_for", None)
+            is_live_flow_alert_batch = topic == HEBER_STREAM and all(
+                envelope.get("feed") == "flow_alerts" for envelope, _event_id, _cache_key in to_publish
+            )
+            if (
+                is_live_flow_alert_batch
+                and callable(durable_live)
+                and not inspect.iscoroutinefunction(durable_live)
+                and durable_live(topic) is True
+                and hasattr(sink_registry, "publish_flow_with_watch_batch_indexed")
+            ):
+                flow_indices = cast(
+                    set[int],
+                    await sink_registry.publish_flow_with_watch_batch_indexed(messages),
+                )
+                published_indices = flow_indices
+                published = len(flow_indices)
+            elif hasattr(sink_registry, "publish_all_batch_indexed"):
+                batch_indices = cast(set[int], await sink_registry.publish_all_batch_indexed(messages))
+                published_indices = batch_indices
+                published = len(batch_indices)
             elif hasattr(sink_registry, "publish_all_batch"):
                 published = await sink_registry.publish_all_batch(messages)
                 if published >= len(messages):

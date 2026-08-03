@@ -44,6 +44,18 @@ services:
       # Heber sink capacity for opening-bell and option-capture bursts.
       - GATEWAY_DATA_SINK_WORKER_COUNT=32
       - GATEWAY_DATA_SINK_REDIS_POOL_SIZE=64
+      # Cutover remains opt-in. When enabled, every producer response waits for
+      # a FULL-synchronous SQLite commit before reporting sink admission.
+      - GATEWAY_DURABLE_OUTBOX_ENABLED=${GATEWAY_DURABLE_OUTBOX_ENABLED:-false}
+      - GATEWAY_DURABLE_OUTBOX_PATH=${GATEWAY_DURABLE_OUTBOX_PATH:-/app/state/outbox/events.sqlite3}
+      - GATEWAY_DURABLE_OUTBOX_MAX_BYTES=${GATEWAY_DURABLE_OUTBOX_MAX_BYTES:-21474836480}
+      - GATEWAY_DURABLE_OUTBOX_RETRY_SECONDS=${GATEWAY_DURABLE_OUTBOX_RETRY_SECONDS:-1.0}
+      - GATEWAY_JETSTREAM_ENABLED=${GATEWAY_JETSTREAM_ENABLED:-false}
+      - GATEWAY_JETSTREAM_LANES=${GATEWAY_JETSTREAM_LANES:-backfill}
+      - GATEWAY_JETSTREAM_URL=${GATEWAY_JETSTREAM_URL:-nats://jetstream:4222}
+      - GATEWAY_JETSTREAM_USERNAME=${GATEWAY_JETSTREAM_USERNAME:-}
+      - GATEWAY_JETSTREAM_PASSWORD=${GATEWAY_JETSTREAM_PASSWORD:-}
+      - GATEWAY_BACKFILL_MAX_CHUNK_RECORDS=${GATEWAY_BACKFILL_MAX_CHUNK_RECORDS:-5000}
       # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.)
       - GATEWAY_UW_EOD_ENABLED=true
       # Enable minute-level Alpaca option chain capture for Heber replay.
@@ -70,11 +82,18 @@ services:
       # observed on 2026-04-28 when the on-disk log began at 20:03 UTC
       # despite the container running all day.
       - ./logs:/app/logs
+      - data-gateway-outbox:/app/state/outbox
     # command: uses Dockerfile CMD by default (gateway.main:app)
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    # Must exceed GATEWAY_SHUTDOWN_DRAIN_SECONDS (default 30) plus the time
+    # steps 4-8 need to stop producers and drain the sink. Docker's default is
+    # 10s, which lands inside the step-3 drain sleep: the container was SIGKILLed
+    # before producers were stopped or the sink was drained, so every deploy and
+    # restart discarded whatever was still queued for heber:events.
+    stop_grace_period: 60s
     logging:
       driver: json-file
       options:
@@ -86,6 +105,35 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  # File-backed event transport. It stays behind an explicit profile until the
+  # Gateway outbox and Heber consumer are wired for cutover.
+  jetstream:
+    image: nats:2.14.3-alpine
+    container_name: data-gateway-jetstream
+    profiles: ["jetstream"]
+    command: ["-c", "/etc/nats/nats-server.conf"]
+    environment:
+      - NATS_USER
+      - NATS_PASSWORD
+    configs:
+      - source: jetstream-server
+        target: /etc/nats/nats-server.conf
+    volumes:
+      - ./state/jetstream:/data
+    ports:
+      # Heber runs in a separate Compose project and reaches this through
+      # host.docker.internal; localhost binding keeps it off the LAN.
+      - "127.0.0.1:4222:4222"
+    expose:
+      - "8222"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # Redis for Heber data sink. AOF-persistent since 2026-07-19: the Jul 12 power
   # outage restarted this instance empty, destroying all stream/DLQ/consumer-group
@@ -126,3 +174,22 @@ services:
 
 volumes:
   data-gateway-redis-data:
+  data-gateway-outbox:
+
+configs:
+  jetstream-server:
+    content: |
+      port: 4222
+      http_port: 8222
+      max_payload: 8388608
+
+      authorization {
+        user: $$NATS_USER
+        password: $$NATS_PASSWORD
+      }
+
+      jetstream {
+        store_dir: "/data"
+        max_file_store: 644245094400
+        sync_interval: always
+      }
