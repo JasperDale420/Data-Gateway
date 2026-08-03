@@ -1,9 +1,10 @@
 """Analytics data models — net premium, max pain, IV, OI, ETFs, shorts, volatility, seasonality, orderbook."""
 
+from datetime import date as date_type
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import AwareDatetime, BaseModel
 
 
 class NormalizedNetPremiumTick(BaseModel):
@@ -39,6 +40,8 @@ class NormalizedIVRank(BaseModel):
     one_year_high: Decimal | None = None
     one_year_low: Decimal | None = None
     provider: str
+    date: date_type | None = None
+    updated_at: AwareDatetime | None = None
 
 
 class NormalizedOIChange(BaseModel):
