@@ -2545,6 +2545,10 @@ def test_replace_order_504_via_http_layer_contains_correct_retry_hint_url(
         "replace_order",
         "cancel_order",
         "cancel_all_orders",
+        # The per-order cancel DELETE /orders actually issues — a write whose
+        # 5xx freezes the symbol's ownership claim, so it must not run on the
+        # tighter read budget.
+        "cancel_all_orders.cancel",
         "close_position",
         "close_all_positions",
     ],
@@ -3739,11 +3743,11 @@ async def test_cancel_all_orders_only_cancels_owned_orders(
     class _MixedOwnersProvider(_FakeProvider):
         def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
             return [
-                {"id": "mine-1", "client_order_id": "c-cerberus-key1"},
-                {"id": "atlas-1", "client_order_id": "c-atlas-key1"},  # foreign
-                {"id": "mine-2", "client_order_id": "c-cerberus-key2"},
-                {"id": "rogue-1", "client_order_id": None},  # un-owned
-                {"id": "3roses-1", "client_order_id": "c-3roses-key1"},  # foreign
+                {"id": "mine-1", "client_order_id": "c-cerberus-key1", "symbol": "AAPL"},
+                {"id": "atlas-1", "client_order_id": "c-atlas-key1", "symbol": "AAPL"},  # foreign
+                {"id": "mine-2", "client_order_id": "c-cerberus-key2", "symbol": "TSLA"},
+                {"id": "rogue-1", "client_order_id": None, "symbol": "AAPL"},  # un-owned
+                {"id": "3roses-1", "client_order_id": "c-3roses-key1", "symbol": "TSLA"},  # foreign
             ]
 
         def cancel_all_orders(self) -> list[dict[str, Any]]:
@@ -3788,8 +3792,8 @@ async def test_cancel_all_orders_with_no_owned_orders_yields_empty_cancels(
     class _AllForeignProvider(_FakeProvider):
         def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
             return [
-                {"id": "atlas-1", "client_order_id": "c-atlas-key1"},
-                {"id": "3roses-1", "client_order_id": "c-3roses-key1"},
+                {"id": "atlas-1", "client_order_id": "c-atlas-key1", "symbol": "AAPL"},
+                {"id": "3roses-1", "client_order_id": "c-3roses-key1", "symbol": "TSLA"},
             ]
 
         def cancel_all_orders(self) -> list[dict[str, Any]]:
@@ -3814,6 +3818,361 @@ async def test_cancel_all_orders_with_no_owned_orders_yields_empty_cancels(
     assert response["data"] == []
     assert response["meta"]["count"] == 0
     assert response["meta"]["owned_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# DELETE /orders must run through the SAME per-symbol fence as
+# DELETE /orders/{id}. The bulk route previously called
+# provider.cancel_order() straight from asyncio.gather — a reachable
+# unfenced broker-write path on the shared Alpaca account.
+#
+# The fence is per SYMBOL, so orders on one symbol serialize under a single
+# fence while different symbols still cancel concurrently.
+# ---------------------------------------------------------------------------
+
+
+class _FenceRecordingGuard(_AllowAllOwnershipGuard):
+    """Ownership guard that records the fence lifecycle for assertions."""
+
+    def __init__(
+        self,
+        *,
+        unacquirable: frozenset[str] = frozenset(),
+        unauthorized: frozenset[str] = frozenset(),
+    ) -> None:
+        self.events: list[tuple[str, Any]] = []
+        self.held: set[str] = set()
+        self.acquisitions: list[str] = []
+        self.max_symbols_held = 0
+        self.mutations: list[str] = []
+        self.completed: list[str] = []
+        self.frozen: dict[str, str] = {}
+        self._unacquirable = unacquirable
+        self._unauthorized = unauthorized
+
+    async def acquire_fence(self, symbol: str) -> str:
+        if symbol in self._unacquirable:
+            self.events.append(("fence_denied", symbol))
+            raise OwnershipConflict(f"concurrent_gateway_reconciliation:{symbol}")
+        assert symbol not in self.held, f"fence for {symbol} held twice at once"
+        self.held.add(symbol)
+        self.max_symbols_held = max(self.max_symbols_held, len(self.held))
+        self.acquisitions.append(symbol)
+        self.events.append(("acquire", symbol))
+        return f"fence-{symbol}"
+
+    async def release_fence(self, symbol: str, _token: str) -> None:
+        self.held.discard(symbol)
+        self.events.append(("release", symbol))
+
+    async def authorize_submission(self, **kwargs: Any) -> None:
+        symbol = kwargs["symbol"]
+        if symbol in self._unauthorized:
+            raise OwnershipConflict(f"claim_frozen_after_ambiguous_broker_mutation:{symbol}")
+
+    async def begin_mutation(self, **kwargs: Any) -> str:
+        self.mutations.append(kwargs["symbol"])
+        self.events.append(("begin_mutation", kwargs["symbol"]))
+        return f"cancel_all_orders:{kwargs['symbol']}"
+
+    async def complete_mutation(self, **kwargs: Any) -> None:
+        self.completed.append(kwargs["symbol"])
+        self.events.append(("complete_mutation", kwargs["symbol"]))
+
+    async def freeze(self, symbol: str, reason: str) -> None:
+        self.frozen[symbol] = reason
+        self.events.append(("freeze", symbol))
+
+
+class _FencedCancelProvider(_FakeProvider):
+    """Provider that flags any cancel reaching the broker without a held fence."""
+
+    def __init__(
+        self,
+        orders: list[dict[str, Any]],
+        guard: _FenceRecordingGuard,
+        *,
+        failures: dict[str, HTTPException] | None = None,
+    ) -> None:
+        super().__init__()
+        self._orders = orders
+        self._guard = guard
+        self._failures = failures or {}
+        self._symbol_by_id = {order["id"]: order.get("symbol") for order in orders}
+        self.bulk_cancel_calls = 0
+        self.cancelled: list[str] = []
+        self.unfenced_cancels: list[str] = []
+
+    def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._orders)
+
+    def cancel_all_orders(self) -> list[dict[str, Any]]:
+        self.bulk_cancel_calls += 1
+        return []
+
+    def cancel_order(self, order_id: str) -> bool:
+        if self._symbol_by_id.get(order_id) not in self._guard.held:
+            self.unfenced_cancels.append(order_id)
+        self._guard.events.append(("cancel", order_id))
+        self.cancelled.append(order_id)
+        failure = self._failures.get(order_id)
+        if failure is not None:
+            raise failure
+        return True
+
+
+def _record_reconciliation(monkeypatch: pytest.MonkeyPatch, guard: _FenceRecordingGuard) -> None:
+    async def _reconcile(_provider: Any, symbol: str) -> BrokerSymbolState:
+        guard.events.append(("reconcile", symbol))
+        return BrokerSymbolState(has_position=False, order_owners=frozenset())
+
+    monkeypatch.setattr(trading, "_reconcile_broker_symbol_state", _reconcile)
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_fences_every_symbol_before_cancelling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each symbol in the batch runs the full fenced protocol: fence →
+    uncached broker reconciliation → claim → mutation marker → broker
+    write → post-write reconciliation → marker clear → fence release."""
+    guard = _FenceRecordingGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "t-1", "client_order_id": _owned_coid("cerberus", "t-1"), "symbol": "TSLA"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert provider.bulk_cancel_calls == 0
+    assert provider.unfenced_cancels == []
+    assert sorted(provider.cancelled) == ["a-1", "t-1"]
+    assert sorted(guard.acquisitions) == ["AAPL", "TSLA"]
+    assert sorted(guard.mutations) == ["AAPL", "TSLA"]
+    assert sorted(guard.completed) == ["AAPL", "TSLA"]
+    assert guard.frozen == {}
+    assert response["meta"]["count"] == 2
+    assert response["meta"]["errors"] == []
+
+    aapl_events = [event for event in guard.events if event[1] in {"AAPL", "a-1"}]
+    assert aapl_events == [
+        ("acquire", "AAPL"),
+        ("reconcile", "AAPL"),
+        ("begin_mutation", "AAPL"),
+        ("cancel", "a-1"),
+        ("reconcile", "AAPL"),
+        ("complete_mutation", "AAPL"),
+        ("release", "AAPL"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_serializes_orders_on_the_same_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two orders on ONE symbol must not both hold that symbol's fence.
+    They run sequentially under a single acquisition — the guard asserts
+    on any concurrent second acquisition of the same symbol."""
+    guard = _FenceRecordingGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "a-2", "client_order_id": _owned_coid("cerberus", "a-2"), "symbol": "AAPL"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert guard.acquisitions == ["AAPL"]
+    assert guard.max_symbols_held == 1
+    assert provider.unfenced_cancels == []
+    assert guard.events == [
+        ("acquire", "AAPL"),
+        ("reconcile", "AAPL"),
+        ("begin_mutation", "AAPL"),
+        ("cancel", "a-1"),
+        ("cancel", "a-2"),
+        ("reconcile", "AAPL"),
+        ("complete_mutation", "AAPL"),
+        ("release", "AAPL"),
+    ]
+    assert response["meta"]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_runs_different_symbols_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parallelism ACROSS symbols is deliberate — a sequential loop could
+    run for minutes during an opening-bell mass cancel. The guard blocks
+    each acquisition until both symbols have arrived, so this only
+    completes if the symbol groups are genuinely concurrent."""
+
+    class _RendezvousGuard(_FenceRecordingGuard):
+        def __init__(self, parties: int) -> None:
+            super().__init__()
+            self._parties = parties
+            self._arrived = 0
+            self._all_arrived = asyncio.Event()
+
+        async def acquire_fence(self, symbol: str) -> str:
+            token = await super().acquire_fence(symbol)
+            self._arrived += 1
+            if self._arrived >= self._parties:
+                self._all_arrived.set()
+            await asyncio.wait_for(self._all_arrived.wait(), timeout=2.0)
+            return token
+
+    guard = _RendezvousGuard(2)
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "t-1", "client_order_id": _owned_coid("cerberus", "t-1"), "symbol": "TSLA"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert guard.max_symbols_held == 2
+    assert response["meta"]["count"] == 2
+    assert response["meta"]["errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_fails_closed_on_blocked_symbol_and_cancels_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A symbol whose fence cannot be acquired — or whose claim is frozen —
+    yields a per-order error and NEVER an unfenced cancel, while orders on
+    other symbols still cancel."""
+    guard = _FenceRecordingGuard(unacquirable=frozenset({"TSLA"}), unauthorized=frozenset({"MSFT"}))
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "t-1", "client_order_id": _owned_coid("cerberus", "t-1"), "symbol": "TSLA"},
+            {"id": "t-2", "client_order_id": _owned_coid("cerberus", "t-2"), "symbol": "TSLA"},
+            {"id": "m-1", "client_order_id": _owned_coid("cerberus", "m-1"), "symbol": "MSFT"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert provider.cancelled == ["a-1"]
+    assert provider.unfenced_cancels == []
+    assert response["meta"]["count"] == 1
+    assert response["meta"]["owned_count"] == 4
+    errors = response["meta"]["errors"]
+    assert {error["order_id"] for error in errors} == {"t-1", "t-2", "m-1"}
+    for error in errors:
+        assert error["cancelled"] is False
+        assert error["status_code"] == 409
+        assert error["detail"]["code"] == "GW-E4301"
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_skips_orders_whose_symbol_cannot_be_fenced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No symbol means no fence, and no fence means no broker cancel."""
+    guard = _FenceRecordingGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "no-symbol", "client_order_id": _owned_coid("cerberus", "no-symbol")},
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert provider.cancelled == ["a-1"]
+    assert provider.unfenced_cancels == []
+    assert guard.acquisitions == ["AAPL"]
+    errors = response["meta"]["errors"]
+    assert [error["order_id"] for error in errors] == ["no-symbol"]
+    assert errors[0]["status_code"] == 409
+    assert errors[0]["detail"]["code"] == "GW-E4301"
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_freezes_symbol_after_ambiguous_broker_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 5xx from the broker leaves the cancel outcome unknown: freeze the
+    symbol before releasing its fence, skip the symbol's remaining orders,
+    and never clear the mutation marker — other symbols keep cancelling."""
+    guard = _FenceRecordingGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "a-2", "client_order_id": _owned_coid("cerberus", "a-2"), "symbol": "AAPL"},
+            {"id": "t-1", "client_order_id": _owned_coid("cerberus", "t-1"), "symbol": "TSLA"},
+        ],
+        guard,
+        failures={"a-1": HTTPException(status_code=HTTP_503_SERVICE_UNAVAILABLE, detail="broker unavailable")},
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    # a-2 is never attempted: AAPL is frozen mid-batch.
+    assert provider.cancelled == ["a-1", "t-1"]
+    assert provider.unfenced_cancels == []
+    assert guard.frozen["AAPL"] == "broker_mutation_503"
+    assert guard.completed == ["TSLA"]
+    assert "AAPL" not in guard.held
+    assert response["meta"]["count"] == 1
+    errors = {error["order_id"]: error for error in response["meta"]["errors"]}
+    assert set(errors) == {"a-1", "a-2"}
+    assert errors["a-1"]["status_code"] == HTTP_503_SERVICE_UNAVAILABLE
+    assert errors["a-2"]["status_code"] == 409
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
+from starlette.status import HTTP_502_BAD_GATEWAY, HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca.common import (
     ALPACA_ROUTER_PREFIX,
@@ -444,6 +444,12 @@ def _extract_client_order_id_from_order(order: Any) -> Any:
     return getattr(order, "client_order_id", None)
 
 
+_OWNERSHIP_UNRESOLVED_MESSAGE = "Order ownership is unresolved; no order was submitted."
+_OWNERSHIP_AMBIGUOUS_MESSAGE = (
+    "Broker mutation may have completed; reconcile broker positions and open orders before another mutation."
+)
+
+
 def _extract_symbol_from_broker_record(record: Any) -> str | None:
     if isinstance(record, dict):
         symbol = record.get("symbol")
@@ -457,13 +463,26 @@ def _extract_symbol_from_broker_record(record: Any) -> str | None:
         return None
 
 
+def _unfenceable_symbol_error() -> HTTPException:
+    """An order whose symbol cannot be canonicalised cannot be fenced."""
+    return HTTPException(
+        status_code=409,
+        detail={"code": "GW-E4301", "message": _OWNERSHIP_UNRESOLVED_MESSAGE},
+    )
+
+
+def _symbol_frozen_error() -> HTTPException:
+    """A symbol left ambiguous by an earlier broker write takes no further mutation."""
+    return HTTPException(
+        status_code=409,
+        detail={"code": "GW-E4301", "message": _OWNERSHIP_AMBIGUOUS_MESSAGE},
+    )
+
+
 def _canonical_order_symbol_or_reject(order: Any) -> str:
     symbol = _extract_symbol_from_broker_record(order)
     if symbol is None:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "GW-E4301", "message": "Order ownership is unresolved; no order was submitted."},
-        )
+        raise _unfenceable_symbol_error()
     return symbol
 
 
@@ -515,6 +534,33 @@ async def _reconcile_broker_symbol_state(provider: Any, symbol: str) -> BrokerSy
     return BrokerSymbolState(has_position=has_position, order_owners=order_owners)
 
 
+def _ownership_rejection(
+    exc: OwnershipConflict | OwnershipStoreUnavailable,
+    symbol: str,
+    *,
+    mutation_may_have_reached_broker: bool = False,
+    reconciliation_context: dict[str, Any] | None = None,
+) -> HTTPException:
+    """Build the HTTP error for an ownership rejection without raising it.
+
+    Batch routes report a blocked symbol per order instead of aborting the
+    whole request, so they need the exception as a value; single-order routes
+    raise it through ``_raise_ownership_rejection``.
+    """
+    message = _OWNERSHIP_AMBIGUOUS_MESSAGE if mutation_may_have_reached_broker else _OWNERSHIP_UNRESOLVED_MESSAGE
+    if isinstance(exc, OwnershipStoreUnavailable):
+        logger.error("order_ownership_unavailable", symbol=symbol, reason=str(exc))
+        return HTTPException(
+            status_code=HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "GW-E5301", "message": message, **(reconciliation_context or {})},
+        )
+    logger.warning("order_ownership_frozen", symbol=symbol, reason=str(exc))
+    return HTTPException(
+        status_code=409,
+        detail={"code": "GW-E4301", "message": message, **(reconciliation_context or {})},
+    )
+
+
 def _raise_ownership_rejection(
     exc: OwnershipConflict | OwnershipStoreUnavailable,
     symbol: str,
@@ -522,22 +568,11 @@ def _raise_ownership_rejection(
     mutation_may_have_reached_broker: bool = False,
     reconciliation_context: dict[str, Any] | None = None,
 ) -> None:
-    message = (
-        "Broker mutation may have completed; reconcile broker positions and open orders before another mutation."
-        if mutation_may_have_reached_broker
-        else "Order ownership is unresolved; no order was submitted."
-    )
-    detail: dict[str, Any] = {"code": "GW-E5301", "message": message}
-    if isinstance(exc, OwnershipStoreUnavailable):
-        logger.error("order_ownership_unavailable", symbol=symbol, reason=str(exc))
-        raise HTTPException(
-            status_code=HTTP_503_SERVICE_UNAVAILABLE,
-            detail={**detail, **(reconciliation_context or {})},
-        ) from exc
-    logger.warning("order_ownership_frozen", symbol=symbol, reason=str(exc))
-    raise HTTPException(
-        status_code=409,
-        detail={"code": "GW-E4301", "message": message, **(reconciliation_context or {})},
+    raise _ownership_rejection(
+        exc,
+        symbol,
+        mutation_may_have_reached_broker=mutation_may_have_reached_broker,
+        reconciliation_context=reconciliation_context,
     ) from exc
 
 
@@ -607,6 +642,10 @@ _WRITE_TRADING_OPERATIONS: frozenset[str] = frozenset(
         "replace_order",
         "cancel_order",
         "cancel_all_orders",
+        # Each broker cancel issued by DELETE /orders. It is a write like any
+        # other cancel, and a 504 on it freezes the symbol's ownership claim,
+        # so it must get the write budget rather than the tighter read one.
+        "cancel_all_orders.cancel",
         "close_position",
         "close_all_positions",
     }
@@ -1641,6 +1680,156 @@ async def cancel_order(
     }
 
 
+def _bulk_cancel_failure(order_id: Any, symbol: str | None, exc: HTTPException) -> dict[str, Any]:
+    """Report one order the batch could not cancel, in the per-order result shape."""
+    return {
+        "order_id": order_id,
+        "symbol": symbol,
+        "cancelled": False,
+        "status_code": exc.status_code,
+        "detail": exc.detail,
+    }
+
+
+def _bulk_cancel_rejection(
+    exc: Exception,
+    symbol: str,
+    *,
+    mutation_may_have_reached_broker: bool = False,
+) -> HTTPException:
+    """Turn any failure into the HTTP error reported against a batch order."""
+    if isinstance(exc, OwnershipConflict | OwnershipStoreUnavailable):
+        return _ownership_rejection(
+            exc,
+            symbol,
+            mutation_may_have_reached_broker=mutation_may_have_reached_broker,
+        )
+    if isinstance(exc, HTTPException):
+        return exc
+    return HTTPException(
+        status_code=HTTP_502_BAD_GATEWAY,
+        detail={"code": "GW-E5007", "message": str(exc)},
+    )
+
+
+async def _freeze_symbol_for_batch(guard: OrderOwnershipGuard, symbol: str, reason: str) -> None:
+    """Freeze one symbol without letting the failure abort the rest of a batch."""
+    try:
+        await _freeze_before_fence_release(guard, symbol, reason)
+    # nosemgrep: empire-no-bare-exception -- batch boundary: a freeze failure must not abort other symbols
+    except Exception:
+        logger.error("bulk_cancel_freeze_failed", symbol=symbol, reason=reason, exc_info=True)
+
+
+async def _cancel_one_fenced_order(
+    *,
+    provider: Any,
+    order_id: Any,
+    symbol: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Cancel one order at the broker while its symbol's fence is held.
+
+    Returns the per-order result and, when the broker outcome is ambiguous,
+    the reason the symbol must be frozen before the fence is released.
+    """
+    try:
+        await _run_trading_provider_call(
+            provider=provider,
+            provider_fn=lambda broker: broker.cancel_order(order_id),
+            operation="cancel_all_orders.cancel",
+        )
+    except HTTPException as exc:
+        freeze_reason = f"broker_mutation_{exc.status_code}" if exc.status_code >= 500 else None
+        return _bulk_cancel_failure(order_id, symbol, exc), freeze_reason
+    # nosemgrep: empire-no-bare-exception -- batch boundary: an unclassified cancel failure is ambiguous, not fatal
+    except Exception as exc:
+        logger.error("bulk_cancel_order_failed", symbol=symbol, order_id=str(order_id), exc_info=True)
+        return (
+            _bulk_cancel_failure(order_id, symbol, _bulk_cancel_rejection(exc, symbol)),
+            "broker_mutation_unclassified",
+        )
+    return {"order_id": order_id, "cancelled": True}, None
+
+
+async def _cancel_owned_orders_for_symbol(
+    *,
+    provider: Any,
+    guard: OrderOwnershipGuard,
+    client_id: str,
+    symbol: str,
+    order_ids: list[Any],
+) -> list[dict[str, Any]]:
+    """Cancel this caller's open orders on ONE symbol under that symbol's fence.
+
+    The fence is per symbol, so one acquisition covers every order on it: the
+    orders run sequentially inside it and no second acquisition of the same
+    symbol is ever attempted. One durable claim and one mutation marker span
+    the whole symbol batch, which is the same protocol the single-order cancel
+    runs — fence, uncached broker reconciliation, claim, mutation marker,
+    broker write, post-write reconciliation, matching-token clear, release.
+
+    Never raises: every failure is reported against the affected orders so a
+    blocked symbol cannot abort the rest of the batch, and no failure path
+    falls back to an unfenced cancel.
+    """
+    results: list[dict[str, Any]] = []
+    fence_token: str | None = None
+    try:
+        try:
+            fence_token = await guard.acquire_fence(symbol)
+            broker_state = await _reconcile_broker_symbol_state(provider, symbol)
+            await guard.authorize_submission(client_id=client_id, symbol=symbol, broker_state=broker_state)
+            await guard.renew_fence(symbol, fence_token)
+            mutation_token = await guard.begin_mutation(symbol=symbol, operation="cancel_all_orders")
+        # nosemgrep: empire-no-bare-exception -- batch boundary: reads only, reported per order
+        except Exception as exc:
+            # Nothing has been written to the broker yet, so the symbol is
+            # reported as blocked rather than frozen.
+            logger.warning("bulk_cancel_symbol_blocked", symbol=symbol, order_count=len(order_ids))
+            rejection = _bulk_cancel_rejection(exc, symbol)
+            return [_bulk_cancel_failure(order_id, symbol, rejection) for order_id in order_ids]
+
+        # From here a broker write may be in flight for this symbol: every
+        # failure below freezes the claim before the fence is released.
+        try:
+            for index, order_id in enumerate(order_ids):
+                result, freeze_reason = await _cancel_one_fenced_order(
+                    provider=provider,
+                    order_id=order_id,
+                    symbol=symbol,
+                )
+                results.append(result)
+                if freeze_reason is not None:
+                    await _freeze_symbol_for_batch(guard, symbol, freeze_reason)
+                    results.extend(
+                        _bulk_cancel_failure(skipped, symbol, _symbol_frozen_error())
+                        for skipped in order_ids[index + 1 :]
+                    )
+                    return results
+            post_cancel_state = await _reconcile_broker_symbol_state(provider, symbol)
+            await guard.verify_reconciliation(client_id=client_id, symbol=symbol, broker_state=post_cancel_state)
+            await guard.complete_mutation(symbol=symbol, token=mutation_token)
+        # nosemgrep: empire-no-bare-exception -- batch boundary: post-write ambiguity freezes, never aborts the batch
+        except Exception as exc:
+            reason = (
+                f"post_write_reconciliation_{exc}"
+                if isinstance(exc, OwnershipConflict)
+                else "post_write_reconciliation_unclassified"
+            )
+            await _freeze_symbol_for_batch(guard, symbol, reason)
+            results.append(
+                _bulk_cancel_failure(
+                    None,
+                    symbol,
+                    _bulk_cancel_rejection(exc, symbol, mutation_may_have_reached_broker=True),
+                )
+            )
+        return results
+    finally:
+        if fence_token is not None:
+            await guard.release_fence(symbol, fence_token)
+
+
 @router.delete("/orders", response_model=SuccessResponse)
 async def cancel_all_orders(
     client: Client = Depends(require_api_key),
@@ -1665,11 +1854,21 @@ async def cancel_all_orders(
     limit), and (c) the safety guarantee — never cancel another client's
     orders — is non-negotiable.
 
-    Failures on individual cancels are captured per-order in the response
-    so the caller can reconcile which orders actually cancelled. We do
-    NOT short-circuit on the first failure: cancelling SOME of a
-    client's orders is strictly better than cancelling NONE if a
-    transient Alpaca error hits mid-batch.
+    Ownership fence (DO NOT REGRESS): every broker cancel runs inside the
+    same per-symbol fence as ``DELETE /orders/{order_id}``. Owned orders
+    are grouped by canonical broker symbol; each group holds that symbol's
+    fence for the whole group, so orders on one symbol serialize while
+    different symbols cancel concurrently. A symbol whose fence cannot be
+    acquired, whose claim is frozen, or whose symbol cannot be
+    canonicalised fails CLOSED — its orders are reported as errors and no
+    unfenced cancel is ever issued as a fallback.
+
+    Failures are captured per order in the response so the caller can
+    reconcile which orders actually cancelled. One blocked symbol never
+    aborts the others: cancelling SOME of a client's orders is strictly
+    better than cancelling NONE. Within a symbol, an ambiguous broker
+    outcome freezes the claim and the symbol's remaining orders are
+    reported as skipped rather than written to the broker.
 
     Page-boundary limitation (tracked separately, same as get_orders):
     only the newest 500 open orders are inspected — owned orders beyond
@@ -1701,44 +1900,57 @@ async def cancel_all_orders(
             if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
         ]
 
-    # Cancel concurrently rather than sequentially. With the default
-    # 25s write timeout × N owned orders, a sequential loop could run
-    # for minutes during an opening-bell mass-cancel; parallel cancels
-    # bounded by the existing in-flight semaphore
-    # (alpaca_trading_max_inflight, default 24) compress that into the
-    # latency of the slowest single cancel.
-    async def _one_cancel(order: dict[str, Any]) -> dict[str, Any]:
+    # Group by canonical broker symbol: the fence is per symbol, so orders
+    # on the same symbol MUST share one acquisition instead of racing for it.
+    ownership_guard = get_order_ownership_guard()
+    unfenceable: list[dict[str, Any]] = []
+    symbol_groups: dict[str, list[Any]] = {}
+    for order in owned:
         order_id = order.get("id") if isinstance(order, dict) else getattr(order, "id", None)
         if not order_id:
-            return {"order_id": None, "cancelled": False, "error": "order missing id field"}
+            unfenceable.append({"order_id": None, "cancelled": False, "error": "order missing id field"})
+            continue
+        symbol = _extract_symbol_from_broker_record(order)
+        if symbol is None:
+            unfenceable.append(_bulk_cancel_failure(order_id, None, _unfenceable_symbol_error()))
+            continue
+        symbol_groups.setdefault(symbol, []).append(order_id)
 
-        # Bind order_id via default-arg to dodge the classic
-        # loop-closure capture footgun.
-        def _cancel_fn(_provider: Any, _oid: Any = order_id) -> Any:
-            return _provider.cancel_order(_oid)
-
-        try:
-            await _execute_trading_call(
-                registry=registry,
-                provider_fn=_cancel_fn,
-                operation="cancel_all_orders.cancel",
+    # Symbol groups run concurrently rather than sequentially. With the
+    # default 25s write timeout × N owned symbols, a sequential loop could
+    # run for minutes during an opening-bell mass-cancel; parallel groups
+    # bounded by the existing in-flight semaphore
+    # (alpaca_trading_max_inflight, default 24) compress that into the
+    # latency of the slowest single symbol. Each group holds only its own
+    # symbol's fence and never waits on another's, so groups cannot deadlock
+    # each other.
+    async def _cancel_symbol_group(symbol: str, order_ids: list[Any]) -> list[dict[str, Any]]:
+        async def _call(provider: Any) -> list[dict[str, Any]]:
+            return await _cancel_owned_orders_for_symbol(
+                provider=provider,
+                guard=ownership_guard,
+                client_id=client.id,
+                symbol=symbol,
+                order_ids=order_ids,
             )
-            return {"order_id": order_id, "cancelled": True}
-        except HTTPException as exc:
-            return {
-                "order_id": order_id,
-                "cancelled": False,
-                "status_code": exc.status_code,
-                "detail": exc.detail,
-            }
 
-    if owned:
-        # gather with return_exceptions=False; _one_cancel itself never
-        # raises (caught HTTPException above), so any propagating
-        # exception is a real bug we WANT to surface.
-        results = await asyncio.gather(*[_one_cancel(order) for order in owned])
-    else:
-        results = []
+        _call.__qualname__ = "trading.cancel_all_orders.symbol_group"
+        try:
+            return await execute_alpaca_provider_call(registry=registry, provider_call=_call)
+        except HTTPException as exc:
+            # Raised before the fenced flow starts (no provider, rate limit):
+            # nothing reached the broker for this symbol.
+            return [_bulk_cancel_failure(order_id, symbol, exc) for order_id in order_ids]
+
+    results: list[dict[str, Any]] = list(unfenceable)
+    if symbol_groups:
+        # gather with return_exceptions=False; _cancel_symbol_group never
+        # raises, so any propagating exception is a real bug we WANT to
+        # surface rather than a symbol failure we should have reported.
+        grouped = await asyncio.gather(
+            *[_cancel_symbol_group(symbol, order_ids) for symbol, order_ids in symbol_groups.items()]
+        )
+        results.extend(result for group in grouped for result in group)
 
     cancelled = [r for r in results if r.get("cancelled")]
     errors = [r for r in results if not r.get("cancelled")]
