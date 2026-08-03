@@ -265,3 +265,23 @@ async def test_release_refuses_a_frozen_or_mid_mutation_claim(blocker: str) -> N
 
     assert guard.claim_key("AAPL") in redis.values
     assert json.loads(redis.values[guard.claim_key("AAPL")])["owner"] == "orion"
+
+
+def test_http_timeout_cap_stays_below_the_fence_ttl() -> None:
+    """The SDK timeout ceiling must stay under the fence TTL.
+
+    A fenced write is dispatched to a thread that asyncio cannot cancel. If the
+    SDK could keep that thread alive past the fence TTL, the broker could execute
+    the write after the symbol's fence lapsed and another client took the claim.
+    config.py holds the cap as a literal to avoid an import cycle, so this test is
+    what keeps the two constants from drifting apart.
+    """
+    from gateway.config import _MAX_TRADING_HTTP_TIMEOUT_SECONDS
+
+    fence_ttl_seconds = OrderOwnershipGuard._FENCE_TTL_MS / 1000.0
+    assert fence_ttl_seconds > _MAX_TRADING_HTTP_TIMEOUT_SECONDS, (
+        f"HTTP timeout cap {_MAX_TRADING_HTTP_TIMEOUT_SECONDS}s must stay below "
+        f"the fence TTL {fence_ttl_seconds}s"
+    )
+    # Margin big enough that a write dispatched just before expiry still settles.
+    assert fence_ttl_seconds - _MAX_TRADING_HTTP_TIMEOUT_SECONDS >= 5.0

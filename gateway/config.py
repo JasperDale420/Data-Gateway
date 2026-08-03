@@ -7,6 +7,17 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The alpaca-py SDK runs fenced writes on a thread; asyncio cannot cancel one
+# mid-flight. If the SDK's HTTP timeout could exceed the ownership fence TTL, a
+# broker write could land after its symbol's fence lapsed and another client
+# claimed the symbol. Cap the HTTP timeout below the fence TTL so "the worker
+# always finishes before the lease lapses" is enforced rather than incidental.
+#
+# Kept as a literal rather than importing OrderOwnershipGuard, which would drag
+# symbology and logging into config's import path. test_order_ownership.py
+# asserts this stays in sync with OrderOwnershipGuard._FENCE_TTL_MS.
+_MAX_TRADING_HTTP_TIMEOUT_SECONDS: float = 110.0  # fence TTL 120s - 10s margin
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -127,6 +138,7 @@ class Settings(BaseSettings):
     alpaca_trading_http_timeout_seconds: float = Field(
         default=30.0,
         ge=1.0,
+        le=_MAX_TRADING_HTTP_TIMEOUT_SECONDS,
         description=(
             "Default HTTP-level timeout (seconds) injected into the alpaca-py SDK's "
             "requests session. The SDK creates a bare Session() with no timeout, so "
@@ -135,7 +147,13 @@ class Settings(BaseSettings):
             "the trading thread until the OS gives up. Should be >= the larger of "
             "alpaca_trading_call_timeout_seconds and alpaca_trading_write_call_timeout_seconds "
             "so user-facing 504s fire first; the HTTP timeout is the safety net for "
-            "thread release."
+            "thread release. Capped below the ownership fence TTL "
+            "(OrderOwnershipGuard._FENCE_TTL_MS): a fenced write is dispatched to a "
+            "thread, so if the SDK could outlive the fence, the broker could execute "
+            "that write after the symbol's fence was released and another client had "
+            "taken the claim. Bounding this below the TTL keeps 'the worker always "
+            "finishes before the lease lapses' an enforced invariant rather than a "
+            "configuration coincidence."
         ),
     )
     alpaca_trading_thread_pool_size: int = Field(

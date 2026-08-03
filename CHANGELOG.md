@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The Alpaca SDK HTTP timeout is now capped below the ownership fence TTL
+  (`GATEWAY_ALPACA_TRADING_HTTP_TIMEOUT_SECONDS` <= 110s vs a 120s fence). A fenced
+  broker write is dispatched to a thread that asyncio cannot cancel, so a timeout
+  configured above the TTL would let the broker execute that write after the symbol's
+  fence had lapsed and another client had taken the claim. The invariant "the worker
+  always settles before the lease expires" is now enforced by config validation rather
+  than left to configuration; a test keeps the two constants from drifting apart.
+
+
 ### Added
 
 - **Shared-account order ownership controls** (`gateway/api/alpaca/trading.py`, `gateway/core/order_ownership.py`, `docker-compose.yml`): Gateway order create, replace, cancel, and position-close requests now reconcile fresh broker positions/open orders before acting, use canonical equity tickers or full OCC contracts, and atomically record non-expiring Redis claims. A durable pre-write marker and synchronous Redis AOF prevent retries after an interrupted broker call. Unknown/manual/mixed/drifted state, incomplete reconciliation, Redis failures, and concurrent Gateway mutations reject without a new broker write. Claims release only after a broker-confirmed flat/no-open-order state.
