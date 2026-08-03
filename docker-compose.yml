@@ -88,6 +88,12 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    # Must exceed GATEWAY_SHUTDOWN_DRAIN_SECONDS (default 30) plus the time
+    # steps 4-8 need to stop producers and drain the sink. Docker's default is
+    # 10s, which lands inside the step-3 drain sleep: the container was SIGKILLed
+    # before producers were stopped or the sink was drained, so every deploy and
+    # restart discarded whatever was still queued for heber:events.
+    stop_grace_period: 60s
     logging:
       driver: json-file
       options:
