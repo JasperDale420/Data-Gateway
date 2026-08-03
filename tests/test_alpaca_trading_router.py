@@ -4186,12 +4186,17 @@ async def test_cancel_all_orders_freezes_symbol_after_ambiguous_broker_failure(
         registry=cast(ProviderRegistry, route_registry),
     )
 
-    # a-2 is never attempted: AAPL is frozen mid-batch.
-    assert provider.cancelled == ["a-1", "t-1"]
+    # a-2 is never attempted: AAPL is frozen mid-batch. Symbol groups run
+    # concurrently, so only the set of cancels is deterministic.
+    assert sorted(provider.cancelled) == ["a-1", "t-1"]
     assert provider.unfenced_cancels == []
     assert guard.frozen["AAPL"] == "broker_mutation_503"
     assert guard.completed == ["TSLA"]
-    assert "AAPL" not in guard.held
+    # A dispatched write whose outcome is unknown keeps its lease: the executor
+    # thread can still reach Alpaca after the asyncio call gives up, so the
+    # fence is left to expire rather than handed to the next client.
+    assert ("release", "AAPL") not in guard.events
+    assert ("release", "TSLA") in guard.events
     assert response["meta"]["count"] == 1
     errors = {error["order_id"]: error for error in response["meta"]["errors"]}
     assert set(errors) == {"a-1", "a-2"}

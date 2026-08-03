@@ -1860,8 +1860,14 @@ async def _cancel_owned_orders_for_symbol(
                 )
                 results.append(result)
                 if freeze_reason is not None:
+                    # The asyncio call gave up, but the executor thread can
+                    # still complete the SDK cancel, so this symbol keeps its
+                    # lease to expiry instead of handing it to the next client
+                    # while a write may still be in flight. At the default
+                    # alpaca_trading_http_timeout_seconds (30s) that thread is
+                    # released well inside the 120s lease.
+                    fence_release_blocked = True
                     freeze_error = await _freeze_symbol_for_batch(guard, symbol, freeze_reason)
-                    fence_release_blocked = freeze_error is not None
                     skipped_error = freeze_error or _symbol_frozen_error()
                     results.extend(
                         _bulk_cancel_failure(skipped, symbol, skipped_error) for skipped in order_ids[index + 1 :]
