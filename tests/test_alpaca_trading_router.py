@@ -4284,6 +4284,55 @@ async def test_cancel_all_orders_freezes_when_the_request_is_cancelled_mid_batch
 
     assert provider.cancelled == ["a-1"]
     assert guard.frozen["AAPL"] == "broker_mutation_cancelled"
+    # The executor thread can still complete the SDK call after the coroutine
+    # dies, so the lease is held to expiry instead of being handed on.
+    assert ("release", "AAPL") not in guard.events
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_revalidates_the_lease_after_upstream_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Renewing before the wait for an upstream Alpaca permit proves nothing:
+    the wait is unbounded and the lease is only 120s. The lease must be
+    revalidated AFTER admission, immediately before the broker write."""
+    guard = _FenceRecordingGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _lease_expiring_execute(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
+        if provider_call.__qualname__.endswith("cancel"):
+            # Stands in for a long wait on the upstream permit during which
+            # the Redis lease expires.
+            guard.held.discard("AAPL")
+            guard.events.append(("admitted", "AAPL"))
+        return await provider_call(registry.get("alpaca"))
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _lease_expiring_execute)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert provider.cancelled == []
+    assert guard.frozen["AAPL"] == "gateway_fence_lost"
+    assert ("admitted", "AAPL") in guard.events
+    errors = response["meta"]["errors"]
+    assert [error["order_id"] for error in errors] == ["a-1"]
 
 
 @pytest.mark.asyncio

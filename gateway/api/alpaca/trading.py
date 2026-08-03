@@ -1738,23 +1738,58 @@ async def _reconcile_symbol_state_for_batch(registry: ProviderRegistry, symbol: 
     return await execute_alpaca_provider_call(registry=registry, provider_call=_call)
 
 
+class _FenceLostBeforeWrite(HTTPException):
+    """The fence lease was gone at dispatch time, so no broker write was issued.
+
+    Subclasses ``HTTPException`` so ``execute_alpaca_provider_call`` re-raises
+    it untouched instead of rewriting it into a generic 502.
+    """
+
+    def __init__(self, rejection: HTTPException) -> None:
+        super().__init__(status_code=rejection.status_code, detail=rejection.detail)
+
+
 async def _cancel_one_fenced_order(
     *,
     registry: ProviderRegistry,
+    guard: OrderOwnershipGuard,
+    fence_token: str,
     order_id: Any,
     symbol: str,
 ) -> tuple[dict[str, Any], str | None]:
     """Cancel one order at the broker while its symbol's fence is held.
 
+    The lease is revalidated INSIDE the admission-gated call, after the
+    upstream Alpaca permit is held and immediately before the SDK call is
+    dispatched. Renewing before admission would prove nothing: the wait for a
+    permit is unbounded while the lease is only two minutes, so a renewal
+    taken before the wait can be stale by the time the write goes out. The
+    in-flight cap between this renewal and the dispatch fast-fails rather than
+    waiting, so nothing unbounded remains after it.
+
     Returns the per-order result and, when the broker outcome is ambiguous,
     the reason the symbol must be frozen before the fence is released.
     """
-    try:
-        await _execute_trading_call(
-            registry=registry,
-            provider_fn=lambda provider: provider.cancel_order(order_id),
+
+    async def _call(provider: Any) -> Any:
+        try:
+            await guard.renew_fence(symbol, fence_token)
+        except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+            raise _FenceLostBeforeWrite(_ownership_rejection(exc, symbol)) from exc
+        return await _run_trading_provider_call(
+            provider=provider,
+            provider_fn=lambda broker: broker.cancel_order(order_id),
             operation="cancel_all_orders.cancel",
         )
+
+    _call.__qualname__ = "trading.cancel_all_orders.cancel"
+    try:
+        await execute_alpaca_provider_call(registry=registry, provider_call=_call)
+    except _FenceLostBeforeWrite as exc:
+        # Nothing was dispatched for this order, but the lease this group
+        # already wrote under is gone, so the symbol is ambiguous.
+        logger.error("bulk_cancel_fence_lost_before_write", symbol=symbol, order_id=str(order_id))
+        return _bulk_cancel_failure(order_id, symbol, exc), "gateway_fence_lost"
     except HTTPException as exc:
         freeze_reason = f"broker_mutation_{exc.status_code}" if exc.status_code >= 500 else None
         return _bulk_cancel_failure(order_id, symbol, exc), freeze_reason
@@ -1816,24 +1851,10 @@ async def _cancel_owned_orders_for_symbol(
         # failure below freezes the claim before the fence is released.
         try:
             for index, order_id in enumerate(order_ids):
-                try:
-                    await guard.renew_fence(symbol, fence_token)
-                except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
-                    # The lease is gone, so another gateway client may already
-                    # hold this symbol and the cancels already issued under it
-                    # are ambiguous. No further write leaves the gateway.
-                    freeze_error = await _freeze_symbol_for_batch(guard, symbol, "gateway_fence_lost")
-                    fence_release_blocked = freeze_error is not None
-                    blocked = freeze_error or _ownership_rejection(
-                        exc,
-                        symbol,
-                        mutation_may_have_reached_broker=index > 0,
-                    )
-                    results.extend(_bulk_cancel_failure(oid, symbol, blocked) for oid in order_ids[index:])
-                    return results
-
                 result, freeze_reason = await _cancel_one_fenced_order(
                     registry=registry,
+                    guard=guard,
+                    fence_token=fence_token,
                     order_id=order_id,
                     symbol=symbol,
                 )
@@ -1852,10 +1873,19 @@ async def _cancel_owned_orders_for_symbol(
         except asyncio.CancelledError:
             # Shutdown or client disconnect during a broker write leaves the
             # outcome unknown; CancelledError is not an Exception, so it needs
-            # its own freeze before the fence is released.
+            # its own handling. The executor thread can still complete the SDK
+            # call after this coroutine dies, so the lease is kept to expiry
+            # rather than handed to another client, and the flag is set BEFORE
+            # the freeze so a second cancellation cannot interrupt the handler
+            # into releasing it.
             logger.error("bulk_cancel_symbol_cancelled", symbol=symbol)
-            freeze_error = await _freeze_symbol_for_batch(guard, symbol, "broker_mutation_cancelled")
-            fence_release_blocked = freeze_error is not None
+            fence_release_blocked = True
+            freeze = asyncio.shield(_freeze_symbol_for_batch(guard, symbol, "broker_mutation_cancelled"))
+            try:
+                await freeze
+            except asyncio.CancelledError:
+                # The freeze itself keeps running; only this wait was cut short.
+                logger.error("bulk_cancel_freeze_wait_interrupted", symbol=symbol)
             raise
         # nosemgrep: empire-no-bare-exception -- batch boundary: post-write ambiguity freezes, never aborts the batch
         except Exception as exc:
