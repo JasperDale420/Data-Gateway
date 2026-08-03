@@ -15,7 +15,12 @@ from gateway.api.alpaca import trading
 from gateway.api.alpaca.common import ALPACA_ROUTER_PREFIX
 from gateway.config import Settings
 from gateway.core.cache import InMemoryCache
-from gateway.core.order_ownership import BrokerSymbolState, OrderOwnershipGuard, OwnershipConflict
+from gateway.core.order_ownership import (
+    BrokerSymbolState,
+    OrderOwnershipGuard,
+    OwnershipConflict,
+    OwnershipStoreUnavailable,
+)
 from gateway.core.registry import ProviderRegistry
 
 
@@ -3839,6 +3844,7 @@ class _FenceRecordingGuard(_AllowAllOwnershipGuard):
         *,
         unacquirable: frozenset[str] = frozenset(),
         unauthorized: frozenset[str] = frozenset(),
+        freeze_failure: Exception | None = None,
     ) -> None:
         self.events: list[tuple[str, Any]] = []
         self.held: set[str] = set()
@@ -3847,8 +3853,10 @@ class _FenceRecordingGuard(_AllowAllOwnershipGuard):
         self.mutations: list[str] = []
         self.completed: list[str] = []
         self.frozen: dict[str, str] = {}
+        self.renewals = 0
         self._unacquirable = unacquirable
         self._unauthorized = unauthorized
+        self._freeze_failure = freeze_failure
 
     async def acquire_fence(self, symbol: str) -> str:
         if symbol in self._unacquirable:
@@ -3860,6 +3868,12 @@ class _FenceRecordingGuard(_AllowAllOwnershipGuard):
         self.acquisitions.append(symbol)
         self.events.append(("acquire", symbol))
         return f"fence-{symbol}"
+
+    async def renew_fence(self, symbol: str, _token: str) -> None:
+        if symbol not in self.held:
+            raise OwnershipConflict(f"gateway_fence_lost:{symbol}")
+        self.renewals += 1
+        self.events.append(("renew", symbol))
 
     async def release_fence(self, symbol: str, _token: str) -> None:
         self.held.discard(symbol)
@@ -3880,6 +3894,9 @@ class _FenceRecordingGuard(_AllowAllOwnershipGuard):
         self.events.append(("complete_mutation", kwargs["symbol"]))
 
     async def freeze(self, symbol: str, reason: str) -> None:
+        if self._freeze_failure is not None:
+            self.events.append(("freeze_failed", symbol))
+            raise self._freeze_failure
         self.frozen[symbol] = reason
         self.events.append(("freeze", symbol))
 
@@ -3968,7 +3985,9 @@ async def test_cancel_all_orders_fences_every_symbol_before_cancelling(
     assert aapl_events == [
         ("acquire", "AAPL"),
         ("reconcile", "AAPL"),
+        ("renew", "AAPL"),
         ("begin_mutation", "AAPL"),
+        ("renew", "AAPL"),
         ("cancel", "a-1"),
         ("reconcile", "AAPL"),
         ("complete_mutation", "AAPL"),
@@ -4004,11 +4023,16 @@ async def test_cancel_all_orders_serializes_orders_on_the_same_symbol(
     assert guard.acquisitions == ["AAPL"]
     assert guard.max_symbols_held == 1
     assert provider.unfenced_cancels == []
+    # The fence lease is renewed immediately before EVERY broker cancel: one
+    # renewal up front cannot cover a group that outruns the 120s lease.
     assert guard.events == [
         ("acquire", "AAPL"),
         ("reconcile", "AAPL"),
+        ("renew", "AAPL"),
         ("begin_mutation", "AAPL"),
+        ("renew", "AAPL"),
         ("cancel", "a-1"),
+        ("renew", "AAPL"),
         ("cancel", "a-2"),
         ("reconcile", "AAPL"),
         ("complete_mutation", "AAPL"),
@@ -4173,6 +4197,251 @@ async def test_cancel_all_orders_freezes_symbol_after_ambiguous_broker_failure(
     assert set(errors) == {"a-1", "a-2"}
     assert errors["a-1"]["status_code"] == HTTP_503_SERVICE_UNAVAILABLE
     assert errors["a-2"]["status_code"] == 409
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_stops_the_group_when_the_fence_lease_is_lost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the lease is gone before the next cancel, another gateway client may
+    already hold the symbol. The earlier cancel is ambiguous, so freeze and
+    never issue the remaining writes."""
+
+    class _LeaseExpiringGuard(_FenceRecordingGuard):
+        async def renew_fence(self, symbol: str, token: str) -> None:
+            if self.renewals >= 2:
+                # Simulates the Redis lease expiring mid-group.
+                self.held.discard(symbol)
+            await super().renew_fence(symbol, token)
+
+    guard = _LeaseExpiringGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "a-2", "client_order_id": _owned_coid("cerberus", "a-2"), "symbol": "AAPL"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert provider.cancelled == ["a-1"]
+    assert provider.unfenced_cancels == []
+    assert guard.frozen["AAPL"] == "gateway_fence_lost"
+    assert guard.completed == []
+    errors = response["meta"]["errors"]
+    assert [error["order_id"] for error in errors] == ["a-2"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_freezes_when_the_request_is_cancelled_mid_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task cancellation after a broker write is ambiguous, not clean: the
+    symbol must be frozen even though ``CancelledError`` is not an ``Exception``."""
+
+    class _StallingGuard(_FenceRecordingGuard):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stalled = asyncio.Event()
+
+        async def renew_fence(self, symbol: str, token: str) -> None:
+            await super().renew_fence(symbol, token)
+            if self.renewals == 3:
+                self.stalled.set()
+                await asyncio.sleep(3600)
+
+    guard = _StallingGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "a-2", "client_order_id": _owned_coid("cerberus", "a-2"), "symbol": "AAPL"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    task = asyncio.ensure_future(
+        trading.cancel_all_orders(
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+    )
+    await asyncio.wait_for(guard.stalled.wait(), timeout=2.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert provider.cancelled == ["a-1"]
+    assert guard.frozen["AAPL"] == "broker_mutation_cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_fails_closed_when_one_order_id_spans_two_symbols(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broker listing that maps one order id to two canonical symbols would
+    otherwise be cancelled twice, once under the wrong symbol's fence."""
+    guard = _FenceRecordingGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "dup-1", "client_order_id": _owned_coid("cerberus", "dup-1"), "symbol": "AAPL"},
+            {"id": "dup-1", "client_order_id": _owned_coid("cerberus", "dup-1"), "symbol": "TSLA"},
+            {"id": "m-1", "client_order_id": _owned_coid("cerberus", "m-1"), "symbol": "MSFT"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert provider.cancelled == ["m-1"]
+    assert guard.acquisitions == ["MSFT"]
+    errors = response["meta"]["errors"]
+    assert [error["order_id"] for error in errors] == ["dup-1", "dup-1"]
+    assert all(error["status_code"] == 409 for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_reports_a_freeze_that_did_not_persist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Never tell the caller a symbol is frozen when the store rejected the
+    freeze — and hold the lease rather than releasing an unrecorded ambiguity."""
+    guard = _FenceRecordingGuard(freeze_failure=OwnershipStoreUnavailable("redis_freeze_failed:AAPL"))
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "a-2", "client_order_id": _owned_coid("cerberus", "a-2"), "symbol": "AAPL"},
+        ],
+        guard,
+        failures={"a-1": HTTPException(status_code=HTTP_503_SERVICE_UNAVAILABLE, detail="broker unavailable")},
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert provider.cancelled == ["a-1"]
+    assert guard.frozen == {}
+    assert ("release", "AAPL") not in guard.events
+    errors = {error["order_id"]: error for error in response["meta"]["errors"]}
+    assert errors["a-2"]["status_code"] == HTTP_503_SERVICE_UNAVAILABLE
+    assert errors["a-2"]["detail"]["code"] == "GW-E5301"
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_takes_an_upstream_permit_per_broker_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The upstream Alpaca permit is per broker call, not per symbol group.
+    Holding one permit for a whole sequential group starves every other
+    trading route behind a long mass-cancel."""
+    depth = {"current": 0, "max": 0, "calls": 0}
+    guard = _FenceRecordingGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "a-2", "client_order_id": _owned_coid("cerberus", "a-2"), "symbol": "AAPL"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+
+    async def _counting_execute(
+        *,
+        registry: ProviderRegistry,
+        provider_call: Any,
+        block: bool = False,
+        log_context: dict[str, Any] | None = None,
+    ):
+        depth["calls"] += 1
+        depth["current"] += 1
+        depth["max"] = max(depth["max"], depth["current"])
+        try:
+            return await provider_call(registry.get("alpaca"))
+        finally:
+            depth["current"] -= 1
+
+    monkeypatch.setattr(trading, "execute_alpaca_provider_call", _counting_execute)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["meta"]["count"] == 2
+    # list + pre-reconcile + 2 cancels + post-reconcile, each with its own permit.
+    assert depth["calls"] == 5
+    assert depth["max"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_runs_the_real_ownership_guard_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive the real guard (NX fence, Lua-equivalent claim/marker scripts)
+    rather than an allow-all fake: the claim survives, the mutation marker is
+    cleared by its own token, and the fence key is gone afterwards."""
+    redis = _MemoryRedis()
+    ownership_guard = OrderOwnershipGuard(redis)
+
+    class _RealGuardProvider(_FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled: list[str] = []
+
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return [
+                {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+                {"id": "a-2", "client_order_id": _owned_coid("cerberus", "a-2"), "symbol": "AAPL"},
+            ]
+
+        def cancel_order(self, order_id: str) -> bool:
+            assert redis.values.get(ownership_guard.fence_key("AAPL")) is not None, "cancel ran without a fence"
+            self.cancelled.append(order_id)
+            return True
+
+    provider = _RealGuardProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert provider.cancelled == ["a-1", "a-2"]
+    assert response["meta"]["count"] == 2
+    assert ownership_guard.fence_key("AAPL") not in redis.values
+    claim = json.loads(redis.values[ownership_guard.claim_key("AAPL")])
+    assert claim["owner"] == "cerberus"
+    assert "mutation_pending" not in claim
+    assert "frozen_reason" not in claim
 
 
 @pytest.mark.asyncio
