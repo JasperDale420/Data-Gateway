@@ -111,7 +111,9 @@ services:
     # Under allkeys-lru an at-cap instance could silently evict un-read stream
     # entries and live watch state. If only persistent keys remain at maxmemory,
     # writes error and the sink failover buffer absorbs them (loud, recoverable).
-    command: redis-server --save "" --appendonly yes --appendfsync everysec --maxmemory 4gb --maxmemory-policy volatile-lru
+    # Ownership claims acknowledge before Gateway can dispatch a broker write;
+    # synchronous AOF makes that safety marker survive a host power loss.
+    command: redis-server --save "" --appendonly yes --appendfsync always --maxmemory 4gb --maxmemory-policy volatile-lru
     volumes:
       - data-gateway-redis-data:/data
     restart: unless-stopped
