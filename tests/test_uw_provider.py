@@ -398,7 +398,12 @@ async def test_get_iv_rank_parses_raw_http_payload_when_sdk_shape_is_incompatibl
         {
             "data": [
                 {"date": "2026-02-11", "volatility": "0.1478", "iv_rank_1y": "11.6152"},
-                {"date": "2026-02-12", "volatility": "0.1756", "iv_rank_1y": "20.2449"},
+                {
+                    "date": "2026-02-12",
+                    "updated_at": "2026-02-12T22:35:24.143985Z",
+                    "volatility": "0.1756",
+                    "iv_rank_1y": "20.2449",
+                },
             ]
         }
     )
@@ -416,6 +421,8 @@ async def test_get_iv_rank_parses_raw_http_payload_when_sdk_shape_is_incompatibl
     assert result.symbol == "SPY"
     assert str(result.iv_rank) == "20.2449"
     assert str(result.current_iv) == "0.1756"
+    assert result.date.isoformat() == "2026-02-12"
+    assert result.updated_at == datetime(2026, 2, 12, 22, 35, 24, 143985, tzinfo=UTC)
     assert http_client.calls == [("/api/stock/SPY/iv-rank", {"date": "2026-02-12"})]
 
 

@@ -394,6 +394,8 @@ class UWBaseMixin(DataProvider):
                 else None
             ),
             provider="unusual_whales",
+            date=get("date") or None,
+            updated_at=get("updated_at") or None,
         )
 
     # ─────────────────────────────────────────────────────────────────
