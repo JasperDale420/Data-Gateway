@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -18,6 +19,21 @@ from gateway.core.jetstream import (
     ensure_streams,
     subject_for_entry,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_gateway_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip GATEWAY_* out of the process environment for this module.
+
+    ``gateway.main`` calls ``load_dotenv()`` at import time, so the developer's
+    ``.env`` is already in ``os.environ`` by the time a test runs. ``_env_file=None``
+    only disables pydantic-settings' own dotenv read, not the environment, so
+    without this fixture these tests assert against local config instead of the
+    declared defaults.
+    """
+    for key in list(os.environ):
+        if key.startswith("GATEWAY_"):
+            monkeypatch.delenv(key, raising=False)
 
 
 def test_jetstream_settings_are_bounded_and_disabled_by_default() -> None:
@@ -86,6 +102,7 @@ def test_jetstream_settings_are_bounded_and_disabled_by_default() -> None:
     with pytest.raises(ValidationError, match="Redis control-plane URL"):
         Settings(
             _env_file=None,
+            data_sink_enabled=True,
             durable_outbox_enabled=True,
             jetstream_enabled=True,
             jetstream_username="gateway",
