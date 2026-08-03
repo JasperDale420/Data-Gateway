@@ -1820,9 +1820,9 @@ async def _cancel_owned_orders_for_symbol(
     runs — fence, uncached broker reconciliation, claim, mutation marker,
     broker write, post-write reconciliation, matching-token clear, release.
 
-    The fence lease is renewed immediately before EVERY broker cancel, so a
-    group that outruns the lease stops instead of writing to a symbol another
-    gateway client may already have taken.
+    The fence lease is revalidated inside EVERY cancel's admission-gated call
+    (see ``_cancel_one_fenced_order``), so a group that outruns the lease stops
+    instead of writing to a symbol another gateway client may already have taken.
 
     Never raises except on task cancellation, which is itself treated as an
     ambiguous broker outcome. Every other failure is reported against the
