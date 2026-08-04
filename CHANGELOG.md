@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Redis sink headroom raised 4GB → 6GB after a live ingestion outage** (`docker-compose.yml`): on 2026-08-04 the sink Redis sat at 3.47G of its 4G cap for roughly 50 minutes during market hours. With `volatile-lru` the two event streams carry no TTL and cannot be evicted, so once the TTL'd keys were exhausted `XADD` stalled, the `data_sink:redis_streams` circuit breaker opened, and the gateway's 50,000-entry failover buffer overflowed — **2,762,092 events evicted**, 99.2% of them `websocket:quotes`. Redis also restarted twice under AOF-fsync stalls. The streams accounted for only 1.51G; the other ~2G was **11.5 million `cache:dedup:publish:*` keys, one per published event**, a population that scales with event volume rather than with the stream caps and was never budgeted for. Stream caps are unchanged (500K live / 2M backfill) — this is headroom only. Note the circuit breaker did **not** self-heal once Redis recovered: it kept re-opening on a 60s probe with no error logged (it buffers rather than attempting while open), and required a gateway restart to reset. That stale-breaker behaviour is a separate bug and is tracked in `docs/FOLLOW_UPS.md`.
+
 ### Added
 
 - **Durable transport startup and lane isolation**: durable-selected JetStream streams are now connected, authenticated, provisioned, and contract-verified before Gateway starts accepting events. Existing broker stream contracts are inspected rather than rewritten. Flow alerts from both pollers and REST atomically admit their writer and watch copies to SQLite; live, backfill, and watch drain independently, so a stalled historical or watch lane cannot block authoritative live delivery. Health and Prometheus now distinguish durable admission from later broker-delivery degradation, while ambiguous PubAcks retain their SQLite rows for retry.

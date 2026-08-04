@@ -56,8 +56,10 @@ services:
       - GATEWAY_JETSTREAM_USERNAME=${GATEWAY_JETSTREAM_USERNAME:-}
       - GATEWAY_JETSTREAM_PASSWORD=${GATEWAY_JETSTREAM_PASSWORD:-}
       - GATEWAY_BACKFILL_MAX_CHUNK_RECORDS=${GATEWAY_BACKFILL_MAX_CHUNK_RECORDS:-5000}
-      # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.)
-      - GATEWAY_UW_EOD_ENABLED=true
+      # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.). Overridable so the
+      # ~1.19M-event nightly burst can be paused while Heber's backfill consumer drains a
+      # backlog — publishing into a stream the consumer is 1.1M behind on just deepens it.
+      - GATEWAY_UW_EOD_ENABLED=${GATEWAY_UW_EOD_ENABLED:-true}
       # Enable minute-level Alpaca option chain capture for Heber replay.
       - GATEWAY_OPTION_CAPTURE_ENABLED=true
       - GATEWAY_OPTION_CAPTURE_SYMBOLS=SPY,QQQ,IWM
@@ -159,7 +161,15 @@ services:
     # Under allkeys-lru an at-cap instance could silently evict un-read stream
     # entries and live watch state. If only persistent keys remain at maxmemory,
     # writes error and the sink failover buffer absorbs them (loud, recoverable).
-    command: redis-server --save "" --appendonly yes --appendfsync everysec --maxmemory 4gb --maxmemory-policy volatile-lru
+    # 4gb→6gb on 2026-08-04 after a live sink outage: the instance sat at 3.47G of 4G
+    # for ~50 minutes, XADD stalled, the data_sink circuit breaker opened, and the
+    # gateway's 50K failover buffer overflowed — 2.76M events evicted before the
+    # breaker was reset. The streams were only 1.51G of that; the other ~2G was
+    # 11.5M `cache:dedup:publish:*` keys, one per published event. That population
+    # scales with event volume, not with the stream caps, so it has to be budgeted
+    # for separately. Stream caps are unchanged (500K live / 2M backfill); this is
+    # headroom only. Docker VM has 11.67GB.
+    command: redis-server --save "" --appendonly yes --appendfsync everysec --maxmemory 6gb --maxmemory-policy volatile-lru
     volumes:
       - data-gateway-redis-data:/data
     restart: unless-stopped
