@@ -65,7 +65,18 @@ services:
       - GATEWAY_OPTION_CAPTURE_SYMBOLS=SPY,QQQ,IWM
       - GATEWAY_OPTION_CAPTURE_INTERVAL_SECONDS=300
       - GATEWAY_OPTION_CAPTURE_MARKET_HOURS_ONLY=true
-      - GATEWAY_OPTION_CAPTURE_WS_ENABLED=true
+      # OFF since 2026-08-04. The WS leg subscribed ws_contract_limit_per_symbol (40) x
+      # SPY/QQQ/IWM = 120 contracts, ranked nearest-expiry ATM — i.e. the highest-tick-rate
+      # contracts in all of OPRA. That produced ~8.69M quote + ~4.4k trade events/day: 99.2%
+      # of everything reaching the sink, 229GB in silver/feed=quotes/instrument_type=option,
+      # and the bulk of the 11.5M dedup keys whose memory pressure caused the 2026-08-04
+      # eviction outage. No consumer reads that Silver partition.
+      # Kairos's exit monitor is NOT affected: it subscribes its own position contracts
+      # (Kairos live_monitor.py:444-462) and the multiplexer refcounts per client, so
+      # dropping __option_capture__'s subscriptions cannot tear down a contract Kairos holds.
+      # The REST chain-snapshot leg above stays ON — that is the 234 events/day Heber-replay
+      # feature. Re-enable by setting this to true.
+      - GATEWAY_OPTION_CAPTURE_WS_ENABLED=${GATEWAY_OPTION_CAPTURE_WS_ENABLED:-false}
       # SPY=13K contracts (~14 pages), QQQ=10K (~11 pages) need longer timeouts
       - GATEWAY_OPTION_CAPTURE_SNAPSHOT_TIMEOUT_SECONDS=90
       - GATEWAY_OPTION_CAPTURE_SYMBOL_TIMEOUT_OVERRIDES=SPY:120,QQQ:90
