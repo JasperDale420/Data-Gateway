@@ -69,7 +69,7 @@ Full defaults live in `gateway/config.py`; see `.env.example` for a commented te
 
 | Variable                                   | Default   | Purpose                              |
 |--------------------------------------------|-----------|--------------------------------------|
-| `GATEWAY_LOG_LEVEL`                        | `INFO`    | Root log level                       |
+| `EMPIRE_LOG_LEVEL`                         | `INFO`    | Root log level (`GATEWAY_LOG_LEVEL` is a dead knob — defined in Settings but never read by the runtime) |
 | `GATEWAY_CACHE_DEFAULT_TTL`               | `300`     | Default cache TTL (seconds)          |
 | `GATEWAY_CACHE_MAX_SIZE`                  | `10000`   | Max in-memory cache entries          |
 | `GATEWAY_RATE_LIMIT_DEFAULT`              | `600`     | Default rate limit (req/min)         |

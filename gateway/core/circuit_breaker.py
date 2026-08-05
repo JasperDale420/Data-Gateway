@@ -140,6 +140,23 @@ class CircuitBreaker:
         self.state = new_state
         set_circuit_breaker_state(self.name, new_state)
 
+    def probe_due(self) -> bool:
+        """True when an OPEN circuit's recovery window has elapsed and a probe
+        should be admitted.
+
+        Producers that pre-check ``state == OPEN`` to avoid enqueueing must
+        still let events through once this returns True — the OPEN → HALF_OPEN
+        transition only ever happens inside ``call()``, so a pre-check that
+        buffers unconditionally starves the breaker of probes and leaves it
+        open forever (observed live 2026-08-05: a Redis bounce opened the sink
+        breaker and publishing stayed dead for 3+ hours until a restart).
+        """
+        if self.state is not CircuitState.OPEN:
+            return True
+        if self._half_open_in_progress:
+            return False
+        return time.time() - (self.last_failure_time or 0) >= self.config.recovery_timeout
+
     async def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> T:
         """Execute a function through the circuit breaker.
 

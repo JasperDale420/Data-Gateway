@@ -393,7 +393,7 @@ uv run pytest --cov=gateway --cov-report=term-missing  # with coverage
 # Linting, formatting, type checking
 ruff check .                          # lint
 ruff format .                         # format
-uv run pyright                        # type check (mypy config exists in pyproject.toml but mypy isn't in the dev extras — run via `uvx mypy .` if needed)
+mypy .                                # type check (mypy is in the dev extras; enforced in CI via the mypy dirty-file allowlist gate)
 pre-commit run --all-files            # all checks at once
 
 # Key management CLI
