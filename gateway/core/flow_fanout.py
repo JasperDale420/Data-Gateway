@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from gateway.core.flow_replay import ReplayGapError, ReplayHistoryTrimmedError
 from gateway.core.logger import logger
 
 if TYPE_CHECKING:
@@ -254,7 +255,7 @@ class FlowFanout:
         self._pending_replays[connection_id] = barrier
         self.subscribe(connection_id, symbols)
         store = self._replay_store
-        if store is None or not store.available:
+        if store is None or not await store.ensure_available():
             if self._pending_replays.get(connection_id) is barrier:
                 self._pending_replays.pop(connection_id, None)
             return {"resume_supported": False}
@@ -303,12 +304,22 @@ class FlowFanout:
                 error=str(exc),
                 exc_info=True,
             )
+            if isinstance(exc, ReplayHistoryTrimmedError):
+                error_code = "history_trimmed"
+            elif isinstance(exc, ReplayGapError):
+                error_code = "durability_gap"
+            else:
+                # Transient (store down, network) — the client should keep
+                # retrying the same cursor; only terminal codes justify
+                # abandoning it.
+                error_code = "replay_failed"
             await self._connections.broadcast_to_connection_ids(
                 {
                     "type": "replay_error",
                     "after_stream_id": after,
                     "high_watermark": through,
                     "message": str(exc),
+                    "error_code": error_code,
                 },
                 targets,
             )

@@ -608,6 +608,11 @@ async def _handle_message(
             elif after_stream_id is not None and not ack.get("resume_supported"):
                 ack["status"] = "warning"
                 ack["warning_code"] = "GW-W5004"
+                # Always transient at ack time (store down / probe failed) —
+                # terminal refusals (trimmed history, durability gap) surface
+                # later as replay_error with a terminal error_code. Clients
+                # must keep retrying the same cursor on this reason.
+                ack["resume_refused_reason"] = "store_unavailable"
                 ack["message"] = "Durable flow replay is unavailable; reconnect completeness cannot be guaranteed"
             return ack
 
