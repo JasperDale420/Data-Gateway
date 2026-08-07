@@ -193,6 +193,7 @@ async def detailed_status(
         transport_status: dict[str, Any] = {}
         get_transport_status = getattr(sink_registry, "get_transport_status", None)
         if callable(get_transport_status):
+            # nosemgrep: empire-no-bare-exception -- optional diagnostics snapshot; logged via logger.exception
             try:
                 transport_status = cast(dict[str, Any], get_transport_status())
             except Exception:
