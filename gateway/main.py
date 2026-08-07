@@ -10,6 +10,7 @@ import os
 import socket
 import sys
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 # uvloop removed — incompatible with container environment (causes deadlocks).
 # Standard asyncio event loop is used instead.
@@ -475,9 +476,15 @@ async def lifespan(app: FastAPI):
                 stream=settings.ws_flow_replay_stream,
                 max_len=settings.ws_flow_replay_max_len,
                 max_replay_events=settings.ws_flow_replay_max_events_per_resume,
+                # Persistent volume: the pending-gap latch must survive process
+                # restarts or a recovered replay silently crosses the gap.
+                gap_sentinel_path=Path(settings.durable_outbox_path).parent / "flow_replay_gap_pending",
             )
-            if await candidate_replay_store.initialize():
-                replay_store = candidate_replay_store
+            # Keep the store even when the startup probe fails — it re-probes
+            # on demand (ensure_available), so replay recovers as soon as
+            # Redis does instead of being disabled until the next deploy.
+            await candidate_replay_store.initialize()
+            replay_store = candidate_replay_store
         flow_fanout = FlowFanout(get_connection_manager(), replay_store=replay_store)
         set_flow_fanout(flow_fanout)
         logger.info("flow_fanout_initialized", replay_available=replay_store is not None)

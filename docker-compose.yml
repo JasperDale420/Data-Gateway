@@ -56,14 +56,27 @@ services:
       - GATEWAY_JETSTREAM_USERNAME=${GATEWAY_JETSTREAM_USERNAME:-}
       - GATEWAY_JETSTREAM_PASSWORD=${GATEWAY_JETSTREAM_PASSWORD:-}
       - GATEWAY_BACKFILL_MAX_CHUNK_RECORDS=${GATEWAY_BACKFILL_MAX_CHUNK_RECORDS:-5000}
-      # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.)
-      - GATEWAY_UW_EOD_ENABLED=true
+      # Enable EOD per-ticker feeds (iv_rank, oi_change, short data, etc.). Overridable so the
+      # ~1.19M-event nightly burst can be paused while Heber's backfill consumer drains a
+      # backlog — publishing into a stream the consumer is 1.1M behind on just deepens it.
+      - GATEWAY_UW_EOD_ENABLED=${GATEWAY_UW_EOD_ENABLED:-true}
       # Enable minute-level Alpaca option chain capture for Heber replay.
       - GATEWAY_OPTION_CAPTURE_ENABLED=true
       - GATEWAY_OPTION_CAPTURE_SYMBOLS=SPY,QQQ,IWM
       - GATEWAY_OPTION_CAPTURE_INTERVAL_SECONDS=300
       - GATEWAY_OPTION_CAPTURE_MARKET_HOURS_ONLY=true
-      - GATEWAY_OPTION_CAPTURE_WS_ENABLED=true
+      # OFF since 2026-08-04. The WS leg subscribed ws_contract_limit_per_symbol (40) x
+      # SPY/QQQ/IWM = 120 contracts, ranked nearest-expiry ATM — i.e. the highest-tick-rate
+      # contracts in all of OPRA. That produced ~8.69M quote + ~4.4k trade events/day: 99.2%
+      # of everything reaching the sink, 229GB in silver/feed=quotes/instrument_type=option,
+      # and the bulk of the 11.5M dedup keys whose memory pressure caused the 2026-08-04
+      # eviction outage. No consumer reads that Silver partition.
+      # Kairos's exit monitor is NOT affected: it subscribes its own position contracts
+      # (Kairos live_monitor.py:444-462) and the multiplexer refcounts per client, so
+      # dropping __option_capture__'s subscriptions cannot tear down a contract Kairos holds.
+      # The REST chain-snapshot leg above stays ON — that is the 234 events/day Heber-replay
+      # feature. Re-enable by setting this to true.
+      - GATEWAY_OPTION_CAPTURE_WS_ENABLED=${GATEWAY_OPTION_CAPTURE_WS_ENABLED:-false}
       # SPY=13K contracts (~14 pages), QQQ=10K (~11 pages) need longer timeouts
       - GATEWAY_OPTION_CAPTURE_SNAPSHOT_TIMEOUT_SECONDS=90
       - GATEWAY_OPTION_CAPTURE_SYMBOL_TIMEOUT_OVERRIDES=SPY:120,QQQ:90
@@ -159,9 +172,17 @@ services:
     # Under allkeys-lru an at-cap instance could silently evict un-read stream
     # entries and live watch state. If only persistent keys remain at maxmemory,
     # writes error and the sink failover buffer absorbs them (loud, recoverable).
+    # 4gb→6gb on 2026-08-04 after a live sink outage: the instance sat at 3.47G of 4G
+    # for ~50 minutes, XADD stalled, the data_sink circuit breaker opened, and the
+    # gateway's 50K failover buffer overflowed — 2.76M events evicted before the
+    # breaker was reset. The streams were only 1.51G of that; the other ~2G was
+    # 11.5M `cache:dedup:publish:*` keys, one per published event. That population
+    # scales with event volume, not with the stream caps, so it has to be budgeted
+    # for separately. Stream caps are unchanged (500K live / 2M backfill); this is
+    # headroom only. Docker VM has 11.67GB.
     # Ownership claims acknowledge before Gateway can dispatch a broker write;
     # synchronous AOF makes that safety marker survive a host power loss.
-    command: redis-server --save "" --appendonly yes --appendfsync always --maxmemory 4gb --maxmemory-policy volatile-lru
+    command: redis-server --save "" --appendonly yes --appendfsync always --maxmemory 6gb --maxmemory-policy volatile-lru
     volumes:
       - data-gateway-redis-data:/data
     restart: unless-stopped

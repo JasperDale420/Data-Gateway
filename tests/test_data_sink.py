@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -1171,3 +1172,204 @@ class TestCircuitOpenInFlightBuffering:
             f"got buffered={sink.buffered}, published={sink.published}"
         )
         assert sink.published == []
+
+
+class TestOpenCircuitProbeAdmission:
+    """A stuck-OPEN breaker must admit a probe once its recovery window
+    elapses, even when every producer pre-checks state before enqueueing.
+
+    Regression: 2026-08-05 — Redis bounced, the sink breaker opened, and
+    because publish_all buffers on OPEN without ever calling through the
+    breaker, no probe could run; publishing stayed dead for 3+ hours until
+    a manual gateway restart."""
+
+    @pytest.mark.asyncio
+    async def test_publish_all_admits_probe_after_recovery_window(self) -> None:
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:probe_sink")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = time.time() - 3600.0  # recovery window long elapsed
+
+        sink = _TrackingSink(sink_name="probe_sink")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            await registry.publish_all("gateway.stream.bars", {"symbol": "AAPL"})
+            await asyncio.sleep(0.1)
+
+        assert len(sink.published) == 1  # the probe went through
+        # A successful probe must move the breaker off OPEN so publishing resumes.
+        assert breaker.state != CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    async def test_publish_all_still_buffers_inside_recovery_window(self) -> None:
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:cold_sink")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = time.time()  # just failed — window not elapsed
+
+        sink = _TrackingSink(sink_name="cold_sink")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            await registry.publish_all("gateway.stream.bars", {"symbol": "AAPL"})
+            await asyncio.sleep(0.05)
+
+        assert len(sink.published) == 0
+
+
+class _BatchBufferingSink(_BufferingSink):
+    """Buffering sink with a per-message batch API, like RedisStreamsSink."""
+
+    def __init__(self, sink_name: str = "batch_buffering", *, fail: bool = False) -> None:
+        super().__init__(sink_name)
+        self.fail = fail
+        self.batch_calls: list[list[tuple[str, Any]]] = []
+
+    async def publish_batch_results(self, messages: list[tuple[str, Any]]) -> list[bool]:
+        self.batch_calls.append(list(messages))
+        if self.fail:
+            raise ConnectionError("redis down")
+        self.published.extend(messages)
+        return [True] * len(messages)
+
+
+class TestBatchPathDrivesBreaker:
+    """The batch publish APIs must run through breaker.call() so a stuck-OPEN
+    breaker can half-open on batch traffic, re-open on failure, and buffer
+    every failed admitted message (2026-08-05 incident follow-up)."""
+
+    @pytest.mark.asyncio
+    async def test_batch_success_after_recovery_window_moves_breaker_off_open(self) -> None:
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:batch_ok")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = time.time() - 3600.0
+
+        sink = _BatchBufferingSink(sink_name="batch_ok")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        messages = [("gateway.stream.bars", {"event_id": f"e{i}"}) for i in range(3)]
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            results = await registry.publish_all_batch_results(messages)
+
+        assert results == [True, True, True]
+        assert breaker.state != CircuitState.OPEN
+        assert len(sink.published) == 3
+
+    @pytest.mark.asyncio
+    async def test_batch_failure_after_recovery_window_reopens_and_buffers_all(self) -> None:
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:batch_bad")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = time.time() - 3600.0
+
+        sink = _BatchBufferingSink(sink_name="batch_bad", fail=True)
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        messages = [("gateway.stream.bars", {"event_id": f"e{i}"}) for i in range(3)]
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            results = await registry.publish_all_batch_results(messages)
+
+        assert results == [False, False, False]
+        assert breaker.state == CircuitState.OPEN  # failed probe re-opened it
+        assert sink.buffered == messages  # every failed admitted message buffered
+
+    @pytest.mark.asyncio
+    async def test_batch_indexed_success_after_recovery_window_moves_breaker_off_open(self) -> None:
+        class _BatchIndexedSink(_BatchBufferingSink):
+            async def publish_batch_indexed(self, messages: list[tuple[str, Any]]) -> set[int]:
+                self.batch_calls.append(list(messages))
+                if self.fail:
+                    raise ConnectionError("redis down")
+                self.published.extend(messages)
+                return set(range(len(messages)))
+
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:batch_idx")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = time.time() - 3600.0
+
+        sink = _BatchIndexedSink(sink_name="batch_idx")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        messages = [("gateway.stream.bars", {"event_id": f"e{i}"}) for i in range(2)]
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            succeeded = await registry.publish_all_batch_indexed(messages)
+
+        assert succeeded == {0, 1}
+        assert breaker.state != CircuitState.OPEN
+
+
+class TestBatchBreakerEdgeCases:
+    """Reviewer-required: all-False results count as sink failure; concurrent
+    half-open batches must not bypass single-probe admission with volatile
+    messages."""
+
+    @pytest.mark.asyncio
+    async def test_all_false_batch_result_reopens_breaker_and_buffers(self) -> None:
+        class _AllFalseSink(_BatchBufferingSink):
+            async def publish_batch_results(self, messages: list[tuple[str, Any]]) -> list[bool]:
+                self.batch_calls.append(list(messages))
+                return [False] * len(messages)  # Redis batch failure shape: returns, doesn't raise
+
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:allfalse")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = time.time() - 3600.0
+
+        sink = _AllFalseSink(sink_name="allfalse")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        messages = [("gateway.stream.bars", {"event_id": f"e{i}"}) for i in range(2)]
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            results = await registry.publish_all_batch_results(messages)
+
+        assert results == [False, False]
+        assert breaker.state == CircuitState.OPEN  # all-false probe recorded as failure
+        assert sink.buffered == messages  # whole admitted batch buffered
+
+    @pytest.mark.asyncio
+    async def test_concurrent_half_open_batch_buffers_volatile_instead_of_bypassing(self) -> None:
+        probe_started = asyncio.Event()
+        release_probe = asyncio.Event()
+
+        class _SlowProbeSink(_BatchBufferingSink):
+            async def publish_batch_results(self, messages: list[tuple[str, Any]]) -> list[bool]:
+                self.batch_calls.append(list(messages))
+                probe_started.set()
+                await release_probe.wait()
+                self.published.extend(messages)
+                return [True] * len(messages)
+
+        cb_registry = CircuitBreakerRegistry()
+        breaker = await cb_registry.get("data_sink:slowprobe")
+        breaker.state = CircuitState.OPEN
+        breaker.last_failure_time = time.time() - 3600.0
+
+        sink = _SlowProbeSink(sink_name="slowprobe")
+        registry = DataSinkRegistry()
+        registry.register(sink)
+
+        first = [("gateway.stream.bars", {"event_id": "probe"})]
+        second = [("gateway.stream.bars", {"event_id": "concurrent"})]
+        with patch("gateway.core.data_sink.get_circuit_breaker", new=cb_registry.get):
+            probe_task = asyncio.create_task(registry.publish_all_batch_results(first))
+            await probe_started.wait()
+            # Second batch arrives while the half-open probe is in flight.
+            second_results = await registry.publish_all_batch_results(second)
+            release_probe.set()
+            first_results = await probe_task
+
+        assert first_results == [True]
+        # The concurrent volatile batch must NOT have been published directly —
+        # it is rejected by single-probe admission and buffered.
+        assert second_results == [False]
+        assert second[0] in sink.buffered
+        assert len(sink.batch_calls) == 1  # only the probe reached the sink

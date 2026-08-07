@@ -73,8 +73,8 @@ Compose specifics:
 
 - `gateway` runs a **baked image** (`data-gateway:${GATEWAY_IMAGE_TAG:-latest}`) — code ships only via `make deploy` (build → tag → recreate); the working tree is NOT production. Only `./config`, `./logs`, and `.env` are live-mounted operational data.
 - `redis` binds to `127.0.0.1:6379` only (the instance is unauthenticated); containers reach it via `host.docker.internal`.
-- Redis persistence: AOF enabled (`--appendonly yes --appendfsync everysec`) with named volume `data-gateway-redis-data` — RDB-only setups came back empty after the 2026-07-12 power outage.
-- Redis memory: `--maxmemory 4gb --maxmemory-policy volatile-lru` — TTL'd cache/dedup keys are evictable; the `heber:events*` streams and consumer groups are not. At-cap writes error into the sink failover buffer instead of silently evicting.
+- Redis persistence: AOF enabled (`--appendonly yes --appendfsync always`) with named volume `data-gateway-redis-data` — RDB-only setups came back empty after the 2026-07-12 power outage.
+- Redis memory: `--maxmemory 6gb --maxmemory-policy volatile-lru` — TTL'd cache/dedup keys are evictable; the `heber:events*` streams and consumer groups are not. At-cap writes error into the sink failover buffer instead of silently evicting.
 - Backfill publishes route to a dedicated stream `heber:events:backfill` (`GATEWAY_BACKFILL_STREAM`) with its own MAXLEN cap (`GATEWAY_BACKFILL_STREAM_MAX_LEN`, default 1,000,000), separate from the live-stream cap — a 976K-record backfill once overran the shared cap and self-evicted un-read UW feeds.
 
 ### Deploying changes (compose)
@@ -224,7 +224,7 @@ terminationGracePeriodSeconds: 90  # 30s drain + 60s budget for steps 4-7
 | Perf gate fails on PR | Run `python scripts/perf_gate.py ...` locally to see which metric regressed; either fix or rebaseline via `scripts/perf_baseline_manager.py` with rationale in the PR. |
 | `unusualwhales-python-client` missing in container | Ensure `Data-Gateway/vendor/unusualwhales_sdk/` is committed and present at build time. |
 | Large backfill evicts live events from Redis | Backfill publishes route to the dedicated `heber:events:backfill` stream with its own cap (`GATEWAY_BACKFILL_STREAM_MAX_LEN`, default 1,000,000). Keep `GATEWAY_DATA_SINK_MAX_STREAM_LEN` and Redis `maxmemory` moving in lockstep. |
-| Redis comes back empty after host restart / power loss | AOF must stay enabled (`--appendonly yes --appendfsync everysec`) with the `data-gateway-redis-data` named volume — see compose specifics in §3. |
+| Redis comes back empty after host restart / power loss | AOF must stay enabled (`--appendonly yes --appendfsync always`) with the `data-gateway-redis-data` named volume — see compose specifics in §3. |
 | WS flow-alert resume unavailable (`GW-W5004` on subscribe ack) | The durable flow replay store (`gateway:flow_alerts:replay`) needs the data-sink Redis URL; without it the fanout runs live-only. Check the `flow_fanout_initialized` startup log for replay availability. |
 
 ---
