@@ -233,6 +233,9 @@ class SQLiteOutbox:
         elif lane == "live":
             where = "WHERE topic NOT IN ('heber:events:backfill', 'heber:watch')"
         with self._lock:
+            # nosec B608 - `where` is one of four hardcoded literals selected by the
+            # lane allowlist validated above; no caller input reaches the statement.
+            # `limit` is bound as a parameter.
             rows = self._connection.execute(
                 f"""
                 SELECT sequence, topic, event_id, payload, payload_digest,
@@ -241,7 +244,7 @@ class SQLiteOutbox:
                 {where}
                 ORDER BY sequence
                 LIMIT ?
-                """,
+                """,  # nosec B608
                 (limit,),
             ).fetchall()
         return [
@@ -299,8 +302,10 @@ class SQLiteOutbox:
             deleted = 0
             if acknowledged:
                 placeholders = ",".join("?" for _sequence in acknowledged)
+                # nosec B608 - `placeholders` is a generated run of `?` bind markers,
+                # never data; the sequences themselves are bound as parameters.
                 cursor = self._connection.execute(
-                    f"DELETE FROM outbox WHERE sequence IN ({placeholders})",
+                    f"DELETE FROM outbox WHERE sequence IN ({placeholders})",  # nosec B608
                     acknowledged,
                 )
                 deleted = cursor.rowcount
