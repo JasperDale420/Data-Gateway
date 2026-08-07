@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import multiprocessing
 import threading
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -297,6 +298,7 @@ async def test_drain_allows_at_most_32_concurrent_pubacks(tmp_path: Path) -> Non
     release = asyncio.Event()
     published = 0
     finished = asyncio.Event()
+    ramped = asyncio.Event()
     lock = asyncio.Lock()
 
     async def publish_ack(_entry: OutboxEntry) -> bool:
@@ -304,6 +306,8 @@ async def test_drain_allows_at_most_32_concurrent_pubacks(tmp_path: Path) -> Non
         async with lock:
             active += 1
             peak_active = max(peak_active, active)
+            if peak_active >= 32:
+                ramped.set()
         await release.wait()
         async with lock:
             active -= 1
@@ -314,10 +318,13 @@ async def test_drain_allows_at_most_32_concurrent_pubacks(tmp_path: Path) -> Non
 
     sink = DurableOutboxSink(SQLiteOutbox(tmp_path / "outbox.sqlite3"), publish_ack)
     await sink.publish_batch_results([("heber:events", _event(f"evt-{index}")) for index in range(33)])
-    for _ in range(100):
-        if peak_active == 32:
-            break
-        await asyncio.sleep(0)
+    # Wait on the ramp-up signal rather than a fixed number of event-loop yields:
+    # how many yields the drain needs to reach its ceiling depends on machine
+    # speed, so a fixed budget passes locally and fails on a loaded CI runner.
+    # A too-low ceiling still fails the assertion below via the timeout, and a
+    # missing ceiling still fails it by overshooting 32.
+    with suppress(TimeoutError):
+        await asyncio.wait_for(ramped.wait(), timeout=10)
 
     assert peak_active == 32
     release.set()
