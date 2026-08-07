@@ -428,7 +428,7 @@ Retention: 14 days by default. Override with `EMPIRE_LOG_DIR`.
 
 Environment variables are passed through from the host `.env`. See [deployment-guide.md](deployment-guide.md) for the build context (must be the monorepo root, not the repo root).
 
-**Redis durability & memory** (`redis-server` command flags in compose): RDB snapshots off (`--save ""`), **AOF on** (`--appendonly yes --appendfsync everysec` — added 2026-07-19 after a power outage restarted Redis empty), data persisted in the named volume `data-gateway-redis-data`, `--maxmemory 4gb --maxmemory-policy volatile-lru` (TTL'd cache/dedup keys are evictable; the persistent heber streams and consumer groups are not — at-cap writes error into the sink failover buffer instead of silently evicting). The instance is unauthenticated, hence the localhost-only bind.
+**Redis durability & memory** (`redis-server` command flags in compose): RDB snapshots off (`--save ""`), **AOF on** (`--appendonly yes --appendfsync always` — added 2026-07-19 after a power outage restarted Redis empty), data persisted in the named volume `data-gateway-redis-data`, `--maxmemory 6gb --maxmemory-policy volatile-lru` (TTL'd cache/dedup keys are evictable; the persistent heber streams and consumer groups are not — at-cap writes error into the sink failover buffer instead of silently evicting). The instance is unauthenticated, hence the localhost-only bind.
 
 **Compose overrides vs code defaults:** `GATEWAY_DATA_SINK_MAX_STREAM_LEN=500000`, `GATEWAY_DATA_SINK_WORKER_COUNT=32`, `GATEWAY_DATA_SINK_REDIS_POOL_SIZE=64`, `EMPIRE_LOG_BACKUP_COUNT=30`, `GATEWAY_UW_EOD_ENABLED=true`, option capture on for SPY/QQQ/IWM at 300s.
 

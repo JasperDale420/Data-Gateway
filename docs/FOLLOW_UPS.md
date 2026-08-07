@@ -6,6 +6,22 @@ baked-image cutover. Paid items are pruned; git history has the details.
 
 ## Open
 
+- **Sink Redis has no measured RSS envelope for `appendfsync always` +
+  `maxmemory 6gb`** — the compose Redis now carries both the synchronous
+  AOF added for order-ownership claim durability and the 6GB cap raised
+  after the 2026-08-04 eviction outage. `maxmemory` bounds the logical
+  dataset, not process RSS: allocator overhead plus AOF-rewrite
+  copy-on-write can push peak RSS well above 6GB against a Docker VM of
+  11.67GB, and the same outage already recorded two Redis restarts under
+  AOF-fsync stalls. A stall or OOM at that ceiling fails `XADD`, opens the
+  `data_sink:redis_streams` breaker, and overflows the 50K failover
+  buffer — the exact failure this cap was raised to prevent. Compose
+  declares no `mem_limit`/`mem_reservation` for the service, so nothing
+  enforces the headroom. Before the next deploy that carries this pair:
+  measure peak Redis RSS through a full AOF rewrite at representative
+  market-hours ingress, then either set an explicit container memory
+  limit with proven headroom or lower the cap. Raised by the adversarial
+  review of the 2026-08-06 branch-hygiene merge.
 - **Latent runtime bugs surfaced by the 2026-07-22 mypy pass** (a
   spawn-task chip is filed) — each site carries a `cast(Any, ...)` with a
   comment; the code paths were broken long before that pass (they raise
