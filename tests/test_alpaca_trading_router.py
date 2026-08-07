@@ -1048,6 +1048,149 @@ async def test_reconciliation_reads_open_orders_before_positions(
 
 
 @pytest.mark.asyncio
+async def test_reconcile_marks_state_incomplete_for_an_unrecognized_position_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unparseable broker record cannot be proven to be a different instrument.
+
+    `SymbolResolver.resolve()` returns type "unknown" rather than raising, so a
+    malformed or newly-formatted representation of the target symbol would
+    otherwise be silently excluded from `has_position`, presenting a live
+    unowned position as flat and letting another client claim the symbol.
+    """
+
+    class _UnparseableProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "!!not-a-symbol!!"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_UnparseableProvider(), "AAPL")
+
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stays_complete_for_a_crypto_position_on_the_shared_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_positions() returns the whole account, so another asset class is a true non-match.
+
+    A crypto or forex holding is positively recognized as a different
+    instrument and must not block equity order submission.
+    """
+
+    class _CryptoHoldingProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "BTC/USD"}, {"symbol": "AAPL"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_CryptoHoldingProvider(), "AAPL")
+
+    assert state.complete is True
+    assert state.has_position is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_marks_state_incomplete_for_an_unparseable_occ_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An OCC-shaped symbol that fails to parse is unrecognized, not another asset class.
+
+    SymbolResolver matches the OCC pattern before parsing the date, so an
+    invalid expiry raises out of the parser rather than resolving to a type.
+    Classifying that as a proven non-match would reopen the same fail-open as
+    an unrecognized symbol.
+    """
+
+    class _BadExpiryProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "AAPL991332C00200000"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_BadExpiryProvider(), "AAPL")
+
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
+async def test_reconcile_marks_state_incomplete_for_a_malformed_human_option_strike(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The human-option strike regex is loose, so Decimal() can raise a non-ValueError.
+
+    `decimal.InvalidOperation` is an ArithmeticError. Left unwrapped it would
+    skip the fail-closed classifier entirely and abort reconciliation as a 500
+    instead of marking it incomplete.
+    """
+
+    class _BadStrikeProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "AAPL 2026-01-16 $1..2 C"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_BadStrikeProvider(), "AAPL")
+
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
+async def test_create_order_rejects_a_malformed_human_option_strike_with_400(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unparseable caller-supplied symbol is a client error, never a 500."""
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL 2026-01-16 $1..2 C",
+            side="buy",
+            qty=1,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_reconcile_marks_state_incomplete_for_a_position_missing_its_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A record with no symbol field is equally unprovable and must fail closed."""
+
+    class _SymbollessProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"qty": "1"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_SymbollessProvider(), "AAPL")
+
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
 async def test_create_order_submits_the_canonical_occ_contract_symbol(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

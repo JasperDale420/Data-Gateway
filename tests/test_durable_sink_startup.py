@@ -86,3 +86,46 @@ async def test_durable_transport_verifies_jetstream_before_exposing_registry(
     assert publisher is not None
     await registry.close_all()
     await publisher.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_cleanup_failure_does_not_mask_the_verification_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing cleanup step must not skip the next one or replace the real cause.
+
+    ``verify_startup()`` failing is what explains a bad startup — a stream
+    contract or auth problem. If closing the outbox also fails, that secondary
+    error must not surface in its place, and the publisher must still be closed
+    rather than left half-open.
+    """
+    settings = Settings(
+        _env_file=None,
+        data_sink_enabled=True,
+        durable_outbox_enabled=True,
+        durable_outbox_path=tmp_path / "events.sqlite3",
+        GATEWAY_DATA_SINK_REDIS_URL="redis://redis:6379/0",
+        jetstream_enabled=True,
+        jetstream_username="gateway",
+        jetstream_password="secret",  # pragma: allowlist secret
+    )
+    publisher_closed: list[bool] = []
+
+    async def verify(self, lanes: str) -> None:
+        raise RuntimeError("jetstream stream contract mismatch")
+
+    async def failing_close(self) -> None:
+        raise RuntimeError("outbox close failed")
+
+    async def record_publisher_close(self) -> None:
+        publisher_closed.append(True)
+
+    monkeypatch.setattr("gateway.core.jetstream.JetStreamOutboxPublisher.verify_startup", verify)
+    monkeypatch.setattr("gateway.core.durable_outbox_sink.DurableOutboxSink.close", failing_close)
+    monkeypatch.setattr("gateway.core.jetstream.JetStreamOutboxPublisher.close", record_publisher_close)
+
+    with pytest.raises(RuntimeError, match="jetstream stream contract mismatch"):
+        await _initialize_data_sink(settings)
+
+    assert publisher_closed == [True]
