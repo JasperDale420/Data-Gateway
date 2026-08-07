@@ -18,7 +18,7 @@ providers:
       api_key_env: APCA_API_KEY_ID  # pragma: allowlist secret
       secret_key_env: APCA_API_SECRET_KEY  # pragma: allowlist secret
       base_url_env: APCA_API_BASE_URL
-      feed: sip  # or iex
+      feed: iex  # Basic-plan account: SIP returns 403 "subscription does not permit"
     capabilities:
       streaming: true
       historical: true

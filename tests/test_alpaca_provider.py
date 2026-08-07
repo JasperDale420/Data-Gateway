@@ -585,3 +585,36 @@ from gateway.providers.alpaca._base import LIVE_TRADING_BASE_URL, AlpacaBaseMixi
 def test_resolve_paper_mode_fails_safe(url, allow_live, expect_paper):
     """Paper is the fail-safe default; live requires opt-in AND the exact live URL."""
     assert AlpacaBaseMixin._resolve_paper_mode(url, allow_live=allow_live) is expect_paper
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("feed_kwarg", "expected_feed"),
+    [({}, "iex"), ({"feed": None}, "iex"), ({"feed": "sip"}, "sip")],
+)
+async def test_get_bars_falls_back_to_provider_configured_feed(
+    monkeypatch: pytest.MonkeyPatch, feed_kwarg: dict[str, Any], expected_feed: str
+) -> None:
+    """Absent or None feed must use the provider-configured feed, not hardcoded SIP.
+
+    Regression: the bars route defaulted feed="sip", overriding a provider
+    configured for iex — every default bars call 403'd on a Basic-plan account.
+    """
+    provider = AlpacaProvider()
+    provider._client = cast(Any, _FakeClient({}))
+    provider._feed = "iex"
+    captured: dict[str, Any] = {}
+
+    async def _capture(_path: str, params: dict[str, Any], *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        captured.update(params)
+        return {}
+
+    monkeypatch.setattr(provider, "_paginate", _capture)
+    await provider.get_bars(
+        ["AAPL"],
+        "1Day",
+        datetime(2026, 1, 14, tzinfo=UTC),
+        datetime(2026, 3, 5, tzinfo=UTC),
+        **feed_kwarg,
+    )
+    assert captured["feed"] == expected_feed

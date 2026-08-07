@@ -22,7 +22,12 @@ services:
       # INFO: DEBUG floods this high-throughput service; the key failure signals
       # (drops, loop stalls, breaker state) are Prometheus metrics now, not logs.
       - EMPIRE_LOG_LEVEL=INFO
-      - GATEWAY_STREAM_OPTIONS_FEED=opra
+      # Basic-plan Alpaca account: SIP/OPRA feeds return 403 "subscription does
+      # not permit". Free feeds: iex (stocks), indicative (options). Eager
+      # stream connect stays off — Basic allows only one WS connection.
+      - GATEWAY_STREAM_OPTIONS_FEED=indicative
+      - GATEWAY_STREAM_USE_IEX=true
+      - GATEWAY_STREAM_EAGER_CONNECT_TYPES=
       # Override Redis URLs for container networking (redis = service name)
       - GATEWAY_CACHE_REDIS_URL=redis://redis:6379/0
       - GATEWAY_DATA_SINK_REDIS_URL=redis://redis:6379/0
