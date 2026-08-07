@@ -9,7 +9,7 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
+from starlette.status import HTTP_502_BAD_GATEWAY, HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca.common import (
     ALPACA_ROUTER_PREFIX,
@@ -24,6 +24,14 @@ from gateway.api.alpaca.common import (
 from gateway.config import get_settings
 from gateway.core.cache import HybridCache, InMemoryCache
 from gateway.core.logger import logger
+from gateway.core.order_ownership import (
+    BrokerSymbolState,
+    OrderOwnershipGuard,
+    OwnershipConflict,
+    OwnershipStoreUnavailable,
+    canonical_broker_symbol,
+    owner_from_client_order_id,
+)
 from gateway.core.registry import ProviderRegistry
 from gateway.schemas import SuccessResponse
 
@@ -86,6 +94,40 @@ _CLIENT_ORDER_ID_MAX_LENGTH = 128
 # misconfigured client (e.g. a colon in the id) fails loudly rather than
 # emitting a malformed key that Alpaca rejects mid-burst.
 _CLIENT_ID_SAFE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+_order_ownership_guard: OrderOwnershipGuard | None = None
+_order_ownership_redis_url: str | None = None
+
+
+def get_order_ownership_guard() -> OrderOwnershipGuard:
+    """Return the raw Redis-backed guard; ownership state must never expire."""
+    global _order_ownership_guard, _order_ownership_redis_url
+    settings = get_settings()
+    if not settings.data_sink_redis_url:
+        logger.error("order_ownership_redis_not_configured")
+        raise HTTPException(
+            status_code=HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "GW-E5301",
+                "message": "Order ownership is unavailable: GATEWAY_DATA_SINK_REDIS_URL is not configured.",
+            },
+        )
+    if _order_ownership_guard is None or _order_ownership_redis_url != settings.data_sink_redis_url:
+        import redis.asyncio as aioredis
+
+        timeout = settings.data_sink_operation_timeout_seconds
+        pool = aioredis.BlockingConnectionPool.from_url(
+            settings.data_sink_redis_url,
+            max_connections=settings.data_sink_redis_pool_size,
+            timeout=timeout,
+            decode_responses=True,
+            socket_connect_timeout=timeout,
+            socket_timeout=timeout,
+        )
+        _order_ownership_guard = OrderOwnershipGuard(aioredis.Redis(connection_pool=pool))
+        _order_ownership_redis_url = settings.data_sink_redis_url
+        logger.info("order_ownership_guard_initialized")
+    return _order_ownership_guard
 
 
 def _ownership_prefix(client_id: str) -> str:
@@ -402,6 +444,172 @@ def _extract_client_order_id_from_order(order: Any) -> Any:
     return getattr(order, "client_order_id", None)
 
 
+_OWNERSHIP_UNRESOLVED_MESSAGE = "Order ownership is unresolved; no order was submitted."
+_OWNERSHIP_AMBIGUOUS_MESSAGE = (
+    "Broker mutation may have completed; reconcile broker positions and open orders before another mutation."
+)
+
+
+def _extract_symbol_from_broker_record(record: Any) -> str | None:
+    if isinstance(record, dict):
+        symbol = record.get("symbol")
+    else:
+        symbol = getattr(record, "symbol", None)
+    if not isinstance(symbol, str):
+        return None
+    try:
+        return canonical_broker_symbol(symbol)
+    except ValueError:
+        return None
+
+
+def _unfenceable_symbol_error() -> HTTPException:
+    """An order whose symbol cannot be canonicalised cannot be fenced."""
+    return HTTPException(
+        status_code=409,
+        detail={"code": "GW-E4301", "message": _OWNERSHIP_UNRESOLVED_MESSAGE},
+    )
+
+
+def _symbol_frozen_error() -> HTTPException:
+    """A symbol left ambiguous by an earlier broker write takes no further mutation."""
+    return HTTPException(
+        status_code=409,
+        detail={"code": "GW-E4301", "message": _OWNERSHIP_AMBIGUOUS_MESSAGE},
+    )
+
+
+def _canonical_order_symbol_or_reject(order: Any) -> str:
+    symbol = _extract_symbol_from_broker_record(order)
+    if symbol is None:
+        raise _unfenceable_symbol_error()
+    return symbol
+
+
+async def _reconcile_broker_symbol_state(provider: Any, symbol: str) -> BrokerSymbolState:
+    """Read the broker before every ownership-sensitive order mutation.
+
+    Open orders are read BEFORE positions, and the ordering is load-bearing.
+    These are two separate broker calls, so a fill can land between them, and
+    a fill moves a symbol out of the open-order list and into the position
+    list. Reading orders first means a fill that races the pair is still seen
+    on one side or the other: it either appears as an open order in the first
+    read, or as a position in the second. Reading positions first leaves a
+    window where the fill is in neither result, which would present a live
+    owner's symbol as flat and let another client take the claim.
+    """
+    orders = await _run_trading_provider_call(
+        provider=provider,
+        provider_fn=lambda broker: broker.get_orders(
+            status="open", limit=500, direction="desc", symbols=[symbol], nested=True
+        ),
+        operation="order_ownership.reconcile_open_orders",
+    )
+    positions = await _run_trading_provider_call(
+        provider=provider,
+        provider_fn=lambda broker: broker.get_positions(),
+        operation="order_ownership.reconcile_positions",
+    )
+    if not isinstance(positions, list) or not isinstance(orders, list):
+        raise OwnershipConflict(f"invalid_broker_reconciliation_shape:{symbol}")
+    # Alpaca caps this endpoint at 500. At the cap, there may be more open
+    # orders, so ownership is unknowable until a proven cursor protocol exists.
+    if len(orders) >= 500:
+        raise OwnershipConflict(f"open_order_reconciliation_truncated:{symbol}")
+
+    has_position = any(_extract_symbol_from_broker_record(position) == symbol for position in positions)
+    client_ids = _known_client_ids()
+    order_owners = frozenset(
+        owner_from_client_order_id(_extract_client_order_id_from_order(order), client_ids)
+        for order in orders
+        if _extract_symbol_from_broker_record(order) == symbol
+    )
+    logger.info(
+        "order_ownership_reconciled",
+        symbol=symbol,
+        has_position=has_position,
+        open_order_owner_count=len(order_owners),
+        has_unattributed_open_order=None in order_owners,
+    )
+    return BrokerSymbolState(has_position=has_position, order_owners=order_owners)
+
+
+def _ownership_rejection(
+    exc: OwnershipConflict | OwnershipStoreUnavailable,
+    symbol: str,
+    *,
+    mutation_may_have_reached_broker: bool = False,
+    reconciliation_context: dict[str, Any] | None = None,
+) -> HTTPException:
+    """Build the HTTP error for an ownership rejection without raising it.
+
+    Batch routes report a blocked symbol per order instead of aborting the
+    whole request, so they need the exception as a value; single-order routes
+    raise it through ``_raise_ownership_rejection``.
+    """
+    message = _OWNERSHIP_AMBIGUOUS_MESSAGE if mutation_may_have_reached_broker else _OWNERSHIP_UNRESOLVED_MESSAGE
+    if isinstance(exc, OwnershipStoreUnavailable):
+        logger.error("order_ownership_unavailable", symbol=symbol, reason=str(exc))
+        return HTTPException(
+            status_code=HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "GW-E5301", "message": message, **(reconciliation_context or {})},
+        )
+    logger.warning("order_ownership_frozen", symbol=symbol, reason=str(exc))
+    return HTTPException(
+        status_code=409,
+        detail={"code": "GW-E4301", "message": message, **(reconciliation_context or {})},
+    )
+
+
+def _raise_ownership_rejection(
+    exc: OwnershipConflict | OwnershipStoreUnavailable,
+    symbol: str,
+    *,
+    mutation_may_have_reached_broker: bool = False,
+    reconciliation_context: dict[str, Any] | None = None,
+) -> None:
+    raise _ownership_rejection(
+        exc,
+        symbol,
+        mutation_may_have_reached_broker=mutation_may_have_reached_broker,
+        reconciliation_context=reconciliation_context,
+    ) from exc
+
+
+async def _freeze_after_ambiguous_mutation(
+    guard: OrderOwnershipGuard,
+    symbol: str,
+    exc: HTTPException,
+) -> None:
+    """Do not allow a retry while a broker write may still be in flight."""
+    if exc.status_code < 500:
+        return
+    try:
+        await guard.freeze(symbol, f"broker_mutation_{exc.status_code}")
+    except (OwnershipConflict, OwnershipStoreUnavailable) as freeze_exc:
+        _raise_ownership_rejection(
+            freeze_exc,
+            symbol,
+            mutation_may_have_reached_broker=True,
+        )
+
+
+async def _freeze_before_fence_release(
+    guard: OrderOwnershipGuard,
+    symbol: str,
+    reason: str,
+) -> None:
+    """Persist an ambiguous broker state before another Gateway mutation can enter."""
+    try:
+        await guard.freeze(symbol, reason)
+    except (OwnershipConflict, OwnershipStoreUnavailable) as freeze_exc:
+        _raise_ownership_rejection(
+            freeze_exc,
+            symbol,
+            mutation_may_have_reached_broker=True,
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Write-class trading operations get a longer wall-clock timeout than reads.
 #
@@ -434,6 +642,10 @@ _WRITE_TRADING_OPERATIONS: frozenset[str] = frozenset(
         "replace_order",
         "cancel_order",
         "cancel_all_orders",
+        # Each broker cancel issued by DELETE /orders. It is a write like any
+        # other cancel, and a 504 on it freezes the symbol's ownership claim,
+        # so it must get the write budget rather than the tighter read one.
+        "cancel_all_orders.cancel",
         "close_position",
         "close_all_positions",
     }
@@ -680,7 +892,7 @@ async def _assert_order_owned_by_caller(
     order_id: str,
     client_id: str,
     operation: str,
-) -> None:
+) -> Any:
     """Stateless ownership verification for an order_id-keyed mutation/read.
 
     Fetches the order from Alpaca via ``provider.get_order(order_id)``,
@@ -720,6 +932,7 @@ async def _assert_order_owned_by_caller(
             operation=operation,
         )
         raise _foreign_order_not_found(order_id=order_id)
+    return fetched
 
 
 @router.get("/account", response_model=SuccessResponse)
@@ -788,6 +1001,11 @@ async def create_order(
     validated_caller_key = _validate_client_order_id(client_order_id, client.id)
     effective_client_order_id = validated_caller_key or _generate_client_order_id(client.id)
     gateway_generated = validated_caller_key is None
+    try:
+        canonical_symbol = canonical_broker_symbol(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"code": "GW-E4006", "message": str(exc)}) from exc
+    ownership_guard = get_order_ownership_guard()
     idempotency_context: dict[str, Any] = {
         "client_order_id": effective_client_order_id,
         "client_order_id_source": "gateway" if gateway_generated else "caller",
@@ -803,7 +1021,7 @@ async def create_order(
     }
     order_log_context: dict[str, Any] = {
         "client_id": client.id,
-        "symbol": symbol.upper(),
+        "symbol": canonical_symbol,
         "side": side.lower(),
         "order_type": order_type.lower(),
         "time_in_force": time_in_force.lower(),
@@ -814,31 +1032,81 @@ async def create_order(
     }
 
     async def _call(provider: Any) -> Any:
+        fence_token: str | None = None
+        mutation_token: str | None = None
         try:
-            return await _run_trading_provider_call(
-                provider=provider,
-                provider_fn=lambda provider: provider.create_order(
-                    symbol=symbol,
-                    qty=qty,
-                    notional=notional,
-                    side=side,
-                    order_type=order_type,
-                    time_in_force=time_in_force,
-                    limit_price=limit_price,
-                    stop_price=stop_price,
-                    client_order_id=effective_client_order_id,
-                    extended_hours=extended_hours,
-                    order_class=order_class,
-                    take_profit_limit_price=take_profit_limit_price,
-                    stop_loss_stop_price=stop_loss_stop_price,
-                    stop_loss_limit_price=stop_loss_limit_price,
-                    position_intent=position_intent,
-                ),
-                operation="create_order",
-                idempotency_context=idempotency_context,
-            )
+            try:
+                fence_token = await ownership_guard.acquire_fence(canonical_symbol)
+                broker_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
+                await ownership_guard.authorize_submission(
+                    client_id=client.id,
+                    symbol=canonical_symbol,
+                    broker_state=broker_state,
+                )
+                await ownership_guard.renew_fence(canonical_symbol, fence_token)
+                mutation_token = await ownership_guard.begin_mutation(symbol=canonical_symbol, operation="create_order")
+            except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+                _raise_ownership_rejection(exc, canonical_symbol)
+
+            try:
+                data = await _run_trading_provider_call(
+                    provider=provider,
+                    provider_fn=lambda provider: provider.create_order(
+                        symbol=canonical_symbol,
+                        qty=qty,
+                        notional=notional,
+                        side=side,
+                        order_type=order_type,
+                        time_in_force=time_in_force,
+                        limit_price=limit_price,
+                        stop_price=stop_price,
+                        client_order_id=effective_client_order_id,
+                        extended_hours=extended_hours,
+                        order_class=order_class,
+                        take_profit_limit_price=take_profit_limit_price,
+                        stop_loss_stop_price=stop_loss_stop_price,
+                        stop_loss_limit_price=stop_loss_limit_price,
+                        position_intent=position_intent,
+                    ),
+                    operation="create_order",
+                    idempotency_context=idempotency_context,
+                )
+            except HTTPException as exc:
+                await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+                raise
+            try:
+                post_submit_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
+                await ownership_guard.verify_reconciliation(
+                    client_id=client.id,
+                    symbol=canonical_symbol,
+                    broker_state=post_submit_state,
+                )
+                assert mutation_token is not None
+                await ownership_guard.complete_mutation(symbol=canonical_symbol, token=mutation_token)
+            except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+                if isinstance(exc, OwnershipConflict):
+                    await _freeze_before_fence_release(
+                        ownership_guard,
+                        canonical_symbol,
+                        f"post_write_reconciliation_{exc}",
+                    )
+                _raise_ownership_rejection(
+                    exc,
+                    canonical_symbol,
+                    mutation_may_have_reached_broker=True,
+                    reconciliation_context=idempotency_context,
+                )
+            return data
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except HTTPException:
+            raise
+        except Exception:
+            await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
+            raise
+        finally:
+            if fence_token is not None:
+                await ownership_guard.release_fence(canonical_symbol, fence_token)
 
     try:
         data = await execute_alpaca_provider_call(
@@ -851,12 +1119,14 @@ async def create_order(
         # HTTPException with a plain-string detail — losing the
         # idempotency_context that _run_trading_provider_call attaches to
         # its own 503/504. Re-merge so EVERY 5xx surfaces the retry key.
+        await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
         raise _merge_idempotency_context_into_5xx(exc, idempotency_context) from exc
     return {
         "success": True,
         "data": data,
         "meta": {
             "provider": "alpaca",
+            "symbol": canonical_symbol,
             "client_order_id": effective_client_order_id,
             "client_order_id_source": "gateway" if gateway_generated else "caller",
         },
@@ -1184,12 +1454,14 @@ async def replace_order(
     # original order before letting any Alpaca write side-effect fire. The
     # check runs BEFORE both the caller-key validation (to avoid leaking
     # validation-error timing as an enumeration signal) and the SDK call.
-    await _assert_order_owned_by_caller(
+    original_order = await _assert_order_owned_by_caller(
         registry=registry,
         order_id=order_id,
         client_id=client.id,
         operation="replace_order",
     )
+    canonical_symbol = _canonical_order_symbol_or_reject(original_order)
+    ownership_guard = get_order_ownership_guard()
 
     # Same validation contract as create_order — empty / whitespace /
     # oversize keys are rejected BEFORE auto-generation so callers can't
@@ -1218,20 +1490,63 @@ async def replace_order(
     }
 
     async def _call(provider: Any) -> Any:
+        fence_token: str | None = None
+        mutation_token: str | None = None
         try:
-            return await _run_trading_provider_call(
-                provider=provider,
-                provider_fn=lambda provider: provider.replace_order(
-                    order_id,
-                    qty=qty,
-                    limit_price=limit_price,
-                    stop_price=stop_price,
-                    time_in_force=time_in_force,
-                    client_order_id=effective_client_order_id,
-                ),
-                operation="replace_order",
-                idempotency_context=idempotency_context,
-            )
+            try:
+                fence_token = await ownership_guard.acquire_fence(canonical_symbol)
+                broker_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
+                await ownership_guard.authorize_submission(
+                    client_id=client.id,
+                    symbol=canonical_symbol,
+                    broker_state=broker_state,
+                )
+                await ownership_guard.renew_fence(canonical_symbol, fence_token)
+                mutation_token = await ownership_guard.begin_mutation(
+                    symbol=canonical_symbol, operation="replace_order"
+                )
+            except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+                _raise_ownership_rejection(exc, canonical_symbol)
+            try:
+                data = await _run_trading_provider_call(
+                    provider=provider,
+                    provider_fn=lambda provider: provider.replace_order(
+                        order_id,
+                        qty=qty,
+                        limit_price=limit_price,
+                        stop_price=stop_price,
+                        time_in_force=time_in_force,
+                        client_order_id=effective_client_order_id,
+                    ),
+                    operation="replace_order",
+                    idempotency_context=idempotency_context,
+                )
+            except HTTPException as exc:
+                await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+                raise
+            try:
+                post_replace_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
+                await ownership_guard.verify_reconciliation(
+                    client_id=client.id,
+                    symbol=canonical_symbol,
+                    broker_state=post_replace_state,
+                )
+                assert mutation_token is not None
+                await ownership_guard.complete_mutation(symbol=canonical_symbol, token=mutation_token)
+            except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+                if isinstance(exc, OwnershipConflict):
+                    await _freeze_before_fence_release(
+                        ownership_guard,
+                        canonical_symbol,
+                        f"post_write_reconciliation_{exc}",
+                    )
+                _raise_ownership_rejection(
+                    exc,
+                    canonical_symbol,
+                    mutation_may_have_reached_broker=True,
+                    reconciliation_context=idempotency_context,
+                )
+            return data
         except ValueError as e:
             # Mirrors create_order — provider-side input validation (e.g.
             # TimeInForce(time_in_force) on an unknown enum value) raises
@@ -1241,6 +1556,14 @@ async def replace_order(
             # 5xx that the new idempotency-context-merge logic then labels
             # with retry hints. Caller would chase a phantom Alpaca outage.
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except HTTPException:
+            raise
+        except Exception:
+            await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
+            raise
+        finally:
+            if fence_token is not None:
+                await ownership_guard.release_fence(canonical_symbol, fence_token)
 
     try:
         data = await execute_alpaca_provider_call(
@@ -1252,6 +1575,7 @@ async def replace_order(
         # APIError/HTTPStatusError into HTTPException with a plain-string
         # detail — losing the idempotency_context. Re-merge so every 5xx
         # surfaces the retry contract.
+        await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
         raise _merge_idempotency_context_into_5xx(exc, idempotency_context) from exc
     return {
         "success": True,
@@ -1279,22 +1603,319 @@ async def cancel_order(
     attempt returns 404 GW-E4404 (NOT 403, to avoid confirming existence)
     and the Alpaca cancel never fires. Audit log: GW-A4001.
     """
-    await _assert_order_owned_by_caller(
+    original_order = await _assert_order_owned_by_caller(
         registry=registry,
         order_id=order_id,
         client_id=client.id,
         operation="cancel_order",
     )
-    success = await _execute_trading_call(
-        registry=registry,
-        provider_fn=lambda provider: provider.cancel_order(order_id),
-        operation="cancel_order",
-    )
+    canonical_symbol = _canonical_order_symbol_or_reject(original_order)
+    ownership_guard = get_order_ownership_guard()
+
+    async def _call(provider: Any) -> Any:
+        fence_token: str | None = None
+        mutation_token: str | None = None
+        try:
+            try:
+                fence_token = await ownership_guard.acquire_fence(canonical_symbol)
+                broker_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
+                await ownership_guard.authorize_submission(
+                    client_id=client.id,
+                    symbol=canonical_symbol,
+                    broker_state=broker_state,
+                )
+                await ownership_guard.renew_fence(canonical_symbol, fence_token)
+                mutation_token = await ownership_guard.begin_mutation(symbol=canonical_symbol, operation="cancel_order")
+            except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+                _raise_ownership_rejection(exc, canonical_symbol)
+            try:
+                success = await _run_trading_provider_call(
+                    provider=provider,
+                    provider_fn=lambda broker: broker.cancel_order(order_id),
+                    operation="cancel_order",
+                )
+            except HTTPException as exc:
+                await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+                raise
+            try:
+                post_cancel_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
+                await ownership_guard.verify_reconciliation(
+                    client_id=client.id,
+                    symbol=canonical_symbol,
+                    broker_state=post_cancel_state,
+                )
+                assert mutation_token is not None
+                await ownership_guard.complete_mutation(symbol=canonical_symbol, token=mutation_token)
+            except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+                if isinstance(exc, OwnershipConflict):
+                    await _freeze_before_fence_release(
+                        ownership_guard,
+                        canonical_symbol,
+                        f"post_write_reconciliation_{exc}",
+                    )
+                _raise_ownership_rejection(
+                    exc,
+                    canonical_symbol,
+                    mutation_may_have_reached_broker=True,
+                )
+            return success
+        except HTTPException:
+            raise
+        except Exception:
+            await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
+            raise
+        finally:
+            if fence_token is not None:
+                await ownership_guard.release_fence(canonical_symbol, fence_token)
+
+    try:
+        success = await execute_alpaca_provider_call(registry=registry, provider_call=_call)
+    except HTTPException as exc:
+        await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+        raise
     return {
         "success": success,
         "data": {"order_id": order_id, "cancelled": success},
         "meta": {"provider": "alpaca"},
     }
+
+
+def _bulk_cancel_failure(order_id: Any, symbol: str | None, exc: HTTPException) -> dict[str, Any]:
+    """Report one order the batch could not cancel, in the per-order result shape."""
+    return {
+        "order_id": order_id,
+        "symbol": symbol,
+        "cancelled": False,
+        "status_code": exc.status_code,
+        "detail": exc.detail,
+    }
+
+
+def _bulk_cancel_rejection(
+    exc: Exception,
+    symbol: str,
+    *,
+    mutation_may_have_reached_broker: bool = False,
+) -> HTTPException:
+    """Turn any failure into the HTTP error reported against a batch order."""
+    if isinstance(exc, OwnershipConflict | OwnershipStoreUnavailable):
+        return _ownership_rejection(
+            exc,
+            symbol,
+            mutation_may_have_reached_broker=mutation_may_have_reached_broker,
+        )
+    if isinstance(exc, HTTPException):
+        return exc
+    return HTTPException(
+        status_code=HTTP_502_BAD_GATEWAY,
+        detail={"code": "GW-E5007", "message": str(exc)},
+    )
+
+
+async def _freeze_symbol_for_batch(guard: OrderOwnershipGuard, symbol: str, reason: str) -> HTTPException | None:
+    """Freeze one symbol without letting the failure abort the rest of a batch.
+
+    Returns the error when the freeze could NOT be persisted, so the caller
+    reports the storage failure instead of claiming a durable freeze that the
+    store never recorded.
+    """
+    try:
+        await _freeze_before_fence_release(guard, symbol, reason)
+    # nosemgrep: empire-no-bare-exception -- batch boundary: a freeze failure must not abort other symbols
+    except Exception as exc:
+        logger.error("bulk_cancel_freeze_failed", symbol=symbol, reason=reason, exc_info=True)
+        return _bulk_cancel_rejection(exc, symbol, mutation_may_have_reached_broker=True)
+    return None
+
+
+async def _reconcile_symbol_state_for_batch(registry: ProviderRegistry, symbol: str) -> BrokerSymbolState:
+    """Reconcile one symbol, taking the upstream permit for this read alone."""
+
+    async def _call(provider: Any) -> BrokerSymbolState:
+        return await _reconcile_broker_symbol_state(provider, symbol)
+
+    _call.__qualname__ = "trading.cancel_all_orders.reconcile"
+    return await execute_alpaca_provider_call(registry=registry, provider_call=_call)
+
+
+class _FenceLostBeforeWrite(HTTPException):
+    """The fence lease was gone at dispatch time, so no broker write was issued.
+
+    Subclasses ``HTTPException`` so ``execute_alpaca_provider_call`` re-raises
+    it untouched instead of rewriting it into a generic 502.
+    """
+
+    def __init__(self, rejection: HTTPException) -> None:
+        super().__init__(status_code=rejection.status_code, detail=rejection.detail)
+
+
+async def _cancel_one_fenced_order(
+    *,
+    registry: ProviderRegistry,
+    guard: OrderOwnershipGuard,
+    fence_token: str,
+    order_id: Any,
+    symbol: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Cancel one order at the broker while its symbol's fence is held.
+
+    The lease is revalidated INSIDE the admission-gated call, after the
+    upstream Alpaca permit is held and immediately before the SDK call is
+    dispatched. Renewing before admission would prove nothing: the wait for a
+    permit is unbounded while the lease is only two minutes, so a renewal
+    taken before the wait can be stale by the time the write goes out. The
+    in-flight cap between this renewal and the dispatch fast-fails rather than
+    waiting, so nothing unbounded remains after it.
+
+    Returns the per-order result and, when the broker outcome is ambiguous,
+    the reason the symbol must be frozen before the fence is released.
+    """
+
+    async def _call(provider: Any) -> Any:
+        try:
+            await guard.renew_fence(symbol, fence_token)
+        except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+            raise _FenceLostBeforeWrite(_ownership_rejection(exc, symbol)) from exc
+        return await _run_trading_provider_call(
+            provider=provider,
+            provider_fn=lambda broker: broker.cancel_order(order_id),
+            operation="cancel_all_orders.cancel",
+        )
+
+    _call.__qualname__ = "trading.cancel_all_orders.cancel"
+    try:
+        await execute_alpaca_provider_call(registry=registry, provider_call=_call)
+    except _FenceLostBeforeWrite as exc:
+        # Nothing was dispatched for this order, but the lease this group
+        # already wrote under is gone, so the symbol is ambiguous.
+        logger.error("bulk_cancel_fence_lost_before_write", symbol=symbol, order_id=str(order_id))
+        return _bulk_cancel_failure(order_id, symbol, exc), "gateway_fence_lost"
+    except HTTPException as exc:
+        freeze_reason = f"broker_mutation_{exc.status_code}" if exc.status_code >= 500 else None
+        return _bulk_cancel_failure(order_id, symbol, exc), freeze_reason
+    # nosemgrep: empire-no-bare-exception -- batch boundary: an unclassified cancel failure is ambiguous, not fatal
+    except Exception as exc:
+        logger.error("bulk_cancel_order_failed", symbol=symbol, order_id=str(order_id), exc_info=True)
+        return (
+            _bulk_cancel_failure(order_id, symbol, _bulk_cancel_rejection(exc, symbol)),
+            "broker_mutation_unclassified",
+        )
+    return {"order_id": order_id, "cancelled": True}, None
+
+
+async def _cancel_owned_orders_for_symbol(
+    *,
+    registry: ProviderRegistry,
+    guard: OrderOwnershipGuard,
+    client_id: str,
+    symbol: str,
+    order_ids: list[Any],
+) -> list[dict[str, Any]]:
+    """Cancel this caller's open orders on ONE symbol under that symbol's fence.
+
+    The fence is per symbol, so one acquisition covers every order on it: the
+    orders run sequentially inside it and no second acquisition of the same
+    symbol is ever attempted. One durable claim and one mutation marker span
+    the whole symbol batch, which is the same protocol the single-order cancel
+    runs — fence, uncached broker reconciliation, claim, mutation marker,
+    broker write, post-write reconciliation, matching-token clear, release.
+
+    The fence lease is revalidated inside EVERY cancel's admission-gated call
+    (see ``_cancel_one_fenced_order``), so a group that outruns the lease stops
+    instead of writing to a symbol another gateway client may already have taken.
+
+    Never raises except on task cancellation, which is itself treated as an
+    ambiguous broker outcome. Every other failure is reported against the
+    affected orders so a blocked symbol cannot abort the rest of the batch,
+    and no failure path falls back to an unfenced cancel.
+    """
+    results: list[dict[str, Any]] = []
+    fence_token: str | None = None
+    fence_release_blocked = False
+    try:
+        try:
+            fence_token = await guard.acquire_fence(symbol)
+            broker_state = await _reconcile_symbol_state_for_batch(registry, symbol)
+            await guard.authorize_submission(client_id=client_id, symbol=symbol, broker_state=broker_state)
+            await guard.renew_fence(symbol, fence_token)
+            mutation_token = await guard.begin_mutation(symbol=symbol, operation="cancel_all_orders")
+        # nosemgrep: empire-no-bare-exception -- batch boundary: reads only, reported per order
+        except Exception as exc:
+            # Nothing has been written to the broker yet, so the symbol is
+            # reported as blocked rather than frozen.
+            logger.warning("bulk_cancel_symbol_blocked", symbol=symbol, order_count=len(order_ids))
+            rejection = _bulk_cancel_rejection(exc, symbol)
+            return [_bulk_cancel_failure(order_id, symbol, rejection) for order_id in order_ids]
+
+        # From here a broker write may be in flight for this symbol: every
+        # failure below freezes the claim before the fence is released.
+        try:
+            for index, order_id in enumerate(order_ids):
+                result, freeze_reason = await _cancel_one_fenced_order(
+                    registry=registry,
+                    guard=guard,
+                    fence_token=fence_token,
+                    order_id=order_id,
+                    symbol=symbol,
+                )
+                results.append(result)
+                if freeze_reason is not None:
+                    # The asyncio call gave up, but the executor thread can
+                    # still complete the SDK cancel, so this symbol keeps its
+                    # lease to expiry instead of handing it to the next client
+                    # while a write may still be in flight. At the default
+                    # alpaca_trading_http_timeout_seconds (30s) that thread is
+                    # released well inside the 120s lease.
+                    fence_release_blocked = True
+                    freeze_error = await _freeze_symbol_for_batch(guard, symbol, freeze_reason)
+                    skipped_error = freeze_error or _symbol_frozen_error()
+                    results.extend(
+                        _bulk_cancel_failure(skipped, symbol, skipped_error) for skipped in order_ids[index + 1 :]
+                    )
+                    return results
+            post_cancel_state = await _reconcile_symbol_state_for_batch(registry, symbol)
+            await guard.verify_reconciliation(client_id=client_id, symbol=symbol, broker_state=post_cancel_state)
+            await guard.complete_mutation(symbol=symbol, token=mutation_token)
+        except asyncio.CancelledError:
+            # Shutdown or client disconnect during a broker write leaves the
+            # outcome unknown; CancelledError is not an Exception, so it needs
+            # its own handling. The executor thread can still complete the SDK
+            # call after this coroutine dies, so the lease is kept to expiry
+            # rather than handed to another client, and the flag is set BEFORE
+            # the freeze so a second cancellation cannot interrupt the handler
+            # into releasing it.
+            logger.error("bulk_cancel_symbol_cancelled", symbol=symbol)
+            fence_release_blocked = True
+            freeze = asyncio.shield(_freeze_symbol_for_batch(guard, symbol, "broker_mutation_cancelled"))
+            try:
+                await freeze
+            except asyncio.CancelledError:
+                # The freeze itself keeps running; only this wait was cut short.
+                logger.error("bulk_cancel_freeze_wait_interrupted", symbol=symbol)
+            raise
+        # nosemgrep: empire-no-bare-exception -- batch boundary: post-write ambiguity freezes, never aborts the batch
+        except Exception as exc:
+            reason = (
+                f"post_write_reconciliation_{exc}"
+                if isinstance(exc, OwnershipConflict)
+                else "post_write_reconciliation_unclassified"
+            )
+            freeze_error = await _freeze_symbol_for_batch(guard, symbol, reason)
+            fence_release_blocked = freeze_error is not None
+            results.append(
+                _bulk_cancel_failure(
+                    None,
+                    symbol,
+                    freeze_error or _bulk_cancel_rejection(exc, symbol, mutation_may_have_reached_broker=True),
+                )
+            )
+        return results
+    finally:
+        # An ambiguity the store never recorded keeps the lease instead: the
+        # fence expires on its own, and until then no other gateway client can
+        # mutate a symbol whose freeze did not persist.
+        if fence_token is not None and not fence_release_blocked:
+            await guard.release_fence(symbol, fence_token)
 
 
 @router.delete("/orders", response_model=SuccessResponse)
@@ -1321,11 +1942,21 @@ async def cancel_all_orders(
     limit), and (c) the safety guarantee — never cancel another client's
     orders — is non-negotiable.
 
-    Failures on individual cancels are captured per-order in the response
-    so the caller can reconcile which orders actually cancelled. We do
-    NOT short-circuit on the first failure: cancelling SOME of a
-    client's orders is strictly better than cancelling NONE if a
-    transient Alpaca error hits mid-batch.
+    Ownership fence (DO NOT REGRESS): every broker cancel runs inside the
+    same per-symbol fence as ``DELETE /orders/{order_id}``. Owned orders
+    are grouped by canonical broker symbol; each group holds that symbol's
+    fence for the whole group, so orders on one symbol serialize while
+    different symbols cancel concurrently. A symbol whose fence cannot be
+    acquired, whose claim is frozen, or whose symbol cannot be
+    canonicalised fails CLOSED — its orders are reported as errors and no
+    unfenced cancel is ever issued as a fallback.
+
+    Failures are captured per order in the response so the caller can
+    reconcile which orders actually cancelled. One blocked symbol never
+    aborts the others: cancelling SOME of a client's orders is strictly
+    better than cancelling NONE. Within a symbol, an ambiguous broker
+    outcome freezes the claim and the symbol's remaining orders are
+    reported as skipped rather than written to the broker.
 
     Page-boundary limitation (tracked separately, same as get_orders):
     only the newest 500 open orders are inspected — owned orders beyond
@@ -1357,44 +1988,68 @@ async def cancel_all_orders(
             if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
         ]
 
-    # Cancel concurrently rather than sequentially. With the default
-    # 25s write timeout × N owned orders, a sequential loop could run
-    # for minutes during an opening-bell mass-cancel; parallel cancels
-    # bounded by the existing in-flight semaphore
-    # (alpaca_trading_max_inflight, default 24) compress that into the
-    # latency of the slowest single cancel.
-    async def _one_cancel(order: dict[str, Any]) -> dict[str, Any]:
+    # Resolve each owned order to its canonical broker symbol. An order that
+    # cannot be resolved cannot be fenced, and an order id the broker reports
+    # under two different symbols would be cancelled twice — once under the
+    # wrong symbol's fence — so both fail closed here.
+    ownership_guard = get_order_ownership_guard()
+    unfenceable: list[dict[str, Any]] = []
+    resolved: list[tuple[Any, str]] = []
+    symbol_by_order_id: dict[Any, str] = {}
+    conflicting_order_ids: set[Any] = set()
+    for order in owned:
         order_id = order.get("id") if isinstance(order, dict) else getattr(order, "id", None)
         if not order_id:
-            return {"order_id": None, "cancelled": False, "error": "order missing id field"}
+            unfenceable.append({"order_id": None, "cancelled": False, "error": "order missing id field"})
+            continue
+        symbol = _extract_symbol_from_broker_record(order)
+        if symbol is None:
+            unfenceable.append(_bulk_cancel_failure(order_id, None, _unfenceable_symbol_error()))
+            continue
+        known_symbol = symbol_by_order_id.setdefault(order_id, symbol)
+        if known_symbol != symbol:
+            conflicting_order_ids.add(order_id)
+        resolved.append((order_id, symbol))
 
-        # Bind order_id via default-arg to dodge the classic
-        # loop-closure capture footgun.
-        def _cancel_fn(_provider: Any, _oid: Any = order_id) -> Any:
-            return _provider.cancel_order(_oid)
+    # Group by canonical broker symbol: the fence is per symbol, so orders
+    # on the same symbol MUST share one acquisition instead of racing for it.
+    symbol_groups: dict[str, list[Any]] = {}
+    for order_id, symbol in resolved:
+        if order_id in conflicting_order_ids:
+            logger.error("bulk_cancel_order_symbol_conflict", order_id=str(order_id), symbol=symbol)
+            unfenceable.append(_bulk_cancel_failure(order_id, symbol, _unfenceable_symbol_error()))
+            continue
+        symbol_groups.setdefault(symbol, []).append(order_id)
 
-        try:
-            await _execute_trading_call(
-                registry=registry,
-                provider_fn=_cancel_fn,
-                operation="cancel_all_orders.cancel",
-            )
-            return {"order_id": order_id, "cancelled": True}
-        except HTTPException as exc:
-            return {
-                "order_id": order_id,
-                "cancelled": False,
-                "status_code": exc.status_code,
-                "detail": exc.detail,
-            }
-
-    if owned:
-        # gather with return_exceptions=False; _one_cancel itself never
-        # raises (caught HTTPException above), so any propagating
-        # exception is a real bug we WANT to surface.
-        results = await asyncio.gather(*[_one_cancel(order) for order in owned])
-    else:
-        results = []
+    # Symbol groups run concurrently rather than sequentially. With the
+    # default 25s write timeout × N owned symbols, a sequential loop could
+    # run for minutes during an opening-bell mass-cancel; parallel groups
+    # bounded by the existing in-flight semaphore
+    # (alpaca_trading_max_inflight, default 24) compress that into the
+    # latency of the slowest single symbol. Each group holds only its own
+    # symbol's fence and never waits on another's, so groups cannot deadlock
+    # each other, and each broker call inside a group takes the upstream
+    # Alpaca permit for that call alone so a long group cannot starve the
+    # other trading routes.
+    results: list[dict[str, Any]] = list(unfenceable)
+    if symbol_groups:
+        # gather with return_exceptions=False; _cancel_owned_orders_for_symbol
+        # only propagates task cancellation, so any other exception is a real
+        # bug we WANT to surface rather than a symbol failure we should have
+        # reported.
+        grouped = await asyncio.gather(
+            *[
+                _cancel_owned_orders_for_symbol(
+                    registry=registry,
+                    guard=ownership_guard,
+                    client_id=client.id,
+                    symbol=symbol,
+                    order_ids=order_ids,
+                )
+                for symbol, order_ids in symbol_groups.items()
+            ]
+        )
+        results.extend(result for group in grouped for result in group)
 
     cancelled = [r for r in results if r.get("cancelled")]
     errors = [r for r in results if not r.get("cancelled")]
@@ -1470,20 +2125,18 @@ async def close_position(
     Idempotency contract (DO NOT REGRESS):
       Alpaca's ClosePositionRequest does NOT accept a client_order_id —
       the SDK generates its own order id server-side. So unlike
-      create_order, the gateway can't use Alpaca-side dedup. Instead, the
-      504 timeout body includes ``retry_with: "get_position"`` and the
-      symbol, so the caller can resolve "did the close actually
-      happen?" by calling GET ``{ALPACA_ROUTER_PREFIX}/positions/<symbol>``:
+      create_order, the gateway can't use Alpaca-side dedup. A timeout
+      freezes the durable ownership claim, so the caller must reconcile
+      rather than retrying the close:
         - 404 POSITION_NOT_FOUND → close succeeded (or position never
-          existed); do NOT retry the close.
-        - 200 with position data → close did NOT take effect; safe to
-          retry the close.
-      This avoids the broker-side double-place problem because a "close"
-      that lands twice is bounded by the current position size — Alpaca
-      rejects close requests for non-existent positions with 40410000,
-      which the provider already translates into a clean 404.
+          existed); do NOT submit another close.
+        - 200 with position data → the original close may be pending or
+          partially filled; resolve the broker order state before action.
     """
-    canonical_symbol = symbol.upper()
+    try:
+        canonical_symbol = canonical_broker_symbol(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"code": "GW-E4006", "message": str(exc)}) from exc
     if qty is not None and qty < 0:
         raise HTTPException(
             status_code=400,
@@ -1494,6 +2147,7 @@ async def close_position(
                 "qty": qty,
             },
         )
+    ownership_guard = get_order_ownership_guard()
 
     logger.info(
         "alpaca_close_position",
@@ -1505,23 +2159,75 @@ async def close_position(
 
     idempotency_context: dict[str, Any] = {
         "symbol": canonical_symbol,
-        "retry_with": "get_position",
+        "retry_with": "broker_reconciliation",
         "retry_hint": (
             "Close may have succeeded at Alpaca despite the 5xx — "
             "ClosePositionRequest does not accept client_order_id. Check "
-            f"GET {ALPACA_ROUTER_PREFIX}/positions/{canonical_symbol}: "
-            "404 means the close succeeded (or position is gone), 200 "
-            "means safe to retry the close."
+            f"GET {ALPACA_ROUTER_PREFIX}/positions/{canonical_symbol} and "
+            f"GET {ALPACA_ROUTER_PREFIX}/orders?status=open&symbols={canonical_symbol}; "
+            "do not retry the close while its ownership claim is frozen."
         ),
     }
 
     async def _call(provider: Any) -> Any:
-        return await _run_trading_provider_call(
-            provider=provider,
-            provider_fn=lambda provider: provider.close_position(symbol, qty, percentage),
-            operation="close_position",
-            idempotency_context=idempotency_context,
-        )
+        fence_token: str | None = None
+        mutation_token: str | None = None
+        try:
+            try:
+                fence_token = await ownership_guard.acquire_fence(canonical_symbol)
+                broker_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
+                await ownership_guard.authorize_close(
+                    client_id=client.id,
+                    symbol=canonical_symbol,
+                    broker_state=broker_state,
+                )
+                await ownership_guard.renew_fence(canonical_symbol, fence_token)
+                mutation_token = await ownership_guard.begin_mutation(
+                    symbol=canonical_symbol, operation="close_position"
+                )
+            except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+                _raise_ownership_rejection(exc, canonical_symbol)
+            try:
+                data = await _run_trading_provider_call(
+                    provider=provider,
+                    provider_fn=lambda provider: provider.close_position(canonical_symbol, qty, percentage),
+                    operation="close_position",
+                    idempotency_context=idempotency_context,
+                )
+            except HTTPException as exc:
+                await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+                raise
+            try:
+                post_close_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
+                await ownership_guard.verify_reconciliation(
+                    client_id=client.id,
+                    symbol=canonical_symbol,
+                    broker_state=post_close_state,
+                )
+                assert mutation_token is not None
+                await ownership_guard.complete_mutation(symbol=canonical_symbol, token=mutation_token)
+            except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+                if isinstance(exc, OwnershipConflict):
+                    await _freeze_before_fence_release(
+                        ownership_guard,
+                        canonical_symbol,
+                        f"post_write_reconciliation_{exc}",
+                    )
+                _raise_ownership_rejection(
+                    exc,
+                    canonical_symbol,
+                    mutation_may_have_reached_broker=True,
+                    reconciliation_context=idempotency_context,
+                )
+            return data
+        except HTTPException:
+            raise
+        except Exception:
+            await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
+            raise
+        finally:
+            if fence_token is not None:
+                await ownership_guard.release_fence(canonical_symbol, fence_token)
 
     try:
         data = await execute_alpaca_provider_call(
@@ -1532,6 +2238,7 @@ async def close_position(
         # Same reason as create_order: execute_alpaca_provider_call's 5xx
         # rewrites lose the retry contract. Re-merge so a non-timeout 5xx
         # (e.g. APIError -> 503) still tells the caller to GET the position.
+        await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
         raise _merge_idempotency_context_into_5xx(exc, idempotency_context) from exc
     return {
         "success": True,

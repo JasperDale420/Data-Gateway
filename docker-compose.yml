@@ -180,7 +180,9 @@ services:
     # scales with event volume, not with the stream caps, so it has to be budgeted
     # for separately. Stream caps are unchanged (500K live / 2M backfill); this is
     # headroom only. Docker VM has 11.67GB.
-    command: redis-server --save "" --appendonly yes --appendfsync everysec --maxmemory 6gb --maxmemory-policy volatile-lru
+    # Ownership claims acknowledge before Gateway can dispatch a broker write;
+    # synchronous AOF makes that safety marker survive a host power loss.
+    command: redis-server --save "" --appendonly yes --appendfsync always --maxmemory 6gb --maxmemory-policy volatile-lru
     volumes:
       - data-gateway-redis-data:/data
     restart: unless-stopped
