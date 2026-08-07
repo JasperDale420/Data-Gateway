@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An open order the broker returns under a malformed symbol no longer drops silently out of ownership reconciliation** (`gateway/api/alpaca/trading.py`). The open-order read is scoped to the symbol being authorized, so every order it returns concerns that symbol — but an order whose symbol would not canonicalise was compared for equality, came back unequal, and was filtered out of the reconciled owner set. The symbol then looked unowned while a live order sat on it, which is exactly the state that lets a second client take the claim. Such an order now fails the reconciliation closed with `unresolvable_broker_order_symbol`. Positions are deliberately unchanged: `get_positions()` is account-wide, so an unparseable record there proves nothing about the symbol in hand, and rejecting it would block mutations account-wide and freeze the target claim in the post-write path over an unrelated bad record. The residual position-side gap and the per-symbol read that closes it are recorded in `docs/FOLLOW_UPS.md`.
+
 ### Changed
 
 - **Re-recorded the perf baseline for path normalization — this is a real, accepted cost, not runner drift** (`config/perf_baseline.json`): the Perf Gate has failed on master since 2026-08-03 on `test_metrics_path_normalization_baseline` (~0.94s against a 0.705s trend threshold). All perf tests pass and the 1.5s hard budget is not breached; only the trend guardrail trips. The baseline moves 0.45 -> 0.70, putting the threshold at 1.08s — roughly 10% above the worst observed run (0.981s), still well inside the hard budget, and still tripping on any further regression of that size.

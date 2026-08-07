@@ -1048,6 +1048,83 @@ async def test_reconciliation_reads_open_orders_before_positions(
 
 
 @pytest.mark.asyncio
+async def test_reconciliation_rejects_an_uncanonicalisable_open_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An open order that cannot be canonicalised makes ownership unknowable.
+
+    The open-order query is already scoped to the symbol being authorized, so
+    every returned order is relevant to it. Treating an unparseable one as
+    "some other symbol" drops it from the owner set, which can present a live
+    owner's symbol as flat and let another client take the claim.
+    """
+
+    class _MalformedOrderProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return [{"symbol": "!!not-a-symbol!!", "client_order_id": "c-other-dg-1"}]
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.undo()
+
+    with pytest.raises(trading.OwnershipConflict) as exc:
+        await trading._reconcile_broker_symbol_state(_MalformedOrderProvider(), "AAPL")
+
+    assert "unresolvable_broker_order_symbol:AAPL" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_does_not_fail_closed_on_a_malformed_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Account-wide position noise must not fail the whole reconciliation.
+
+    ``get_positions`` returns every symbol, so an unparseable record proves
+    nothing either way about the symbol being authorized. Rejecting it would
+    block mutations account-wide, and in the post-write path would freeze the
+    target claim over a record that may have nothing to do with it. This guards
+    against re-introducing that regression; the residual gap it leaves — a
+    malformed position on the target symbol reading as flat — needs a
+    per-symbol position read to close. See docs/FOLLOW_UPS.md.
+    """
+
+    class _MalformedPositionProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": None}, {"symbol": "AAPL"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_MalformedPositionProvider(), "AAPL")
+
+    assert state.has_position is True
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_accepts_well_formed_records_for_other_symbols(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only unparseable records fail closed; canonical non-matches still filter."""
+
+    class _OtherSymbolProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return [{"symbol": "MSFT", "client_order_id": "c-other-dg-1"}]
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "MSFT"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_OtherSymbolProvider(), "AAPL")
+
+    assert state.has_position is False
+    assert state.order_owners == frozenset()
+
+
+@pytest.mark.asyncio
 async def test_create_order_submits_the_canonical_occ_contract_symbol(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
