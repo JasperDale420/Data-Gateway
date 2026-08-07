@@ -843,6 +843,7 @@ class DataSinkRegistry:
                 raise _BatchProbeFailure(f"sink {sink.name} accepted 0 of {n} batch messages")
             return to_flags(raw, n)
 
+        # nosemgrep: empire-no-bare-exception -- batch boundary: logged via logger.exception with the whole admitted batch buffered for retry
         try:
             return await breaker.call(_probe)
         except CircuitOpenError:
