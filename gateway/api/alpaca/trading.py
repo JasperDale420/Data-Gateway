@@ -457,6 +457,7 @@ def _extract_symbol_from_broker_record(record: Any) -> str | None:
         symbol = getattr(record, "symbol", None)
     if not isinstance(symbol, str):
         return None
+    # nosemgrep: empire-no-return-none-for-failure -- documented Optional extractor: uncanonicalisable symbol yields None, and every caller fails closed on it
     try:
         return canonical_broker_symbol(symbol)
     except ValueError:

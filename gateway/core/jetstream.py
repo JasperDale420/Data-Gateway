@@ -127,6 +127,7 @@ class JetStreamOutboxPublisher:
                     error_cb=self._on_error,
                 )
                 jetstream = connection.jetstream(publish_async_max_pending=_MAX_ASYNC_PUBACKS)
+                # nosemgrep: empire-no-bare-exception -- stream-provisioning boundary: closes the connection, marks the broker disconnected, and re-raises
                 try:
                     await ensure_streams(jetstream, build_stream_configs(self._settings))
                 except Exception:

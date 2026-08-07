@@ -276,6 +276,7 @@ async def _initialize_data_sink(settings):
             failed_buffer_capacity=settings.data_sink_failed_buffer_capacity,
         )
         sink = LaneRoutedSink(durable_sink, redis_sink, lanes=settings.jetstream_lanes)
+        # nosemgrep: empire-no-bare-exception -- startup boundary: closes the durable sink and publisher, then re-raises to fail startup
         try:
             await publisher.verify_startup(settings.jetstream_lanes)
         except Exception:

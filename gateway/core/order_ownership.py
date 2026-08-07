@@ -150,6 +150,7 @@ return 0
             self._reject(symbol, "gateway_fence_lost")
 
     async def release_fence(self, symbol: str, token: str) -> None:
+        # nosemgrep: empire-no-bare-exception -- best-effort fence release: logged with exc_info; raising here would mask the caller's outcome
         try:
             await self._redis.eval(self._COMPARE_AND_DELETE_FENCE, 1, self.fence_key(symbol), token)
         except Exception:
