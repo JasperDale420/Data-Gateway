@@ -276,11 +276,19 @@ async def _initialize_data_sink(settings):
             failed_buffer_capacity=settings.data_sink_failed_buffer_capacity,
         )
         sink = LaneRoutedSink(durable_sink, redis_sink, lanes=settings.jetstream_lanes)
+        # nosemgrep: empire-no-bare-exception -- startup cleanup, not a handler: any verify failure must close the outbox and publisher before `raise` re-raises the original and fails startup loudly
         try:
             await publisher.verify_startup(settings.jetstream_lanes)
         except Exception:
-            await durable_sink.close()
-            await publisher.close()
+            # Both closes are suppressed so a failing one cannot skip the other
+            # or displace the verification error that actually explains the
+            # failed startup.
+            for close in (durable_sink.close, publisher.close):
+                # nosemgrep: empire-no-bare-exception -- cleanup on an already-failing startup path; logged, then the original verification error is re-raised below
+                try:
+                    await close()
+                except Exception:
+                    logger.warning("durable_outbox_startup_cleanup_failed", step=close.__qualname__, exc_info=True)
             raise
         sink_registry.register(sink)
         if not sink.durable_admission:

@@ -967,6 +967,7 @@ class BackfillEngine:
         semaphore = self._get_semaphore(job.request.provider, job.request.feed)
 
         async with semaphore:
+            # nosemgrep: empire-no-bare-exception -- job boundary over an injectable manifest store (redis transport errors and pydantic validation errors are disjoint families); logged with exc_info=True and handled explicitly by failing the job closed
             try:
                 readiness = await self._manifest_store.read_heber_readiness()
             except Exception:
@@ -1082,6 +1083,7 @@ class BackfillEngine:
         while True:
             all_verified = True
             for chunk in job.chunks.values():
+                # nosemgrep: empire-no-bare-exception -- per-chunk boundary over an injectable manifest store; logged with exc_info=True and handled explicitly by holding the job unverified so it can never settle COMPLETED on an unreadable ack
                 try:
                     acknowledgement = await self._manifest_store.read_ack(
                         job.job_id,
@@ -1590,6 +1592,7 @@ def _strict_timestamp(value: Any) -> datetime | None:
         try:
             timestamp = datetime.fromisoformat(normalized)
         except ValueError:
+            # nosemgrep: empire-no-return-none-for-failure -- input validator, not a failure signal: None means "this value is not a timestamp", matching the non-try `return None` branches above and below; the sole caller raises ReplayValidationError on None
             try:
                 parsed_date = date.fromisoformat(normalized)
             except ValueError:
@@ -1612,6 +1615,7 @@ def _is_completed_market_day(day: date) -> bool:
         return False
     if 2024 <= day.year <= 2026:
         return day not in US_HOLIDAYS
+    # nosemgrep: empire-no-bare-exception -- availability probe for an optional dependency chain (ZoneInfo tzdata, exchange_calendars); logged with exc_info=True and handled explicitly by treating the day as non-tradeable, which only shrinks the canary set
     try:
         return TradingCalendar().is_trading_day(day)
     except Exception:
