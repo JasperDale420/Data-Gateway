@@ -27,6 +27,7 @@ _MAX_ADMISSION_QUEUE_EVENTS = 8_192
 _MAX_ADMISSION_QUEUE_BYTES = _MAX_ADMISSION_TRANSACTION_BYTES
 _MAX_CONCURRENT_PUBACKS = 32
 _OUTBOX_METRICS_REFRESH_SECONDS = 5.0
+_DRAIN_GRACEFUL_STOP_SECONDS = 10.0
 
 
 @dataclass(slots=True)
@@ -49,6 +50,7 @@ class DurableOutboxSink(DataSink):
         name: str = "durable_outbox",
         admission_queue_max_events: int = _MAX_ADMISSION_QUEUE_EVENTS,
         admission_queue_max_bytes: int = _MAX_ADMISSION_QUEUE_BYTES,
+        drain_stop_grace_seconds: float = _DRAIN_GRACEFUL_STOP_SECONDS,
     ) -> None:
         if admission_queue_max_events < 1:
             raise ValueError("admission queue event limit must be positive")
@@ -57,6 +59,7 @@ class DurableOutboxSink(DataSink):
         self._outbox = outbox
         self._publisher = publisher
         self._retry_delay_seconds = max(0.01, retry_delay_seconds)
+        self._drain_stop_grace_seconds = drain_stop_grace_seconds
         self._name = name
         self._storage_lock = asyncio.Lock()
         self._admission_requests: deque[_AdmissionRequest] = deque()
@@ -355,6 +358,8 @@ class DurableOutboxSink(DataSink):
     async def _drain(self, lane: str) -> None:
         while True:
             self._wake[lane].clear()
+            if self._closed:
+                return
             async with self._storage_lock:
                 entries = await asyncio.to_thread(
                     self._outbox.pending,
@@ -469,14 +474,49 @@ class DurableOutboxSink(DataSink):
             with suppress(asyncio.CancelledError):
                 await self._metrics_task
             self._metrics_task = None
-        for task in self._drain_tasks.values():
-            task.cancel()
-        for task in self._drain_tasks.values():
-            with suppress(asyncio.CancelledError):
-                await task
+        # Wake any drain task idle at self._wake[lane].wait() so it observes
+        # _closed and returns on its own; a task already mid-batch instead
+        # finishes publishing and committing settle_publications, then sees
+        # _closed at the top of its next loop iteration. Cancelling
+        # unconditionally here would let a row the publisher already
+        # acknowledged sit unsettled in SQLite, forcing a redelivery on
+        # restart.
+        for wake in self._wake.values():
+            wake.set()
+        if self._drain_tasks:
+            await asyncio.gather(*(self._stop_drain(lane, task) for lane, task in self._drain_tasks.items()))
         self._drain_tasks.clear()
         async with self._storage_lock:
             await asyncio.to_thread(self._outbox.close)
+
+    async def _stop_drain(self, lane: str, task: asyncio.Task[None]) -> None:
+        """Give an in-flight batch a bounded window to settle before cancelling it.
+
+        A forced cancellation past the grace period reopens the same gap this
+        method otherwise closes: a row the publisher already acknowledged can
+        still be mid-flight to settle_publications and never get marked
+        settled. No new admissions can land once the sink is closed, so
+        whatever remains pending for this lane afterward is exactly the set
+        of rows that may be redelivered on the next start() — logged here so
+        that isn't invisible.
+        """
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=self._drain_stop_grace_seconds)
+        except TimeoutError:
+            # lane_summaries() runs a COUNT(*), unlike pending()'s default
+            # 1,000-row cap, so this stays accurate for a lane backlog of any size.
+            async with self._storage_lock:
+                summaries = await asyncio.to_thread(self._outbox.lane_summaries)
+            logger.warning(
+                "durable_outbox_drain_stop_timed_out",
+                sink=self.name,
+                lane=lane,
+                grace_seconds=self._drain_stop_grace_seconds,
+                rows_at_risk_of_redelivery=summaries[lane].pending_count,
+            )
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
     async def _refresh_outbox_metrics_periodically(self) -> None:
         """Bound aggregate SQLite status reads away from the admission and ACK paths."""
