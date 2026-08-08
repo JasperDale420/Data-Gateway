@@ -5064,6 +5064,26 @@ def test_canonical_order_symbol_or_reject_raises_unfenceable_error() -> None:
     assert exc.value.detail["code"] == "GW-E4301"
 
 
+def test_canonical_order_symbol_or_reject_rejects_another_asset_class() -> None:
+    """A crypto/forex record extracts cleanly to None (proven non-match, not
+    an UnrecognizedBrokerSymbol) -- but an order fence still can't be built
+    for it, so this must hit the `symbol is None` branch distinct from the
+    UnrecognizedBrokerSymbol exception path covered above."""
+    with pytest.raises(HTTPException) as exc:
+        trading._canonical_order_symbol_or_reject({"symbol": "BTC/USD"})
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "GW-E4301"
+
+
+def test_canonical_open_order_symbol_or_conflict_rejects_another_asset_class() -> None:
+    """Same `extracted is None` branch as above, on the open-order variant
+    used while reconciling before a mutation -- OwnershipConflict (409),
+    not HTTPException directly."""
+    with pytest.raises(OwnershipConflict, match="unresolvable_broker_order_symbol:AAPL"):
+        trading._canonical_open_order_symbol_or_conflict({"symbol": "BTC/USD"}, "AAPL")
+
+
 @pytest.mark.asyncio
 async def test_reconcile_broker_symbol_state_rejects_non_list_broker_response(
     monkeypatch: pytest.MonkeyPatch,
