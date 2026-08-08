@@ -503,18 +503,31 @@ class DurableOutboxSink(DataSink):
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=self._drain_stop_grace_seconds)
         except TimeoutError:
-            # lane_summaries() runs a COUNT(*), unlike pending()'s default
-            # 1,000-row cap, so this stays accurate for a lane backlog of any size.
-            async with self._storage_lock:
-                summaries = await asyncio.to_thread(self._outbox.lane_summaries)
+            # Cancel before the diagnostic read below, not after: a failure in
+            # that read (SQLite unavailable, etc.) must never leave this task
+            # running past its grace period, which would leak the task and
+            # abort close() before it ever cancels the other lanes or closes
+            # the outbox.
+            task.cancel()
+            rows_at_risk: int | None = None
+            # nosemgrep: empire-no-bare-exception -- best-effort diagnostics on an already-timed-out shutdown path; a failed read must not skip the cancellation above or the warning log, logged with exc_info. Deliberately NOT wrapped in asyncio.wait_for: to_thread() offers no real cancellation, so timing this out would abandon a worker thread still running lane_summaries() against self._outbox's SQLite connection while close() moves on to close that same connection under a fresh lock acquisition -- an unbounded read racing an unsafe one is the worse trade.
+            try:
+                # lane_summaries() runs a COUNT(*), unlike pending()'s default
+                # 1,000-row cap, so this stays accurate for a lane backlog of any size.
+                async with self._storage_lock:
+                    summaries = await asyncio.to_thread(self._outbox.lane_summaries)
+                rows_at_risk = summaries[lane].pending_count
+            except Exception:
+                logger.warning(
+                    "durable_outbox_drain_stop_summary_unavailable", sink=self.name, lane=lane, exc_info=True
+                )
             logger.warning(
                 "durable_outbox_drain_stop_timed_out",
                 sink=self.name,
                 lane=lane,
                 grace_seconds=self._drain_stop_grace_seconds,
-                rows_at_risk_of_redelivery=summaries[lane].pending_count,
+                rows_at_risk_of_redelivery=rows_at_risk,
             )
-            task.cancel()
         with suppress(asyncio.CancelledError):
             await task
 

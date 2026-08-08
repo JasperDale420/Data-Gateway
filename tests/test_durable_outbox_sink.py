@@ -570,6 +570,41 @@ async def test_close_cancels_a_batch_that_exceeds_the_graceful_stop_window(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_close_cancels_the_stuck_batch_even_if_the_diagnostic_summary_read_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation must not depend on the diagnostic lane_summaries() read
+    succeeding: a failure there (SQLite unavailable, etc.) must not leave the
+    stuck task running past its grace period or abort close() before it
+    cancels the task and closes the outbox."""
+    outbox = SQLiteOutbox(tmp_path / "outbox.sqlite3")
+    entered_publish = asyncio.Event()
+    never_releases = asyncio.Event()
+
+    async def publish_ack(_entry: OutboxEntry) -> bool:
+        entered_publish.set()
+        await never_releases.wait()
+        return True
+
+    def _broken_lane_summaries() -> dict[str, object]:
+        raise RuntimeError("simulated SQLite failure")
+
+    monkeypatch.setattr(outbox, "lane_summaries", _broken_lane_summaries)
+
+    sink = DurableOutboxSink(outbox, publish_ack, drain_stop_grace_seconds=0.05)
+    await sink.publish("heber.live.trades", _event("evt-stuck"))
+    await asyncio.wait_for(entered_publish.wait(), timeout=2)
+
+    # Must not hang or raise: the stuck task is cancelled before the
+    # (failing) diagnostic read, so close() still completes.
+    await asyncio.wait_for(sink.close(), timeout=2)
+
+    with SQLiteOutbox(tmp_path / "outbox.sqlite3") as reopened:
+        assert [entry.event_id for entry in reopened.pending()] == ["evt-stuck"]
+
+
+@pytest.mark.asyncio
 async def test_close_timeout_reports_the_true_pending_count_past_the_default_row_cap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
