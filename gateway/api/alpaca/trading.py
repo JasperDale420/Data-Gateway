@@ -1299,22 +1299,27 @@ async def get_orders(
         log_context={"client_id": client.id, "method": "GET", "path": "/api/v1/alpaca/orders"},
     )
     # Filter to only orders owned by this caller, THEN truncate to the
-    # caller-requested limit. Defensive against a provider that returns
-    # a non-list (current implementation always returns list, but
-    # typing-wise nothing pins it).
-    if isinstance(data, list):
-        owned = [
-            order
-            for order in data
-            if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
-        ]
-        owned = owned[:limit]
-    else:
-        owned = data
+    # caller-requested limit. A non-list response means Alpaca returned
+    # something malformed/unexpected — fail loudly (502) rather than
+    # silently reporting zero orders, which would be indistinguishable
+    # from "you genuinely have no open orders" to the caller.
+    if not isinstance(data, list):
+        logger.error("alpaca_get_orders_malformed_response", response_type=type(data).__name__)
+        raise HTTPException(
+            status_code=HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "GW-E5009",
+                "message": f"Alpaca returned a malformed response for get_orders: expected a list, got {type(data).__name__}.",
+            },
+        )
+    owned = [
+        order for order in data if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
+    ]
+    owned = owned[:limit]
     return {
         "success": True,
         "data": owned,
-        "meta": {"count": len(owned) if isinstance(owned, list) else 0, "provider": "alpaca"},
+        "meta": {"count": len(owned), "provider": "alpaca"},
     }
 
 
@@ -1980,13 +1985,28 @@ async def cancel_all_orders(
         ),
         operation="cancel_all_orders.list",
     )
-    owned: list[dict[str, Any]] = []
-    if isinstance(raw_orders, list):
-        owned = [
-            order
-            for order in raw_orders
-            if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
-        ]
+    # A non-list response means Alpaca returned something malformed/
+    # unexpected — fail loudly (502) rather than silently reporting zero
+    # owned orders. This is a bulk-cancel reconciliation path: a caller
+    # reading {"success": true, "owned_count": 0} back would conclude
+    # nothing was open, when the truth is unknown.
+    if not isinstance(raw_orders, list):
+        logger.error("alpaca_cancel_all_orders_malformed_response", response_type=type(raw_orders).__name__)
+        raise HTTPException(
+            status_code=HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "GW-E5009",
+                "message": (
+                    f"Alpaca returned a malformed response while listing orders for cancel_all_orders: "
+                    f"expected a list, got {type(raw_orders).__name__}."
+                ),
+            },
+        )
+    owned: list[dict[str, Any]] = [
+        order
+        for order in raw_orders
+        if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
+    ]
 
     # Resolve each owned order to its canonical broker symbol. An order that
     # cannot be resolved cannot be fenced, and an order id the broker reports

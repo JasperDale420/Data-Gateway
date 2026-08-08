@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
-from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
+from starlette.status import HTTP_502_BAD_GATEWAY, HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca import trading
 from gateway.api.alpaca.common import ALPACA_ROUTER_PREFIX
@@ -609,6 +609,41 @@ async def test_get_orders_times_out_stuck_trading_call(
         )
 
     assert exc.value.status_code == HTTP_504_GATEWAY_TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_get_orders_raises_502_when_provider_response_is_not_a_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed (non-list) broker response must fail loudly, not be
+    silently treated as zero orders — a zero-order response here is
+    indistinguishable from "you genuinely have no open orders", which is
+    corrupted-data-reported-as-truth on the read path callers reconcile
+    against."""
+
+    class _NonListProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> Any:
+            self.orders_calls.append(kwargs)
+            return {"unexpected": "shape"}
+
+    provider = _NonListProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_orders(
+            status="open",
+            limit=50,
+            direction="desc",
+            symbols=None,
+            nested=True,
+            side=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_502_BAD_GATEWAY
+    assert exc.value.detail["code"] == "GW-E5009"
 
 
 @pytest.mark.asyncio
@@ -3823,6 +3858,45 @@ async def test_cancel_all_orders_with_no_owned_orders_yields_empty_cancels(
     assert response["data"] == []
     assert response["meta"]["count"] == 0
     assert response["meta"]["owned_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_raises_502_when_broker_list_is_not_a_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed (non-list) broker response must fail loudly, not be
+    silently treated as zero owned orders. This is a bulk-cancel
+    reconciliation path — a caller reading ``{"success": true,
+    "owned_count": 0}`` after a corrupted broker response would wrongly
+    conclude nothing was open, when the truth is unknown."""
+    bulk_cancel_calls = {"n": 0}
+
+    class _NonListOrdersProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> Any:
+            return {"unexpected": "shape"}
+
+        def cancel_all_orders(self) -> list[dict[str, Any]]:
+            bulk_cancel_calls["n"] += 1
+            return []
+
+    provider = _NonListOrdersProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.cancel_all_orders(
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_502_BAD_GATEWAY
+    assert exc.value.detail["code"] == "GW-E5009"
+    # Never falls back to the account-wide bulk cancel, and never reaches
+    # the per-order cancel path either (the actual write path this route
+    # uses — see the route docstring: bulk `cancel_all_orders()` is NEVER
+    # called from this endpoint).
+    assert bulk_cancel_calls["n"] == 0
+    assert provider.cancel_calls == []
 
 
 # ---------------------------------------------------------------------------
