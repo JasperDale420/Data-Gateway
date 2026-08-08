@@ -27,6 +27,7 @@ _MAX_ADMISSION_QUEUE_EVENTS = 8_192
 _MAX_ADMISSION_QUEUE_BYTES = _MAX_ADMISSION_TRANSACTION_BYTES
 _MAX_CONCURRENT_PUBACKS = 32
 _OUTBOX_METRICS_REFRESH_SECONDS = 5.0
+_DRAIN_SHUTDOWN_TIMEOUT_SECONDS = 20.0
 
 
 @dataclass(slots=True)
@@ -49,6 +50,7 @@ class DurableOutboxSink(DataSink):
         name: str = "durable_outbox",
         admission_queue_max_events: int = _MAX_ADMISSION_QUEUE_EVENTS,
         admission_queue_max_bytes: int = _MAX_ADMISSION_QUEUE_BYTES,
+        drain_shutdown_timeout_seconds: float = _DRAIN_SHUTDOWN_TIMEOUT_SECONDS,
     ) -> None:
         if admission_queue_max_events < 1:
             raise ValueError("admission queue event limit must be positive")
@@ -57,6 +59,7 @@ class DurableOutboxSink(DataSink):
         self._outbox = outbox
         self._publisher = publisher
         self._retry_delay_seconds = max(0.01, retry_delay_seconds)
+        self._drain_shutdown_timeout_seconds = max(0.01, drain_shutdown_timeout_seconds)
         self._name = name
         self._storage_lock = asyncio.Lock()
         self._admission_requests: deque[_AdmissionRequest] = deque()
@@ -66,6 +69,15 @@ class DurableOutboxSink(DataSink):
         self._admission_task: asyncio.Task[None] | None = None
         self._metrics_task: asyncio.Task[None] | None = None
         self._wake = {lane: asyncio.Event() for lane in ("live", "backfill", "watch")}
+        # Set whenever a lane holds no publisher acknowledgement that isn't yet
+        # durably settled in SQLite; cleared the instant one arrives. close()
+        # waits on this before cancelling a drain task, so an acknowledgement
+        # already given by the publisher can never be abandoned mid-settle.
+        # It does not gate on "a publish is in flight" (a stuck publisher that
+        # never returns must still cancel promptly on shutdown).
+        self._settle_safe = {lane: asyncio.Event() for lane in ("live", "backfill", "watch")}
+        for event in self._settle_safe.values():
+            event.set()
         self._drain_tasks: dict[str, asyncio.Task[None]] = {}
         self._closed = False
         self._admission_error: str | None = None
@@ -362,6 +374,8 @@ class DurableOutboxSink(DataSink):
                     lane=lane,
                 )
             if not entries:
+                if self._closed:
+                    return
                 await self._wake[lane].wait()
                 continue
 
@@ -396,9 +410,15 @@ class DurableOutboxSink(DataSink):
                     error=error,
                     exc_info=True,
                 )
+                # The batch's fate is fully logged and tracked even though the
+                # settlement write itself failed, so a shutdown may proceed —
+                # this failure mode already accepts possible redelivery on
+                # restart, deduped downstream by event_id.
+                self._settle_safe[lane].set()
                 await asyncio.sleep(self._retry_delay_seconds)
                 continue
 
+            self._settle_safe[lane].set()
             for entry, (acknowledged, _error) in zip(entries, outcomes, strict=True):
                 if acknowledged:
                     self._failed_delivery_sequences[lane].discard(entry.sequence)
@@ -416,7 +436,11 @@ class DurableOutboxSink(DataSink):
         try:
             async with self._puback_semaphore:
                 acknowledged = await self._publisher(entry)
-            if not acknowledged:
+            if acknowledged:
+                # The publisher has committed to this event. Until it is durably
+                # settled below, a shutdown must not cancel this lane's drain.
+                self._settle_safe[lane].clear()
+            else:
                 error = "publisher returned False"
         except asyncio.CancelledError:
             raise
@@ -469,14 +493,82 @@ class DurableOutboxSink(DataSink):
             with suppress(asyncio.CancelledError):
                 await self._metrics_task
             self._metrics_task = None
-        for task in self._drain_tasks.values():
-            task.cancel()
-        for task in self._drain_tasks.values():
-            with suppress(asyncio.CancelledError):
-                await task
+        # Wake any drain parked with an empty queue so it observes self._closed
+        # and returns instead of waiting forever.
+        for wake in self._wake.values():
+            wake.set()
+        drain_tasks = list(self._drain_tasks.values())
+        if drain_tasks:
+            # Cancelling a drain while it holds a publisher acknowledgement that
+            # is not yet durably settled would abandon that ack: the row stays
+            # pending and gets redelivered on restart (bounded redundant
+            # delivery, deduped downstream by event_id). Wait for each lane to
+            # reach a safe point before cancelling anything. This is bounded,
+            # not "wait for the drain to finish" — a lane with no unsettled ack
+            # (idle, retrying, or a publish that is simply slow/stuck and has
+            # not yet returned) is already safe and does not block this wait.
+            #
+            # This narrows the race rather than eliminating it: it is
+            # deliberately NOT a guarantee. If a broker never acks a sibling
+            # publish in the same batch within the timeout (e.g. a broker
+            # outage spanning the whole shutdown window — the JetStream client
+            # puts no timeout of its own on a PubAck), this still falls back to
+            # cancelling — the same behavior this file had before this fix
+            # existed at all. That residual window only opens during an
+            # already-exceptional outage, versus the pre-fix bug which
+            # reproduced on any close() racing an ordinary in-flight publish.
+            # See test_close_falls_back_to_cancelling_past_the_shutdown_timeout.
+            await self._wait_until_safe_to_cancel_drains()
+            # No `await` between the safety check above and cancelling below.
+            # A lane's event can only be cleared from a synchronous line inside
+            # _publish_with_puback, which can only run when this coroutine
+            # yields control — so once every lane is observed set with no
+            # intervening yield, none can have gone unsafe again before these
+            # cancellations land. An `await` here (even just to reap the helper
+            # wait tasks) would reopen exactly that gap.
+            for task in drain_tasks:
+                task.cancel()
+            for task in drain_tasks:
+                with suppress(asyncio.CancelledError):
+                    await task
         self._drain_tasks.clear()
         async with self._storage_lock:
             await asyncio.to_thread(self._outbox.close)
+
+    async def _wait_until_safe_to_cancel_drains(self) -> None:
+        """Block until no lane holds an unsettled acknowledgement, or the timeout elapses.
+
+        Returns only once a synchronous `is_set()` check confirms every lane is
+        safe, with that check as the function's last action. A version of this
+        that instead waited on `event.wait()` futures and then cleaned them up
+        before returning left `await` points between "observed safe" and the
+        caller's cancellation — during which a publish that was already in
+        flight could complete and clear a lane's event again, reopening the
+        exact abandoned-acknowledgement race this exists to close.
+        """
+        deadline = asyncio.get_running_loop().time() + self._drain_shutdown_timeout_seconds
+        waiters: list[asyncio.Task[bool]] = []
+        try:
+            while not all(event.is_set() for event in self._settle_safe.values()):
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    logger.warning(
+                        "durable_outbox_shutdown_unsettled_ack_timeout",
+                        sink=self.name,
+                        timeout_seconds=self._drain_shutdown_timeout_seconds,
+                        unsettled_lanes=sorted(lane for lane, event in self._settle_safe.items() if not event.is_set()),
+                    )
+                    return
+                pending = [
+                    asyncio.ensure_future(event.wait()) for event in self._settle_safe.values() if not event.is_set()
+                ]
+                waiters.extend(pending)
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(asyncio.wait(pending), timeout=remaining)
+        finally:
+            for waiter in waiters:
+                if not waiter.done():
+                    waiter.cancel()
 
     async def _refresh_outbox_metrics_periodically(self) -> None:
         """Bound aggregate SQLite status reads away from the admission and ACK paths."""

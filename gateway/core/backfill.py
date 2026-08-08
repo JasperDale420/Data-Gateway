@@ -967,6 +967,7 @@ class BackfillEngine:
         semaphore = self._get_semaphore(job.request.provider, job.request.feed)
 
         async with semaphore:
+            # nosemgrep: empire-no-bare-exception -- fail-closed integrity gate: any read failure (redis or manifest validation) logs exc_info and blocks the job FAILED rather than backfilling unverified
             try:
                 readiness = await self._manifest_store.read_heber_readiness()
             except Exception:
@@ -1082,6 +1083,7 @@ class BackfillEngine:
         while True:
             all_verified = True
             for chunk in job.chunks.values():
+                # nosemgrep: empire-no-bare-exception -- fail-closed ack verification: any read failure logs exc_info and leaves the chunk unverified rather than certifying it
                 try:
                     acknowledgement = await self._manifest_store.read_ack(
                         job.job_id,
@@ -1590,6 +1592,7 @@ def _strict_timestamp(value: Any) -> datetime | None:
         try:
             timestamp = datetime.fromisoformat(normalized)
         except ValueError:
+            # nosemgrep: empire-no-return-none-for-failure -- parse predicate, not a failure signal: None means "not a timestamp", which every caller checks
             try:
                 parsed_date = date.fromisoformat(normalized)
             except ValueError:
@@ -1612,6 +1615,7 @@ def _is_completed_market_day(day: date) -> bool:
         return False
     if 2024 <= day.year <= 2026:
         return day not in US_HOLIDAYS
+    # nosemgrep: empire-no-bare-exception -- fail-closed calendar fallback: an unavailable calendar logs exc_info and reports the day incomplete rather than canarying against unknown data
     try:
         return TradingCalendar().is_trading_day(day)
     except Exception:

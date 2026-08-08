@@ -101,6 +101,21 @@ def _median_tests(runs: list[dict[str, Any]]) -> dict[str, float]:
     return medians
 
 
+def _clamp_down(observed: float, approved: Any) -> float:
+    """Return the observed value, never exceeding the approved baseline.
+
+    Baselines feed the trend guardrail's allowance (baseline * multiplier +
+    slack), so letting a slower-but-passing run raise the baseline would let the
+    allowance float upward until it reached the hard per-test budget and stopped
+    catching regressions. Recent runs may only ratchet a baseline *down*; raising
+    one stays an explicit edit to the checked-in config, which
+    scripts/merge_static_budgets.py then propagates into the active cache.
+    """
+    if isinstance(approved, int | float):
+        return _round_seconds(min(float(observed), float(approved)))
+    return _round_seconds(observed)
+
+
 def _ratchet_budget(current: float, baseline: float, mult: float, slack: float, floor: float) -> float:
     candidate = max(floor, (baseline * mult) + slack)
     if candidate >= current:
@@ -157,10 +172,17 @@ def main() -> int:
     baseline_tests = _median_tests(pass_runs)
 
     next_baseline = copy.deepcopy(baseline)
+    prior_suite = baseline.get("suite_baseline_seconds")
+    prior_tests = baseline.get("tests", {})
+    if not isinstance(prior_tests, dict):
+        prior_tests = {}
+
     if isinstance(baseline_suite, float):
-        next_baseline["suite_baseline_seconds"] = _round_seconds(baseline_suite)
+        next_baseline["suite_baseline_seconds"] = _clamp_down(baseline_suite, prior_suite)
     if baseline_tests:
-        next_baseline["tests"] = {key: _round_seconds(value) for key, value in sorted(baseline_tests.items())}
+        next_baseline["tests"] = {
+            key: _clamp_down(value, prior_tests.get(key)) for key, value in sorted(baseline_tests.items())
+        }
 
     next_budgets = copy.deepcopy(budgets)
     if "ratchet" not in next_budgets:

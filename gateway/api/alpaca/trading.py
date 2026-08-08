@@ -457,10 +457,33 @@ def _extract_symbol_from_broker_record(record: Any) -> str | None:
         symbol = getattr(record, "symbol", None)
     if not isinstance(symbol, str):
         return None
+    # nosemgrep: empire-no-return-none-for-failure -- extractor sentinel, not a swallowed failure: None means "no canonical symbol". Single-order, bulk-cancel, and open-order reconciliation callers all turn it into an explicit rejection; the account-wide position scan in _reconcile_broker_symbol_state deliberately does not, and that gap is tracked in docs/FOLLOW_UPS.md
     try:
         return canonical_broker_symbol(symbol)
     except ValueError:
         return None
+
+
+def _canonical_open_order_symbol_or_conflict(order: Any, symbol: str) -> str:
+    """Canonicalise a returned open order, failing closed when it will not parse.
+
+    The open-order read is already scoped to ``symbol``, so every order it
+    returns is about the symbol being authorized. One that will not canonicalise
+    therefore cannot be dismissed as belonging to something else: filtering it
+    out would drop its owner from the reconciled set and present the symbol as
+    unowned while a live order sits on it.
+
+    Positions are deliberately not treated this way. ``get_positions`` is
+    account-wide, so an unparseable record there carries no proof of relevance,
+    and rejecting it would fail every symbol's mutation over an unrelated bad
+    record — including in the post-write path, where the rejection freezes the
+    claim. That gap is tracked in docs/FOLLOW_UPS.md and needs a per-symbol
+    position read to close safely.
+    """
+    extracted = _extract_symbol_from_broker_record(order)
+    if extracted is None:
+        raise OwnershipConflict(f"unresolvable_broker_order_symbol:{symbol}")
+    return extracted
 
 
 def _unfenceable_symbol_error() -> HTTPException:
@@ -518,11 +541,14 @@ async def _reconcile_broker_symbol_state(provider: Any, symbol: str) -> BrokerSy
         raise OwnershipConflict(f"open_order_reconciliation_truncated:{symbol}")
 
     has_position = any(_extract_symbol_from_broker_record(position) == symbol for position in positions)
+    # Every returned order is canonicalised before any is filtered, so an
+    # unparseable one aborts the reconciliation instead of dropping out of it.
+    order_symbols = [_canonical_open_order_symbol_or_conflict(order, symbol) for order in orders]
     client_ids = _known_client_ids()
     order_owners = frozenset(
         owner_from_client_order_id(_extract_client_order_id_from_order(order), client_ids)
-        for order in orders
-        if _extract_symbol_from_broker_record(order) == symbol
+        for order, order_symbol in zip(orders, order_symbols, strict=True)
+        if order_symbol == symbol
     )
     logger.info(
         "order_ownership_reconciled",
