@@ -10,6 +10,7 @@ from gateway.core.order_ownership import (
     BrokerSymbolState,
     OrderOwnershipGuard,
     OwnershipConflict,
+    OwnershipStoreUnavailable,
     canonical_broker_symbol,
 )
 
@@ -97,6 +98,200 @@ class _FakeRedis:
             return 0
         del self.values[key]
         return 1
+
+
+class _FailingRedis:
+    """Wraps a working `_FakeRedis` and raises for selected operations.
+
+    Simulates Redis going down mid-call: `fail_on` names the client methods
+    (``get``/``set``/``sadd``/``srem``/``eval``) that should raise instead of
+    delegating, while every other method still hits the shared `inner` store —
+    so a claim written before the failure is injected stays visible.
+    """
+
+    def __init__(self, inner: _FakeRedis, fail_on: frozenset[str]) -> None:
+        self._inner = inner
+        self._fail_on = fail_on
+
+    async def get(self, *args: object, **kwargs: object) -> str | None:
+        if "get" in self._fail_on:
+            raise ConnectionError("redis get failed")
+        return await self._inner.get(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def set(self, *args: object, **kwargs: object) -> bool | None:
+        if "set" in self._fail_on:
+            raise ConnectionError("redis set failed")
+        return await self._inner.set(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def sadd(self, *args: object, **kwargs: object) -> int:
+        if "sadd" in self._fail_on:
+            raise ConnectionError("redis sadd failed")
+        return await self._inner.sadd(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def srem(self, *args: object, **kwargs: object) -> int:
+        if "srem" in self._fail_on:
+            raise ConnectionError("redis srem failed")
+        return await self._inner.srem(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def eval(self, *args: object, **kwargs: object) -> int:
+        if "eval" in self._fail_on:
+            raise ConnectionError("redis eval failed")
+        return await self._inner.eval(*args, **kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_freeze_raises_store_unavailable_and_does_not_swallow_redis_failure() -> None:
+    inner = _FakeRedis()
+    guard = OrderOwnershipGuard(inner)
+    state = BrokerSymbolState(has_position=False, order_owners=frozenset())
+    await guard.authorize_submission(client_id="orion", symbol="AAPL", broker_state=state)
+
+    failing_guard = OrderOwnershipGuard(_FailingRedis(inner, fail_on=frozenset({"set"})))
+    with pytest.raises(OwnershipStoreUnavailable, match="redis_freeze_failed:AAPL"):
+        await failing_guard.freeze("AAPL", "broker_mutation_504")
+
+    # The claim in the durable store is untouched — the failure was raised, not swallowed.
+    claim = json.loads(inner.values[guard.claim_key("AAPL")])
+    assert "frozen_reason" not in claim
+
+
+@pytest.mark.asyncio
+async def test_authorize_submission_raises_store_unavailable_when_claim_write_fails() -> None:
+    guard = OrderOwnershipGuard(_FailingRedis(_FakeRedis(), fail_on=frozenset({"eval"})))
+    state = BrokerSymbolState(has_position=False, order_owners=frozenset())
+
+    with pytest.raises(OwnershipStoreUnavailable, match="redis_claim_failed:AAPL"):
+        await guard.authorize_submission(client_id="orion", symbol="AAPL", broker_state=state)
+
+
+@pytest.mark.asyncio
+async def test_frozen_claim_persists_and_blocks_a_competing_client() -> None:
+    """Closes the durability gap: a frozen claim must survive and fence off
+
+    a *different* client reading it through its own guard instance, not just
+    block further calls from the guard object that froze it.
+    """
+    redis = _FakeRedis()
+    owner_guard = OrderOwnershipGuard(redis)
+    state = BrokerSymbolState(has_position=False, order_owners=frozenset())
+    await owner_guard.authorize_submission(client_id="orion", symbol="AAPL", broker_state=state)
+    await owner_guard.freeze("AAPL", "broker_mutation_504")
+
+    competitor_guard = OrderOwnershipGuard(redis)
+    with pytest.raises(OwnershipConflict, match="claim_frozen_after_ambiguous_broker_mutation"):
+        await competitor_guard.authorize_submission(
+            client_id="cerberus",
+            symbol="AAPL",
+            broker_state=BrokerSymbolState(has_position=False, order_owners=frozenset()),
+        )
+
+
+@pytest.mark.asyncio
+async def test_freeze_raises_store_unavailable_when_claim_read_fails() -> None:
+    """`_load_claim`'s `get` failure is shared by every caller (authorize_submission,
+
+    authorize_close, verify_reconciliation, freeze) — none of them wrap or swallow
+    it, so exercising it once here through freeze proves the shared path for all.
+    """
+    guard = OrderOwnershipGuard(_FailingRedis(_FakeRedis(), fail_on=frozenset({"get"})))
+
+    with pytest.raises(OwnershipStoreUnavailable, match="redis_read_failed:AAPL"):
+        await guard.freeze("AAPL", "broker_mutation_504")
+
+
+@pytest.mark.asyncio
+async def test_claim_reuse_raises_store_unavailable_when_index_repair_sadd_fails() -> None:
+    inner = _FakeRedis()
+    guard = OrderOwnershipGuard(inner)
+    await guard.authorize_submission(
+        client_id="orion",
+        symbol="AAPL",
+        broker_state=BrokerSymbolState(has_position=False, order_owners=frozenset()),
+    )
+
+    failing_guard = OrderOwnershipGuard(_FailingRedis(inner, fail_on=frozenset({"sadd"})))
+    with pytest.raises(OwnershipStoreUnavailable, match="redis_index_repair_failed:AAPL"):
+        await failing_guard.authorize_submission(
+            client_id="orion",
+            symbol="AAPL",
+            broker_state=BrokerSymbolState(has_position=True, order_owners=frozenset({"orion"})),
+        )
+
+
+@pytest.mark.asyncio
+async def test_release_if_clear_raises_store_unavailable_when_eval_fails() -> None:
+    inner = _FakeRedis()
+    guard = OrderOwnershipGuard(inner)
+    empty_state = BrokerSymbolState(has_position=False, order_owners=frozenset())
+    await guard.authorize_submission(client_id="orion", symbol="AAPL", broker_state=empty_state)
+    claim = json.loads(inner.values[guard.claim_key("AAPL")])
+
+    failing_guard = OrderOwnershipGuard(_FailingRedis(inner, fail_on=frozenset({"eval"})))
+    with pytest.raises(OwnershipStoreUnavailable, match="redis_release_failed:AAPL"):
+        await failing_guard._release_if_clear(symbol="AAPL", claim=claim, broker_state=empty_state)
+
+
+@pytest.mark.asyncio
+async def test_begin_mutation_raises_store_unavailable_when_eval_fails() -> None:
+    inner = _FakeRedis()
+    guard = OrderOwnershipGuard(inner)
+    state = BrokerSymbolState(has_position=False, order_owners=frozenset())
+    await guard.authorize_submission(client_id="orion", symbol="AAPL", broker_state=state)
+
+    failing_guard = OrderOwnershipGuard(_FailingRedis(inner, fail_on=frozenset({"eval"})))
+    with pytest.raises(OwnershipStoreUnavailable, match="redis_mutation_begin_failed:AAPL"):
+        await failing_guard.begin_mutation(symbol="AAPL", operation="create_order")
+
+
+@pytest.mark.asyncio
+async def test_complete_mutation_raises_store_unavailable_when_eval_fails() -> None:
+    inner = _FakeRedis()
+    guard = OrderOwnershipGuard(inner)
+    state = BrokerSymbolState(has_position=False, order_owners=frozenset())
+    await guard.authorize_submission(client_id="orion", symbol="AAPL", broker_state=state)
+    token = await guard.begin_mutation(symbol="AAPL", operation="create_order")
+
+    failing_guard = OrderOwnershipGuard(_FailingRedis(inner, fail_on=frozenset({"eval"})))
+    with pytest.raises(OwnershipStoreUnavailable, match="redis_mutation_complete_failed:AAPL"):
+        await failing_guard.complete_mutation(symbol="AAPL", token=token)
+
+
+@pytest.mark.asyncio
+async def test_acquire_fence_raises_store_unavailable_when_redis_set_fails() -> None:
+    guard = OrderOwnershipGuard(_FailingRedis(_FakeRedis(), fail_on=frozenset({"set"})))
+
+    with pytest.raises(OwnershipStoreUnavailable, match="redis_fence_acquire_failed:AAPL"):
+        await guard.acquire_fence("AAPL")
+
+
+@pytest.mark.asyncio
+async def test_renew_fence_raises_store_unavailable_when_eval_fails() -> None:
+    inner = _FakeRedis()
+    guard = OrderOwnershipGuard(inner)
+    token = await guard.acquire_fence("AAPL")
+
+    failing_guard = OrderOwnershipGuard(_FailingRedis(inner, fail_on=frozenset({"eval"})))
+    with pytest.raises(OwnershipStoreUnavailable, match="redis_fence_renew_failed:AAPL"):
+        await failing_guard.renew_fence("AAPL", token)
+
+
+@pytest.mark.asyncio
+async def test_release_fence_failure_is_swallowed_not_raised() -> None:
+    """release_fence intentionally never raises on a Redis failure.
+
+    Its `except Exception: logger.error(...)` body is deliberate — a caller
+    releasing a fence during cleanup must not itself crash on a flaky Redis.
+    This documents that contract rather than assuming it holds.
+    """
+    inner = _FakeRedis()
+    guard = OrderOwnershipGuard(inner)
+    token = await guard.acquire_fence("AAPL")
+
+    failing_guard = OrderOwnershipGuard(_FailingRedis(inner, fail_on=frozenset({"eval"})))
+    await failing_guard.release_fence("AAPL", token)  # must not raise
+
+    # The fence was never actually cleared — the failed eval never reached the store.
+    assert inner.values[guard.fence_key("AAPL")] == token
 
 
 @pytest.mark.asyncio

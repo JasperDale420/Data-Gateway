@@ -457,10 +457,33 @@ def _extract_symbol_from_broker_record(record: Any) -> str | None:
         symbol = getattr(record, "symbol", None)
     if not isinstance(symbol, str):
         return None
+    # nosemgrep: empire-no-return-none-for-failure -- extractor sentinel, not a swallowed failure: None means "no canonical symbol". Single-order, bulk-cancel, and open-order reconciliation callers all turn it into an explicit rejection; the account-wide position scan in _reconcile_broker_symbol_state deliberately does not, and that gap is tracked in docs/FOLLOW_UPS.md
     try:
         return canonical_broker_symbol(symbol)
     except ValueError:
         return None
+
+
+def _canonical_open_order_symbol_or_conflict(order: Any, symbol: str) -> str:
+    """Canonicalise a returned open order, failing closed when it will not parse.
+
+    The open-order read is already scoped to ``symbol``, so every order it
+    returns is about the symbol being authorized. One that will not canonicalise
+    therefore cannot be dismissed as belonging to something else: filtering it
+    out would drop its owner from the reconciled set and present the symbol as
+    unowned while a live order sits on it.
+
+    Positions are deliberately not treated this way. ``get_positions`` is
+    account-wide, so an unparseable record there carries no proof of relevance,
+    and rejecting it would fail every symbol's mutation over an unrelated bad
+    record — including in the post-write path, where the rejection freezes the
+    claim. That gap is tracked in docs/FOLLOW_UPS.md and needs a per-symbol
+    position read to close safely.
+    """
+    extracted = _extract_symbol_from_broker_record(order)
+    if extracted is None:
+        raise OwnershipConflict(f"unresolvable_broker_order_symbol:{symbol}")
+    return extracted
 
 
 def _unfenceable_symbol_error() -> HTTPException:
@@ -518,11 +541,14 @@ async def _reconcile_broker_symbol_state(provider: Any, symbol: str) -> BrokerSy
         raise OwnershipConflict(f"open_order_reconciliation_truncated:{symbol}")
 
     has_position = any(_extract_symbol_from_broker_record(position) == symbol for position in positions)
+    # Every returned order is canonicalised before any is filtered, so an
+    # unparseable one aborts the reconciliation instead of dropping out of it.
+    order_symbols = [_canonical_open_order_symbol_or_conflict(order, symbol) for order in orders]
     client_ids = _known_client_ids()
     order_owners = frozenset(
         owner_from_client_order_id(_extract_client_order_id_from_order(order), client_ids)
-        for order in orders
-        if _extract_symbol_from_broker_record(order) == symbol
+        for order, order_symbol in zip(orders, order_symbols, strict=True)
+        if order_symbol == symbol
     )
     logger.info(
         "order_ownership_reconciled",
@@ -1299,22 +1325,27 @@ async def get_orders(
         log_context={"client_id": client.id, "method": "GET", "path": "/api/v1/alpaca/orders"},
     )
     # Filter to only orders owned by this caller, THEN truncate to the
-    # caller-requested limit. Defensive against a provider that returns
-    # a non-list (current implementation always returns list, but
-    # typing-wise nothing pins it).
-    if isinstance(data, list):
-        owned = [
-            order
-            for order in data
-            if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
-        ]
-        owned = owned[:limit]
-    else:
-        owned = data
+    # caller-requested limit. A non-list response means Alpaca returned
+    # something malformed/unexpected — fail loudly (502) rather than
+    # silently reporting zero orders, which would be indistinguishable
+    # from "you genuinely have no open orders" to the caller.
+    if not isinstance(data, list):
+        logger.error("alpaca_get_orders_malformed_response", response_type=type(data).__name__)
+        raise HTTPException(
+            status_code=HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "GW-E5009",
+                "message": f"Alpaca returned a malformed response for get_orders: expected a list, got {type(data).__name__}.",
+            },
+        )
+    owned = [
+        order for order in data if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
+    ]
+    owned = owned[:limit]
     return {
         "success": True,
         "data": owned,
-        "meta": {"count": len(owned) if isinstance(owned, list) else 0, "provider": "alpaca"},
+        "meta": {"count": len(owned), "provider": "alpaca"},
     }
 
 
@@ -1980,13 +2011,28 @@ async def cancel_all_orders(
         ),
         operation="cancel_all_orders.list",
     )
-    owned: list[dict[str, Any]] = []
-    if isinstance(raw_orders, list):
-        owned = [
-            order
-            for order in raw_orders
-            if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
-        ]
+    # A non-list response means Alpaca returned something malformed/
+    # unexpected — fail loudly (502) rather than silently reporting zero
+    # owned orders. This is a bulk-cancel reconciliation path: a caller
+    # reading {"success": true, "owned_count": 0} back would conclude
+    # nothing was open, when the truth is unknown.
+    if not isinstance(raw_orders, list):
+        logger.error("alpaca_cancel_all_orders_malformed_response", response_type=type(raw_orders).__name__)
+        raise HTTPException(
+            status_code=HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "GW-E5009",
+                "message": (
+                    f"Alpaca returned a malformed response while listing orders for cancel_all_orders: "
+                    f"expected a list, got {type(raw_orders).__name__}."
+                ),
+            },
+        )
+    owned: list[dict[str, Any]] = [
+        order
+        for order in raw_orders
+        if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
+    ]
 
     # Resolve each owned order to its canonical broker symbol. An order that
     # cannot be resolved cannot be fenced, and an order id the broker reports
@@ -2090,6 +2136,20 @@ async def get_positions(
         operation="get_positions",
         log_context={"client_id": client.id, "method": "GET", "path": "/api/v1/alpaca/positions"},
     )
+    # A non-list response means Alpaca returned something malformed/
+    # unexpected — fail loudly (502) rather than silently reporting zero
+    # positions, which would be indistinguishable from "you genuinely
+    # hold nothing" to the caller. Same fail-closed pattern as get_orders
+    # / cancel_all_orders.
+    if not isinstance(data, list):
+        logger.error("alpaca_get_positions_malformed_response", response_type=type(data).__name__)
+        raise HTTPException(
+            status_code=HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "GW-E5009",
+                "message": f"Alpaca returned a malformed response for get_positions: expected a list, got {type(data).__name__}.",
+            },
+        )
     return {
         "success": True,
         "data": data,

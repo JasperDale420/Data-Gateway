@@ -6,6 +6,39 @@ baked-image cutover. Paid items are pruned; git history has the details.
 
 ## Open
 
+- **A failed `OrderOwnershipGuard.freeze()` leaves an ambiguous claim
+  reusable once Redis recovers** — `freeze()` is the only mechanism that
+  durably blocks further use of a symbol after an ambiguous broker
+  mutation (e.g. a 504 on `create_order` where the order may or may not
+  have reached Alpaca). If the `freeze()` write itself fails because
+  Redis is unavailable at that moment, `_freeze_after_ambiguous_mutation`
+  /`_freeze_before_fence_release` correctly reject *that* request (503,
+  `GW-E5301`), but the claim in Redis is left unmarked. Once Redis comes
+  back, a later `authorize_submission`/`authorize_close` call for the
+  *same* owner sees an ordinary (non-frozen) claim and falls back to
+  plain broker-state reconciliation — which passes if the broker's
+  reported state looks self-consistent, with no explicit gate forcing
+  manual reconciliation of the original ambiguous mutation first. Raised
+  by the 2026-08-07 adversarial review (`gpt-5.6-terra`) of the
+  `tests/test_order_ownership.py` Redis-failure-path test additions
+  (high severity). Needs its own design (a durable or service-wide
+  fail-closed hold that survives a failed freeze) and adversarial review
+  of that plan before implementation — out of scope for a test-only
+  change.
+- **Ownership reconciliation reads positions account-wide, so a malformed
+  position record is indistinguishable from an absent one**
+  (`gateway/api/alpaca/trading.py`, `_reconcile_broker_symbol_state`): the
+  open-order leg is scoped to the symbol being authorized, so an order that
+  will not canonicalise is provably relevant and now fails closed with
+  `OwnershipConflict`. `get_positions()` has no such scoping — an unparseable
+  record there could belong to any symbol. Rejecting it would block mutations
+  account-wide and, in the post-write path, freeze the target claim over an
+  unrelated bad record, so positions still treat unparseable as "not this
+  symbol". The residual hole: a malformed position **on the target symbol**
+  reads as flat. Closing it safely needs a per-symbol position read
+  (`get_position(symbol)`, 404 = flat, fail closed only when the targeted
+  record will not canonicalise) plus a post-write regression test asserting an
+  unrelated malformed position leaves the claim completed rather than frozen.
 - **Sink Redis has no measured RSS envelope for `appendfsync always` +
   `maxmemory 6gb`** — the compose Redis now carries both the synchronous
   AOF added for order-ownership claim durability and the 6GB cap raised

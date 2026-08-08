@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import multiprocessing
 import threading
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -297,6 +298,7 @@ async def test_drain_allows_at_most_32_concurrent_pubacks(tmp_path: Path) -> Non
     release = asyncio.Event()
     published = 0
     finished = asyncio.Event()
+    ramped = asyncio.Event()
     lock = asyncio.Lock()
 
     async def publish_ack(_entry: OutboxEntry) -> bool:
@@ -304,6 +306,8 @@ async def test_drain_allows_at_most_32_concurrent_pubacks(tmp_path: Path) -> Non
         async with lock:
             active += 1
             peak_active = max(peak_active, active)
+            if peak_active >= 32:
+                ramped.set()
         await release.wait()
         async with lock:
             active -= 1
@@ -314,10 +318,13 @@ async def test_drain_allows_at_most_32_concurrent_pubacks(tmp_path: Path) -> Non
 
     sink = DurableOutboxSink(SQLiteOutbox(tmp_path / "outbox.sqlite3"), publish_ack)
     await sink.publish_batch_results([("heber:events", _event(f"evt-{index}")) for index in range(33)])
-    for _ in range(100):
-        if peak_active == 32:
-            break
-        await asyncio.sleep(0)
+    # Wait on the ramp-up signal rather than a fixed number of event-loop yields:
+    # how many yields the drain needs to reach its ceiling depends on machine
+    # speed, so a fixed budget passes locally and fails on a loaded CI runner.
+    # A too-low ceiling still fails the assertion below via the timeout, and a
+    # missing ceiling still fails it by overshooting 32.
+    with suppress(TimeoutError):
+        await asyncio.wait_for(ramped.wait(), timeout=10)
 
     assert peak_active == 32
     release.set()
@@ -745,3 +752,152 @@ async def test_admission_failure_poisons_sink_until_restart(tmp_path: Path) -> N
 
     assert await sink.health_check() is False
     await sink.close()
+
+
+@pytest.mark.asyncio
+async def test_close_settles_entries_the_publisher_already_acknowledged(tmp_path: Path) -> None:
+    """close() must not discard acknowledgements the publisher already gave.
+
+    The drain suspends at the `asyncio.gather` over a batch's publishes, so a
+    close() arriving while some entries are acknowledged and others are still in
+    flight used to cancel the drain before `settle_publications` ran. Those rows
+    stayed pending despite the broker having accepted them, so the next process
+    republished them. Shutdown must stop the drain at a safe point instead.
+    """
+    path = tmp_path / "outbox.sqlite3"
+    with SQLiteOutbox(path) as original:
+        for index in range(3):
+            original.admit("heber.live.trades", _event(f"evt-{index}"))
+
+    first_published = asyncio.Event()
+    release = asyncio.Event()
+    acknowledged: list[str] = []
+
+    async def publish_ack(entry: OutboxEntry) -> bool:
+        if entry.event_id == "evt-0":
+            acknowledged.append(entry.event_id)
+            first_published.set()
+            return True
+        await release.wait()
+        acknowledged.append(entry.event_id)
+        return True
+
+    sink = DurableOutboxSink(SQLiteOutbox(path), publish_ack)
+    await sink.start()
+    await asyncio.wait_for(first_published.wait(), timeout=5)
+
+    # Close while evt-0 is acknowledged but the rest of the batch is in flight.
+    # The delay only has to be long enough for a shutdown that abandons the
+    # drain to have already done so; a shutdown that stops it at a safe point is
+    # still waiting here, so a longer delay would not change the outcome.
+    close_task = asyncio.create_task(sink.close())
+    await asyncio.sleep(0.2)
+    release.set()
+    await asyncio.wait_for(close_task, timeout=10)
+
+    assert sorted(acknowledged) == ["evt-0", "evt-1", "evt-2"]
+    with SQLiteOutbox(path) as reopened:
+        assert reopened.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_close_settles_simultaneous_unsettled_acks_across_lanes(tmp_path: Path) -> None:
+    """close() must wait for every lane, not just the first one it samples safe.
+
+    Regression coverage for a narrower version of the same abandoned-
+    acknowledgement race: an earlier draft of the shutdown fix waited on each
+    lane's "safe to cancel" signal via `event.wait()` tasks and then reaped
+    them before cancelling the drains, which put `await` points between
+    "observed every lane safe" and "cancel the drains" -- during which a
+    lane that looked safe a moment earlier could take on a new unsettled
+    acknowledgement. Each lane here gets two entries in one batch: the first
+    acknowledges immediately (clearing that lane's safe-to-cancel signal) while
+    the second stays in flight, holding the batch's `gather()` -- and so its
+    settlement -- open. That keeps both lanes unsettled at once for close() to
+    race against.
+    """
+    path = tmp_path / "outbox.sqlite3"
+    with SQLiteOutbox(path) as original:
+        original.admit("heber.live.trades", _event("evt-live-0"))
+        original.admit("heber.live.trades", _event("evt-live-1"))
+        original.admit("heber:events:backfill", _event("evt-backfill-0"))
+        original.admit("heber:events:backfill", _event("evt-backfill-1"))
+
+    both_holding = asyncio.Event()
+    release = asyncio.Event()
+    holding: set[str] = set()
+    acknowledged: list[str] = []
+
+    async def publish_ack(entry: OutboxEntry) -> bool:
+        if entry.event_id.endswith("-1"):
+            holding.add(entry.event_id)
+            if len(holding) == 2:
+                both_holding.set()
+            await release.wait()
+        acknowledged.append(entry.event_id)
+        return True
+
+    sink = DurableOutboxSink(SQLiteOutbox(path), publish_ack)
+    await sink.start()
+    await asyncio.wait_for(both_holding.wait(), timeout=5)
+
+    # Both lanes' "-0" entries have acknowledged by now, each clearing its
+    # lane's safe-to-cancel signal; each lane's "-1" entry is what is holding
+    # the gather (and thus settlement) open, so both lanes are unsettled.
+    close_task = asyncio.create_task(sink.close())
+    await asyncio.sleep(0.2)
+    release.set()
+    await asyncio.wait_for(close_task, timeout=10)
+
+    assert sorted(acknowledged) == ["evt-backfill-0", "evt-backfill-1", "evt-live-0", "evt-live-1"]
+    with SQLiteOutbox(path) as reopened:
+        assert reopened.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_close_falls_back_to_cancelling_past_the_shutdown_timeout(tmp_path: Path) -> None:
+    """The safe-shutdown wait is bounded, not a guarantee -- and that is deliberate.
+
+    If a publish in the same batch as an already-acknowledged entry never
+    resolves within `drain_shutdown_timeout_seconds` (e.g. a broker outage
+    spanning the whole shutdown window -- the JetStream client puts no timeout
+    of its own on a PubAck), close() falls back to cancelling rather than
+    hanging shutdown indefinitely. The already-acknowledged entry in that batch
+    was never durably settled (the batch's `gather()` never completed), so it
+    stays pending and is redelivered on restart -- the same outcome this file
+    already accepts elsewhere (settlement failures, a publisher that never
+    starts). This is the file's one bounded escape hatch, not a regression: it
+    only opens once the configured timeout is exhausted, versus the original
+    bug which reproduced on any close() racing an ordinary in-flight publish.
+    """
+    path = tmp_path / "outbox.sqlite3"
+    with SQLiteOutbox(path) as original:
+        original.admit("heber.live.trades", _event("evt-acked"))
+        original.admit("heber.live.trades", _event("evt-never-acks"))
+
+    acked_first = asyncio.Event()
+    never_release = asyncio.Event()
+
+    async def publish_ack(entry: OutboxEntry) -> bool:
+        if entry.event_id == "evt-acked":
+            acked_first.set()
+            return True
+        await never_release.wait()
+        return True
+
+    sink = DurableOutboxSink(SQLiteOutbox(path), publish_ack, drain_shutdown_timeout_seconds=0.2)
+    await sink.start()
+    await asyncio.wait_for(acked_first.wait(), timeout=5)
+
+    start = asyncio.get_running_loop().time()
+    await asyncio.wait_for(sink.close(), timeout=5)
+    elapsed = asyncio.get_running_loop().time() - start
+
+    # A lower bound close to the configured 0.2s proves close() genuinely spent
+    # the wait budget on the unsettled lane rather than cancelling immediately
+    # (which would also leave both rows pending, so that alone doesn't
+    # distinguish the fallback path from the pre-fix immediate-cancel bug).
+    # The upper bound proves it did not hang past that budget.
+    assert 0.15 <= elapsed < 2.0
+    with SQLiteOutbox(path) as reopened:
+        assert sorted(entry.event_id for entry in reopened.pending()) == ["evt-acked", "evt-never-acks"]
