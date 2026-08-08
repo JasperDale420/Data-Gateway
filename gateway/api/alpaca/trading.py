@@ -29,6 +29,8 @@ from gateway.core.order_ownership import (
     OrderOwnershipGuard,
     OwnershipConflict,
     OwnershipStoreUnavailable,
+    UnrecognizedBrokerSymbol,
+    UnsupportedAssetClass,
     canonical_broker_symbol,
     owner_from_client_order_id,
 )
@@ -451,16 +453,30 @@ _OWNERSHIP_AMBIGUOUS_MESSAGE = (
 
 
 def _extract_symbol_from_broker_record(record: Any) -> str | None:
+    """Return the record's canonical broker symbol, or None for another asset class.
+
+    None means the record resolved cleanly to an instrument this fence does not
+    cover — a crypto or forex holding. That is a proven non-match: ``get_positions()``
+    returns the whole shared account, so treating it as an error would let a
+    single crypto position block every equity order the Gateway submits.
+
+    ``UnrecognizedBrokerSymbol`` propagates instead when the record carries no
+    symbol, or one that cannot be resolved at all. Such a record cannot be
+    proven to be a *different* instrument from the target, so it must never be
+    silently skipped: every caller either turns it into an explicit rejection,
+    or (the account-wide position scan in ``_reconcile_broker_symbol_state``)
+    marks its reconciliation incomplete.
+    """
     if isinstance(record, dict):
         symbol = record.get("symbol")
     else:
         symbol = getattr(record, "symbol", None)
     if not isinstance(symbol, str):
-        return None
-    # nosemgrep: empire-no-return-none-for-failure -- extractor sentinel, not a swallowed failure: None means "no canonical symbol". Single-order, bulk-cancel, and open-order reconciliation callers all turn it into an explicit rejection; the account-wide position scan in _reconcile_broker_symbol_state deliberately does not, and that gap is tracked in docs/FOLLOW_UPS.md
+        raise UnrecognizedBrokerSymbol("broker record carries no symbol field")
+    # nosemgrep: empire-no-return-none-for-failure -- classifier, not a failure signal: UnsupportedAssetClass is positive identification of another asset class, while every resolver/parser failure raises UnrecognizedBrokerSymbol and propagates so unprovable records fail closed
     try:
         return canonical_broker_symbol(symbol)
-    except ValueError:
+    except UnsupportedAssetClass:
         return None
 
 
@@ -473,14 +489,15 @@ def _canonical_open_order_symbol_or_conflict(order: Any, symbol: str) -> str:
     out would drop its owner from the reconciled set and present the symbol as
     unowned while a live order sits on it.
 
-    Positions are deliberately not treated this way. ``get_positions`` is
-    account-wide, so an unparseable record there carries no proof of relevance,
-    and rejecting it would fail every symbol's mutation over an unrelated bad
-    record — including in the post-write path, where the rejection freezes the
-    claim. That gap is tracked in docs/FOLLOW_UPS.md and needs a per-symbol
-    position read to close safely.
+    Positions are handled differently: ``get_positions`` is account-wide, so an
+    unrecognized record there marks the whole reconciliation incomplete instead
+    of aborting outright (see ``_reconcile_broker_symbol_state``), since a single
+    bad record must not fail every other symbol's mutation.
     """
-    extracted = _extract_symbol_from_broker_record(order)
+    try:
+        extracted = _extract_symbol_from_broker_record(order)
+    except UnrecognizedBrokerSymbol as exc:
+        raise OwnershipConflict(f"unresolvable_broker_order_symbol:{symbol}") from exc
     if extracted is None:
         raise OwnershipConflict(f"unresolvable_broker_order_symbol:{symbol}")
     return extracted
@@ -503,7 +520,10 @@ def _symbol_frozen_error() -> HTTPException:
 
 
 def _canonical_order_symbol_or_reject(order: Any) -> str:
-    symbol = _extract_symbol_from_broker_record(order)
+    try:
+        symbol = _extract_symbol_from_broker_record(order)
+    except UnrecognizedBrokerSymbol as exc:
+        raise _unfenceable_symbol_error() from exc
     if symbol is None:
         raise _unfenceable_symbol_error()
     return symbol
@@ -540,7 +560,25 @@ async def _reconcile_broker_symbol_state(provider: Any, symbol: str) -> BrokerSy
     if len(orders) >= 500:
         raise OwnershipConflict(f"open_order_reconciliation_truncated:{symbol}")
 
-    has_position = any(_extract_symbol_from_broker_record(position) == symbol for position in positions)
+    # An unrecognized position record could be the target symbol in a
+    # representation the Gateway cannot parse. Skipping it would present a
+    # live unowned position as flat, so it downgrades the whole reconciliation
+    # to incomplete rather than being silently treated as a non-match.
+    unrecognized = False
+
+    def _position_symbol(position: Any) -> str | None:
+        nonlocal unrecognized
+        try:
+            return _extract_symbol_from_broker_record(position)
+        except UnrecognizedBrokerSymbol as exc:
+            unrecognized = True
+            logger.error("order_ownership_unrecognized_broker_record", symbol=symbol, reason=str(exc))
+            return None
+
+    # Materialised rather than short-circuited with any(): every record must be
+    # examined so an unrecognized one after the first match still counts.
+    position_symbols = [_position_symbol(position) for position in positions]
+    has_position = symbol in position_symbols
     # Every returned order is canonicalised before any is filtered, so an
     # unparseable one aborts the reconciliation instead of dropping out of it.
     order_symbols = [_canonical_open_order_symbol_or_conflict(order, symbol) for order in orders]
@@ -556,8 +594,9 @@ async def _reconcile_broker_symbol_state(provider: Any, symbol: str) -> BrokerSy
         has_position=has_position,
         open_order_owner_count=len(order_owners),
         has_unattributed_open_order=None in order_owners,
+        complete=not unrecognized,
     )
-    return BrokerSymbolState(has_position=has_position, order_owners=order_owners)
+    return BrokerSymbolState(has_position=has_position, order_owners=order_owners, complete=not unrecognized)
 
 
 def _ownership_rejection(
@@ -2048,7 +2087,10 @@ async def cancel_all_orders(
         if not order_id:
             unfenceable.append({"order_id": None, "cancelled": False, "error": "order missing id field"})
             continue
-        symbol = _extract_symbol_from_broker_record(order)
+        try:
+            symbol = _extract_symbol_from_broker_record(order)
+        except UnrecognizedBrokerSymbol:
+            symbol = None
         if symbol is None:
             unfenceable.append(_bulk_cancel_failure(order_id, None, _unfenceable_symbol_error()))
             continue

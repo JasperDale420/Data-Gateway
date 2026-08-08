@@ -1589,14 +1589,21 @@ def _strict_timestamp(value: Any) -> datetime | None:
             return None
     elif isinstance(value, str) and value.strip():
         normalized = value.strip().replace("Z", "+00:00")
+        # Date-only is tried first because datetime.fromisoformat also accepts
+        # those strings, and returns them naive — which the zone check below
+        # then rejects. A date names no instant of its own, so it reads as UTC
+        # midnight, the same reading the `isinstance(value, date)` branch above
+        # already gives a real date object. Feeds whose only time evidence is a
+        # date (filing_date, report_date, period_end_date) depend on this.
         try:
-            timestamp = datetime.fromisoformat(normalized)
+            parsed_date = date.fromisoformat(normalized)
         except ValueError:
             # nosemgrep: empire-no-return-none-for-failure -- parse predicate, not a failure signal: None means "not a timestamp", which every caller checks
             try:
-                parsed_date = date.fromisoformat(normalized)
+                timestamp = datetime.fromisoformat(normalized)
             except ValueError:
                 return None
+        else:
             timestamp = datetime(
                 parsed_date.year,
                 parsed_date.month,
