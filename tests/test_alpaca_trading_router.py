@@ -2144,6 +2144,42 @@ def test_create_order_504_via_http_layer_contains_correct_retry_hint_url(
 
 
 @pytest.mark.asyncio
+async def test_replace_order_rejects_an_unrecognized_original_order_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller-owned order this Gateway cannot canonicalize can't be fenced.
+
+    _canonical_order_symbol_or_reject converts UnrecognizedBrokerSymbol (a
+    symbol matching no known instrument format) into the same 409 it already
+    raises for a symbol resolving to None — never an unhandled exception.
+    """
+
+    class _UnrecognizedSymbolProvider(_FakeProvider):
+        def get_order(self, order_id: str) -> dict[str, Any]:
+            self.get_order_calls.append(order_id)
+            return {
+                "id": order_id,
+                "client_order_id": _owned_coid(self._owner_client_id, order_id),
+                "symbol": "!!not-a-symbol!!",
+            }
+
+    provider = _UnrecognizedSymbolProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="orig-order-1",
+            qty=15,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "GW-E4301"
+
+
+@pytest.mark.asyncio
 async def test_replace_order_auto_generates_client_order_id_when_caller_omits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
