@@ -150,6 +150,15 @@ return 0
             self._reject(symbol, "gateway_fence_lost")
 
     async def release_fence(self, symbol: str, token: str) -> None:
+        """Best-effort delete; deliberately does not raise like acquire/renew.
+
+        The mutation this fence guarded has already completed by the time we
+        get here, so there is no caller left to usefully hand a failure to.
+        The TTL set at acquire/renew time is the real safety net: a failed
+        delete just means the key self-expires up to ``_FENCE_TTL_MS`` later
+        instead of immediately.
+        """
+        # nosemgrep: empire-no-bare-exception -- best-effort release: the fence has a bounded TTL and will self-expire, so a failed delete here is not fatal
         try:
             await self._redis.eval(self._COMPARE_AND_DELETE_FENCE, 1, self.fence_key(symbol), token)
         except Exception:
