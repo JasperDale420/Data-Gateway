@@ -2090,6 +2090,20 @@ async def get_positions(
         operation="get_positions",
         log_context={"client_id": client.id, "method": "GET", "path": "/api/v1/alpaca/positions"},
     )
+    # A non-list response means Alpaca returned something malformed/
+    # unexpected — fail loudly (502) rather than silently reporting zero
+    # positions, which would be indistinguishable from "you genuinely
+    # hold nothing" to the caller. Same fail-closed pattern as get_orders
+    # / cancel_all_orders.
+    if not isinstance(data, list):
+        logger.error("alpaca_get_positions_malformed_response", response_type=type(data).__name__)
+        raise HTTPException(
+            status_code=HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "GW-E5009",
+                "message": f"Alpaca returned a malformed response for get_positions: expected a list, got {type(data).__name__}.",
+            },
+        )
     return {
         "success": True,
         "data": data,

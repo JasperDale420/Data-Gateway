@@ -4687,3 +4687,30 @@ def test_account_wide_actions_require_super_admin() -> None:
     # super_admin passes the account-wide gate.
     _enforce_account_wide_admin("DELETE", "/api/v1/alpaca/positions", super_admin)
     _enforce_account_wide_admin("PATCH", "/api/v1/alpaca/account/configurations", super_admin)
+
+
+@pytest.mark.asyncio
+async def test_get_positions_fails_closed_on_malformed_broker_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-list get_positions() response must not be reported as zero
+    positions — that's indistinguishable from "you genuinely hold nothing"
+    to the caller. Fail loudly (502 GW-E5009) instead, matching the
+    get_orders / cancel_all_orders fail-closed pattern."""
+
+    class _MalformedPositionsProvider(_FakeProvider):
+        def get_positions(self) -> Any:
+            return {"error": "not a list"}
+
+    provider = _MalformedPositionsProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_positions(
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail["code"] == "GW-E5009"
