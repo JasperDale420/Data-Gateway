@@ -1110,18 +1110,17 @@ async def test_reconciliation_rejects_an_uncanonicalisable_open_order(
 
 
 @pytest.mark.asyncio
-async def test_reconciliation_does_not_fail_closed_on_a_malformed_position(
+async def test_reconciliation_marks_state_incomplete_for_a_malformed_position(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Account-wide position noise must not fail the whole reconciliation.
+    """A malformed position record can no longer read as a silent non-match.
 
-    ``get_positions`` returns every symbol, so an unparseable record proves
-    nothing either way about the symbol being authorized. Rejecting it would
-    block mutations account-wide, and in the post-write path would freeze the
-    target claim over a record that may have nothing to do with it. This guards
-    against re-introducing that regression; the residual gap it leaves — a
-    malformed position on the target symbol reading as flat — needs a
-    per-symbol position read to close. See docs/FOLLOW_UPS.md.
+    ``get_positions`` returns every symbol, so a record missing its symbol
+    entirely could be the target symbol in a representation the Gateway
+    cannot parse. Treating it as "not this symbol" would let a live unowned
+    position present as flat. It now marks the whole reconciliation
+    incomplete instead, which ``OrderOwnershipGuard`` rejects — closing the
+    gap previously tracked in docs/FOLLOW_UPS.md.
     """
 
     class _MalformedPositionProvider(_FakeProvider):
@@ -1135,6 +1134,77 @@ async def test_reconciliation_does_not_fail_closed_on_a_malformed_position(
 
     state = await trading._reconcile_broker_symbol_state(_MalformedPositionProvider(), "AAPL")
 
+    assert state.has_position is True
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_marks_state_incomplete_for_an_unparseable_occ_expiry_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An OCC-shaped symbol that fails to parse is unrecognized, not another
+    asset class. SymbolResolver matches the OCC pattern before parsing the
+    date, so an invalid expiry raises out of the parser rather than resolving
+    to a type -- classifying that as a proven non-match would reopen the same
+    fail-open this fix closes."""
+
+    class _BadExpiryProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "AAPL991332C00200000"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_BadExpiryProvider(), "AAPL")
+
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_marks_state_incomplete_for_a_malformed_option_strike_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The human-option strike regex is loose, so Decimal() can raise a
+    non-ValueError (decimal.InvalidOperation, an ArithmeticError). Left
+    unwrapped it would skip the fail-closed classifier entirely and abort
+    reconciliation as a 500 instead of marking it incomplete."""
+
+    class _BadStrikeProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "AAPL 2026-01-16 $1..2 C"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_BadStrikeProvider(), "AAPL")
+
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_stays_complete_for_a_crypto_position_on_the_shared_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_positions() returns the whole account, so another asset class is a
+    true non-match -- a crypto or forex holding is positively recognized and
+    must not block equity order submission or mark reconciliation incomplete."""
+
+    class _CryptoHoldingProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "BTC/USD"}, {"symbol": "AAPL"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_CryptoHoldingProvider(), "AAPL")
+
+    assert state.complete is True
     assert state.has_position is True
 
 
@@ -4969,11 +5039,20 @@ def test_extract_symbol_from_broker_record_getattr_fallback_for_non_dict() -> No
     assert trading._extract_symbol_from_broker_record(record) == "AAPL"
 
 
-def test_extract_symbol_from_broker_record_returns_none_on_value_error() -> None:
-    """`canonical_broker_symbol` raises ValueError for symbols the resolver
-    can't classify as a stock or a full OCC option contract -- the record
-    must be treated as unfenceable (None), not propagate the exception."""
+def test_extract_symbol_from_broker_record_raises_for_an_unrecognized_symbol() -> None:
+    """A symbol the resolver cannot classify at all is unprovable, not a
+    positively-identified non-match -- it must propagate as
+    UnrecognizedBrokerSymbol so callers fail closed rather than silently
+    treat it as "some other symbol"."""
     record = {"symbol": "!!!not-a-real-symbol!!!"}
+    with pytest.raises(trading.UnrecognizedBrokerSymbol):
+        trading._extract_symbol_from_broker_record(record)
+
+
+def test_extract_symbol_from_broker_record_returns_none_for_another_asset_class() -> None:
+    """A crypto/forex holding is positively identified, so it's a safe
+    non-match -- unlike an unrecognized symbol, this stays None."""
+    record = {"symbol": "BTC/USD"}
     assert trading._extract_symbol_from_broker_record(record) is None
 
 

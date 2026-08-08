@@ -325,6 +325,21 @@ async def test_manual_or_mixed_broker_orders_freeze_symbol_before_submission() -
 
 
 @pytest.mark.asyncio
+async def test_incomplete_broker_reconciliation_blocks_submission_and_close() -> None:
+    """The whole point of BrokerSymbolState.complete is enforcement here: a
+    reconciliation that could not positively classify every broker record
+    (see trading._reconcile_broker_symbol_state) must never be trusted enough
+    to authorize a mutation, regardless of what has_position/order_owners say."""
+    guard = OrderOwnershipGuard(_FakeRedis())
+    state = BrokerSymbolState(has_position=False, order_owners=frozenset(), complete=False)
+
+    with pytest.raises(OwnershipConflict, match="incomplete_broker_reconciliation"):
+        await guard.authorize_submission(client_id="orion", symbol="AAPL", broker_state=state)
+    with pytest.raises(OwnershipConflict, match="incomplete_broker_reconciliation"):
+        await guard.authorize_close(client_id="orion", symbol="AAPL", broker_state=state)
+
+
+@pytest.mark.asyncio
 async def test_position_without_a_recorded_owner_freezes_close_and_new_orders() -> None:
     guard = OrderOwnershipGuard(_FakeRedis())
     state = BrokerSymbolState(has_position=True, order_owners=frozenset())
