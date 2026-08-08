@@ -6,17 +6,58 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import DecimalException
 from typing import Any
 
 from gateway.core.logger import logger
 from gateway.core.symbology import SymbolResolver
 
+_FENCEABLE_TYPES = frozenset({"stock", "option"})
+_RECOGNIZED_OTHER_ASSET_CLASSES = frozenset({"crypto", "forex"})
+
+
+class UnrecognizedBrokerSymbol(ValueError):
+    """The symbol could not be resolved to a known instrument at all.
+
+    Covers both a resolver result of "unknown" and a parser that raised while
+    reading a well-shaped symbol — an OCC-pattern string with an impossible
+    expiry, for instance. Neither case proves the symbol is a *different*
+    instrument from the one being fenced, so shared-account reconciliation must
+    fail closed on it rather than skip the record.
+    """
+
+
+class UnsupportedAssetClass(ValueError):
+    """The symbol resolved cleanly to an instrument this fence does not cover.
+
+    Positive identification, unlike [UnrecognizedBrokerSymbol]: a crypto or
+    forex holding is proven to be a different instrument, so reconciliation can
+    safely skip it.
+    """
+
 
 def canonical_broker_symbol(symbol: str) -> str:
-    """Return Alpaca's canonical equity ticker or full OCC option contract."""
-    resolved = SymbolResolver().resolve(symbol)
-    if resolved.type not in {"stock", "option"}:
-        raise ValueError("Shared-account ownership supports equities and full OCC option contracts only")
+    """Return Alpaca's canonical equity ticker or full OCC option contract.
+
+    Both failure modes subclass ``ValueError`` so callers that reject
+    unfenceable symbols with a 400/409 keep working unchanged, but they are
+    distinguishable for reconciliation, which may only skip a record it has
+    positively identified as another asset class.
+    """
+    # DecimalException as well as ValueError: the human-readable option format
+    # accepts a loose `[\d.]+` strike, so a malformed one reaches Decimal() and
+    # raises InvalidOperation, an ArithmeticError. Without this it would escape
+    # every caller's ValueError handling as an uncaught 500.
+    try:
+        resolved = SymbolResolver().resolve(symbol)
+    except (ValueError, DecimalException) as exc:
+        raise UnrecognizedBrokerSymbol(f"broker symbol could not be parsed: {symbol!r}") from exc
+    if resolved.type in _RECOGNIZED_OTHER_ASSET_CLASSES:
+        raise UnsupportedAssetClass(
+            f"Shared-account ownership supports equities and full OCC option contracts only, not {resolved.type}"
+        )
+    if resolved.type not in _FENCEABLE_TYPES:
+        raise UnrecognizedBrokerSymbol(f"broker symbol matched no known instrument format: {symbol!r}")
     return resolved.provider_formats.get("alpaca", resolved.symbol).upper()
 
 
