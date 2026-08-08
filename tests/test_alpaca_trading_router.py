@@ -1190,6 +1190,122 @@ async def test_reconcile_marks_state_incomplete_for_a_position_missing_its_symbo
     assert state.complete is False
 
 
+def test_parse_owner_from_client_order_id_falls_back_to_naive_split_when_unmatched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When no known client id matches by longest-prefix (the authenticator
+    isn't reachable, or genuinely returns no match), the naive first-hyphen
+    split is still tried so a non-hyphenated id keeps resolving."""
+    monkeypatch.setattr(trading, "_known_client_ids", lambda: [])
+
+    assert trading._parse_owner_from_client_order_id("c-cerberus-abc123") == "cerberus"
+
+
+def test_parse_owner_from_client_order_id_returns_none_without_a_separator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``c-`` prefix with nothing after it has no owner to extract."""
+    monkeypatch.setattr(trading, "_known_client_ids", lambda: [])
+
+    assert trading._parse_owner_from_client_order_id("c-") is None
+
+
+def test_extract_client_order_id_from_order_reads_an_attribute_on_non_dict_records() -> None:
+    """Defensive fallback for object-style (non-dict) order responses."""
+    record = SimpleNamespace(client_order_id="c-cerberus-abc")
+
+    assert trading._extract_client_order_id_from_order(record) == "c-cerberus-abc"
+
+
+def test_foreign_order_not_found_includes_the_order_id_when_known() -> None:
+    exc = trading._foreign_order_not_found(order_id="order-123")
+
+    assert exc.detail["order_id"] == "order-123"
+
+
+def test_extract_symbol_from_broker_record_reads_a_symbol_attribute_on_non_dict_records() -> None:
+    """The Alpaca SDK returns order/position objects, not dicts: `.symbol` is
+    an attribute, not a key, and must resolve the same way either shape does."""
+    record = SimpleNamespace(symbol="AAPL")
+
+    assert trading._extract_symbol_from_broker_record(record) == "AAPL"
+
+
+def test_canonical_order_symbol_or_reject_rejects_a_recognized_other_asset_class() -> None:
+    """A crypto/forex holding is positively identified, not unrecognized, but
+    this fence only covers equities and OCC option contracts, so a caller
+    trying to resolve one directly must still be rejected, not passed through."""
+    with pytest.raises(HTTPException) as exc:
+        trading._canonical_order_symbol_or_reject({"symbol": "BTC/USD"})
+
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rejects_a_non_list_broker_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An SDK response that isn't a list can't be scanned for ownership at
+    all, so reconciliation must fail closed rather than treat it as empty."""
+
+    class _MalformedShapeProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> Any:
+            return {"not": "a list"}
+
+    monkeypatch.undo()
+
+    with pytest.raises(OwnershipConflict):
+        await trading._reconcile_broker_symbol_state(_MalformedShapeProvider(), "AAPL")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rejects_when_open_orders_hit_the_500_truncation_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Alpaca caps get_orders at 500. At the cap there may be more open
+    orders the Gateway never saw, so ownership is unknowable and reconciling
+    against a possibly-truncated list must fail closed."""
+
+    class _TruncatedOrdersProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return [{"symbol": "AAPL"} for _ in range(500)]
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.undo()
+
+    with pytest.raises(OwnershipConflict):
+        await trading._reconcile_broker_symbol_state(_TruncatedOrdersProvider(), "AAPL")
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_reports_an_order_missing_its_id_field_as_unfenceable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broker record with no id can never be targeted for cancellation, so
+    it fails closed before any symbol resolution is attempted."""
+
+    class _MissingIdProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return [{"client_order_id": _owned_coid(), "symbol": "AAPL"}]
+
+    provider = _MissingIdProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id=_DEFAULT_TEST_CLIENT_ID)),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["meta"]["count"] == 0
+    assert response["meta"]["errors"] == [{"order_id": None, "cancelled": False, "error": "order missing id field"}]
+
+
 @pytest.mark.asyncio
 async def test_create_order_submits_the_canonical_occ_contract_symbol(
     monkeypatch: pytest.MonkeyPatch,

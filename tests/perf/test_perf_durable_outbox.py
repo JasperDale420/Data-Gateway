@@ -33,7 +33,11 @@ async def test_outbox_admission_rate_for_one_kib_envelopes(tmp_path: Path) -> No
         await asyncio.Event().wait()
         return True
 
-    sink = DurableOutboxSink(outbox, blocked_publisher)
+    # blocked_publisher never returns, so nothing is ever mid-settlement: the
+    # 10s production close() grace period buys no correctness here, only test
+    # wall-clock. drain_stop_grace_seconds is trimmed so close() force-cancels
+    # promptly; the rate assertion above is already computed before close() runs.
+    sink = DurableOutboxSink(outbox, blocked_publisher, drain_stop_grace_seconds=0.1)
     started = time.perf_counter()
     await asyncio.gather(*(sink.publish("heber:events", _envelope(index)) for index in range(event_count)))
     elapsed = time.perf_counter() - started
