@@ -9,6 +9,7 @@ import pytest
 
 from gateway.core.durable_outbox import OutboxCapacityError, OutboxEntry, SQLiteOutbox
 from gateway.core.durable_outbox_sink import DurableOutboxSink, LaneRoutedSink
+from gateway.core.logger import logger
 
 
 def _event(event_id: str) -> dict[str, str]:
@@ -297,6 +298,9 @@ async def test_drain_allows_at_most_32_concurrent_pubacks(tmp_path: Path) -> Non
     release = asyncio.Event()
     published = 0
     finished = asyncio.Event()
+    # A 33rd waiter proves the semaphore, not just the batch count, bounds
+    # concurrency: it must still be blocked once the other 32 are admitted.
+    thirty_second_admitted = asyncio.Event()
     lock = asyncio.Lock()
 
     async def publish_ack(_entry: OutboxEntry) -> bool:
@@ -304,6 +308,8 @@ async def test_drain_allows_at_most_32_concurrent_pubacks(tmp_path: Path) -> Non
         async with lock:
             active += 1
             peak_active = max(peak_active, active)
+            if active == 32:
+                thirty_second_admitted.set()
         await release.wait()
         async with lock:
             active -= 1
@@ -314,10 +320,10 @@ async def test_drain_allows_at_most_32_concurrent_pubacks(tmp_path: Path) -> Non
 
     sink = DurableOutboxSink(SQLiteOutbox(tmp_path / "outbox.sqlite3"), publish_ack)
     await sink.publish_batch_results([("heber:events", _event(f"evt-{index}")) for index in range(33)])
-    for _ in range(100):
-        if peak_active == 32:
-            break
-        await asyncio.sleep(0)
+    # Waiting on this event rather than polling with bare sleep(0) ticks
+    # avoids depending on how many event-loop turns the background SQLite
+    # thread-pool reads need under CI's slower/loaded scheduling.
+    await asyncio.wait_for(thirty_second_admitted.wait(), timeout=2)
 
     assert peak_active == 32
     release.set()
@@ -484,6 +490,127 @@ async def test_batch_contracts_count_exact_duplicates_as_durably_accepted(tmp_pa
 
     release_publisher.set()
     await sink.close()
+
+
+@pytest.mark.asyncio
+async def test_close_waits_for_an_in_flight_batch_to_settle_before_cancelling(tmp_path: Path) -> None:
+    """close() must not abandon a batch mid-publish.
+
+    Cancelling the drain task between the publisher acknowledging an entry and
+    settle_publications committing that acknowledgement to SQLite would leave
+    an already-published row marked pending, so it gets redelivered after
+    restart. close() must let an in-flight batch finish instead of cancelling
+    it out from under the publisher.
+    """
+    outbox = SQLiteOutbox(tmp_path / "outbox.sqlite3")
+    entered_publish = asyncio.Event()
+    release_publish = asyncio.Event()
+    was_cancelled = False
+
+    async def publish_ack(_entry: OutboxEntry) -> bool:
+        nonlocal was_cancelled
+        entered_publish.set()
+        try:
+            await release_publish.wait()
+        except asyncio.CancelledError:
+            was_cancelled = True
+            raise
+        return True
+
+    sink = DurableOutboxSink(outbox, publish_ack)
+    await sink.publish("heber.live.trades", _event("evt-in-flight"))
+    await asyncio.wait_for(entered_publish.wait(), timeout=2)
+
+    close_task = asyncio.create_task(sink.close())
+    # Real ticks, not a wall-clock sleep: every step close() takes before
+    # reaching the drain-task stop logic is non-blocking (an uncontended lock,
+    # an already-done admission task, cancelling a task parked on a plain
+    # sleep) — none of it involves thread-pool I/O — so a bounded number of
+    # scheduler turns is enough to deterministically prove whether close()
+    # cancelled the publisher's await, without depending on real time.
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert not was_cancelled, "close() must not cancel a publisher that is still in flight"
+    assert not close_task.done(), "close() must wait for the in-flight batch, not cancel it"
+
+    release_publish.set()
+    await asyncio.wait_for(close_task, timeout=2)
+
+    with SQLiteOutbox(tmp_path / "outbox.sqlite3") as reopened:
+        assert reopened.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_close_cancels_a_batch_that_exceeds_the_graceful_stop_window(tmp_path: Path) -> None:
+    """A publisher that never returns must not hang shutdown forever.
+
+    The graceful window above covers the common case. This is the boundary:
+    close() still has to finish if the publisher is genuinely stuck, by
+    forcibly cancelling it. The row is left pending rather than lost — it
+    gets redelivered on the next start(), which downstream consumers already
+    tolerate via event_id-based dedup.
+    """
+    outbox = SQLiteOutbox(tmp_path / "outbox.sqlite3")
+    entered_publish = asyncio.Event()
+    never_releases = asyncio.Event()
+
+    async def publish_ack(_entry: OutboxEntry) -> bool:
+        entered_publish.set()
+        await never_releases.wait()
+        return True
+
+    sink = DurableOutboxSink(outbox, publish_ack, drain_stop_grace_seconds=0.05)
+    await sink.publish("heber.live.trades", _event("evt-stuck"))
+    await asyncio.wait_for(entered_publish.wait(), timeout=2)
+
+    await asyncio.wait_for(sink.close(), timeout=2)
+
+    with SQLiteOutbox(tmp_path / "outbox.sqlite3") as reopened:
+        assert [entry.event_id for entry in reopened.pending()] == ["evt-stuck"]
+
+
+@pytest.mark.asyncio
+async def test_close_timeout_reports_the_true_pending_count_past_the_default_row_cap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The forced-cancel warning must not silently understate a large backlog.
+
+    SQLiteOutbox.pending() defaults to limit=1000; using it for the at-risk
+    count would misreport a bigger lane as exactly 1000. lane_summaries()
+    runs a real COUNT(*) and must be what's logged instead.
+    """
+    path = tmp_path / "outbox.sqlite3"
+    row_count = 1_200
+    with SQLiteOutbox(path) as seed:
+        seed.admit_many([("heber.live.trades", _event(f"evt-{index}")) for index in range(row_count)])
+
+    entered_publish = asyncio.Event()
+    never_releases = asyncio.Event()
+
+    async def publish_ack(_entry: OutboxEntry) -> bool:
+        entered_publish.set()
+        await never_releases.wait()
+        return True
+
+    logged_calls: list[dict[str, object]] = []
+    original_warning = logger.warning
+
+    def capture_warning(event: str, **kwargs: object) -> None:
+        if event == "durable_outbox_drain_stop_timed_out":
+            logged_calls.append(kwargs)
+        original_warning(event, **kwargs)
+
+    monkeypatch.setattr("gateway.core.durable_outbox_sink.logger.warning", capture_warning)
+
+    sink = DurableOutboxSink(SQLiteOutbox(path), publish_ack, drain_stop_grace_seconds=0.05)
+    await sink.start()
+    await asyncio.wait_for(entered_publish.wait(), timeout=2)
+
+    await asyncio.wait_for(sink.close(), timeout=2)
+
+    assert logged_calls, "expected a durable_outbox_drain_stop_timed_out warning"
+    assert logged_calls[0]["rows_at_risk_of_redelivery"] == row_count
 
 
 @pytest.mark.asyncio
