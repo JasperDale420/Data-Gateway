@@ -26,6 +26,7 @@ from gateway.core.backfill import (
     _chunk_id,
     _date_chunks,
     _manifest_hash,
+    _strict_timestamp,
     expected_heber_backfill_binding,
 )
 from gateway.core.backfill_manifest import (
@@ -999,3 +1000,29 @@ def test_prometheus_rule_routes_block_and_recovery_through_existing_alerting() -
     assert "gateway_replay_blocked == 1" in alerts
     assert "Kairos intake is blocked" in alerts
     assert "matching durable Heber acknowledgement" in alerts
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # Date-only fields are what the SEC/fundamentals feeds actually carry
+        # (filing_date, report_date, period_end_date), and a real `date` object
+        # has always been read as UTC midnight. The string form must match it.
+        ("2026-07-23", datetime(2026, 7, 23, tzinfo=UTC)),
+        ("20260723", datetime(2026, 7, 23, tzinfo=UTC)),
+        (date(2026, 7, 23), datetime(2026, 7, 23, tzinfo=UTC)),
+        ("2026-07-23T14:00:00Z", datetime(2026, 7, 23, 14, 0, tzinfo=UTC)),
+        ("2026-07-23T14:00:00+00:00", datetime(2026, 7, 23, 14, 0, tzinfo=UTC)),
+        # A datetime without a zone stays a rejection: the instant is genuinely
+        # unknown, unlike a date, whose UTC-midnight reading is a convention.
+        ("2026-07-23T14:00:00", None),
+        ("not-a-date", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_strict_timestamp_reads_date_only_values_as_utc_midnight(
+    value: object,
+    expected: datetime | None,
+) -> None:
+    assert _strict_timestamp(value) == expected
