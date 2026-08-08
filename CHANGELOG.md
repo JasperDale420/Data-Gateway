@@ -26,6 +26,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `GET /orders` and `DELETE /orders` (bulk cancel) now fail loudly (502
+  `GW-E5009`) instead of silently reporting zero orders when Alpaca returns a
+  malformed (non-list) response. Previously a corrupted broker response was
+  indistinguishable from "you genuinely have no open orders" — a caller doing
+  bulk-cancel reconciliation on live capital could wrongly conclude there was
+  nothing to cancel.
 - `GET /api/v1/alpaca/positions` now fails closed (502 `GW-E5009`) if Alpaca
   ever returns a malformed (non-list) positions response, instead of either
   crashing on `len()` or, if the malformed value happened to support `len()`,

@@ -612,6 +612,41 @@ async def test_get_orders_times_out_stuck_trading_call(
 
 
 @pytest.mark.asyncio
+async def test_get_orders_raises_502_when_provider_response_is_not_a_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed (non-list) broker response must fail loudly, not be
+    silently treated as zero orders — a zero-order response here is
+    indistinguishable from "you genuinely have no open orders", which is
+    corrupted-data-reported-as-truth on the read path callers reconcile
+    against."""
+
+    class _NonListProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> Any:
+            self.orders_calls.append(kwargs)
+            return {"unexpected": "shape"}
+
+    provider = _NonListProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_orders(
+            status="open",
+            limit=50,
+            direction="desc",
+            symbols=None,
+            nested=True,
+            side=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_502_BAD_GATEWAY
+    assert exc.value.detail["code"] == "GW-E5009"
+
+
+@pytest.mark.asyncio
 async def test_cancel_order_returns_success_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3902,6 +3937,45 @@ async def test_cancel_all_orders_with_no_owned_orders_yields_empty_cancels(
     assert response["meta"]["owned_count"] == 0
 
 
+@pytest.mark.asyncio
+async def test_cancel_all_orders_raises_502_when_broker_list_is_not_a_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed (non-list) broker response must fail loudly, not be
+    silently treated as zero owned orders. This is a bulk-cancel
+    reconciliation path — a caller reading ``{"success": true,
+    "owned_count": 0}`` after a corrupted broker response would wrongly
+    conclude nothing was open, when the truth is unknown."""
+    bulk_cancel_calls = {"n": 0}
+
+    class _NonListOrdersProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> Any:
+            return {"unexpected": "shape"}
+
+        def cancel_all_orders(self) -> list[dict[str, Any]]:
+            bulk_cancel_calls["n"] += 1
+            return []
+
+    provider = _NonListOrdersProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.cancel_all_orders(
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_502_BAD_GATEWAY
+    assert exc.value.detail["code"] == "GW-E5009"
+    # Never falls back to the account-wide bulk cancel, and never reaches
+    # the per-order cancel path either (the actual write path this route
+    # uses — see the route docstring: bulk `cancel_all_orders()` is NEVER
+    # called from this endpoint).
+    assert bulk_cancel_calls["n"] == 0
+    assert provider.cancel_calls == []
+
+
 # ---------------------------------------------------------------------------
 # DELETE /orders must run through the SAME per-symbol fence as
 # DELETE /orders/{id}. The bulk route previously called
@@ -5045,33 +5119,6 @@ async def test_create_order_post_write_store_unavailable_skips_freeze_before_rej
 
 
 @pytest.mark.asyncio
-async def test_get_orders_returns_data_as_is_when_provider_response_not_a_list(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _MalformedOrdersProvider(_FakeProvider):
-        def get_orders(self, **kwargs: Any) -> Any:
-            return {"unexpected": "shape"}
-
-    provider = _MalformedOrdersProvider()
-    route_registry = _FakeRegistry({"alpaca": provider})
-    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
-
-    response = await trading.get_orders(
-        status="open",
-        limit=50,
-        direction="desc",
-        symbols=None,
-        nested=True,
-        side=None,
-        client=cast(Any, SimpleNamespace(id="test-client")),
-        registry=cast(ProviderRegistry, route_registry),
-    )
-
-    assert response["data"] == {"unexpected": "shape"}
-    assert response["meta"]["count"] == 0
-
-
-@pytest.mark.asyncio
 async def test_get_order_by_client_id_returns_owned_order_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5391,31 +5438,6 @@ def test_bulk_cancel_rejection_wraps_unclassified_exception_as_502() -> None:
     assert result.status_code == HTTP_502_BAD_GATEWAY
     assert result.detail["code"] == "GW-E5007"
     assert "boom" in result.detail["message"]
-
-
-@pytest.mark.asyncio
-async def test_cancel_all_orders_handles_non_list_provider_response(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A malformed (non-list) upstream response must degrade to "no owned
-    orders" rather than crash the batch-cancel endpoint."""
-
-    class _MalformedListProvider(_FakeProvider):
-        def get_orders(self, **kwargs: Any) -> Any:
-            return {"unexpected": "shape"}
-
-    provider = _MalformedListProvider()
-    route_registry = _FakeRegistry({"alpaca": provider})
-    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
-
-    response = await trading.cancel_all_orders(
-        client=cast(Any, SimpleNamespace(id="cerberus")),
-        registry=cast(ProviderRegistry, route_registry),
-    )
-
-    assert response["data"] == []
-    assert response["meta"]["owned_count"] == 0
-    assert response["meta"]["count"] == 0
 
 
 @pytest.mark.asyncio
