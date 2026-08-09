@@ -36,7 +36,7 @@ class AlpacaMarketMixin(_AlpacaMixinBase):
             "timeframe": alpaca_timeframe,
             "start": start.replace(tzinfo=UTC).isoformat() if start.tzinfo is None else start.isoformat(),
             "end": end.replace(tzinfo=UTC).isoformat() if end.tzinfo is None else end.isoformat(),
-            "feed": kwargs.get("feed", self._feed),
+            "feed": kwargs.get("feed") or self._feed,
             "adjustment": kwargs.get("adjustment", "split"),
             "limit": max(1, min(total_limit, 10000)),
         }

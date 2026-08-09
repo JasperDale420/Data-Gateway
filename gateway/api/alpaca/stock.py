@@ -167,7 +167,9 @@ async def get_stock_bars(
     start: datetime | None = Query(default=None, description=DESC_START_TIME),
     end: datetime | None = Query(default=None, description=DESC_END_TIME),
     limit: int = Query(default=1000, le=10000, description=DESC_MAX_BARS),
-    feed: str = Query(default="sip", description="Data feed: sip or iex"),
+    feed: str | None = Query(
+        default=None, description="Data feed override: sip or iex (default: provider-configured feed)"
+    ),
     client: Client = Depends(require_api_key),
     registry: ProviderRegistry = Depends(get_registry),
 ):
