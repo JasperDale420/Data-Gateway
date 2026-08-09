@@ -29,6 +29,8 @@ from gateway.core.order_ownership import (
     OrderOwnershipGuard,
     OwnershipConflict,
     OwnershipStoreUnavailable,
+    UnrecognizedBrokerSymbol,
+    UnsupportedAssetClass,
     canonical_broker_symbol,
     owner_from_client_order_id,
 )
@@ -451,16 +453,54 @@ _OWNERSHIP_AMBIGUOUS_MESSAGE = (
 
 
 def _extract_symbol_from_broker_record(record: Any) -> str | None:
+    """Return the record's canonical broker symbol, or None for another asset class.
+
+    None means the record resolved cleanly to an instrument this fence does not
+    cover — a crypto or forex holding. That is a proven non-match: ``get_positions()``
+    returns the whole shared account, so treating it as an error would let a
+    single crypto position block every equity order the Gateway submits.
+
+    ``UnrecognizedBrokerSymbol`` propagates instead when the record carries no
+    symbol, or one that cannot be resolved at all. Such a record cannot be
+    proven to be a *different* instrument from the target, so it must never be
+    silently skipped: every caller either turns it into an explicit rejection,
+    or (the account-wide position scan in ``_reconcile_broker_symbol_state``)
+    marks its reconciliation incomplete.
+    """
     if isinstance(record, dict):
         symbol = record.get("symbol")
     else:
         symbol = getattr(record, "symbol", None)
     if not isinstance(symbol, str):
-        return None
+        raise UnrecognizedBrokerSymbol("broker record carries no symbol field")
+    # nosemgrep: empire-no-return-none-for-failure -- classifier, not a failure signal: UnsupportedAssetClass is positive identification of another asset class, while every resolver/parser failure raises UnrecognizedBrokerSymbol and propagates so unprovable records fail closed
     try:
         return canonical_broker_symbol(symbol)
-    except ValueError:
+    except UnsupportedAssetClass:
         return None
+
+
+def _canonical_open_order_symbol_or_conflict(order: Any, symbol: str) -> str:
+    """Canonicalise a returned open order, failing closed when it will not parse.
+
+    The open-order read is already scoped to ``symbol``, so every order it
+    returns is about the symbol being authorized. One that will not canonicalise
+    therefore cannot be dismissed as belonging to something else: filtering it
+    out would drop its owner from the reconciled set and present the symbol as
+    unowned while a live order sits on it.
+
+    Positions are handled differently: ``get_positions`` is account-wide, so an
+    unrecognized record there marks the whole reconciliation incomplete instead
+    of aborting outright (see ``_reconcile_broker_symbol_state``), since a single
+    bad record must not fail every other symbol's mutation.
+    """
+    try:
+        extracted = _extract_symbol_from_broker_record(order)
+    except UnrecognizedBrokerSymbol as exc:
+        raise OwnershipConflict(f"unresolvable_broker_order_symbol:{symbol}") from exc
+    if extracted is None:
+        raise OwnershipConflict(f"unresolvable_broker_order_symbol:{symbol}")
+    return extracted
 
 
 def _unfenceable_symbol_error() -> HTTPException:
@@ -480,7 +520,10 @@ def _symbol_frozen_error() -> HTTPException:
 
 
 def _canonical_order_symbol_or_reject(order: Any) -> str:
-    symbol = _extract_symbol_from_broker_record(order)
+    try:
+        symbol = _extract_symbol_from_broker_record(order)
+    except UnrecognizedBrokerSymbol as exc:
+        raise _unfenceable_symbol_error() from exc
     if symbol is None:
         raise _unfenceable_symbol_error()
     return symbol
@@ -517,12 +560,33 @@ async def _reconcile_broker_symbol_state(provider: Any, symbol: str) -> BrokerSy
     if len(orders) >= 500:
         raise OwnershipConflict(f"open_order_reconciliation_truncated:{symbol}")
 
-    has_position = any(_extract_symbol_from_broker_record(position) == symbol for position in positions)
+    # An unrecognized position record could be the target symbol in a
+    # representation the Gateway cannot parse. Skipping it would present a
+    # live unowned position as flat, so it downgrades the whole reconciliation
+    # to incomplete rather than being silently treated as a non-match.
+    unrecognized = False
+
+    def _position_symbol(position: Any) -> str | None:
+        nonlocal unrecognized
+        try:
+            return _extract_symbol_from_broker_record(position)
+        except UnrecognizedBrokerSymbol as exc:
+            unrecognized = True
+            logger.error("order_ownership_unrecognized_broker_record", symbol=symbol, reason=str(exc))
+            return None
+
+    # Materialised rather than short-circuited with any(): every record must be
+    # examined so an unrecognized one after the first match still counts.
+    position_symbols = [_position_symbol(position) for position in positions]
+    has_position = symbol in position_symbols
+    # Every returned order is canonicalised before any is filtered, so an
+    # unparseable one aborts the reconciliation instead of dropping out of it.
+    order_symbols = [_canonical_open_order_symbol_or_conflict(order, symbol) for order in orders]
     client_ids = _known_client_ids()
     order_owners = frozenset(
         owner_from_client_order_id(_extract_client_order_id_from_order(order), client_ids)
-        for order in orders
-        if _extract_symbol_from_broker_record(order) == symbol
+        for order, order_symbol in zip(orders, order_symbols, strict=True)
+        if order_symbol == symbol
     )
     logger.info(
         "order_ownership_reconciled",
@@ -530,8 +594,9 @@ async def _reconcile_broker_symbol_state(provider: Any, symbol: str) -> BrokerSy
         has_position=has_position,
         open_order_owner_count=len(order_owners),
         has_unattributed_open_order=None in order_owners,
+        complete=not unrecognized,
     )
-    return BrokerSymbolState(has_position=has_position, order_owners=order_owners)
+    return BrokerSymbolState(has_position=has_position, order_owners=order_owners, complete=not unrecognized)
 
 
 def _ownership_rejection(
@@ -1299,22 +1364,27 @@ async def get_orders(
         log_context={"client_id": client.id, "method": "GET", "path": "/api/v1/alpaca/orders"},
     )
     # Filter to only orders owned by this caller, THEN truncate to the
-    # caller-requested limit. Defensive against a provider that returns
-    # a non-list (current implementation always returns list, but
-    # typing-wise nothing pins it).
-    if isinstance(data, list):
-        owned = [
-            order
-            for order in data
-            if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
-        ]
-        owned = owned[:limit]
-    else:
-        owned = data
+    # caller-requested limit. A non-list response means Alpaca returned
+    # something malformed/unexpected — fail loudly (502) rather than
+    # silently reporting zero orders, which would be indistinguishable
+    # from "you genuinely have no open orders" to the caller.
+    if not isinstance(data, list):
+        logger.error("alpaca_get_orders_malformed_response", response_type=type(data).__name__)
+        raise HTTPException(
+            status_code=HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "GW-E5009",
+                "message": f"Alpaca returned a malformed response for get_orders: expected a list, got {type(data).__name__}.",
+            },
+        )
+    owned = [
+        order for order in data if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
+    ]
+    owned = owned[:limit]
     return {
         "success": True,
         "data": owned,
-        "meta": {"count": len(owned) if isinstance(owned, list) else 0, "provider": "alpaca"},
+        "meta": {"count": len(owned), "provider": "alpaca"},
     }
 
 
@@ -1980,13 +2050,28 @@ async def cancel_all_orders(
         ),
         operation="cancel_all_orders.list",
     )
-    owned: list[dict[str, Any]] = []
-    if isinstance(raw_orders, list):
-        owned = [
-            order
-            for order in raw_orders
-            if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
-        ]
+    # A non-list response means Alpaca returned something malformed/
+    # unexpected — fail loudly (502) rather than silently reporting zero
+    # owned orders. This is a bulk-cancel reconciliation path: a caller
+    # reading {"success": true, "owned_count": 0} back would conclude
+    # nothing was open, when the truth is unknown.
+    if not isinstance(raw_orders, list):
+        logger.error("alpaca_cancel_all_orders_malformed_response", response_type=type(raw_orders).__name__)
+        raise HTTPException(
+            status_code=HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "GW-E5009",
+                "message": (
+                    f"Alpaca returned a malformed response while listing orders for cancel_all_orders: "
+                    f"expected a list, got {type(raw_orders).__name__}."
+                ),
+            },
+        )
+    owned: list[dict[str, Any]] = [
+        order
+        for order in raw_orders
+        if _client_order_id_matches_owner(_extract_client_order_id_from_order(order), client.id)
+    ]
 
     # Resolve each owned order to its canonical broker symbol. An order that
     # cannot be resolved cannot be fenced, and an order id the broker reports
@@ -2002,7 +2087,10 @@ async def cancel_all_orders(
         if not order_id:
             unfenceable.append({"order_id": None, "cancelled": False, "error": "order missing id field"})
             continue
-        symbol = _extract_symbol_from_broker_record(order)
+        try:
+            symbol = _extract_symbol_from_broker_record(order)
+        except UnrecognizedBrokerSymbol:
+            symbol = None
         if symbol is None:
             unfenceable.append(_bulk_cancel_failure(order_id, None, _unfenceable_symbol_error()))
             continue
@@ -2090,6 +2178,20 @@ async def get_positions(
         operation="get_positions",
         log_context={"client_id": client.id, "method": "GET", "path": "/api/v1/alpaca/positions"},
     )
+    # A non-list response means Alpaca returned something malformed/
+    # unexpected — fail loudly (502) rather than silently reporting zero
+    # positions, which would be indistinguishable from "you genuinely
+    # hold nothing" to the caller. Same fail-closed pattern as get_orders
+    # / cancel_all_orders.
+    if not isinstance(data, list):
+        logger.error("alpaca_get_positions_malformed_response", response_type=type(data).__name__)
+        raise HTTPException(
+            status_code=HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "GW-E5009",
+                "message": f"Alpaca returned a malformed response for get_positions: expected a list, got {type(data).__name__}.",
+            },
+        )
     return {
         "success": True,
         "data": data,

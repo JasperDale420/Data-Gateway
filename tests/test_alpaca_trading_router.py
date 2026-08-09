@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
-from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
+from starlette.status import HTTP_502_BAD_GATEWAY, HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
 
 from gateway.api.alpaca import trading
 from gateway.api.alpaca.common import ALPACA_ROUTER_PREFIX
@@ -612,6 +612,41 @@ async def test_get_orders_times_out_stuck_trading_call(
 
 
 @pytest.mark.asyncio
+async def test_get_orders_raises_502_when_provider_response_is_not_a_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed (non-list) broker response must fail loudly, not be
+    silently treated as zero orders — a zero-order response here is
+    indistinguishable from "you genuinely have no open orders", which is
+    corrupted-data-reported-as-truth on the read path callers reconcile
+    against."""
+
+    class _NonListProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> Any:
+            self.orders_calls.append(kwargs)
+            return {"unexpected": "shape"}
+
+    provider = _NonListProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_orders(
+            status="open",
+            limit=50,
+            direction="desc",
+            symbols=None,
+            nested=True,
+            side=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_502_BAD_GATEWAY
+    assert exc.value.detail["code"] == "GW-E5009"
+
+
+@pytest.mark.asyncio
 async def test_cancel_order_returns_success_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1043,6 +1078,153 @@ async def test_reconciliation_reads_open_orders_before_positions(
     state = await trading._reconcile_broker_symbol_state(_OrderTrackingProvider(), "AAPL")
 
     assert calls == ["orders", "positions"]
+    assert state.has_position is False
+    assert state.order_owners == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_rejects_an_uncanonicalisable_open_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An open order that cannot be canonicalised makes ownership unknowable.
+
+    The open-order query is already scoped to the symbol being authorized, so
+    every returned order is relevant to it. Treating an unparseable one as
+    "some other symbol" drops it from the owner set, which can present a live
+    owner's symbol as flat and let another client take the claim.
+    """
+
+    class _MalformedOrderProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return [{"symbol": "!!not-a-symbol!!", "client_order_id": "c-other-dg-1"}]
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.undo()
+
+    with pytest.raises(trading.OwnershipConflict) as exc:
+        await trading._reconcile_broker_symbol_state(_MalformedOrderProvider(), "AAPL")
+
+    assert "unresolvable_broker_order_symbol:AAPL" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_marks_state_incomplete_for_a_malformed_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed position record can no longer read as a silent non-match.
+
+    ``get_positions`` returns every symbol, so a record missing its symbol
+    entirely could be the target symbol in a representation the Gateway
+    cannot parse. Treating it as "not this symbol" would let a live unowned
+    position present as flat. It now marks the whole reconciliation
+    incomplete instead, which ``OrderOwnershipGuard`` rejects — closing the
+    gap previously tracked in docs/FOLLOW_UPS.md.
+    """
+
+    class _MalformedPositionProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": None}, {"symbol": "AAPL"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_MalformedPositionProvider(), "AAPL")
+
+    assert state.has_position is True
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_marks_state_incomplete_for_an_unparseable_occ_expiry_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An OCC-shaped symbol that fails to parse is unrecognized, not another
+    asset class. SymbolResolver matches the OCC pattern before parsing the
+    date, so an invalid expiry raises out of the parser rather than resolving
+    to a type -- classifying that as a proven non-match would reopen the same
+    fail-open this fix closes."""
+
+    class _BadExpiryProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "AAPL991332C00200000"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_BadExpiryProvider(), "AAPL")
+
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_marks_state_incomplete_for_a_malformed_option_strike_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The human-option strike regex is loose, so Decimal() can raise a
+    non-ValueError (decimal.InvalidOperation, an ArithmeticError). Left
+    unwrapped it would skip the fail-closed classifier entirely and abort
+    reconciliation as a 500 instead of marking it incomplete."""
+
+    class _BadStrikeProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "AAPL 2026-01-16 $1..2 C"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_BadStrikeProvider(), "AAPL")
+
+    assert state.complete is False
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_stays_complete_for_a_crypto_position_on_the_shared_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_positions() returns the whole account, so another asset class is a
+    true non-match -- a crypto or forex holding is positively recognized and
+    must not block equity order submission or mark reconciliation incomplete."""
+
+    class _CryptoHoldingProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "BTC/USD"}, {"symbol": "AAPL"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_CryptoHoldingProvider(), "AAPL")
+
+    assert state.complete is True
+    assert state.has_position is True
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_accepts_well_formed_records_for_other_symbols(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only unparseable records fail closed; canonical non-matches still filter."""
+
+    class _OtherSymbolProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return [{"symbol": "MSFT", "client_order_id": "c-other-dg-1"}]
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "MSFT"}]
+
+    monkeypatch.undo()
+
+    state = await trading._reconcile_broker_symbol_state(_OtherSymbolProvider(), "AAPL")
+
     assert state.has_position is False
     assert state.order_owners == frozenset()
 
@@ -3825,6 +4007,45 @@ async def test_cancel_all_orders_with_no_owned_orders_yields_empty_cancels(
     assert response["meta"]["owned_count"] == 0
 
 
+@pytest.mark.asyncio
+async def test_cancel_all_orders_raises_502_when_broker_list_is_not_a_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed (non-list) broker response must fail loudly, not be
+    silently treated as zero owned orders. This is a bulk-cancel
+    reconciliation path — a caller reading ``{"success": true,
+    "owned_count": 0}`` after a corrupted broker response would wrongly
+    conclude nothing was open, when the truth is unknown."""
+    bulk_cancel_calls = {"n": 0}
+
+    class _NonListOrdersProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> Any:
+            return {"unexpected": "shape"}
+
+        def cancel_all_orders(self) -> list[dict[str, Any]]:
+            bulk_cancel_calls["n"] += 1
+            return []
+
+    provider = _NonListOrdersProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.cancel_all_orders(
+            client=cast(Any, SimpleNamespace(id="cerberus")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_502_BAD_GATEWAY
+    assert exc.value.detail["code"] == "GW-E5009"
+    # Never falls back to the account-wide bulk cancel, and never reaches
+    # the per-order cancel path either (the actual write path this route
+    # uses — see the route docstring: bulk `cancel_all_orders()` is NEVER
+    # called from this endpoint).
+    assert bulk_cancel_calls["n"] == 0
+    assert provider.cancel_calls == []
+
+
 # ---------------------------------------------------------------------------
 # DELETE /orders must run through the SAME per-symbol fence as
 # DELETE /orders/{id}. The bulk route previously called
@@ -4687,3 +4908,1025 @@ def test_account_wide_actions_require_super_admin() -> None:
     # super_admin passes the account-wide gate.
     _enforce_account_wide_admin("DELETE", "/api/v1/alpaca/positions", super_admin)
     _enforce_account_wide_admin("PATCH", "/api/v1/alpaca/account/configurations", super_admin)
+
+
+@pytest.mark.asyncio
+async def test_get_positions_fails_closed_on_malformed_broker_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-list get_positions() response must not be reported as zero
+    positions — that's indistinguishable from "you genuinely hold nothing"
+    to the caller. Fail loudly (502 GW-E5009) instead, matching the
+    get_orders / cancel_all_orders fail-closed pattern."""
+
+    class _MalformedPositionsProvider(_FakeProvider):
+        def get_positions(self) -> Any:
+            return {"error": "not a list"}
+
+    provider = _MalformedPositionsProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.get_positions(
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail["code"] == "GW-E5009"
+
+
+# ---------------------------------------------------------------------------
+# Coverage-floor backfill (CI per-file ratchet on gateway/api/alpaca/trading.py).
+# The sections below target branches that were genuinely never exercised by
+# the tests above: parsing/validation helper edge cases, the pre-check and
+# post-write ownership-rejection branches on replace_order/cancel_order/
+# close_position (only create_order's equivalents were covered), the
+# never-called read-only routes (get_positions, get_position,
+# close_all_positions, get_portfolio_history, get_clock), and a few
+# cancel_all_orders batch-boundary branches (non-list provider responses,
+# missing order ids, unclassified post-write exceptions, and the
+# double-cancellation race on the CancelledError freeze-wait).
+# ---------------------------------------------------------------------------
+
+
+def test_validate_client_order_id_rejects_oversize_already_prefixed_key() -> None:
+    """Idempotent-retry path (DO NOT REGRESS): a caller replaying a key that
+    ALREADY carries their own ownership prefix is still subject to Alpaca's
+    128-char ceiling -- retries are not exempt from the length check."""
+    client_id = "cerberus"
+    prefix = f"c-{client_id}-"
+    oversize_already_prefixed = prefix + ("x" * 130)
+    assert len(oversize_already_prefixed) > 128
+
+    with pytest.raises(HTTPException) as exc:
+        trading._validate_client_order_id(oversize_already_prefixed, client_id)
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "GW-E4006"
+    assert "already carries this caller's ownership prefix" in exc.value.detail["message"]
+
+
+def test_known_client_ids_returns_empty_list_when_authenticator_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_known_client_ids` narrowly catches ImportError/AttributeError/
+    FileNotFoundError and degrades to `[]` (naive-parse fallback) rather than
+    letting a config-load problem crash audit-log enrichment."""
+    from gateway.api import deps
+
+    monkeypatch.setattr(deps, "get_authenticator", lambda: (_ for _ in ()).throw(FileNotFoundError("missing")))
+    assert trading._known_client_ids() == []
+
+    monkeypatch.setattr(deps, "get_authenticator", lambda: object())  # no .list_client_ids()
+    assert trading._known_client_ids() == []
+
+
+def test_parse_owner_from_client_order_id_skips_unsafe_known_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`"foo:bad"` is longer than `"atlas"` so it sorts first in the
+    longest-prefix-match order, but it fails the safe-id regex and must be
+    skipped via `continue` rather than crash the lookup, falling through to
+    the real `"atlas"` match."""
+    monkeypatch.setattr(trading, "_known_client_ids", lambda: ["foo:bad", "atlas"])
+
+    assert trading._parse_owner_from_client_order_id("c-atlas-suffix") == "atlas"
+
+
+def test_parse_owner_from_client_order_id_naive_fallback_variants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the authenticator can't be reached, `_known_client_ids()` returns
+    `[]` and parsing falls back to a naive first-hyphen split, covering all
+    three of its sub-branches."""
+    monkeypatch.setattr(trading, "_known_client_ids", lambda: [])
+
+    # sep_idx <= 0 -- no hyphen after the "c-" sentinel -> None.
+    assert trading._parse_owner_from_client_order_id("c-nohyphenhere") is None
+
+    # candidate fails the safe-id regex -> None.
+    assert trading._parse_owner_from_client_order_id("c-bad:id-xyz") is None
+
+    # non-hyphenated id -- naive split succeeds.
+    assert trading._parse_owner_from_client_order_id("c-cerberus-key1") == "cerberus"
+
+
+def test_foreign_order_not_found_omits_order_id_when_none() -> None:
+    """`get_order_by_client_id`'s 404 doesn't have an order_id to report --
+    the detail dict must not carry an `order_id` key at all (not even
+    `None`), to keep the shape identical across both call sites."""
+    exc = trading._foreign_order_not_found(order_id=None)
+
+    assert exc.status_code == 404
+    assert exc.detail["code"] == "GW-E4404"
+    assert "order_id" not in exc.detail
+
+
+def test_extract_client_order_id_from_order_uses_getattr_fallback_for_non_dict() -> None:
+    """Defensive against object-style order responses (not the dict shape
+    `_model_to_dict` normally produces)."""
+    order = SimpleNamespace(client_order_id="c-cerberus-abc")
+    assert trading._extract_client_order_id_from_order(order) == "c-cerberus-abc"
+
+    bare = SimpleNamespace()
+    assert trading._extract_client_order_id_from_order(bare) is None
+
+
+def test_extract_symbol_from_broker_record_getattr_fallback_for_non_dict() -> None:
+    record = SimpleNamespace(symbol="AAPL")
+    assert trading._extract_symbol_from_broker_record(record) == "AAPL"
+
+
+def test_extract_symbol_from_broker_record_raises_for_an_unrecognized_symbol() -> None:
+    """A symbol the resolver cannot classify at all is unprovable, not a
+    positively-identified non-match -- it must propagate as
+    UnrecognizedBrokerSymbol so callers fail closed rather than silently
+    treat it as "some other symbol"."""
+    record = {"symbol": "!!!not-a-real-symbol!!!"}
+    with pytest.raises(trading.UnrecognizedBrokerSymbol):
+        trading._extract_symbol_from_broker_record(record)
+
+
+def test_extract_symbol_from_broker_record_returns_none_for_another_asset_class() -> None:
+    """A crypto/forex holding is positively identified, so it's a safe
+    non-match -- unlike an unrecognized symbol, this stays None."""
+    record = {"symbol": "BTC/USD"}
+    assert trading._extract_symbol_from_broker_record(record) is None
+
+
+def test_canonical_order_symbol_or_reject_raises_unfenceable_error() -> None:
+    with pytest.raises(HTTPException) as exc:
+        trading._canonical_order_symbol_or_reject({"symbol": None})
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "GW-E4301"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_broker_symbol_state_rejects_non_list_broker_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider returning something other than a list for orders/positions
+    is a shape violation reconciliation must fail closed on -- silently
+    treating it as empty would present a live owner's exposure as flat.
+
+    ``monkeypatch.undo()`` drops the autouse stub of
+    ``_reconcile_broker_symbol_state`` so this test exercises the REAL
+    function (same pattern as
+    ``test_reconciliation_reads_open_orders_before_positions`` above).
+    """
+    monkeypatch.undo()
+
+    class _MalformedProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> Any:
+            return {"not": "a list"}
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+    with pytest.raises(OwnershipConflict, match="invalid_broker_reconciliation_shape:AAPL"):
+        await trading._reconcile_broker_symbol_state(_MalformedProvider(), "AAPL")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_broker_symbol_state_rejects_when_open_orders_at_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At Alpaca's 500-order page cap there may be MORE open orders beyond
+    the page, so ownership is unknowable until real cursor pagination
+    exists -- fail closed rather than assume the page is complete."""
+    monkeypatch.undo()
+
+    class _AtCapProvider(_FakeProvider):
+        def get_orders(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return [{"id": f"o-{i}", "symbol": "AAPL"} for i in range(500)]
+
+        def get_positions(self) -> list[dict[str, Any]]:
+            return []
+
+    with pytest.raises(OwnershipConflict, match="open_order_reconciliation_truncated:AAPL"):
+        await trading._reconcile_broker_symbol_state(_AtCapProvider(), "AAPL")
+
+
+@pytest.mark.asyncio
+async def test_freeze_after_ambiguous_mutation_reraises_when_freeze_itself_fails() -> None:
+    """If the store can't even record the freeze after a 5xx, the caller
+    must see THAT failure (mutation_may_have_reached_broker=True) rather
+    than the original 5xx being swallowed silently."""
+
+    class _FreezeFailsGuard(_AllowAllOwnershipGuard):
+        async def freeze(self, _symbol: str, _reason: str) -> None:
+            raise OwnershipStoreUnavailable("redis_freeze_failed:AAPL")
+
+    guard = _FreezeFailsGuard()
+    original = HTTPException(status_code=503, detail="broker unavailable")
+
+    with pytest.raises(HTTPException) as exc:
+        await trading._freeze_after_ambiguous_mutation(guard, "AAPL", original)
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "GW-E5301"
+    assert exc.value is not original
+
+
+@pytest.mark.asyncio
+async def test_create_order_rejects_symbol_that_fails_canonicalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="!!!not-a-real-symbol!!!",
+            side="buy",
+            qty=1,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "GW-E4006"
+
+
+@pytest.mark.asyncio
+async def test_create_order_post_write_store_unavailable_skips_freeze_before_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When post-submit reconciliation fails because the STORE is
+    unavailable (not because the broker state is ambiguous), there is
+    nothing to freeze via the isinstance(OwnershipConflict) branch -- it
+    must be skipped. The order still ends up frozen once, via the OUTER
+    ambiguous-mutation handler that fires for any 5xx bubbling out of
+    ``_call`` -- proving the inner branch was genuinely skipped (not just
+    coincidentally not observed) means checking the specific freeze reason,
+    not just that freeze was called."""
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    redis = _MemoryRedis()
+    freeze_reasons: list[str] = []
+
+    class _PostWriteStoreUnavailableGuard(OrderOwnershipGuard):
+        async def verify_reconciliation(self, **_kwargs: Any) -> None:
+            raise OwnershipStoreUnavailable("redis_read_failed:AAPL")
+
+        async def freeze(self, symbol: str, reason: str) -> None:
+            freeze_reasons.append(reason)
+            await super().freeze(symbol, reason)
+
+    ownership_guard = _PostWriteStoreUnavailableGuard(redis)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.create_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    assert freeze_reasons == ["broker_mutation_503"], (
+        "OwnershipStoreUnavailable must skip the isinstance(OwnershipConflict) freeze "
+        f"branch inside the post-write except block; got {freeze_reasons}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_order_by_client_id_returns_owned_order_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The success path (an OWNED client_order_id lookup) was never
+    exercised -- only the foreign-prefix 404 rejection was tested."""
+
+    class _ByClientIdProvider(_FakeProvider):
+        def get_order_by_client_id(self, client_order_id: str) -> dict[str, Any]:
+            return {"id": "o-99", "client_order_id": client_order_id}
+
+    provider = _ByClientIdProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    owned_key = _owned_coid("cerberus", "my-key")
+    response = await trading.get_order_by_client_id(
+        client_order_id=owned_key,
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["id"] == "o-99"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_pre_check_ownership_conflict_rejects_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replace_calls: list[str] = []
+
+    class _TrackingProvider(_FakeProvider):
+        def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+            replace_calls.append(order_id)
+            return {"id": "replaced"}
+
+    provider = _TrackingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    class _PreCheckConflictGuard(_AllowAllOwnershipGuard):
+        async def authorize_submission(self, **_kwargs: Any) -> None:
+            raise OwnershipConflict("owned_by_another_gateway_client:AAPL")
+
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: _PreCheckConflictGuard())
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="ord-1",
+            qty=2,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "GW-E4301"
+    assert replace_calls == [], "the broker replace call must never fire when the pre-check rejects"
+
+
+class _ReplaceOrderProvider(_FakeProvider):
+    def replace_order(self, order_id: str, **kwargs: Any) -> dict[str, Any]:
+        return {"id": "replaced", "order_id": order_id}
+
+
+@pytest.mark.asyncio
+async def test_replace_order_post_write_reconciliation_conflict_freezes_before_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _ReplaceOrderProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    redis = _MemoryRedis()
+
+    class _PostReplaceConflictGuard(OrderOwnershipGuard):
+        async def verify_reconciliation(self, **_kwargs: Any) -> None:
+            raise OwnershipConflict("post_replace_drift")
+
+    ownership_guard = _PostReplaceConflictGuard(redis)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="ord-1",
+            qty=2,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 409
+    assert "may have completed" in exc.value.detail["message"]
+    claim = json.loads(redis.values[ownership_guard.claim_key("AAPL")])
+    assert claim["frozen_reason"] == "post_write_reconciliation_post_replace_drift"
+
+
+@pytest.mark.asyncio
+async def test_replace_order_post_write_store_unavailable_skips_freeze_before_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _ReplaceOrderProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    redis = _MemoryRedis()
+    freeze_reasons: list[str] = []
+
+    class _PostReplaceStoreUnavailableGuard(OrderOwnershipGuard):
+        async def verify_reconciliation(self, **_kwargs: Any) -> None:
+            raise OwnershipStoreUnavailable("redis_read_failed:AAPL")
+
+        async def freeze(self, symbol: str, reason: str) -> None:
+            freeze_reasons.append(reason)
+            await super().freeze(symbol, reason)
+
+    ownership_guard = _PostReplaceStoreUnavailableGuard(redis)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.replace_order(
+            order_id="ord-1",
+            qty=2,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    assert freeze_reasons == ["broker_mutation_503"], (
+        f"replace_order's post-write OwnershipStoreUnavailable must skip the "
+        f"isinstance(OwnershipConflict) freeze branch; got {freeze_reasons}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_pre_check_ownership_conflict_rejects_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancel_calls: list[str] = []
+
+    class _TrackingProvider(_FakeProvider):
+        def cancel_order(self, order_id: str) -> bool:
+            cancel_calls.append(order_id)
+            return True
+
+    provider = _TrackingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    class _PreCheckConflictGuard(_AllowAllOwnershipGuard):
+        async def authorize_submission(self, **_kwargs: Any) -> None:
+            raise OwnershipConflict("owned_by_another_gateway_client:AAPL")
+
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: _PreCheckConflictGuard())
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.cancel_order(
+            order_id="ord-1",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "GW-E4301"
+    assert cancel_calls == [], "the broker cancel call must never fire when the pre-check rejects"
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_freezes_after_backpressure_before_reraising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 5xx HTTPException from ``_run_trading_provider_call`` (backpressure
+    or timeout) is caught right after the broker call
+    (``except HTTPException as exc: await _freeze_after_ambiguous_mutation``)
+    and re-raised, then caught AGAIN by the outer handler around
+    ``execute_alpaca_provider_call`` -- proving both freeze call sites fire
+    on the same exception as it bubbles out. Stubs
+    ``_run_trading_provider_call`` (rather than saturating the real
+    semaphore) so only the actual cancel call backpressures -- the
+    ownership pre-check's own broker read must still succeed."""
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    backpressure_503 = HTTPException(
+        status_code=HTTP_503_SERVICE_UNAVAILABLE,
+        detail={"code": "GW-E5005", "message": "Alpaca trading API backpressure during cancel_order"},
+    )
+    real_run_trading_provider_call = trading._run_trading_provider_call
+
+    async def _backpressure_on_cancel_only(*, provider: Any, provider_fn: Any, operation: str, **kwargs: Any) -> Any:
+        if operation == "cancel_order":
+            raise backpressure_503
+        return await real_run_trading_provider_call(
+            provider=provider, provider_fn=provider_fn, operation=operation, **kwargs
+        )
+
+    monkeypatch.setattr(trading, "_run_trading_provider_call", _backpressure_on_cancel_only)
+
+    freeze_reasons: list[str] = []
+
+    class _RecordingGuard(_AllowAllOwnershipGuard):
+        async def freeze(self, symbol: str, reason: str) -> None:
+            freeze_reasons.append(reason)
+
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: _RecordingGuard())
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.cancel_order(
+            order_id="ord-1",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    assert freeze_reasons, "the ambiguous-mutation freeze must fire at least once"
+    assert all(reason == "broker_mutation_503" for reason in freeze_reasons)
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_post_cancel_reconciliation_conflict_freezes_before_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    redis = _MemoryRedis()
+
+    class _PostCancelConflictGuard(OrderOwnershipGuard):
+        async def verify_reconciliation(self, **_kwargs: Any) -> None:
+            raise OwnershipConflict("post_cancel_drift")
+
+    ownership_guard = _PostCancelConflictGuard(redis)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.cancel_order(
+            order_id="ord-1",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 409
+    claim = json.loads(redis.values[ownership_guard.claim_key("AAPL")])
+    assert claim["frozen_reason"] == "post_write_reconciliation_post_cancel_drift"
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_post_cancel_store_unavailable_skips_freeze_before_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    redis = _MemoryRedis()
+    freeze_reasons: list[str] = []
+
+    class _PostCancelStoreUnavailableGuard(OrderOwnershipGuard):
+        async def verify_reconciliation(self, **_kwargs: Any) -> None:
+            raise OwnershipStoreUnavailable("redis_read_failed:AAPL")
+
+        async def freeze(self, symbol: str, reason: str) -> None:
+            freeze_reasons.append(reason)
+            await super().freeze(symbol, reason)
+
+    ownership_guard = _PostCancelStoreUnavailableGuard(redis)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.cancel_order(
+            order_id="ord-1",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    assert freeze_reasons == ["broker_mutation_503"], (
+        f"cancel_order's post-cancel OwnershipStoreUnavailable must skip the "
+        f"isinstance(OwnershipConflict) freeze branch; got {freeze_reasons}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_unclassified_exception_freezes_before_reraising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare (non-HTTPException) exception from the broker SDK call must
+    still freeze the symbol as ambiguous before propagating -- the outcome
+    at the broker is genuinely unknown."""
+
+    class _RaisingProvider(_FakeProvider):
+        def cancel_order(self, order_id: str) -> bool:
+            raise RuntimeError("simulated broker SDK crash")
+
+    provider = _RaisingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    freeze_reasons: list[str] = []
+
+    class _RecordingGuard(_AllowAllOwnershipGuard):
+        async def freeze(self, symbol: str, reason: str) -> None:
+            freeze_reasons.append(reason)
+
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: _RecordingGuard())
+
+    with pytest.raises(RuntimeError, match="simulated broker SDK crash"):
+        await trading.cancel_order(
+            order_id="ord-1",
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert freeze_reasons == ["broker_mutation_unclassified"]
+
+
+def test_bulk_cancel_rejection_wraps_unclassified_exception_as_502() -> None:
+    result = trading._bulk_cancel_rejection(RuntimeError("boom"), "AAPL")
+
+    assert isinstance(result, HTTPException)
+    assert result.status_code == HTTP_502_BAD_GATEWAY
+    assert result.detail["code"] == "GW-E5007"
+    assert "boom" in result.detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_reports_order_missing_id_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _MissingIdProvider(_FakeProvider):
+        def get_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return [{"client_order_id": _owned_coid("cerberus", "no-id"), "symbol": "AAPL"}]
+
+    provider = _MissingIdProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    errors = response["meta"]["errors"]
+    assert len(errors) == 1
+    assert errors[0]["order_id"] is None
+    assert errors[0]["error"] == "order missing id field"
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_unclassified_broker_cancel_exception_reported_and_symbol_kept_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare (non-HTTPException) exception raised BY THE BROKER CANCEL
+    ITSELF -- not the fence lease and not an HTTPException -- must still be
+    caught, logged, and reported per-order with the ``broker_mutation_
+    unclassified`` freeze reason. Distinct from the post-write-reconciliation
+    unclassified-exception test above: this one originates from
+    ``provider.cancel_order`` inside ``_cancel_one_fenced_order``, not from
+    ``guard.verify_reconciliation`` after the batch of writes completes."""
+    guard = _FenceRecordingGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "a-2", "client_order_id": _owned_coid("cerberus", "a-2"), "symbol": "AAPL"},
+        ],
+        guard,
+        failures={"a-1": RuntimeError("simulated broker SDK crash")},
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    # a-2 is never attempted: AAPL is frozen mid-batch after a-1's unclassified crash.
+    assert provider.cancelled == ["a-1"]
+    assert guard.frozen["AAPL"] == "broker_mutation_unclassified"
+    errors = {error["order_id"]: error for error in response["meta"]["errors"]}
+    assert errors["a-1"]["status_code"] == HTTP_502_BAD_GATEWAY
+    assert errors["a-1"]["detail"]["code"] == "GW-E5007"
+    assert "simulated broker SDK crash" in errors["a-1"]["detail"]["message"]
+    assert errors["a-2"]["status_code"] == 409
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_post_write_reconciliation_unclassified_exception_freezes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-``OwnershipConflict`` exception from post-write reconciliation
+    (e.g. a bug, not an ownership drift) must still freeze the symbol with
+    the ``_unclassified`` reason and report a 502 -- never silently drop
+    the ambiguity."""
+
+    class _PostWriteBoomGuard(_FenceRecordingGuard):
+        async def verify_reconciliation(self, **_kwargs: Any) -> None:
+            raise RuntimeError("reconciliation blew up")
+
+    guard = _PostWriteBoomGuard()
+    provider = _FencedCancelProvider(
+        [{"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"}],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    response = await trading.cancel_all_orders(
+        client=cast(Any, SimpleNamespace(id="cerberus")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert provider.cancelled == ["a-1"]
+    assert guard.frozen["AAPL"] == "post_write_reconciliation_unclassified"
+    errors = response["meta"]["errors"]
+    assert [error["order_id"] for error in errors] == [None]
+    assert errors[0]["status_code"] == HTTP_502_BAD_GATEWAY
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_freeze_wait_interrupted_by_second_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A SECOND task cancellation arriving while the shielded post-
+    cancellation freeze is still in flight must be caught and logged at the
+    ``await freeze`` boundary -- the shield keeps the freeze coroutine
+    itself running in the background rather than aborting it, so only the
+    WAIT is interrupted. Asserting on the ``bulk_cancel_freeze_wait_
+    interrupted`` log line (not just that the task eventually raises
+    CancelledError, which would also be true if this except block were
+    deleted) is what actually pins this branch down."""
+    import logging
+
+    class _StallingFreezeGuard(_FenceRecordingGuard):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stalled = asyncio.Event()
+            self.freezing = asyncio.Event()
+
+        async def renew_fence(self, symbol: str, token: str) -> None:
+            await super().renew_fence(symbol, token)
+            if self.renewals == 3:
+                self.stalled.set()
+                await asyncio.sleep(3600)
+
+        async def freeze(self, symbol: str, reason: str) -> None:
+            self.freezing.set()
+            await asyncio.sleep(3600)
+
+    guard = _StallingFreezeGuard()
+    provider = _FencedCancelProvider(
+        [
+            {"id": "a-1", "client_order_id": _owned_coid("cerberus", "a-1"), "symbol": "AAPL"},
+            {"id": "a-2", "client_order_id": _owned_coid("cerberus", "a-2"), "symbol": "AAPL"},
+        ],
+        guard,
+    )
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: guard)
+    _record_reconciliation(monkeypatch, guard)
+
+    with caplog.at_level(logging.ERROR, logger="data-gateway"):
+        task = asyncio.ensure_future(
+            trading.cancel_all_orders(
+                client=cast(Any, SimpleNamespace(id="cerberus")),
+                registry=cast(ProviderRegistry, route_registry),
+            )
+        )
+        await asyncio.wait_for(guard.stalled.wait(), timeout=2.0)
+        task.cancel()  # First cancellation: interrupts renew_fence's stall.
+        await asyncio.wait_for(guard.freezing.wait(), timeout=2.0)
+        task.cancel()  # Second cancellation: interrupts the `await freeze` wait itself.
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert provider.cancelled == ["a-1"]
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert "bulk_cancel_freeze_wait_interrupted" in rendered
+
+
+@pytest.mark.asyncio
+async def test_get_positions_uses_shared_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``GET /positions`` was never actually invoked by any existing test."""
+
+    class _PositionsProvider(_FakeProvider):
+        def get_positions(self) -> list[dict[str, Any]]:
+            return [{"symbol": "AAPL", "qty": "10"}]
+
+    provider = _PositionsProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.get_positions(
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"] == [{"symbol": "AAPL", "qty": "10"}]
+    assert response["meta"]["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_position_uses_shared_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _PositionProvider(_FakeProvider):
+        def get_position(self, symbol: str) -> dict[str, Any]:
+            return {"symbol": symbol, "qty": "5"}
+
+    provider = _PositionProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.get_position(
+        symbol="AAPL",
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["symbol"] == "AAPL"
+
+
+class _ClosePositionProvider(_FakeProvider):
+    def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> dict[str, Any]:
+        return {"symbol": symbol, "status": "closed"}
+
+
+@pytest.mark.asyncio
+async def test_close_position_rejects_symbol_that_fails_canonicalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol="!!!not-a-real-symbol!!!",
+            qty=None,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "GW-E4006"
+
+
+@pytest.mark.asyncio
+async def test_close_position_pre_check_ownership_conflict_rejects_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_calls: list[str] = []
+
+    class _TrackingProvider(_ClosePositionProvider):
+        def close_position(self, symbol: str, qty: Any = None, percentage: Any = None) -> dict[str, Any]:
+            close_calls.append(symbol)
+            return super().close_position(symbol, qty, percentage)
+
+    provider = _TrackingProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    class _PreCheckConflictGuard(_AllowAllOwnershipGuard):
+        async def authorize_close(self, **_kwargs: Any) -> None:
+            raise OwnershipConflict("broker_position_not_open:AAPL")
+
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: _PreCheckConflictGuard())
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol="AAPL",
+            qty=None,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 409
+    assert close_calls == [], "the broker close call must never fire when the pre-check rejects"
+
+
+def _seed_owned_claim(redis: _MemoryRedis, symbol: str, owner: str) -> None:
+    """Pre-populate a durable ownership claim for ``symbol`` in the fake
+    Redis. ``close_position``'s ``authorize_close`` requires a PRE-EXISTING
+    claim owned by the caller (a close targets an already-owned position --
+    unlike create_order/replace_order/cancel_order, close never creates a
+    fresh claim of its own)."""
+    redis.values[OrderOwnershipGuard.claim_key(symbol)] = OrderOwnershipGuard._serialize_claim(owner)
+
+
+@pytest.mark.asyncio
+async def test_close_position_post_close_reconciliation_conflict_freezes_before_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _ClosePositionProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    redis = _MemoryRedis()
+    _seed_owned_claim(redis, "AAPL", "test-client")
+
+    async def _has_position_state(*_args: Any, **_kwargs: Any) -> BrokerSymbolState:
+        return BrokerSymbolState(has_position=True, order_owners=frozenset())
+
+    monkeypatch.setattr(trading, "_reconcile_broker_symbol_state", _has_position_state)
+
+    class _PostCloseConflictGuard(OrderOwnershipGuard):
+        async def verify_reconciliation(self, **_kwargs: Any) -> None:
+            raise OwnershipConflict("post_close_drift")
+
+    ownership_guard = _PostCloseConflictGuard(redis)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol="AAPL",
+            qty=None,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == 409
+    claim = json.loads(redis.values[ownership_guard.claim_key("AAPL")])
+    assert claim["frozen_reason"] == "post_write_reconciliation_post_close_drift"
+
+
+@pytest.mark.asyncio
+async def test_close_position_post_close_store_unavailable_skips_freeze_before_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _ClosePositionProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+    redis = _MemoryRedis()
+    _seed_owned_claim(redis, "AAPL", "test-client")
+
+    async def _has_position_state(*_args: Any, **_kwargs: Any) -> BrokerSymbolState:
+        return BrokerSymbolState(has_position=True, order_owners=frozenset())
+
+    monkeypatch.setattr(trading, "_reconcile_broker_symbol_state", _has_position_state)
+    freeze_reasons: list[str] = []
+
+    class _PostCloseStoreUnavailableGuard(OrderOwnershipGuard):
+        async def verify_reconciliation(self, **_kwargs: Any) -> None:
+            raise OwnershipStoreUnavailable("redis_read_failed:AAPL")
+
+        async def freeze(self, symbol: str, reason: str) -> None:
+            freeze_reasons.append(reason)
+            await super().freeze(symbol, reason)
+
+    ownership_guard = _PostCloseStoreUnavailableGuard(redis)
+    monkeypatch.setattr(trading, "get_order_ownership_guard", lambda: ownership_guard)
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol="AAPL",
+            qty=None,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id="test-client")),
+            registry=cast(ProviderRegistry, route_registry),
+        )
+
+    assert exc.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    assert freeze_reasons == ["broker_mutation_503"], (
+        f"close_position's post-close OwnershipStoreUnavailable must skip the "
+        f"isinstance(OwnershipConflict) freeze branch; got {freeze_reasons}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_close_all_positions_uses_shared_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _CloseAllProvider(_FakeProvider):
+        def close_all_positions(self, cancel_orders: bool) -> list[dict[str, Any]]:
+            return [{"symbol": "AAPL", "status": "closed"}]
+
+    provider = _CloseAllProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.close_all_positions(
+        cancel_orders=True,
+        client=cast(Any, SimpleNamespace(id="ops")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["meta"]["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_portfolio_history_uses_shared_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _PortfolioHistoryProvider(_FakeProvider):
+        def get_portfolio_history(self, **kwargs: Any) -> dict[str, Any]:
+            return {"equity": [1000, 1010]}
+
+    provider = _PortfolioHistoryProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.get_portfolio_history(
+        period="1M",
+        timeframe="1D",
+        extended_hours=False,
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["equity"] == [1000, 1010]
+
+
+@pytest.mark.asyncio
+async def test_get_clock_uses_shared_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _ClockProvider(_FakeProvider):
+        def get_clock(self) -> dict[str, Any]:
+            return {"is_open": True}
+
+    provider = _ClockProvider()
+    route_registry = _FakeRegistry({"alpaca": provider})
+    _helper_monkeypatch(monkeypatch, route_registry=route_registry)
+
+    response = await trading.get_clock(
+        client=cast(Any, SimpleNamespace(id="test-client")),
+        registry=cast(ProviderRegistry, route_registry),
+    )
+
+    assert response["success"] is True
+    assert response["data"]["is_open"] is True

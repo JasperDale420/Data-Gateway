@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -232,3 +234,92 @@ def test_perf_baseline_manager_skips_ratchet_when_samples_insufficient(tmp_path:
     assert report["ratchet_applied"] is False
     assert report["history_count"] == 1
     assert report["pass_samples_used"] == 1
+
+
+def test_perf_baseline_manager_never_inflates_baseline_above_approved_value(tmp_path: Path) -> None:
+    """Passing runs slower than the approved baseline must not raise it.
+
+    Regression guard for the trend guardrail silently self-relaxing: the manager
+    used to overwrite the active baseline with the median of recent passing runs
+    in either direction. Once a slower-but-passing run landed, the next run's
+    allowance (baseline * multiplier + slack) floated up with it, so the trend
+    guard drifted toward the hard per-test budget and stopped catching genuine
+    regressions. Raising a baseline must stay an explicit edit to the checked-in
+    config, which merge_static_budgets.py then propagates.
+    """
+    summary_file = tmp_path / "perf-summary.json"
+    history_file = tmp_path / "perf-history.json"
+    budgets_file = tmp_path / "perf-budgets.json"
+    baseline_file = tmp_path / "perf-baseline.json"
+    out_history_file = tmp_path / "out-history.json"
+    out_budgets_file = tmp_path / "out-budgets.json"
+    out_baseline_file = tmp_path / "out-baseline.json"
+    report_file = tmp_path / "out-report.json"
+
+    slow_test = "tests/perf/test_perf_baseline.py::test_metrics_path_normalization_baseline"
+    fast_test = "tests/perf/test_perf_baseline.py::test_wrap_event_serialization_baseline"
+
+    # Runs pass at ~0.94s against an approved 0.70s baseline (allowance 1.08s).
+    _write_json(
+        summary_file,
+        {
+            "status": "pass",
+            "measured_seconds": 3.2,
+            "test_times_seconds": {slow_test: 0.94, fast_test: 0.02},
+        },
+    )
+    _write_json(
+        history_file,
+        {
+            "version": 1,
+            "runs": [
+                {"status": "pass", "suite_seconds": 3.3, "tests": {slow_test: 0.939, fast_test: 0.02}},
+                {"status": "pass", "suite_seconds": 3.4, "tests": {slow_test: 0.981, fast_test: 0.02}},
+            ],
+        },
+    )
+    _write_json(
+        budgets_file,
+        {
+            "suite_max_seconds": 6.0,
+            "ratchet": {
+                "enabled": True,
+                "history_window": 20,
+                "baseline_window": 5,
+                "min_samples": 3,
+                "suite_multiplier": 3.0,
+                "test_multiplier": 3.0,
+                "absolute_slack_seconds": 0.03,
+                "min_suite_seconds": 0.8,
+                "min_test_seconds": 0.03,
+            },
+            "tests": {slow_test: 1.5, fast_test: 0.12},
+        },
+    )
+    _write_json(
+        baseline_file,
+        {"suite_baseline_seconds": 3.0, "tests": {slow_test: 0.70, fast_test: 0.031}},
+    )
+
+    _run_manager(
+        summary_file=summary_file,
+        history_file=history_file,
+        budgets_file=budgets_file,
+        baseline_file=baseline_file,
+        out_history_file=out_history_file,
+        out_budgets_file=out_budgets_file,
+        out_baseline_file=out_baseline_file,
+        report_file=report_file,
+    )
+
+    baseline = _read_json(out_baseline_file)
+    # The approved 0.70s ceiling holds even though every observed run is slower.
+    assert baseline["tests"][slow_test] == 0.70
+    assert baseline["suite_baseline_seconds"] == 3.0
+    # Downward movement is still allowed: the fast test ratchets to its median.
+    assert baseline["tests"][fast_test] == 0.02
+
+    # The trend allowance therefore stays put instead of floating toward the budget.
+    trend = baseline["tests"][slow_test] * 1.5 + 0.03
+    assert trend == pytest.approx(1.08)
+    assert trend < _read_json(out_budgets_file)["tests"][slow_test]
