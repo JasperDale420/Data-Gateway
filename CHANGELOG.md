@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Added the hashed, read-only `kairosprime` Data Gateway client. It is provider-scoped to Alpaca and Unusual Whales for at most 100 symbols, cannot access trading routes, and uses a dedicated local credential that is not committed. KairosPrime's credential-owning data proxy remains the operation allowlist for REST reads.
+
 - **Redis-failure test coverage for the shared-account order-ownership guard** (`tests/test_order_ownership.py`): `OrderOwnershipGuard`'s Redis-backed methods (`freeze`, `authorize_submission`'s claim write and index repair, `_release_if_clear`, `begin_mutation`, `complete_mutation`, `acquire_fence`, `renew_fence`) are now each proven to raise `OwnershipStoreUnavailable` — not silently swallow the failure — when the underlying Redis call fails, plus a test confirming `release_fence` intentionally does the opposite (logs, never raises). A separate test proves a frozen claim persists in the durable store and blocks a *different* client's guard instance from claiming the symbol. Closes a gap from a prior adversarial review: router-level tests could only prove the router's branching against a fake guard, not that the real guard propagates store failures. An adversarial review of this test addition (`gpt-5.6-terra`) surfaced a separate, pre-existing production gap — see `docs/FOLLOW_UPS.md` — where a failed `freeze()` write leaves a claim reusable once Redis recovers; that is tracked as a follow-up, not fixed here.
 
 ### Fixed

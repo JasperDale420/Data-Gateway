@@ -3254,6 +3254,33 @@ def test_real_config_restricts_plaintext_to_powerless_test_client() -> None:
     assert set(auth._plaintext_keys.values()) <= {"test"}
 
 
+def test_real_config_has_read_only_kairosprime_client() -> None:
+    """KairosPrime market-data access is scoped and cannot route trades."""
+    from gateway.core.auth import ClientAuthenticator
+
+    config_path = Path(__file__).resolve().parents[1] / "config" / "clients.yaml"
+    auth = ClientAuthenticator(config_path)
+
+    client = auth.get_client("kairosprime")
+    assert client is not None
+    assert client.enabled is True
+    assert client.role == "client"
+    assert set(client.permissions.providers) == {"alpaca", "uw"}
+    assert set(client.permissions.feeds) == {
+        "quotes",
+        "trades",
+        "options",
+        "option_quotes",
+        "flow",
+        "flow_alerts",
+        "news",
+    }
+    assert client.permissions.max_symbols == 100
+    assert client.permissions.rate_limit == 600
+    assert client.permissions.trading is False
+    assert "kairosprime" not in auth._plaintext_keys.values()
+
+
 # ---------------------------------------------------------------------------
 # Per-client order ownership isolation (BLOCKER 1 + BLOCKER 2).
 #
