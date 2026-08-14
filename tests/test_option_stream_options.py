@@ -93,10 +93,15 @@ async def test_stocks_sip_stream_drops_option_contracts() -> None:
         trades={"AAPL", "AAPL260116C00200000"},
     )
 
-    assert len(connection._ws.messages) == 1
+    # Frame 0 is the core subscribe, frame 1 the ancillary statuses/lulds frame.
+    # The OCC filter must apply to both — an unfiltered ancillary frame would
+    # reintroduce exactly the symbol-shape mismatch this test guards against.
+    assert len(connection._ws.messages) == 2
     decoded = _decode(AlpacaStreamType.STOCKS_SIP, connection._ws.messages[0])
     assert sorted(decoded["quotes"]) == ["BMY", "DHR"]
     assert sorted(decoded["trades"]) == ["AAPL"]
+    ancillary = _decode(AlpacaStreamType.STOCKS_SIP, connection._ws.messages[1])
+    assert sorted(ancillary["statuses"]) == ["AAPL", "BMY", "DHR"]
     assert any("stocks stream ignoring" in w.lower() for w in warnings)
 
 
@@ -114,9 +119,11 @@ async def test_stocks_iex_stream_drops_option_contracts() -> None:
 
     await connection.subscribe(quotes={"BMY", "BMY260529P00057000"})
 
-    assert len(connection._ws.messages) == 1
+    assert len(connection._ws.messages) == 2
     decoded = _decode(AlpacaStreamType.STOCKS_IEX, connection._ws.messages[0])
     assert decoded["quotes"] == ["BMY"]
+    ancillary = _decode(AlpacaStreamType.STOCKS_IEX, connection._ws.messages[1])
+    assert ancillary["lulds"] == ["BMY"]
 
 
 @pytest.mark.asyncio
