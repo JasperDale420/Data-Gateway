@@ -105,7 +105,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    restart: unless-stopped
+    # always, not unless-stopped: Docker skips restart-on-daemon-start for a
+    # container it considers stopped, and a Docker Desktop restart SIGTERMs
+    # every container. On 2026-08-12 that left this down while Heber's
+    # consumers (restart: always) came back and crash-looped against it for
+    # 1h40m, ingesting nothing.
+    restart: always
     # Must exceed GATEWAY_SHUTDOWN_DRAIN_SECONDS (default 30) plus the time
     # steps 4-8 need to stop producers and drain the sink. Docker's default is
     # 10s, which lands inside the step-3 drain sleep: the container was SIGKILLed
@@ -190,7 +195,12 @@ services:
     command: redis-server --save "" --appendonly yes --appendfsync always --maxmemory 6gb --maxmemory-policy volatile-lru
     volumes:
       - data-gateway-redis-data:/data
-    restart: unless-stopped
+    # always, not unless-stopped: Docker skips restart-on-daemon-start for a
+    # container it considers stopped, and a Docker Desktop restart SIGTERMs
+    # every container. On 2026-08-12 that left this down while Heber's
+    # consumers (restart: always) came back and crash-looped against it for
+    # 1h40m, ingesting nothing.
+    restart: always
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]
       interval: 10s

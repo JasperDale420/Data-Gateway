@@ -62,8 +62,69 @@ MESSAGE_TYPE_TO_DATA_TYPE = {
     "q": "quotes",
     "t": "trades",
     "n": "news",
+    # Ancillary stock channels. Heber contracts all four as typed Silver
+    # datasets, but they were discarded here as "system messages", so halts,
+    # LULD bands, trade corrections and auction imbalances never reached the
+    # lakehouse. Feed names must stay exactly these — anything else is DLQ'd
+    # by Heber with reason `uncontracted_feed`.
+    "l": "lulds",
+    "s": "statuses",
+    "c": "corrections",
+    "i": "auctions",
 }
 _VALIDATABLE_FEEDS = frozenset({"bars", "quotes", "trades"})
+
+# Alpaca wire key -> Heber Silver column, per ancillary feed. Heber's
+# FIELD_MAPPINGS entry for these feeds is EMPTY, so its normalizer reads Silver
+# column names straight off the payload: without this rename the two-letter
+# Alpaca keys normalize to an all-null row that then fails Heber's required-
+# field check. Only columns that exist in SILVER_SCHEMAS are emitted — e.g.
+# `lulds` has no tape column, so `z` is left on the raw wire key.
+#
+# `auctions` is the odd one out: Alpaca's imbalance message carries a price and
+# nothing else, while Heber's auctions schema mirrors the richer REST
+# /v2/stocks/auctions shape. The other five columns stay null rather than being
+# invented.
+ANCILLARY_FIELD_RENAMES: dict[str, dict[str, str]] = {
+    "lulds": {
+        "t": "timestamp",
+        "u": "upper_limit",
+        "d": "lower_limit",
+        "i": "indicator",
+    },
+    "statuses": {
+        "t": "timestamp",
+        "sc": "status_code",
+        "sm": "status_message",
+        "rc": "reason_code",
+        "rm": "reason_message",
+        "z": "tape",
+    },
+    "corrections": {
+        "t": "timestamp",
+        "x": "exchange",
+        "oi": "original_trade_id",
+        "op": "original_price",
+        "os": "original_size",
+        "oc": "original_conditions",
+        "ci": "corrected_trade_id",
+        "cp": "corrected_price",
+        "cs": "corrected_size",
+        "cc": "corrected_conditions",
+        "z": "tape",
+    },
+    "auctions": {"p": "auction_price"},
+}
+
+# Channels the stock streams must subscribe to explicitly before Alpaca sends
+# anything. `corrections` is deliberately absent — Alpaca delivers those to any
+# trades subscriber without being asked, which is why they are the one feed
+# here that needed no subscription change.
+#
+# `imbalances` is also absent: the channel is unverified on the IEX feed this
+# deployment runs on, and its payload fills one of six `auctions` columns. The
+# "i" mapping above forwards them if the channel is ever enabled.
+_STOCK_ANCILLARY_CHANNELS = ("statuses", "lulds")
 
 
 class StreamTransportFatalError(RuntimeError):
@@ -519,6 +580,7 @@ class UpstreamConnection:
 
         if len(msg) > 1:  # Has at least one subscription type
             await self._ws.send(self._encode_message(msg))
+            await self._send_ancillary_channel_request("subscribe", bars, quotes, trades)
             logger.info(
                 "subscribed_upstream",
                 stream=self.stream_type.value,
@@ -555,6 +617,7 @@ class UpstreamConnection:
 
         if len(msg) > 1:
             await self._ws.send(self._encode_message(msg))
+            await self._send_ancillary_channel_request("unsubscribe", bars, quotes, trades)
             logger.info(
                 "unsubscribed_upstream",
                 stream=self.stream_type.value,
@@ -563,6 +626,44 @@ class UpstreamConnection:
                 trades=list(trades) if trades else [],
                 news=list(news) if news else [],
             )
+
+    async def _send_ancillary_channel_request(
+        self,
+        action: str,
+        bars: set[str] | None,
+        quotes: set[str] | None,
+        trades: set[str] | None,
+    ) -> None:
+        """Subscribe/unsubscribe the stock ancillary channels for the same symbols.
+
+        These feed Heber only — no client-facing subscribe surface exists for
+        them — so they track whatever symbols we already stream. Sent as its
+        own frame: halts and LULD bands are nice to have, but a channel Alpaca
+        rejects must not take the bars/quotes/trades subscription down with it.
+        """
+        if self.stream_type not in (AlpacaStreamType.STOCKS_SIP, AlpacaStreamType.STOCKS_IEX):
+            return
+        if not self._ws:
+            return
+
+        candidates = (bars or set()) | (quotes or set()) | (trades or set())
+        if action == "unsubscribe":
+            # The removed_* sets are computed PER FEED, so a symbol dropped from
+            # trades may still be streamed on quotes. The ancillary channels
+            # track the union, so anything still streamed must keep them —
+            # otherwise a partial unsubscribe silently stops halts and LULD
+            # bands for a symbol we are still following.
+            still_streamed = set().union(*self._subscriptions.get_all_subscriptions()[:3])
+            candidates -= still_streamed
+
+        symbols = sorted(candidates)
+        if not symbols:
+            return
+
+        msg: dict[str, Any] = {"action": action}
+        for channel in _STOCK_ANCILLARY_CHANNELS:
+            msg[channel] = symbols
+        await self._ws.send(self._encode_message(msg))
 
     def _sanitize_subscription_request(
         self,
@@ -1455,6 +1556,13 @@ class StreamMultiplexer:
         # from daily bars in Silver.
         if data_type == "bars" and "timeframe" not in message:
             message["timeframe"] = "1Min"
+
+        # Rename Alpaca's two-letter wire keys to Heber's Silver column names.
+        # Rebinds rather than mutating so the caller's message is untouched;
+        # these are low-volume channels, so the extra dict is free.
+        renames = ANCILLARY_FIELD_RENAMES.get(data_type)
+        if renames:
+            message = {renames.get(key, key): value for key, value in message.items()}
 
         envelope = fast_wrap_streaming_event(
             event=message,
