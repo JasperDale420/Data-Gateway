@@ -117,6 +117,14 @@ services:
     # before producers were stopped or the sink was drained, so every deploy and
     # restart discarded whatever was still queued for heber:events.
     stop_grace_period: 60s
+    # See the redis service for why `default` is listed explicitly. Heber's
+    # watch and gold-poller dial the `data-gateway` alias for option quotes and
+    # enrichment.
+    networks:
+      default: {}
+      empire-bus:
+        aliases:
+          - data-gateway
     logging:
       driver: json-file
       options:
@@ -201,12 +209,35 @@ services:
     # consumers (restart: always) came back and crash-looped against it for
     # 1h40m, ingesting nothing.
     restart: always
+    # `default` is listed explicitly because declaring any network on a service
+    # replaces the implicit project default — dropping it would break this
+    # project's own `redis://redis:6379/0`. The alias is what Heber dials; the
+    # bare service name `redis` is deliberately NOT exposed on the shared bus,
+    # where it would be ambiguous across projects.
+    networks:
+      default: {}
+      empire-bus:
+        aliases:
+          - data-gateway-redis
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+
+networks:
+  # Shared bus so Heber reaches this project container-to-container instead of
+  # going out through host.docker.internal and back in via the published port.
+  # That round-trip depends on Docker Desktop's port forwarder, and when it
+  # broke the Heber consumers got `Errno 101 Network is unreachable` and
+  # crash-looped — 1h38m on 2026-08-08, 25m on 08-11.
+  #
+  # External on purpose: created out of band so neither project owns it and a
+  # `compose down` in either cannot remove it from under the other.
+  #   docker network create empire-bus
+  empire-bus:
+    external: true
 
 volumes:
   data-gateway-redis-data:
