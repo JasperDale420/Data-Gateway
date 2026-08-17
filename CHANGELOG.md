@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs corrected to match the free-tier Alpaca feed switch and the current failed-event buffer size** (weekly drift check, doc-only): `README.md`'s Available Feeds table and `docs/CONSUMER_GUIDE.md` no longer claim stock/option streams and REST bars use SIP/OPRA by default — this account is on Alpaca's Basic plan, which 403s SIP/OPRA requests, so the gateway runs IEX (stocks) and indicative (options) instead (see the `f42cf5d` entry below). A broken `feed=sip` example in `CONSUMER_GUIDE.md` that would 403 was fixed to omit the parameter. `docs/RUNBOOK.md`'s failed-event buffer size was corrected from a stale "10,000 entries" to the current default of 50,000 (`GATEWAY_DATA_SINK_FAILED_BUFFER_CAPACITY`).
+
 ### Fixed
 
 - **Trading halts, LULD bands and trade corrections now reach the lakehouse** (`gateway/core/stream.py`): the streaming multiplexer recognised only bars, quotes, trades and news, and silently discarded every other Alpaca stock message as a system message. Heber has contracted `lulds`, `statuses`, `corrections` and `auctions` as typed datasets for some time, but nothing was ever delivered to them. All four message types are now forwarded, with Alpaca's two-letter wire fields renamed to the column names Heber expects — without that rename the records would land as empty rows and be rejected. Halts and LULD bands also need to be requested from Alpaca explicitly, so the gateway now asks for them alongside whatever symbols it already streams; corrections arrive on their own. The request is sent separately from the main subscription so that if Alpaca ever refuses these channels, normal bar/quote/trade streaming is unaffected. Auction imbalances are mapped but not yet requested: the channel is unverified on this account's IEX feed and Alpaca's imbalance message carries only a price, filling one of the six auction columns (the rest come from the REST `/stocks/auctions` endpoint).

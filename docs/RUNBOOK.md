@@ -375,8 +375,10 @@ Triage:
 ### 6.7  Failed-event buffer eviction / silent data loss (`SinkBufferEvictionsActive`)
 
 When a publish exhausts its retries (or the sink circuit is OPEN), the event is
-held in the Redis sink's **failed-event buffer** — a `deque` capped at 10,000
-entries (`gateway/core/redis_sink.py`). The buffer **drains automatically on the
+held in the Redis sink's **failed-event buffer** — a `deque` capped at
+`GATEWAY_DATA_SINK_FAILED_BUFFER_CAPACITY` entries (default 50,000; was a fixed
+10,000 at the time of the 2026-05-05 incident below) (`gateway/core/redis_sink.py`).
+The buffer **drains automatically on the
 next successful reconnect**. While it is filling it emits the
 `gateway_sink_buffer_size{sink}` gauge; once full, each new event **evicts the
 oldest** (permanently lost) and increments
