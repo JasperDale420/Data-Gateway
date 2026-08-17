@@ -8,6 +8,7 @@ from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any
 
+from alpaca.common.exceptions import APIError
 from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.status import HTTP_502_BAD_GATEWAY, HTTP_503_SERVICE_UNAVAILABLE, HTTP_504_GATEWAY_TIMEOUT
 
@@ -641,13 +642,29 @@ def _raise_ownership_rejection(
     ) from exc
 
 
+class _UnappliedWriteOwnershipError(HTTPException):
+    """The broker refused the write; only the ownership marker is unresolved.
+
+    Subclasses ``HTTPException`` so ``execute_alpaca_provider_call`` re-raises
+    it untouched, and marks the one 5xx that must NOT be followed by a freeze.
+    This error is raised after the symbol's fence has been released, and the
+    route-level freeze is unfenced, so freezing on it could stamp a claim
+    another client has since taken. There is nothing to record in any case: the
+    broker answered that it applied nothing, and if the pending marker really
+    did survive, that marker already blocks the symbol on its own.
+    """
+
+    def __init__(self, rejection: HTTPException) -> None:
+        super().__init__(status_code=rejection.status_code, detail=rejection.detail)
+
+
 async def _freeze_after_ambiguous_mutation(
     guard: OrderOwnershipGuard,
     symbol: str,
     exc: HTTPException,
 ) -> None:
     """Do not allow a retry while a broker write may still be in flight."""
-    if exc.status_code < 500:
+    if isinstance(exc, _UnappliedWriteOwnershipError) or exc.status_code < 500:
         return
     try:
         await guard.freeze(symbol, f"broker_mutation_{exc.status_code}")
@@ -673,6 +690,110 @@ async def _freeze_before_fence_release(
             symbol,
             mutation_may_have_reached_broker=True,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Broker replies that PROVE an order mutation never changed broker state.
+#
+# A freeze exists for one reason: the Gateway gave up while a write may still
+# be travelling to Alpaca, so no later reconciliation can be trusted and only a
+# human may clear it. A definitive 4xx rejection is the opposite situation —
+# Alpaca answered, refused the write, and the symbol is exactly as it was
+# reconciled moments earlier. Freezing on those replies locked owners out of
+# their own risk-reducing closes for the rest of the session.
+#
+# Only two replies qualify, both narrow on purpose:
+#   * 42210000 with the ``order is already in "<state>" state`` signature, where
+#     <state> is terminal. Alpaca reuses 42210000 for other rejections
+#     ("insufficient qty available"), and a non-terminal state such as
+#     ``pending_new`` says nothing about a write in flight, so both keep the
+#     ambiguous treatment.
+#   * A 404: the broker found no such order to act on.
+# Everything else — 5xx, timeouts, transport failures, unrecognized error
+# bodies, any other 4xx (a wash-trade or buying-power rejection included) —
+# stays ambiguous and still freezes.
+# ─────────────────────────────────────────────────────────────────────────────
+_TERMINAL_ORDER_STATE_CODE = 42210000
+_ORDER_NOT_FOUND_CODE = 40410000
+_TERMINAL_ORDER_STATES = frozenset({"filled", "canceled", "cancelled", "expired", "rejected", "done_for_day"})
+# The quote characters around the state arrive escaped when the raw JSON body is
+# read instead of the parsed message, so they are matched loosely.
+_ALREADY_IN_STATE_RE = re.compile(r"already in\s*[\\\"']*(?P<state>[a-z_]+)[\\\"']*\s*state", re.IGNORECASE)
+
+
+def _alpaca_error_code(exc: APIError) -> int | None:
+    """Return the numeric Alpaca error code, or None when the body is unreadable."""
+    # nosemgrep: empire-no-bare-exception,empire-no-return-none-for-failure -- documented Optional helper: APIError.code re-parses a body that may not be JSON; an unreadable code must classify as "unproven", not raise
+    try:
+        code = exc.code
+    except Exception:
+        return None
+    return code if isinstance(code, int) else None
+
+
+def _alpaca_error_message(exc: APIError) -> str:
+    """Return the broker's message, falling back to the raw body it came in."""
+    # nosemgrep: empire-no-bare-exception -- APIError.message re-parses a body that may not be JSON; the raw text still carries the signature being matched
+    try:
+        message = exc.message
+    except Exception:
+        return str(exc)
+    return message if isinstance(message, str) else str(exc)
+
+
+def _broker_write_proven_unapplied(exc: BaseException) -> bool:
+    """True only when the broker's own reply proves the write did not apply."""
+    if not isinstance(exc, APIError):
+        return False
+    code = _alpaca_error_code(exc)
+    # nosemgrep: empire-no-bare-exception -- APIError.status_code is a property over an optional wrapped HTTPError; an unreadable status must classify as "unproven", not raise
+    try:
+        status_code = exc.status_code
+    except Exception:
+        status_code = None
+    if status_code == 404 or code == _ORDER_NOT_FOUND_CODE:
+        return True
+    if code != _TERMINAL_ORDER_STATE_CODE:
+        return False
+    match = _ALREADY_IN_STATE_RE.search(_alpaca_error_message(exc))
+    return match is not None and match.group("state").lower() in _TERMINAL_ORDER_STATES
+
+
+async def _clear_mutation_after_unapplied_write(
+    guard: OrderOwnershipGuard,
+    symbol: str,
+    mutation_token: str | None,
+    broker_error: BaseException,
+) -> None:
+    """Drop the pending marker for a write the broker proved it never applied.
+
+    The marker is what blocks the next mutation on the symbol, so it must go
+    even though no broker write happened. If it cannot be cleared the symbol is
+    locked exactly as a freeze would have locked it, and answering with the
+    broker's 4xx would hide that: the caller would read "your order already
+    filled", act on it, and find its next close rejected. The ownership error
+    is raised instead, carrying the broker's own message so the caller still
+    learns the order state it needs, plus the command that lifts the lock.
+    """
+    if mutation_token is None:
+        return
+    try:
+        await guard.complete_mutation(symbol=symbol, token=mutation_token)
+    except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+        logger.error("order_ownership_unapplied_write_marker_stuck", symbol=symbol, exc_info=True)
+        rejection = _ownership_rejection(
+            exc,
+            symbol,
+            reconciliation_context={
+                "broker_error": str(broker_error),
+                "recovery_hint": (
+                    f"No order was submitted, but {symbol}'s ownership claim may still carry a pending-mutation "
+                    "marker that blocks the next write. Clear it with "
+                    f"'python -m gateway.cli thaw-claim {symbol}'."
+                ),
+            },
+        )
+        raise _UnappliedWriteOwnershipError(rejection) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -824,9 +945,12 @@ def _merge_idempotency_context_into_5xx(
     surface the retry contract.
 
     For sub-500 statuses the exception is returned unchanged — those are
-    deterministic client errors where retry semantics don't apply.
+    deterministic client errors where retry semantics don't apply. So is an
+    ``_UnappliedWriteOwnershipError``: the broker proved it applied nothing, so
+    the "may have applied despite the 5xx" retry contract would send the caller
+    chasing a write that never happened.
     """
-    if exc.status_code < 500:
+    if isinstance(exc, _UnappliedWriteOwnershipError) or exc.status_code < 500:
         return exc
 
     existing_detail = exc.detail
@@ -1562,6 +1686,7 @@ async def replace_order(
     async def _call(provider: Any) -> Any:
         fence_token: str | None = None
         mutation_token: str | None = None
+        write_proven_unapplied = False
         try:
             try:
                 fence_token = await ownership_guard.acquire_fence(canonical_symbol)
@@ -1593,6 +1718,15 @@ async def replace_order(
                 )
             except HTTPException as exc:
                 await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+                raise
+            except Exception as exc:
+                # Replacing an order that already reached a terminal state is
+                # refused outright, leaving the original order and the symbol
+                # untouched — same proof as the cancel path.
+                if not _broker_write_proven_unapplied(exc):
+                    raise
+                await _clear_mutation_after_unapplied_write(ownership_guard, canonical_symbol, mutation_token, exc)
+                write_proven_unapplied = True
                 raise
             try:
                 post_replace_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
@@ -1629,7 +1763,8 @@ async def replace_order(
         except HTTPException:
             raise
         except Exception:
-            await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
+            if not write_proven_unapplied:
+                await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
             raise
         finally:
             if fence_token is not None:
@@ -1685,6 +1820,7 @@ async def cancel_order(
     async def _call(provider: Any) -> Any:
         fence_token: str | None = None
         mutation_token: str | None = None
+        write_proven_unapplied = False
         try:
             try:
                 fence_token = await ownership_guard.acquire_fence(canonical_symbol)
@@ -1706,6 +1842,16 @@ async def cancel_order(
                 )
             except HTTPException as exc:
                 await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+                raise
+            except Exception as exc:
+                # A cancel that raced its own order's terminal transition is the
+                # common case here, and the broker's refusal proves the symbol
+                # is untouched — clear the marker and let the 4xx reach the
+                # caller, who reconciles the true order state from it.
+                if not _broker_write_proven_unapplied(exc):
+                    raise
+                await _clear_mutation_after_unapplied_write(ownership_guard, canonical_symbol, mutation_token, exc)
+                write_proven_unapplied = True
                 raise
             try:
                 post_cancel_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
@@ -1732,7 +1878,8 @@ async def cancel_order(
         except HTTPException:
             raise
         except Exception:
-            await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
+            if not write_proven_unapplied:
+                await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
             raise
         finally:
             if fence_token is not None:

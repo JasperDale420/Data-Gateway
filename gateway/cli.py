@@ -6,15 +6,27 @@ Usage:
     python -m gateway.cli rotate-key <client_id>
     python -m gateway.cli list-clients
     python -m gateway.cli hash-key <key>
+    python -m gateway.cli thaw-claim <SYMBOL> [--delete]
 """
 
 import argparse
+import asyncio
 import hashlib
+import json
 import secrets
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import yaml
+
+from gateway.core.order_ownership import (
+    BrokerSymbolState,
+    OrderOwnershipGuard,
+    OwnershipConflict,
+    OwnershipStoreUnavailable,
+    canonical_broker_symbol,
+)
 
 
 def generate_key() -> str:
@@ -171,6 +183,111 @@ def cmd_revoke_client(args):
     return 1
 
 
+def _describe_claim(label: str, claim: dict | None) -> None:
+    print(f"{label}: {json.dumps(claim, sort_keys=True) if claim is not None else 'none'}")
+
+
+def _thaw_refusal(symbol: str, reason: str) -> int:
+    print(f"REFUSED: {symbol} is not safe to thaw ({reason}).")
+    print("Resolve the broker state first, then re-run.")
+    return 1
+
+
+async def thaw_claim(
+    *,
+    guard: OrderOwnershipGuard,
+    reconcile: Callable[[str], Awaitable[BrokerSymbolState]],
+    symbol: str,
+    delete: bool = False,
+) -> int:
+    """Clear a frozen ownership claim after proving the broker state is unambiguous.
+
+    A freeze is deliberately one-way inside the request path: it marks a symbol
+    whose broker outcome the Gateway could not determine, and only a human who
+    has checked the broker may lift it. This applies that check mechanically —
+    a fresh reconciliation must show no open order from anyone but the claim
+    owner, and ``--delete`` additionally requires the symbol to be flat.
+
+    The symbol's fence is held for the whole command, which is what every
+    Gateway mutation takes before it writes, so no broker write can start
+    against the symbol while it is being inspected and no second thaw can run
+    beside this one. The fence is revalidated immediately before the write, and
+    the write itself only applies to the exact claim that was reviewed.
+    """
+    try:
+        canonical = canonical_broker_symbol(symbol)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+
+    try:
+        fence_token = await guard.acquire_fence(canonical)
+    except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+        return _thaw_refusal(canonical, f"the symbol's fence could not be taken ({exc})")
+
+    try:
+        stored = await guard.read_claim(canonical)
+        _describe_claim(f"{canonical} before", stored.claim if stored is not None else None)
+        if stored is None:
+            print(f"ERROR: no ownership claim exists for {canonical}.")
+            return 1
+        if not (stored.claim.get("frozen_reason") or stored.claim.get("mutation_pending")):
+            return _thaw_refusal(canonical, "the claim is neither frozen nor mid-mutation, so there is nothing to lift")
+
+        state = await reconcile(canonical)
+        print(
+            f"broker state: has_position={state.has_position} "
+            f"order_owners={sorted(owner or '<manual>' for owner in state.order_owners)} "
+            f"complete={state.complete}"
+        )
+        if not state.complete:
+            return _thaw_refusal(canonical, "broker reconciliation was incomplete")
+        if state.order_owners - {stored.claim["owner"]}:
+            return _thaw_refusal(canonical, "open orders belong to another owner")
+        if delete and (state.has_position or state.order_owners):
+            return _thaw_refusal(canonical, "the broker still holds a position or open order")
+
+        await guard.renew_fence(canonical, fence_token)
+        await guard.thaw(canonical, expected=stored, delete=delete)
+        after = await guard.read_claim(canonical)
+        _describe_claim(f"{canonical} after", after.claim if after is not None else None)
+        return 0
+    except (OwnershipConflict, OwnershipStoreUnavailable) as exc:
+        return _thaw_refusal(canonical, str(exc))
+    finally:
+        await guard.release_fence(canonical, fence_token)
+
+
+def cmd_thaw_claim(args):
+    """Thaw one frozen ownership claim after a fresh broker reconciliation."""
+    from gateway.api.alpaca.trading import _reconcile_broker_symbol_state, get_order_ownership_guard
+    from gateway.config import get_settings
+    from gateway.core.registry import ProviderRegistry
+
+    async def _run() -> int:
+        registry = ProviderRegistry()
+        await registry.load_from_config(get_settings().providers_config_path)
+        provider = registry.get("alpaca")
+        if provider is None:
+            print("ERROR: the Alpaca provider is unavailable; broker state cannot be verified.")
+            return 1
+
+        async def _reconcile(symbol: str) -> BrokerSymbolState:
+            return await _reconcile_broker_symbol_state(provider, symbol)
+
+        try:
+            return await thaw_claim(
+                guard=get_order_ownership_guard(),
+                reconcile=_reconcile,
+                symbol=args.symbol,
+                delete=args.delete,
+            )
+        finally:
+            await registry.shutdown()
+
+    return asyncio.run(_run())
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Gateway CLI for key management",
@@ -209,6 +326,18 @@ def main():
     revoke_parser.add_argument("client_id", help="Client ID")
     revoke_parser.add_argument("--delete", action="store_true", help="Delete instead of disable")
 
+    # thaw-claim
+    thaw_parser = subparsers.add_parser(
+        "thaw-claim",
+        help="Clear a frozen order-ownership claim after verifying broker state",
+    )
+    thaw_parser.add_argument("symbol", help="Ticker or full OCC option contract")
+    thaw_parser.add_argument(
+        "--delete",
+        action="store_true",
+        help="Drop the claim entirely (requires no broker position and no open orders)",
+    )
+
     args = parser.parse_args()
 
     commands = {
@@ -218,6 +347,7 @@ def main():
         "list-clients": cmd_list_clients,
         "hash-key": cmd_hash_key,
         "revoke-client": cmd_revoke_client,
+        "thaw-claim": cmd_thaw_claim,
     }
 
     return commands[args.command](args)
