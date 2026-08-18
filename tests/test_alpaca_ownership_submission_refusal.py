@@ -36,6 +36,7 @@ from gateway.core.order_ownership import (
     OwnershipStoreUnavailable,
 )
 from gateway.core.registry import ProviderRegistry
+from gateway.providers.alpaca.trading import AlpacaTradingMixin
 
 _CLIENT_ID = "test-client"
 _OTHER_CLIENT_ID = "other-client"
@@ -62,6 +63,11 @@ def _api_error(
 def _insufficient_qty_error() -> APIError:
     """The exact reply the incident produced: a close re-sent after it filled."""
     return _api_error(code=40310000, message="insufficient qty available for order", status_code=403)
+
+
+def _position_not_found_error() -> APIError:
+    """What Alpaca answers a close aimed at a position that is already gone."""
+    return _api_error(code=40410000, message="position not found", status_code=404)
 
 
 class _MemoryRedis:
@@ -565,6 +571,82 @@ async def test_a_refused_close_releases_a_claim_the_broker_has_nothing_behind(
     assert _stored_claim(redis, guard) is None
 
 
+class _RealAdapter(AlpacaTradingMixin):
+    """The production provider with only its Alpaca SDK client replaced.
+
+    The route never sees the broker's own ``APIError`` for a vanished
+    position — this adapter converts it — so the conversion has to be in the
+    test or the route path under test is fiction.
+    """
+
+    def __init__(self, error: BaseException) -> None:
+        def _raise(*_args: Any, **_kwargs: Any) -> Any:
+            raise error
+
+        self._trading_client = cast(Any, SimpleNamespace(close_position=_raise))
+
+
+def test_the_adapter_converts_a_vanished_position_into_a_sub_500_http_error() -> None:
+    """Pins the coupling the route's marker handling depends on."""
+    with pytest.raises(HTTPException) as exc:
+        _RealAdapter(_position_not_found_error()).close_position(_SYMBOL)
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail["code"] == "POSITION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_a_close_on_a_vanished_position_does_not_strand_the_mutation_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the incident, and the one that never freezes.
+
+    A duplicate close of a position that already closed is answered
+    POSITION_NOT_FOUND. The route correctly declines to freeze it, but the
+    pending-mutation marker used to survive anyway — which rejects every later
+    write on the symbol with the same 409 a freeze would, and needs the same
+    operator command to clear.
+    """
+    guard, redis = _seeded_guard(monkeypatch)
+    _stub_broker_states(monkeypatch, [_HELD, _FLAT])
+
+    with pytest.raises(HTTPException) as exc:
+        await trading.close_position(
+            symbol=_SYMBOL,
+            qty=None,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id=_CLIENT_ID)),
+            registry=cast(ProviderRegistry, _FakeRegistry(_RealAdapter(_position_not_found_error()))),
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail["code"] == "POSITION_NOT_FOUND"
+    # Nothing is held and nothing rests: the claim goes with the position.
+    assert _stored_claim(redis, guard) is None
+
+
+@pytest.mark.asyncio
+async def test_a_vanished_position_keeps_a_claim_that_still_has_an_order_behind_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The marker still clears, but the claim stays while an order rests."""
+    guard, redis = _seeded_guard(monkeypatch)
+    _stub_broker_states(monkeypatch, [_HELD, _RESTING])
+
+    with pytest.raises(HTTPException):
+        await trading.close_position(
+            symbol=_SYMBOL,
+            qty=None,
+            percentage=None,
+            client=cast(Any, SimpleNamespace(id=_CLIENT_ID)),
+            registry=cast(ProviderRegistry, _FakeRegistry(_RealAdapter(_position_not_found_error()))),
+        )
+
+    claim = _live_claim(redis, guard)
+    assert "mutation_pending" not in claim
+    assert "frozen_reason" not in claim
+
+
 @pytest.mark.asyncio
 async def test_a_close_with_a_broker_5xx_still_freezes(monkeypatch: pytest.MonkeyPatch) -> None:
     guard, redis = _seeded_guard(monkeypatch)
@@ -596,12 +678,10 @@ async def test_a_close_with_an_unknown_exception_still_freezes(monkeypatch: pyte
         pytest.param(_insufficient_qty_error(), id="insufficient-qty-403"),
         pytest.param(_api_error(code=40310000, message="wash trade detected", status_code=403), id="wash-403"),
         pytest.param(_api_error(code=42210000, message="qty must be > 0", status_code=422), id="validation-422"),
-        pytest.param(_api_error(code=40010000, message="invalid symbol", status_code=400), id="generic-400"),
-        pytest.param(_api_error(code=42910000, message="too many requests", status_code=429), id="rate-limit-429"),
-        pytest.param(_api_error(code=40410000, message="order not found", status_code=404), id="not-found-404"),
+        pytest.param(_position_not_found_error(), id="not-found-404"),
     ],
 )
-def test_structured_4xx_refusals_are_classified_as_unapplied(exc: BaseException) -> None:
+def test_the_refusal_codes_this_account_produces_are_classified_as_unapplied(exc: BaseException) -> None:
     assert trading._broker_submission_proven_unapplied(exc) is True
 
 
@@ -614,11 +694,42 @@ def test_structured_4xx_refusals_are_classified_as_unapplied(exc: BaseException)
         pytest.param(_api_error(code=40310000, message="insufficient qty", status_code=None), id="unreadable-status"),
         pytest.param(ConnectionError("connection reset by peer"), id="transport-error"),
         pytest.param(TimeoutError(), id="timeout"),
-        pytest.param(HTTPException(status_code=403, detail="not an APIError"), id="not-an-api-error"),
     ],
 )
 def test_ambiguous_submission_replies_are_not_classified_as_unapplied(exc: BaseException) -> None:
     assert trading._broker_submission_proven_unapplied(exc) is False
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pytest.param(_api_error(code=42910000, message="too many requests", status_code=429), id="rate-limit-429"),
+        pytest.param(_api_error(code=40110000, message="access key verification failed", status_code=401), id="auth"),
+        pytest.param(_api_error(code=40010000, message="invalid symbol", status_code=400), id="unlisted-400"),
+    ],
+)
+def test_an_unlisted_4xx_code_stays_ambiguous(exc: BaseException) -> None:
+    """The classifier names the refusals this account has actually produced.
+
+    A 4xx status with any parseable body is not proof on its own: Alpaca
+    publishes no universal "rejected before dispatch" guarantee, a 429 may be
+    thrown by a proxy in front of the broker, and clearing ownership on a
+    reply nobody has characterised is how a symbol ends up written by two
+    clients. Everything unlisted keeps the pre-existing freeze.
+    """
+    assert trading._broker_submission_proven_unapplied(exc) is False
+
+
+def test_a_sub_500_http_error_from_the_adapter_is_classified_as_unapplied() -> None:
+    """The gateway already treats sub-500 as definitive when deciding to freeze.
+
+    ``_freeze_after_ambiguous_mutation`` skips the freeze below 500, so the
+    pending-mutation marker must clear on the same test — otherwise the symbol
+    the gateway deliberately did not freeze is silently locked anyway.
+    """
+    not_found = HTTPException(status_code=404, detail={"code": "POSITION_NOT_FOUND"})
+    assert trading._broker_submission_proven_unapplied(not_found) is True
+    assert trading._broker_submission_proven_unapplied(HTTPException(status_code=503, detail="upstream")) is False
 
 
 def test_the_cancel_classifier_is_unchanged_by_the_submission_classifier() -> None:

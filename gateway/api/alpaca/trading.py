@@ -762,23 +762,40 @@ def _broker_write_proven_unapplied(exc: BaseException) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 # A SUBMISSION carries broader proof than a cancel or a replace.
 #
-# Alpaca either accepts an order and answers with it, or refuses the request
-# outright — the refusal is decided before anything reaches the book, so the
-# symbol is exactly as it was reconciled a moment earlier. That covers every
-# 4xx a create or a close draws: insufficient quantity, day-trade buying power
-# and wash-trade blocks on the shared account (40310000), validation
-# (42210000), rate limiting, malformed requests.
+# A cancel refused by the broker says nothing about whether the write it was
+# chasing is still travelling, which is why ``_broker_write_proven_unapplied``
+# above only trusts a terminal-state reply. A create or a close is different:
+# the reply names a request Alpaca declined to turn into an order, so the
+# symbol is exactly as it was reconciled a moment earlier.
 #
-# A cancel cannot claim the same thing — refusing to cancel says nothing about
-# whether the write it was chasing is still travelling — which is why
-# ``_broker_write_proven_unapplied`` above stays narrow and this predicate does
-# not replace it. What proves a refusal is the broker's own structured reply: a
-# readable 4xx status together with a readable Alpaca error body. Anything less
-# stays ambiguous and still freezes — 5xx, timeouts, transport failures, and
-# any reply whose status or body cannot be read.
+# The refusals below are named, not inferred from the status class. A 4xx with
+# a parseable body is not proof by itself — Alpaca publishes no universal
+# "rejected before dispatch" contract, a 429 can come from a proxy in front of
+# the broker rather than the broker, and clearing ownership on a reply nobody
+# has characterised is how one symbol ends up written by two clients. These are
+# the codes this shared account actually produces on a submission:
+#   * 403 40310000 — insufficient quantity, day-trade buying power, wash trade.
+#   * 422 42210000 — request validation, including a position-intent mismatch.
+# Plus whatever ``_broker_write_proven_unapplied`` already proves (a 404, or a
+# terminal-state reply). Everything else keeps the freeze: 5xx, timeouts,
+# transport failures, unlisted 4xx codes, and any reply whose status or body
+# cannot be read.
 # ─────────────────────────────────────────────────────────────────────────────
+_SUBMISSION_REFUSAL_REPLIES = frozenset({(403, 40310000), (422, 42210000)})
+
+
 def _broker_submission_proven_unapplied(exc: BaseException) -> bool:
-    """True when the broker's reply proves a submission never reached the book."""
+    """True when the reply to a submission proves it never reached the book."""
+    if isinstance(exc, HTTPException):
+        # Sub-500 is the exact test ``_freeze_after_ambiguous_mutation`` uses to
+        # skip the freeze, so the pending-mutation marker has to clear on the
+        # same test — a marker outliving a write the gateway judged definitive
+        # locks the symbol just as the freeze it deliberately skipped would,
+        # and needs the same operator command to lift. The only route that
+        # reaches here with a sub-500 is a close whose position the provider
+        # already found gone (POSITION_NOT_FOUND, converted from the broker's
+        # own 404); the gateway's own pre-dispatch rejections are 503/504.
+        return exc.status_code < 500
     if _broker_write_proven_unapplied(exc):
         return True
     if not isinstance(exc, APIError):
@@ -788,9 +805,7 @@ def _broker_submission_proven_unapplied(exc: BaseException) -> bool:
         status_code = exc.status_code
     except Exception:
         return False
-    if not isinstance(status_code, int) or not (400 <= status_code < 500):
-        return False
-    return _alpaca_error_code(exc) is not None
+    return (status_code, _alpaca_error_code(exc)) in _SUBMISSION_REFUSAL_REPLIES
 
 
 async def _release_claim_after_unapplied_submission(
@@ -1335,6 +1350,15 @@ async def create_order(
                 )
             except HTTPException as exc:
                 await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+                if _broker_submission_proven_unapplied(exc):
+                    await _clear_mutation_after_unapplied_write(ownership_guard, canonical_symbol, mutation_token, exc)
+                    await _release_claim_after_unapplied_submission(
+                        provider,
+                        ownership_guard,
+                        canonical_symbol,
+                        fence_token,
+                        client.id,
+                    )
                 raise
             except Exception as exc:
                 # A close re-sent before Alpaca's position read caught up with
@@ -2537,7 +2561,20 @@ async def close_position(
                     idempotency_context=idempotency_context,
                 )
             except HTTPException as exc:
+                # The provider converts the broker's "position does not exist"
+                # into a 404 before the route ever sees an APIError, so a
+                # duplicate close of an already-closed position arrives here,
+                # not in the branch below.
                 await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+                if _broker_submission_proven_unapplied(exc):
+                    await _clear_mutation_after_unapplied_write(ownership_guard, canonical_symbol, mutation_token, exc)
+                    await _release_claim_after_unapplied_submission(
+                        provider,
+                        ownership_guard,
+                        canonical_symbol,
+                        fence_token,
+                        client.id,
+                    )
                 raise
             except Exception as exc:
                 # A close submits an order like any other write, and draws the
