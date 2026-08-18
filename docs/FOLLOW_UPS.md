@@ -6,21 +6,17 @@ baked-image cutover. Paid items are pruned; git history has the details.
 
 ## Open
 
-- **The order-ownership tests cannot exercise fence expiry or the real
-  Lua** — every ownership test drives an in-memory Redis stand-in whose
-  `set(..., px=...)` never expires and whose scripts are the guard's Lua
-  re-implemented in Python by hand. Two things are therefore unproven by
-  the suite: that the Lua behaves as the fakes claim, and that a fence
-  lease expiring *mid-write* is safe. The interleaving that matters is a
-  lease that dies between a refused submission and the fresh broker read
-  that decides whether to release its claim, while a second gateway
-  client acquires the symbol — that release is now conditional on the live
-  fence token inside Lua (`_RELEASE_CLAIM_UNDER_FENCE`) and is covered by
-  `test_a_fence_that_expires_mid_refusal_cannot_release_the_next_claim`,
-  but against the hand-written fake, not a real lease. Needs a real-Redis
-  (or TTL-faithful) harness with barriers to prove the Lua and the TTL
-  agree with the fakes. Raised by the 2026-08-18 adversarial review
-  (`gpt-5.6-terra`) of the submission-refusal fix (medium severity).
+- **Most order-ownership Lua is still only proven against a hand-written
+  fake** — every ownership test but one drives an in-memory Redis
+  stand-in whose `set(..., px=...)` never expires and whose scripts are
+  the guard's Lua re-implemented in Python by hand, so the fakes and the
+  Lua can drift. `tests/test_order_ownership_lua_integration.py` now
+  closes the piece that mattered most — the post-refusal release, run by
+  a real Redis against a real expiring fence lease — but
+  `_CLAIM_AND_INDEX`, `_BEGIN_MUTATION`, `_COMPLETE_MUTATION`,
+  `_COMPARE_AND_DELETE` and `_THAW_CLAIM` have no real-Redis coverage.
+  Raised by the 2026-08-18 adversarial review (`gpt-5.6-terra`) of the
+  submission-refusal fix (medium severity).
 - **A failed `OrderOwnershipGuard.freeze()` leaves an ambiguous claim
   reusable once Redis recovers** — `freeze()` is the only mechanism that
   durably blocks further use of a symbol after an ambiguous broker
