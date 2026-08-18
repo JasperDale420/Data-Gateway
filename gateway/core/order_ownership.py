@@ -331,6 +331,32 @@ return 0
             self._reject(symbol, "mutation_completion_token_lost")
         logger.info("order_ownership_mutation_reconciled", symbol=symbol)
 
+    async def release_claim_if_broker_is_clear(
+        self,
+        *,
+        client_id: str,
+        symbol: str,
+        broker_state: BrokerSymbolState,
+    ) -> None:
+        """Drop this client's claim on a symbol the broker holds nothing for.
+
+        A claim is taken before the write it protects, so a write the broker
+        refused outright can leave one standing over a symbol with no position
+        and no open order behind it. Releasing requires proof, and the proof is
+        a COMPLETE broker read showing the symbol flat: an incomplete
+        reconciliation may be hiding the very position being released, and a
+        symbol whose open order outlives its claim is ambiguous for every
+        client, not just this one. The release runs through the same
+        compare-and-delete as every other, so a claim that is frozen, carries a
+        pending mutation, or has moved to another owner is left alone.
+        """
+        if not broker_state.complete:
+            return
+        claim = await self._load_claim(symbol)
+        if claim is None or claim["owner"] != client_id:
+            return
+        await self._release_if_clear(symbol=symbol, claim=claim, broker_state=broker_state)
+
     async def _release_if_clear(
         self,
         *,

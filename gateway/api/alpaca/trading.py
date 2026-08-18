@@ -759,6 +759,78 @@ def _broker_write_proven_unapplied(exc: BaseException) -> bool:
     return match is not None and match.group("state").lower() in _TERMINAL_ORDER_STATES
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# A SUBMISSION carries broader proof than a cancel or a replace.
+#
+# Alpaca either accepts an order and answers with it, or refuses the request
+# outright — the refusal is decided before anything reaches the book, so the
+# symbol is exactly as it was reconciled a moment earlier. That covers every
+# 4xx a create or a close draws: insufficient quantity, day-trade buying power
+# and wash-trade blocks on the shared account (40310000), validation
+# (42210000), rate limiting, malformed requests.
+#
+# A cancel cannot claim the same thing — refusing to cancel says nothing about
+# whether the write it was chasing is still travelling — which is why
+# ``_broker_write_proven_unapplied`` above stays narrow and this predicate does
+# not replace it. What proves a refusal is the broker's own structured reply: a
+# readable 4xx status together with a readable Alpaca error body. Anything less
+# stays ambiguous and still freezes — 5xx, timeouts, transport failures, and
+# any reply whose status or body cannot be read.
+# ─────────────────────────────────────────────────────────────────────────────
+def _broker_submission_proven_unapplied(exc: BaseException) -> bool:
+    """True when the broker's reply proves a submission never reached the book."""
+    if _broker_write_proven_unapplied(exc):
+        return True
+    if not isinstance(exc, APIError):
+        return False
+    # nosemgrep: empire-no-bare-exception -- APIError.status_code is a property over an optional wrapped HTTPError; an unreadable status must classify as "unproven", not raise
+    try:
+        status_code = exc.status_code
+    except Exception:
+        return False
+    if not isinstance(status_code, int) or not (400 <= status_code < 500):
+        return False
+    return _alpaca_error_code(exc) is not None
+
+
+async def _release_claim_after_unapplied_submission(
+    provider: Any,
+    guard: OrderOwnershipGuard,
+    symbol: str,
+    fence_token: str | None,
+    client_id: str,
+) -> None:
+    """Clear up a claim left standing by a submission the broker refused.
+
+    The claim is taken before the write, so a refused submission can leave one
+    over a symbol that holds nothing — and a claim with nothing behind it is
+    residue every later caller has to reconcile away. It is dropped only when
+    the fence this call still holds is proven live and a FRESH broker read
+    shows no position and no open order; a resting order in particular must
+    keep its claim, because an unclaimed broker order is ambiguous for every
+    client and would strand the symbol for all of them.
+
+    Every failure here is logged and swallowed. The broker proved it applied
+    nothing, so there is no ambiguity to record: a claim left behind blocks no
+    one — the next submission reconciles the same state and releases it — while
+    raising would replace the broker's own 4xx, which is the answer the caller
+    needs to learn why its order was refused.
+    """
+    if fence_token is None:
+        return
+    try:
+        await guard.renew_fence(symbol, fence_token)
+        broker_state = await _reconcile_broker_symbol_state(provider, symbol)
+        await guard.release_claim_if_broker_is_clear(
+            client_id=client_id,
+            symbol=symbol,
+            broker_state=broker_state,
+        )
+    # nosemgrep: empire-no-bare-exception -- best-effort cleanup after a write the broker proved it refused; the claim self-heals on the next submission and raising here would hide the broker's own 4xx
+    except Exception:
+        logger.warning("order_ownership_unapplied_submission_release_skipped", symbol=symbol, exc_info=True)
+
+
 async def _clear_mutation_after_unapplied_write(
     guard: OrderOwnershipGuard,
     symbol: str,
@@ -1223,6 +1295,7 @@ async def create_order(
     async def _call(provider: Any) -> Any:
         fence_token: str | None = None
         mutation_token: str | None = None
+        write_proven_unapplied = False
         try:
             try:
                 fence_token = await ownership_guard.acquire_fence(canonical_symbol)
@@ -1263,6 +1336,24 @@ async def create_order(
             except HTTPException as exc:
                 await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
                 raise
+            except Exception as exc:
+                # A close re-sent before Alpaca's position read caught up with
+                # its own fill is refused with "insufficient qty available" —
+                # the refusal proves nothing reached the book, so the marker
+                # goes, the claim is not frozen, and the broker's 4xx reaches
+                # the caller that needs to read it.
+                if not _broker_submission_proven_unapplied(exc):
+                    raise
+                await _clear_mutation_after_unapplied_write(ownership_guard, canonical_symbol, mutation_token, exc)
+                await _release_claim_after_unapplied_submission(
+                    provider,
+                    ownership_guard,
+                    canonical_symbol,
+                    fence_token,
+                    client.id,
+                )
+                write_proven_unapplied = True
+                raise
             try:
                 post_submit_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
                 await ownership_guard.verify_reconciliation(
@@ -1291,7 +1382,8 @@ async def create_order(
         except HTTPException:
             raise
         except Exception:
-            await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
+            if not write_proven_unapplied:
+                await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
             raise
         finally:
             if fence_token is not None:
@@ -2421,6 +2513,7 @@ async def close_position(
     async def _call(provider: Any) -> Any:
         fence_token: str | None = None
         mutation_token: str | None = None
+        write_proven_unapplied = False
         try:
             try:
                 fence_token = await ownership_guard.acquire_fence(canonical_symbol)
@@ -2445,6 +2538,23 @@ async def close_position(
                 )
             except HTTPException as exc:
                 await _freeze_after_ambiguous_mutation(ownership_guard, canonical_symbol, exc)
+                raise
+            except Exception as exc:
+                # A close submits an order like any other write, and draws the
+                # same refusals — the position already flat under a filled
+                # close, a reduce-only sell the account will not accept. None
+                # of them reach the book, so none of them are ambiguous.
+                if not _broker_submission_proven_unapplied(exc):
+                    raise
+                await _clear_mutation_after_unapplied_write(ownership_guard, canonical_symbol, mutation_token, exc)
+                await _release_claim_after_unapplied_submission(
+                    provider,
+                    ownership_guard,
+                    canonical_symbol,
+                    fence_token,
+                    client.id,
+                )
+                write_proven_unapplied = True
                 raise
             try:
                 post_close_state = await _reconcile_broker_symbol_state(provider, canonical_symbol)
@@ -2472,7 +2582,8 @@ async def close_position(
         except HTTPException:
             raise
         except Exception:
-            await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
+            if not write_proven_unapplied:
+                await _freeze_before_fence_release(ownership_guard, canonical_symbol, "broker_mutation_unclassified")
             raise
         finally:
             if fence_token is not None:
