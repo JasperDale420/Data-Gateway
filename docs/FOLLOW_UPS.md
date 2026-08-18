@@ -14,13 +14,13 @@ baked-image cutover. Paid items are pruned; git history has the details.
   lease expiring *mid-write* is safe. The interleaving that matters is a
   lease that dies between a refused submission and the fresh broker read
   that decides whether to release its claim, while a second gateway
-  client acquires the symbol — the release itself is guarded by a fence
-  renewal (`_release_claim_after_unapplied_submission`) and a completeness
-  check, and `test_a_lost_fence_stops_the_release` covers a failed
-  renewal, but no test drives two clients through a real TTL. Needs a
-  real-Redis (or TTL-faithful) harness with barriers. Raised by the
-  2026-08-18 adversarial review (`gpt-5.6-terra`) of the submission-refusal
-  fix (medium severity).
+  client acquires the symbol — that release is now conditional on the live
+  fence token inside Lua (`_RELEASE_CLAIM_UNDER_FENCE`) and is covered by
+  `test_a_fence_that_expires_mid_refusal_cannot_release_the_next_claim`,
+  but against the hand-written fake, not a real lease. Needs a real-Redis
+  (or TTL-faithful) harness with barriers to prove the Lua and the TTL
+  agree with the fakes. Raised by the 2026-08-18 adversarial review
+  (`gpt-5.6-terra`) of the submission-refusal fix (medium severity).
 - **A failed `OrderOwnershipGuard.freeze()` leaves an ambiguous claim
   reusable once Redis recovers** — `freeze()` is the only mechanism that
   durably blocks further use of a symbol after an ambiguous broker

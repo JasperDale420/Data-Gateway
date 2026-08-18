@@ -99,10 +99,26 @@ class _MemoryRedis:
         return 1
 
     async def eval(self, script: str, _keys: int, key: str, *args: str | int) -> int:
-        # ``key`` is KEYS[1]; for the two-key scripts ``args[0]`` is KEYS[2]
-        # (the owner index) and everything after it is ARGV.
+        # ``key`` is KEYS[1]; for the multi-key scripts ``args[0]`` is KEYS[2]
+        # (the owner index), ``args[1]`` is KEYS[3], and everything from
+        # ``_keys - 1`` on is ARGV.
         owner_index_key = str(args[0]) if _keys > 1 else ""
         argv = args[_keys - 1 :]
+        if "-- release_claim_under_fence" in script:
+            fence_key = str(args[1])
+            if self.values.get(fence_key) != str(argv[2]):
+                return 0
+            raw = self.values.get(key)
+            if raw is None:
+                return 0
+            claim = json.loads(raw)
+            if claim.get("owner") != str(argv[0]):
+                return 0
+            if claim.get("mutation_pending") or claim.get("frozen_reason"):
+                return 0
+            del self.values[key]
+            self.index.setdefault(owner_index_key, set()).discard(str(argv[1]))
+            return 1
         if "-- begin_mutation" in script:
             raw = self.values.get(key)
             if raw is None:
@@ -520,6 +536,43 @@ async def test_a_lost_fence_stops_the_release(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.asyncio
+async def test_a_fence_that_expires_mid_refusal_cannot_release_the_next_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The release has to be atomic with the lease, not merely preceded by it.
+
+    The fence carries a TTL, so it can lapse after the renewal and before the
+    release — the two broker reads in between are the window. Another request
+    for the SAME client can then take a fresh fence, claim the symbol and put
+    an order on it, and the first request's release would be acting on a
+    reconciliation that is no longer true. An owner check cannot catch that:
+    the owner is identical. The fence token is what distinguishes them.
+    """
+    guard, redis = _seeded_guard(monkeypatch)
+    reconciles: list[int] = []
+
+    async def _state(*_args: Any, **_kwargs: Any) -> BrokerSymbolState:
+        reconciles.append(len(reconciles))
+        if len(reconciles) == 2:
+            # The lease lapsed during this read and a concurrent request for
+            # the same client took the symbol over: new fence, new claim.
+            redis.values[guard.fence_key(_SYMBOL)] = "fence-token-of-the-next-request"
+            redis.values[guard.claim_key(_SYMBOL)] = json.dumps(
+                {"owner": _CLIENT_ID, "claimed_at": "2026-08-18T13:31:00+00:00"},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        return _FLAT
+
+    monkeypatch.setattr(trading, "_reconcile_broker_symbol_state", _state)
+    error = await _submit(_SubmitProvider(_insufficient_qty_error()))
+
+    assert error.status_code == 403
+    # The successor's claim survives: the stale request holds no lease on it.
+    assert _live_claim(redis, guard)["claimed_at"] == "2026-08-18T13:31:00+00:00"
+
+
+@pytest.mark.asyncio
 async def test_another_clients_claim_is_never_released_by_a_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -706,6 +759,8 @@ def test_ambiguous_submission_replies_are_not_classified_as_unapplied(exc: BaseE
         pytest.param(_api_error(code=42910000, message="too many requests", status_code=429), id="rate-limit-429"),
         pytest.param(_api_error(code=40110000, message="access key verification failed", status_code=401), id="auth"),
         pytest.param(_api_error(code=40010000, message="invalid symbol", status_code=400), id="unlisted-400"),
+        pytest.param(_api_error(message="<html>not found</html>", status_code=404), id="unreadable-404"),
+        pytest.param(_api_error(code=40499999, message="unknown", status_code=404), id="unlisted-404-code"),
     ],
 )
 def test_an_unlisted_4xx_code_stays_ambiguous(exc: BaseException) -> None:
@@ -715,9 +770,23 @@ def test_an_unlisted_4xx_code_stays_ambiguous(exc: BaseException) -> None:
     publishes no universal "rejected before dispatch" guarantee, a 429 may be
     thrown by a proxy in front of the broker, and clearing ownership on a
     reply nobody has characterised is how a symbol ends up written by two
-    clients. Everything unlisted keeps the pre-existing freeze.
+    clients. A bare 404 is the same story — the cancel path accepts one on the
+    status alone, but a cancel names an order the broker could not find, while
+    a submission names nothing that was ever supposed to exist. Everything
+    unlisted keeps the pre-existing freeze.
     """
     assert trading._broker_submission_proven_unapplied(exc) is False
+
+
+@pytest.mark.asyncio
+async def test_an_uncharacterized_404_on_a_submission_still_freezes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The classifier's rule has to hold at the route, not just in isolation."""
+    guard, redis = _seeded_guard(monkeypatch)
+    _stub_broker_states(monkeypatch, [_HELD, _HELD])
+
+    await _submit(_SubmitProvider(_api_error(message="<html>not found</html>", status_code=404)))
+
+    assert _live_claim(redis, guard)["frozen_reason"] == "broker_mutation_unclassified"
 
 
 def test_a_sub_500_http_error_from_the_adapter_is_classified_as_unapplied() -> None:

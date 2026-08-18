@@ -776,12 +776,15 @@ def _broker_write_proven_unapplied(exc: BaseException) -> bool:
 # the codes this shared account actually produces on a submission:
 #   * 403 40310000 — insufficient quantity, day-trade buying power, wash trade.
 #   * 422 42210000 — request validation, including a position-intent mismatch.
-# Plus whatever ``_broker_write_proven_unapplied`` already proves (a 404, or a
-# terminal-state reply). Everything else keeps the freeze: 5xx, timeouts,
-# transport failures, unlisted 4xx codes, and any reply whose status or body
-# cannot be read.
+#   * 404 40410000 — the position a close names is already gone. Note the code
+#     is required: the cancel classifier accepts a bare 404 on the status alone,
+#     because a cancel names an order the broker could not find, but a
+#     submission names nothing that was ever supposed to exist there, so an
+#     uncharacterised 404 on this path is somebody else's answer, not Alpaca's.
+# Everything else keeps the freeze: 5xx, timeouts, transport failures, unlisted
+# 4xx codes, and any reply whose status or body cannot be read.
 # ─────────────────────────────────────────────────────────────────────────────
-_SUBMISSION_REFUSAL_REPLIES = frozenset({(403, 40310000), (422, 42210000)})
+_SUBMISSION_REFUSAL_REPLIES = frozenset({(403, 40310000), (422, 42210000), (404, _ORDER_NOT_FOUND_CODE)})
 
 
 def _broker_submission_proven_unapplied(exc: BaseException) -> bool:
@@ -796,8 +799,6 @@ def _broker_submission_proven_unapplied(exc: BaseException) -> bool:
         # already found gone (POSITION_NOT_FOUND, converted from the broker's
         # own 404); the gateway's own pre-dispatch rejections are 503/504.
         return exc.status_code < 500
-    if _broker_write_proven_unapplied(exc):
-        return True
     if not isinstance(exc, APIError):
         return False
     # nosemgrep: empire-no-bare-exception -- APIError.status_code is a property over an optional wrapped HTTPError; an unreadable status must classify as "unproven", not raise
@@ -819,11 +820,13 @@ async def _release_claim_after_unapplied_submission(
 
     The claim is taken before the write, so a refused submission can leave one
     over a symbol that holds nothing — and a claim with nothing behind it is
-    residue every later caller has to reconcile away. It is dropped only when
-    the fence this call still holds is proven live and a FRESH broker read
-    shows no position and no open order; a resting order in particular must
-    keep its claim, because an unclaimed broker order is ambiguous for every
-    client and would strand the symbol for all of them.
+    residue every later caller has to reconcile away. It is dropped only when a
+    FRESH broker read shows no position and no open order, and only under this
+    call's own fence lease: the reads take long enough for a lease to lapse, so
+    the release is made conditional on the token rather than merely preceded by
+    a renewal. A resting order in particular must keep its claim, because an
+    unclaimed broker order is ambiguous for every client and would strand the
+    symbol for all of them.
 
     Every failure here is logged and swallowed. The broker proved it applied
     nothing, so there is no ambiguity to record: a claim left behind blocks no
@@ -839,6 +842,7 @@ async def _release_claim_after_unapplied_submission(
         await guard.release_claim_if_broker_is_clear(
             client_id=client_id,
             symbol=symbol,
+            fence_token=fence_token,
             broker_state=broker_state,
         )
     # nosemgrep: empire-no-bare-exception -- best-effort cleanup after a write the broker proved it refused; the claim self-heals on the next submission and raising here would hide the broker's own 4xx

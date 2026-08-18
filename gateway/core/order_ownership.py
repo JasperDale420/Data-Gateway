@@ -131,6 +131,25 @@ redis.call('DEL', KEYS[1])
 redis.call('SREM', KEYS[2], ARGV[2])
 return 1
 """
+    # The same release, made atomic with the caller's fence lease. The plain
+    # release above runs inside a call that has just proven its ownership, but
+    # a release that follows a refused broker write runs after two broker reads
+    # — long enough for a 120-second lease to lapse and for the next request,
+    # possibly the same client's, to take the symbol over. Comparing the owner
+    # cannot see that: the owner is identical. Comparing the live fence token
+    # can, so a caller whose lease has moved on deletes nothing.
+    _RELEASE_CLAIM_UNDER_FENCE = """
+-- release_claim_under_fence
+if redis.call('GET', KEYS[3]) ~= ARGV[3] then return 0 end
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local claim = cjson.decode(raw)
+if claim['owner'] ~= ARGV[1] then return 0 end
+if claim['mutation_pending'] or claim['frozen_reason'] then return 0 end
+redis.call('DEL', KEYS[1])
+redis.call('SREM', KEYS[2], ARGV[2])
+return 1
+"""
     _COMPARE_AND_DELETE_FENCE = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
@@ -336,6 +355,7 @@ return 0
         *,
         client_id: str,
         symbol: str,
+        fence_token: str,
         broker_state: BrokerSymbolState,
     ) -> None:
         """Drop this client's claim on a symbol the broker holds nothing for.
@@ -346,16 +366,36 @@ return 0
         a COMPLETE broker read showing the symbol flat: an incomplete
         reconciliation may be hiding the very position being released, and a
         symbol whose open order outlives its claim is ambiguous for every
-        client, not just this one. The release runs through the same
-        compare-and-delete as every other, so a claim that is frozen, carries a
+        client, not just this one.
+
+        The write itself is conditional on ``fence_token`` still being the live
+        lease, because the reads that produced this decision take long enough
+        for the lease to lapse and the symbol to be taken over. It keeps the
+        rest of the release contract too: a claim that is frozen, carries a
         pending mutation, or has moved to another owner is left alone.
         """
-        if not broker_state.complete:
+        if not broker_state.complete or broker_state.has_position or broker_state.order_owners:
             return
         claim = await self._load_claim(symbol)
         if claim is None or claim["owner"] != client_id:
             return
-        await self._release_if_clear(symbol=symbol, claim=claim, broker_state=broker_state)
+        try:
+            released = await self._redis.eval(
+                self._RELEASE_CLAIM_UNDER_FENCE,
+                3,
+                self.claim_key(symbol),
+                self.owner_index_key(client_id),
+                self.fence_key(symbol),
+                client_id,
+                symbol,
+                fence_token,
+            )
+        except Exception as exc:
+            raise self._store_error(symbol, "release_under_fence", exc) from exc
+        if released:
+            logger.info("order_ownership_claim_released", client_id=client_id, symbol=symbol)
+        else:
+            logger.info("order_ownership_claim_release_skipped", client_id=client_id, symbol=symbol)
 
     async def _release_if_clear(
         self,
