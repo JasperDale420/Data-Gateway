@@ -51,6 +51,19 @@ async def _claim_exists(redis, guard: OrderOwnershipGuard) -> bool:
     return await redis.get(guard.claim_key(_SYMBOL)) is not None
 
 
+async def _await_fence_expiry(redis, guard: OrderOwnershipGuard) -> None:
+    """Wait for Redis to actually drop the lease, however long that takes.
+
+    Polling rather than sleeping a fixed span: the lease is real, so on a
+    loaded machine it can outlive any constant a test picks, and a test that
+    fails under load is worse than no test.
+    """
+    deadline = asyncio.get_running_loop().time() + 10.0
+    while await redis.get(guard.fence_key(_SYMBOL)) is not None:
+        assert asyncio.get_running_loop().time() < deadline, "the fence lease never expired"
+        await asyncio.sleep(0.02)
+
+
 async def test_the_real_lua_releases_a_claim_held_under_a_live_fence(redis_probe) -> None:
     guard = OrderOwnershipGuard(redis_probe)
     await _seed_claim(redis_probe, guard)
@@ -74,8 +87,10 @@ async def test_a_fence_that_expired_on_its_own_cannot_release(redis_probe, monke
     await _seed_claim(redis_probe, guard)
     stale_token = await guard.acquire_fence(_SYMBOL)
 
-    await asyncio.sleep(0.2)
-    assert await redis_probe.get(guard.fence_key(_SYMBOL)) is None, "the lease must really have expired"
+    await _await_fence_expiry(redis_probe, guard)
+    # Full-length lease from here: the successor's lease must not be able to
+    # lapse mid-test, or the scenario quietly degrades into "no lease at all".
+    monkeypatch.undo()
 
     # The successor is the SAME client: an owner comparison cannot tell them
     # apart, which is the whole point of the fence token.
