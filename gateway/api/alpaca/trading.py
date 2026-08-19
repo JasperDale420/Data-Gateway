@@ -836,6 +836,7 @@ async def _release_claim_after_unapplied_submission(
     """
     if fence_token is None:
         return
+    # nosemgrep: empire-no-bare-exception -- best-effort cleanup after a write the broker proved it refused; the claim self-heals on the next submission and raising here would hide the broker's own 4xx
     try:
         await guard.renew_fence(symbol, fence_token)
         broker_state = await _reconcile_broker_symbol_state(provider, symbol)
@@ -845,7 +846,6 @@ async def _release_claim_after_unapplied_submission(
             fence_token=fence_token,
             broker_state=broker_state,
         )
-    # nosemgrep: empire-no-bare-exception -- best-effort cleanup after a write the broker proved it refused; the claim self-heals on the next submission and raising here would hide the broker's own 4xx
     except Exception:
         logger.warning("order_ownership_unapplied_submission_release_skipped", symbol=symbol, exc_info=True)
 
