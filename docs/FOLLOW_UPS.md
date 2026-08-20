@@ -6,6 +6,17 @@ baked-image cutover. Paid items are pruned; git history has the details.
 
 ## Open
 
+- **Most order-ownership Lua is still only proven against a hand-written
+  fake** — every ownership test but one drives an in-memory Redis
+  stand-in whose `set(..., px=...)` never expires and whose scripts are
+  the guard's Lua re-implemented in Python by hand, so the fakes and the
+  Lua can drift. `tests/test_order_ownership_lua_integration.py` now
+  closes the piece that mattered most — the post-refusal release, run by
+  a real Redis against a real expiring fence lease — but
+  `_CLAIM_AND_INDEX`, `_BEGIN_MUTATION`, `_COMPLETE_MUTATION`,
+  `_COMPARE_AND_DELETE` and `_THAW_CLAIM` have no real-Redis coverage.
+  Raised by the 2026-08-18 adversarial review (`gpt-5.6-terra`) of the
+  submission-refusal fix (medium severity).
 - **A failed `OrderOwnershipGuard.freeze()` leaves an ambiguous claim
   reusable once Redis recovers** — `freeze()` is the only mechanism that
   durably blocks further use of a symbol after an ambiguous broker

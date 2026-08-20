@@ -135,6 +135,25 @@ clients:
     trading: true
   role: trader
 - enabled: true
+  id: kairosprime
+  key_hash: sha256:50fd6d4d21423bd9d973ec63a6e4d56d25da28a9f035dedd1577116eed87726b  # pragma: allowlist secret
+  permissions:
+    feeds:
+    - quotes
+    - trades
+    - options
+    - option_quotes
+    - flow
+    - flow_alerts
+    - news
+    max_symbols: 100
+    providers:
+    - alpaca
+    - uw
+    rate_limit: 600
+    trading: false
+  role: client
+- enabled: true
   id: heber-watch
   key_hash: sha256:5d386ceee561e31034090faae284437b7ebc9af67511af17d6a30d7ab34618c4  # pragma: allowlist secret
   permissions:

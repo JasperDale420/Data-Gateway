@@ -404,7 +404,6 @@ async def get_daily_bars(symbol: str, start: str, end: str) -> list[dict]:
                 "start": start,
                 "end": end,
                 "limit": 10000,
-                "feed": "sip",
             },
         )
         resp.raise_for_status()
@@ -582,7 +581,7 @@ The header tells you exactly how long to wait. Do not retry immediately.
 
 | Need | Best Provider | Why |
 |------|--------------|-----|
-| Backtesting bars | Alpaca | Highest limits, SIP feed, timezone-aware |
+| Backtesting bars | Alpaca | Highest limits, IEX feed (Basic plan), timezone-aware |
 | Real-time quotes | Alpaca / Finnhub | Low latency, minimal cache |
 | Options flow/greeks | UW | Deepest options analytics |
 | Fundamentals | Finnhub + AV | Complementary data sets |
@@ -601,8 +600,8 @@ from datetime import datetime, timezone
 start = datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat()  # "2025-01-01T00:00:00+00:00"
 ```
 
-**Use `feed=sip` for Alpaca when possible.**
-SIP (Securities Information Processor) includes all exchanges. IEX is free-tier only. Default is `sip`.
+**This gateway currently runs on Alpaca's Basic (free-tier) plan — do not request `feed=sip`.**
+SIP (Securities Information Processor) includes all exchanges, but the account's data subscription does not permit it and the request will 403. Stock bars/quotes default to `feed=iex` (single-exchange, thinner than consolidated SIP) and options default to `feed=indicative` (synthetic quotes), both set in `config/providers.yaml`. See `CHANGELOG.md` for the fidelity tradeoff; upgrading to an Algo Trader Plus subscription restores SIP/OPRA.
 
 ---
 
@@ -615,7 +614,7 @@ Gap-and-go, micro-pullback, VWAP strategies need:
 - [x] **Intraday bars** -- Alpaca `stocks/{symbol}/bars` with `timeframe=1Min` or `5Min`
 - [x] **Real-time quotes** -- Alpaca `stocks/{symbol}/quotes` or WebSocket `stock_quotes`
 - [x] **Real-time bar stream** -- WebSocket `stock_bars` feed
-- [x] **Pre-market data** -- Alpaca bars with `feed=sip` include extended hours
+- [x] **Pre-market data** -- Alpaca bars include extended hours (`extended_hours` param; unrelated to `feed`, which defaults to `iex` on this account's plan)
 - [x] **Volume analysis** -- Alpaca bars include volume; UW `stock/{symbol}/volume-price-levels`
 - [x] **Order execution** -- Alpaca orders API (bracket orders, stop-loss)
 - [x] **Position management** -- Alpaca positions API

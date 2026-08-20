@@ -244,17 +244,19 @@ ws://localhost:8080/ws
 
 | Feed | Description | Stream |
 |------|-------------|--------|
-| `stock_bars` | Stock minute bars | Alpaca SIP |
-| `stock_quotes` | Stock NBBO quotes | Alpaca SIP |
-| `stock_trades` | Stock trade executions | Alpaca SIP |
-| `option_bars` | Options minute bars | Alpaca OPRA |
-| `option_quotes` | Options quotes | Alpaca OPRA |
-| `option_trades` | Options trade executions | Alpaca OPRA |
+| `stock_bars` | Stock minute bars | Alpaca IEX* |
+| `stock_quotes` | Stock NBBO quotes | Alpaca IEX* |
+| `stock_trades` | Stock trade executions | Alpaca IEX* |
+| `option_bars` | Options minute bars | Alpaca indicative* |
+| `option_quotes` | Options quotes | Alpaca indicative* |
+| `option_trades` | Options trade executions | Alpaca indicative* |
 | `crypto_bars` | Crypto minute bars | Alpaca Crypto |
 | `crypto_quotes` | Crypto quotes | Alpaca Crypto |
 | `crypto_trades` | Crypto trade executions | Alpaca Crypto |
 | `crypto_orderbooks` | Crypto Level 2 orderbooks | Alpaca Crypto |
 | `news` | Real-time news articles | Alpaca News |
+
+\* On the account's current Alpaca Basic plan, SIP (stocks) and OPRA (options) return 403; the gateway runs the free-tier IEX / indicative feeds instead (`GATEWAY_STREAM_USE_IEX`, `GATEWAY_STREAM_OPTIONS_FEED` in `docker-compose.yml`). See `CHANGELOG.md` for the fidelity tradeoff.
 
 Additional stock/crypto feeds (`dailyBars`, `updatedBars`, `lulds`, `statuses`, `imbalances`) are also supported — see `/catalog/feeds` for the authoritative list.
 

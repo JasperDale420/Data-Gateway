@@ -73,6 +73,19 @@ def owner_from_client_order_id(client_order_id: Any, client_ids: list[str]) -> s
 
 
 @dataclass(frozen=True)
+class StoredClaim:
+    """A claim together with the exact bytes it was stored as.
+
+    The raw form is what lets an operator write require the precise version it
+    reviewed: anything that rewrote the claim in between — a concurrent thaw, a
+    new owner, a mutation marker — changes the bytes and the write is refused.
+    """
+
+    raw: str
+    claim: dict[str, str]
+
+
+@dataclass(frozen=True)
 class BrokerSymbolState:
     """Fresh broker state for one canonical broker symbol."""
 
@@ -118,6 +131,25 @@ redis.call('DEL', KEYS[1])
 redis.call('SREM', KEYS[2], ARGV[2])
 return 1
 """
+    # The same release, made atomic with the caller's fence lease. The plain
+    # release above runs inside a call that has just proven its ownership, but
+    # a release that follows a refused broker write runs after two broker reads
+    # — long enough for a 120-second lease to lapse and for the next request,
+    # possibly the same client's, to take the symbol over. Comparing the owner
+    # cannot see that: the owner is identical. Comparing the live fence token
+    # can, so a caller whose lease has moved on deletes nothing.
+    _RELEASE_CLAIM_UNDER_FENCE = """
+-- release_claim_under_fence
+if redis.call('GET', KEYS[3]) ~= ARGV[3] then return 0 end
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local claim = cjson.decode(raw)
+if claim['owner'] ~= ARGV[1] then return 0 end
+if claim['mutation_pending'] or claim['frozen_reason'] then return 0 end
+redis.call('DEL', KEYS[1])
+redis.call('SREM', KEYS[2], ARGV[2])
+return 1
+"""
     _COMPARE_AND_DELETE_FENCE = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
@@ -140,6 +172,26 @@ local raw = redis.call('GET', KEYS[1])
 if not raw then return 0 end
 local claim = cjson.decode(raw)
 if claim['mutation_pending'] ~= ARGV[1] then return 0 end
+claim['mutation_pending'] = nil
+redis.call('SET', KEYS[1], cjson.encode(claim))
+return 1
+"""
+    # Compare-and-swap against the exact bytes the operator reviewed. Anything
+    # that rewrote the claim between the review and this write — a concurrent
+    # thaw, a released-and-reclaimed symbol, a mutation marker taken by the
+    # owner — changes those bytes, and the thaw is refused rather than applied
+    # to state nobody checked.
+    _THAW_CLAIM = """
+-- thaw_claim
+local raw = redis.call('GET', KEYS[1])
+if not raw or raw ~= ARGV[1] then return 0 end
+if ARGV[2] == '1' then
+  redis.call('DEL', KEYS[1])
+  redis.call('SREM', KEYS[2], ARGV[3])
+  return 1
+end
+local claim = cjson.decode(raw)
+claim['frozen_reason'] = nil
 claim['mutation_pending'] = nil
 redis.call('SET', KEYS[1], cjson.encode(claim))
 return 1
@@ -298,6 +350,53 @@ return 0
             self._reject(symbol, "mutation_completion_token_lost")
         logger.info("order_ownership_mutation_reconciled", symbol=symbol)
 
+    async def release_claim_if_broker_is_clear(
+        self,
+        *,
+        client_id: str,
+        symbol: str,
+        fence_token: str,
+        broker_state: BrokerSymbolState,
+    ) -> None:
+        """Drop this client's claim on a symbol the broker holds nothing for.
+
+        A claim is taken before the write it protects, so a write the broker
+        refused outright can leave one standing over a symbol with no position
+        and no open order behind it. Releasing requires proof, and the proof is
+        a COMPLETE broker read showing the symbol flat: an incomplete
+        reconciliation may be hiding the very position being released, and a
+        symbol whose open order outlives its claim is ambiguous for every
+        client, not just this one.
+
+        The write itself is conditional on ``fence_token`` still being the live
+        lease, because the reads that produced this decision take long enough
+        for the lease to lapse and the symbol to be taken over. It keeps the
+        rest of the release contract too: a claim that is frozen, carries a
+        pending mutation, or has moved to another owner is left alone.
+        """
+        if not broker_state.complete or broker_state.has_position or broker_state.order_owners:
+            return
+        claim = await self._load_claim(symbol)
+        if claim is None or claim["owner"] != client_id:
+            return
+        try:
+            released = await self._redis.eval(
+                self._RELEASE_CLAIM_UNDER_FENCE,
+                3,
+                self.claim_key(symbol),
+                self.owner_index_key(client_id),
+                self.fence_key(symbol),
+                client_id,
+                symbol,
+                fence_token,
+            )
+        except Exception as exc:
+            raise self._store_error(symbol, "release_under_fence", exc) from exc
+        if released:
+            logger.info("order_ownership_claim_released", client_id=client_id, symbol=symbol)
+        else:
+            logger.info("order_ownership_claim_release_skipped", client_id=client_id, symbol=symbol)
+
     async def _release_if_clear(
         self,
         *,
@@ -322,6 +421,10 @@ return 0
             logger.info("order_ownership_claim_released", client_id=claim["owner"], symbol=symbol)
 
     async def _load_claim(self, symbol: str) -> dict[str, str] | None:
+        stored = await self._load_stored_claim(symbol)
+        return None if stored is None else stored.claim
+
+    async def _load_stored_claim(self, symbol: str) -> StoredClaim | None:
         try:
             raw = await self._redis.get(self.claim_key(symbol))
         except Exception as exc:
@@ -337,7 +440,7 @@ return 0
                 raise ValueError("claim is not a JSON object")
             if not isinstance(claim.get("owner"), str) or not claim["owner"]:
                 raise ValueError("missing owner")
-            return claim
+            return StoredClaim(raw=raw, claim=claim)
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             logger.error("order_ownership_claim_corrupt", symbol=symbol, exc_info=True)
             raise OwnershipConflict(f"corrupt_claim:{symbol}") from exc
@@ -406,6 +509,48 @@ return 0
         except Exception as exc:
             raise self._store_error(symbol, "freeze", exc) from exc
         logger.warning("order_ownership_frozen", symbol=symbol, reason=reason)
+
+    async def read_claim(self, symbol: str) -> StoredClaim | None:
+        """Return the stored claim so an operator can inspect it before acting."""
+        return await self._load_stored_claim(symbol)
+
+    async def thaw(self, symbol: str, *, expected: StoredClaim, delete: bool = False) -> None:
+        """Release an operator-verified claim; the only path out of a freeze.
+
+        The caller must hold the symbol's fence and must have proven the broker
+        state unambiguous — nothing here re-checks either. What this does
+        guarantee is that the write lands on the exact claim the caller
+        reviewed: the swap is conditional on those bytes, so a claim that moved
+        underneath (released and re-taken by another client, thawed
+        concurrently, or marked for a new mutation) is refused instead of
+        overwritten. ``delete`` drops the claim and its owner-index entry for a
+        symbol the broker holds nothing on; otherwise the claim survives with
+        its freeze and pending marker removed, leaving the owner free to mutate
+        again.
+        """
+        owner = expected.claim["owner"]
+        try:
+            thawed = await self._redis.eval(
+                self._THAW_CLAIM,
+                2,
+                self.claim_key(symbol),
+                self.owner_index_key(owner),
+                expected.raw,
+                "1" if delete else "0",
+                symbol,
+            )
+        except Exception as exc:
+            raise self._store_error(symbol, "thaw", exc) from exc
+        if not thawed:
+            self._reject(symbol, "claim_changed_before_thaw")
+        logger.critical(
+            "order_ownership_thawed_by_operator",
+            symbol=symbol,
+            client_id=owner,
+            deleted=delete,
+            cleared_frozen_reason=expected.claim.get("frozen_reason"),
+            cleared_mutation_pending=expected.claim.get("mutation_pending"),
+        )
 
     async def _ensure_index(self, client_id: str, symbol: str) -> None:
         try:
