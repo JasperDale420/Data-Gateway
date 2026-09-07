@@ -18,6 +18,7 @@ from gateway.core.envelope import (
     SCHEMA_VERSION,
     EnvelopeWrapError,
     EventEnvelope,
+    _infer_instrument_type,
     compute_event_id,
     fast_wrap_streaming_event,
     make_instrument_key,
@@ -74,6 +75,66 @@ class TestMakeInstrumentKey:
         for _ in range(100):
             assert make_instrument_key("AAPL", "equity") == "equity:AAPL"
             assert make_instrument_key("BTC-USD", "crypto") == "crypto:BTC-USD"
+
+
+class TestInferInstrumentType:
+    """Direct unit tests for ``_infer_instrument_type``.
+
+    This locks down the documented gotcha (CLAUDE.md "Gotcha:
+    `_infer_instrument_type` and per-underlying analytics"): the function
+    flags ANY payload carrying a ``strike`` or ``expiry`` field as
+    ``instrument_type=option``, even for per-underlying analytics feeds
+    (e.g. ``iv_term_structure``) where that's wrong. Callers for those feeds
+    must pass ``instrument_type_override="equity"`` to ``wrap_event`` --
+    this class pins the raw inference behavior so a future refactor can't
+    silently change it without a test failing here (in addition to the
+    poller-level regression tests in test_uw_eod_instrument_keys.py).
+    """
+
+    def test_flow_feed_is_always_option_even_without_strike_or_expiry(self):
+        """feed in {flow, flow_alerts} short-circuits to option."""
+        assert _infer_instrument_type("flow", "AAPL", {}) == "option"
+        assert _infer_instrument_type("flow_alerts", "AAPL", {}) == "option"
+
+    def test_strike_field_triggers_option(self):
+        """Any payload with a truthy `strike` is classified as option."""
+        assert _infer_instrument_type("bars", "AAPL", {"strike": 200.0}) == "option"
+
+    def test_expiry_field_triggers_option(self):
+        """Any payload with a truthy `expiry` is classified as option -- this
+        is the exact trigger that mis-tags per-underlying analytics feeds
+        like iv_term_structure (see module docstring)."""
+        assert _infer_instrument_type("bars", "AAPL", {"expiry": "2026-06-20"}) == "option"
+
+    def test_per_underlying_analytics_payload_is_mistagged_option_without_override(self):
+        """Pins the gotcha itself: a per-underlying analytics row (one entry
+        per expiry of the SAME underlying, no strike) is misclassified as
+        `option` by raw inference. This is exactly why
+        `_poll_eod_iv_term_structure` must pass instrument_type_override.
+        """
+        iv_term_structure_row = {"symbol": "AAPL", "expiry": "2026-06-20", "iv": 0.25}
+        assert _infer_instrument_type("iv_term_structure", "AAPL", iv_term_structure_row) == "option"
+
+    def test_falsy_strike_and_expiry_do_not_trigger_option(self):
+        """Empty-string/zero strike or expiry are falsy and must not trigger option."""
+        assert _infer_instrument_type("bars", "AAPL", {"strike": 0, "expiry": ""}) == "equity"
+
+    def test_crypto_slash_symbol_detected(self):
+        """A symbol containing '/' is classified as crypto."""
+        assert _infer_instrument_type("quotes", "BTC/USD", {}) == "crypto"
+
+    def test_crypto_prefix_suffix_heuristic(self):
+        """Symbols starting/ending with a known crypto prefix (len>=6) are crypto."""
+        assert _infer_instrument_type("quotes", "BTCUSD", {}) == "crypto"
+        assert _infer_instrument_type("quotes", "DOGEETH", {}) == "crypto"
+
+    def test_short_crypto_like_symbol_stays_equity(self):
+        """Under the 6-char length floor, the crypto heuristic does not fire."""
+        assert _infer_instrument_type("quotes", "BTC", {}) == "equity"
+
+    def test_plain_equity_symbol_defaults_to_equity(self):
+        """No option/crypto indicators -> default equity classification."""
+        assert _infer_instrument_type("bars", "AAPL", {"o": 150.0, "c": 151.0}) == "equity"
 
 
 class TestComputeEventId:

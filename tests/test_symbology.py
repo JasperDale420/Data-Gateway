@@ -60,6 +60,22 @@ class TestSymbolResolver:
         assert result.type == "option"
         assert result.option_type == "call"
 
+    def test_resolve_human_option_compact_month_format(self):
+        """Second human-option pattern: 'AAPL JAN17 200C' (compact month/day/strike)."""
+        result = self.resolver.resolve("AAPL JAN17 200C")
+        assert result.type == "option"
+        assert result.underlying == "AAPL"
+        assert result.option_type == "call"
+        assert result.expiration.month == 1
+        assert result.expiration.day == 17
+        assert result.strike == Decimal("200")
+
+    def test_resolve_unknown_format_returns_unknown_type(self):
+        """A symbol matching no pattern resolves to type='unknown', not an exception."""
+        result = self.resolver.resolve("not a real symbol!!")
+        assert result.type == "unknown"
+        assert result.symbol == "NOT A REAL SYMBOL!!"
+
     # Crypto
     def test_resolve_crypto(self):
         result = self.resolver.resolve("BTC/USD")
@@ -71,6 +87,22 @@ class TestSymbolResolver:
         result = self.resolver.resolve("EUR/USD")
         assert result.type == "forex"
         assert result.symbol == "EUR/USD"
+
+    def test_forex_shaped_pair_with_unknown_base_falls_back_to_crypto(self):
+        """A 3/3-letter slash pair only resolves as forex when the base is a
+        known ISO 4217 currency code. Otherwise it falls through to the
+        crypto pattern (which matches the same X/XXX shape) instead of
+        being misclassified as forex.
+        """
+        result = self.resolver.resolve("XYZ/ABC")
+        assert result.type == "crypto"
+        assert result.symbol == "XYZ/ABC"
+
+    def test_known_forex_currency_pair_not_misread_as_crypto(self):
+        """A known forex pair must resolve as forex, not fall through to crypto,
+        confirming the FOREX_PATTERN branch is checked before CRYPTO_PATTERN."""
+        result = self.resolver.resolve("GBP/JPY")
+        assert result.type == "forex"
 
     # OCC generation
     def test_to_occ(self):

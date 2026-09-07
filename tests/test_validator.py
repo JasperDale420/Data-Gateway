@@ -206,6 +206,53 @@ class TestValidateBar:
         result = validator.validate_bar(bar)
         assert result.valid is True
 
+    def test_nan_price_rejected(self, validator: DataValidator) -> None:
+        """A NaN price must be rejected, not silently pass the `> 0` comparison.
+
+        NaN bypasses every IEEE 754 ordering comparison (`nan > 0` and
+        `nan <= 0` are both False), so a naive `open <= 0` check alone would
+        let it through. `_to_float` must catch this before the range checks.
+        """
+        bar = {
+            "symbol": "AAPL",
+            "open": float("nan"),
+            "high": 105,
+            "low": 99,
+            "close": 102,
+            "volume": 1000,
+        }
+        result = validator.validate_bar(bar)
+        assert result.valid is False
+        assert ValidationErrorCodes.INVALID_PRICE in result.error_codes
+
+    def test_infinite_price_rejected(self, validator: DataValidator) -> None:
+        """An infinite price must be rejected, not treated as a huge-but-valid high."""
+        bar = {
+            "symbol": "AAPL",
+            "open": 100,
+            "high": float("inf"),
+            "low": 99,
+            "close": 102,
+            "volume": 1000,
+        }
+        result = validator.validate_bar(bar)
+        assert result.valid is False
+        assert ValidationErrorCodes.INVALID_PRICE in result.error_codes
+
+    def test_nan_string_price_rejected(self, validator: DataValidator) -> None:
+        """A string 'nan' price (some feeds serialize floats as strings) is also caught."""
+        bar = {
+            "symbol": "AAPL",
+            "open": "nan",
+            "high": 105,
+            "low": 99,
+            "close": 102,
+            "volume": 1000,
+        }
+        result = validator.validate_bar(bar)
+        assert result.valid is False
+        assert ValidationErrorCodes.INVALID_PRICE in result.error_codes
+
     def test_stream_bar_shape_passes(self, validator: DataValidator) -> None:
         """Raw stream bar payload shape should be validated without remapping."""
         bar = {
