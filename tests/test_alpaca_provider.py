@@ -227,13 +227,16 @@ async def test_get_quotes_records_requested_batch_size(monkeypatch: pytest.Monke
 
 
 class _RecordingLogger:
-    """Captures (level, event) pairs so tests can assert log severity."""
+    """Captures (level, event) pairs, plus the full kwargs payload, so tests
+    can assert both log severity and the emitted field contract."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.payloads: list[dict[str, Any]] = []
 
-    def _record(self, level: str, event: str, **_: Any) -> None:
+    def _record(self, level: str, event: str, **kw: Any) -> None:
         self.calls.append((level, event))
+        self.payloads.append(kw)
 
     def info(self, event: str, **kw: Any) -> None:
         self._record("info", event, **kw)
@@ -290,6 +293,18 @@ async def test_get_quotes_logs_4xx_as_warning_5xx_as_error(
 
     levels = {lvl for lvl, event in rec.calls if event == "alpaca_quotes_error"}
     assert levels == {expected_level}
+
+    # Field contract: consolidating onto the shared helper must not silently
+    # drop or rename the fields the removed inline calls emitted. The helper
+    # emits `status_code` (its own convention) alongside a preserved `status`
+    # alias (added specifically so Alpaca's old field name survives) plus the
+    # original `error` text — regression-guard all three.
+    payload = next(
+        kw for (lvl, event), kw in zip(rec.calls, rec.payloads, strict=True) if event == "alpaca_quotes_error"
+    )
+    assert payload["status"] == status
+    assert payload["status_code"] == status
+    assert payload["error"]
 
 
 @pytest.mark.asyncio
