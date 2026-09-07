@@ -394,6 +394,64 @@ class TestPositivityConstraints:
                 side="ask",
             )
 
+    def test_greek_exposure_negative_strike_rejected(self) -> None:
+        """`strike` is optional on NormalizedGreekExposure but must still be
+        `> 0` when present -- untested branch of `_positive_strike`."""
+        with pytest.raises(ValidationError, match=NON_POSITIVE_MSG):
+            NormalizedGreekExposure(
+                symbol="AAPL",
+                timestamp=UTC_TS,
+                call_gamma=Decimal("0.1"),
+                strike=Decimal("-1"),
+            )
+
+    def test_greek_exposure_zero_strike_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=NON_POSITIVE_MSG):
+            NormalizedGreekExposure(
+                symbol="AAPL",
+                timestamp=UTC_TS,
+                call_gamma=Decimal("0.1"),
+                strike=Decimal("0"),
+            )
+
+    def test_greek_exposure_without_strike_accepted(self) -> None:
+        """Aggregate (non-per-contract) greek exposure rows omit strike entirely."""
+        row = NormalizedGreekExposure(
+            symbol="AAPL",
+            timestamp=UTC_TS,
+            call_gamma=Decimal("0.1"),
+        )
+        assert row.strike is None
+
+    def test_forex_rate_negative_bid_rejected(self) -> None:
+        """NormalizedForexRate requires bid/ask/mid/OHLC to be `> 0` -- untested branch."""
+        with pytest.raises(ValidationError, match=NON_POSITIVE_MSG):
+            NormalizedForexRate(
+                pair="EUR/USD",
+                timestamp=UTC_TS,
+                bid=Decimal("-1.05"),
+                ask=Decimal("1.06"),
+            )
+
+    def test_forex_rate_zero_ask_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=NON_POSITIVE_MSG):
+            NormalizedForexRate(
+                pair="EUR/USD",
+                timestamp=UTC_TS,
+                bid=Decimal("1.05"),
+                ask=Decimal("0"),
+            )
+
+    def test_forex_rate_positive_values_accepted(self) -> None:
+        rate = NormalizedForexRate(
+            pair="EUR/USD",
+            timestamp=UTC_TS,
+            bid=Decimal("1.05"),
+            ask=Decimal("1.06"),
+        )
+        assert rate.bid == Decimal("1.05")
+        assert rate.ask == Decimal("1.06")
+
 
 # ─────────────────────────────────────────────────────────────────────
 # BLOCKER 3 — ResponseMeta requires explicit provider
