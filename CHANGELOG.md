@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Alpaca stock-market-data error logging now shares one severity-by-status implementation** (`gateway/providers/alpaca/market.py`). Eight methods (`get_bars`, `get_quotes`, `get_trades`, `get_latest_bars`, `get_latest_trades`, `get_historical_quotes`, `get_snapshots`, `get_auctions`) each re-implemented the same "4xx logs at WARNING, 5xx logs at ERROR" branch inline — one copy was explicitly commented as mirroring `gateway/api/alpaca/common.py`. They now all call the existing shared `log_provider_http_error` helper (`gateway/providers/_errors.py`), already used by the Alpha Vantage and Finnhub providers. No behavior change: same events, same fields, same WARN/4xx-ERROR/5xx split.
+
 - **Docs corrected to match the free-tier Alpaca feed switch and the current failed-event buffer size** (weekly drift check, doc-only): `README.md`'s Available Feeds table and `docs/CONSUMER_GUIDE.md` no longer claim stock/option streams and REST bars use SIP/OPRA by default — this account is on Alpaca's Basic plan, which 403s SIP/OPRA requests, so the gateway runs IEX (stocks) and indicative (options) instead (see the `f42cf5d` entry below). A broken `feed=sip` example in `CONSUMER_GUIDE.md` that would 403 was fixed to omit the parameter. `docs/RUNBOOK.md`'s failed-event buffer size was corrected from a stale "10,000 entries" to the current default of 50,000 (`GATEWAY_DATA_SINK_FAILED_BUFFER_CAPACITY`).
 
 ### Fixed

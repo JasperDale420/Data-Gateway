@@ -283,7 +283,7 @@ async def test_get_quotes_logs_4xx_as_warning_5xx_as_error(
     provider = AlpacaProvider()
     provider._client = cast(Any, _HTTPErrorClient(status))
     rec = _RecordingLogger()
-    monkeypatch.setattr("gateway.providers.alpaca.market.logger", rec)
+    monkeypatch.setattr("gateway.providers._errors.logger", rec)
 
     with pytest.raises(httpx.HTTPStatusError):
         await provider.get_quotes(["SPX"])
@@ -310,7 +310,7 @@ async def test_get_bars_logs_4xx_as_warning_5xx_as_error(
 
     monkeypatch.setattr(provider, "_paginate", _raise)
     rec = _RecordingLogger()
-    monkeypatch.setattr("gateway.providers.alpaca.market.logger", rec)
+    monkeypatch.setattr("gateway.providers._errors.logger", rec)
 
     with pytest.raises(httpx.HTTPStatusError):
         await provider.get_bars(
@@ -342,7 +342,7 @@ async def test_get_trades_logs_4xx_as_warning_5xx_as_error(
 
     monkeypatch.setattr(provider, "_paginate", _raise)
     rec = _RecordingLogger()
-    monkeypatch.setattr("gateway.providers.alpaca.market.logger", rec)
+    monkeypatch.setattr("gateway.providers._errors.logger", rec)
 
     with pytest.raises(httpx.HTTPStatusError):
         await provider.get_trades(
@@ -366,7 +366,7 @@ async def test_get_snapshots_logs_4xx_as_warning_5xx_as_error(
     provider = AlpacaProvider()
     provider._client = cast(Any, _HTTPErrorClient(status))
     rec = _RecordingLogger()
-    monkeypatch.setattr("gateway.providers.alpaca.market.logger", rec)
+    monkeypatch.setattr("gateway.providers._errors.logger", rec)
 
     with pytest.raises(httpx.HTTPStatusError):
         await provider.get_snapshots(["SPX"])
