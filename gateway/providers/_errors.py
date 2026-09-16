@@ -21,6 +21,7 @@ def log_provider_http_error(event: str, exc: Exception, **fields: Any) -> None:
     payload = {**fields, "error": str(exc)}
     if status_code is not None:
         payload["status_code"] = status_code
+        payload["status"] = status_code
     if status_code is not None and 400 <= status_code < 500:
         logger.warning(event, **payload)
     else:

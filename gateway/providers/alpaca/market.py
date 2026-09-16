@@ -9,6 +9,7 @@ import httpx
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
 from gateway.core.metrics import record_provider_quote_batch_size
+from gateway.providers._errors import log_provider_http_error
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, _AlpacaMixinBase
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
@@ -52,12 +53,10 @@ class AlpacaMarketMixin(_AlpacaMixinBase):
             logger.info("alpaca_bars_fetched", symbols=len(symbols), bars=len(results))
 
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
             # 4xx are client-caused (e.g. requesting an index symbol like SPX
             # from /v2/stocks/bars → 400) and must not flood the ERROR log; only
-            # 5xx are genuine upstream failures. Mirrors api/alpaca/common.py.
-            log = logger.warning if status < 500 else logger.error
-            log("alpaca_bars_error", status=status, error=str(e))
+            # 5xx are genuine upstream failures. See gateway.providers._errors.
+            log_provider_http_error("alpaca_bars_error", e)
             raise
 
         return results
@@ -84,14 +83,7 @@ class AlpacaMarketMixin(_AlpacaMixinBase):
                 results.append(self._normalize_quote(symbol, quote))
 
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            # 4xx are client-caused; only 5xx are genuine upstream failures.
-            log = logger.warning if status < 500 else logger.error
-            log(
-                "alpaca_quotes_error",
-                status=status,
-                error=str(e),
-            )
+            log_provider_http_error("alpaca_quotes_error", e)
             raise
 
         return results
@@ -123,10 +115,7 @@ class AlpacaMarketMixin(_AlpacaMixinBase):
             logger.info("alpaca_trades_fetched", symbols=len(symbols), trades=len(results))
 
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            # 4xx are client-caused; only 5xx are genuine upstream failures.
-            log = logger.warning if status < 500 else logger.error
-            log("alpaca_trades_error", status=status, error=str(e))
+            log_provider_http_error("alpaca_trades_error", e)
             raise
 
         return results
@@ -154,10 +143,7 @@ class AlpacaMarketMixin(_AlpacaMixinBase):
             logger.info("alpaca_latest_bars_fetched", count=len(results))
 
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            # 4xx are client-caused; only 5xx are genuine upstream failures.
-            log = logger.warning if status < 500 else logger.error
-            log("alpaca_latest_bars_error", status=status, error=str(e))
+            log_provider_http_error("alpaca_latest_bars_error", e)
             raise
 
         return results
@@ -185,10 +171,7 @@ class AlpacaMarketMixin(_AlpacaMixinBase):
             logger.info("alpaca_latest_trades_fetched", count=len(results))
 
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            # 4xx are client-caused; only 5xx are genuine upstream failures.
-            log = logger.warning if status < 500 else logger.error
-            log("alpaca_latest_trades_error", status=status, error=str(e))
+            log_provider_http_error("alpaca_latest_trades_error", e)
             raise
 
         return results
@@ -220,10 +203,7 @@ class AlpacaMarketMixin(_AlpacaMixinBase):
             logger.info("alpaca_historical_quotes_fetched", symbols=len(symbols), quotes=len(results))
 
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            # 4xx are client-caused; only 5xx are genuine upstream failures.
-            log = logger.warning if status < 500 else logger.error
-            log("alpaca_historical_quotes_error", status=status, error=str(e))
+            log_provider_http_error("alpaca_historical_quotes_error", e)
             raise
 
         return results
@@ -254,10 +234,7 @@ class AlpacaMarketMixin(_AlpacaMixinBase):
             return snapshots
 
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            # 4xx are client-caused; only 5xx are genuine upstream failures.
-            log = logger.warning if status < 500 else logger.error
-            log("alpaca_snapshots_error", status=status, error=str(e))
+            log_provider_http_error("alpaca_snapshots_error", e)
             raise
 
     @http_retry
@@ -288,10 +265,7 @@ class AlpacaMarketMixin(_AlpacaMixinBase):
             return data.get("auctions", {})
 
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            # 4xx are client-caused; only 5xx are genuine upstream failures.
-            log = logger.warning if status < 500 else logger.error
-            log("alpaca_auctions_error", status=status, error=str(e))
+            log_provider_http_error("alpaca_auctions_error", e)
             raise
 
     # ─────────────────────────────────────────────────────────────────
