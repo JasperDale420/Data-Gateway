@@ -10,6 +10,7 @@ from gateway.core.http_client import create_async_http_client
 from gateway.core.logger import logger
 from gateway.core.metrics import httpx_event_hooks
 from gateway.core.provider import DataProvider, HealthStatus, ProviderCapabilities
+from gateway.providers._errors import log_provider_http_error
 
 
 class NewsProvider(DataProvider):
@@ -186,7 +187,7 @@ class NewsProvider(DataProvider):
             }
 
         except httpx.HTTPStatusError as e:
-            logger.error("news_articles_error", status=e.response.status_code, error=str(e))
+            log_provider_http_error("news_articles_error", e)
             raise
         except Exception as e:
             logger.error("news_articles_failed", error=str(e))
@@ -304,7 +305,7 @@ class NewsProvider(DataProvider):
             return result
 
         except httpx.HTTPStatusError as e:
-            logger.error("news_sentiment_error", symbol=symbol, status=e.response.status_code)
+            log_provider_http_error("news_sentiment_error", e, symbol=symbol)
             raise
         except Exception as e:
             logger.error("news_sentiment_failed", symbol=symbol, error=str(e))

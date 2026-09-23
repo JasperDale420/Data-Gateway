@@ -9,6 +9,7 @@ import httpx
 
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
+from gateway.providers._errors import log_provider_http_error
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, _AlpacaMixinBase
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
@@ -82,11 +83,7 @@ class AlpacaOptionsMixin(_AlpacaMixinBase):
             )
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_option_chain_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            log_provider_http_error("alpaca_option_chain_error", e)
             raise
 
         return results
@@ -124,7 +121,7 @@ class AlpacaOptionsMixin(_AlpacaMixinBase):
             logger.info("alpaca_option_bars_fetched", contracts=len(contracts), bars=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_option_bars_error", status=e.response.status_code, error=str(e))
+            log_provider_http_error("alpaca_option_bars_error", e)
             raise
 
         return results
@@ -156,11 +153,7 @@ class AlpacaOptionsMixin(_AlpacaMixinBase):
             )
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_option_quotes_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            log_provider_http_error("alpaca_option_quotes_error", e)
             raise
 
         return results
@@ -194,7 +187,7 @@ class AlpacaOptionsMixin(_AlpacaMixinBase):
             logger.info("alpaca_historical_option_quotes_fetched", count=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_historical_option_quotes_error", status=e.response.status_code, error=str(e))
+            log_provider_http_error("alpaca_historical_option_quotes_error", e)
             raise
 
         return results
@@ -228,7 +221,7 @@ class AlpacaOptionsMixin(_AlpacaMixinBase):
             logger.info("alpaca_option_trades_fetched", count=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_option_trades_error", status=e.response.status_code)
+            log_provider_http_error("alpaca_option_trades_error", e)
             raise
 
         return results
@@ -256,7 +249,7 @@ class AlpacaOptionsMixin(_AlpacaMixinBase):
             logger.info("alpaca_option_latest_trades_fetched", count=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_option_latest_trades_error", status=e.response.status_code)
+            log_provider_http_error("alpaca_option_latest_trades_error", e)
             raise
 
         return results
@@ -295,7 +288,7 @@ class AlpacaOptionsMixin(_AlpacaMixinBase):
             return all_snapshots
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_option_snapshots_error", status=e.response.status_code)
+            log_provider_http_error("alpaca_option_snapshots_error", e)
             raise
 
     async def get_option_snapshot_contracts(self, underlying: str) -> list:
