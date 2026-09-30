@@ -7,6 +7,7 @@ import httpx
 
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
+from gateway.providers._errors import log_provider_http_error
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, _AlpacaMixinBase
 from gateway.schemas import NormalizedBar
 
@@ -39,11 +40,7 @@ class AlpacaForexMixin(_AlpacaMixinBase):
             return {"rates": rates, "provider": "alpaca"}
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_forex_rates_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            log_provider_http_error("alpaca_forex_rates_error", e)
             raise
 
     @http_retry
@@ -86,5 +83,5 @@ class AlpacaForexMixin(_AlpacaMixinBase):
             return results
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_forex_historical_error", status=e.response.status_code, error=str(e))
+            log_provider_http_error("alpaca_forex_historical_error", e)
             raise

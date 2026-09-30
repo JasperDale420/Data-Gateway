@@ -8,6 +8,7 @@ import httpx
 
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
+from gateway.providers._errors import log_provider_http_error
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, _AlpacaMixinBase
 from gateway.schemas import NormalizedBar, NormalizedQuote, NormalizedTrade
 
@@ -50,7 +51,7 @@ class AlpacaCryptoMixin(_AlpacaMixinBase):
             logger.info("alpaca_crypto_bars_fetched", pair=pair, bars=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_crypto_bars_error", status=e.response.status_code, error=str(e))
+            log_provider_http_error("alpaca_crypto_bars_error", e)
             raise
 
         return results
@@ -80,7 +81,7 @@ class AlpacaCryptoMixin(_AlpacaMixinBase):
             logger.info("alpaca_crypto_trades_fetched", pair=pair, trades=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_crypto_trades_error", status=e.response.status_code, error=str(e))
+            log_provider_http_error("alpaca_crypto_trades_error", e)
             raise
 
         return results
@@ -104,11 +105,7 @@ class AlpacaCryptoMixin(_AlpacaMixinBase):
             return results
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_crypto_quotes_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            log_provider_http_error("alpaca_crypto_quotes_error", e)
             raise
 
     @http_retry
@@ -139,7 +136,7 @@ class AlpacaCryptoMixin(_AlpacaMixinBase):
             logger.info("alpaca_historical_crypto_quotes_fetched", pair=pair, quotes=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_historical_crypto_quotes_error", status=e.response.status_code, error=str(e))
+            log_provider_http_error("alpaca_historical_crypto_quotes_error", e)
             raise
 
         return results
@@ -169,11 +166,7 @@ class AlpacaCryptoMixin(_AlpacaMixinBase):
             return results
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_crypto_snapshots_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            log_provider_http_error("alpaca_crypto_snapshots_error", e)
             raise
 
     @http_retry
@@ -196,7 +189,7 @@ class AlpacaCryptoMixin(_AlpacaMixinBase):
             return data.get("bars", {})
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_crypto_latest_bars_error", status=e.response.status_code)
+            log_provider_http_error("alpaca_crypto_latest_bars_error", e)
             raise
 
     @http_retry
@@ -219,7 +212,7 @@ class AlpacaCryptoMixin(_AlpacaMixinBase):
             return data.get("trades", {})
 
         except httpx.HTTPStatusError as e:
-            logger.error("alpaca_crypto_latest_trades_error", status=e.response.status_code)
+            log_provider_http_error("alpaca_crypto_latest_trades_error", e)
             raise
 
     @http_retry
@@ -277,9 +270,5 @@ class AlpacaCryptoMixin(_AlpacaMixinBase):
             return result.model_dump()
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_crypto_orderbook_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            log_provider_http_error("alpaca_crypto_orderbook_error", e)
             raise

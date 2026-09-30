@@ -8,6 +8,7 @@ import httpx
 
 from gateway.core.http_client import http_retry
 from gateway.core.logger import logger
+from gateway.providers._errors import log_provider_http_error
 from gateway.providers.alpaca._base import ERR_PROVIDER_NOT_INITIALIZED, _AlpacaMixinBase
 
 
@@ -103,11 +104,7 @@ class AlpacaCorporateMixin(_AlpacaMixinBase):
             logger.info("alpaca_corporate_actions_fetched", count=len(results))
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "alpaca_corporate_actions_error",
-                status=e.response.status_code,
-                error=str(e),
-            )
+            log_provider_http_error("alpaca_corporate_actions_error", e)
             raise
 
         return results
