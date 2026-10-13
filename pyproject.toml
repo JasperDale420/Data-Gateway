@@ -9,7 +9,12 @@ authors = [
     {name = "Empire Trading", email = "dev@empire.trading"}
 ]
 dependencies = [
-    "fastapi[standard]>=0.115.0",
+    # 0.133.0 is the first FastAPI that accepts starlette 1.x, and
+    # gateway/main.py passes strict_content_type (added in 0.132.0).
+    "fastapi[standard]>=0.133.0",
+    # Security floor: every starlette < 1.3.1 has open advisories. Declared
+    # directly so pip installs (CI, Docker) honour it, not just uv.lock.
+    "starlette>=1.3.1",
     "uvicorn>=0.32.0",
     "websockets>=13.0",
     "pydantic>=2.5",

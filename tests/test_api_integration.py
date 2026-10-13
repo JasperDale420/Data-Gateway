@@ -153,6 +153,23 @@ class TestSymbologyEndpoints:
         assert len(data["results"]) == 3
         assert len(data["errors"]) == 0
 
+    def test_batch_resolve_accepts_json_body_without_content_type(self, client: TestClient, auth_headers: dict):
+        """A JSON body sent with no Content-Type header is still parsed as JSON.
+
+        Pins the request contract every JSON-body endpoint has always had:
+        FastAPI 0.132+ rejects such requests with 422 unless the app opts out.
+        """
+        response = client.post(
+            "/api/v1/symbology/batch",
+            content=b'{"symbols": ["AAPL", "MSFT"]}',
+            headers=auth_headers,
+        )
+        assert "content-type" not in response.request.headers
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert len(data["results"]) == 2
+
     def test_convert_symbol(self, client: TestClient, auth_headers: dict):
         """GET /api/v1/symbology/convert converts to provider format."""
         response = client.get(
