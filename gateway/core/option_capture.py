@@ -19,6 +19,7 @@ from gateway.core.metrics import (
 )
 from gateway.core.registry import ProviderRegistry
 from gateway.core.stream import AlpacaStreamType, StreamMultiplexer
+from gateway.core.timeutils import parse_timestamp
 
 HEBER_STREAM = "heber:events"
 CAPTURE_CLIENT_ID = "__option_capture__"
@@ -39,19 +40,6 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _parse_timestamp(value: Any) -> datetime | None:
-    if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-    if isinstance(value, str):
-        # nosemgrep: empire-no-return-none-for-failure -- documented Optional parse helper: unparseable provider timestamp yields None
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-        except ValueError:
-            return None
-    return None
 
 
 def _parse_date(value: Any) -> date | None:
@@ -444,7 +432,7 @@ class OptionCaptureService:
             if expiry is not None:
                 expiries.append(expiry)
 
-            ts_value = _parse_timestamp(serialized.get("timestamp"))
+            ts_value = parse_timestamp(serialized.get("timestamp"))
             if ts_value is not None:
                 timestamps.append(ts_value.astimezone(UTC))
 
@@ -568,7 +556,7 @@ class OptionCaptureService:
         if total_contracts <= 0:
             return self._empty_symbol_snapshot()
 
-        snapshot_timestamp = _parse_timestamp(payload.get("timestamp"))
+        snapshot_timestamp = parse_timestamp(payload.get("timestamp"))
         greeks_present = 0
         iv_present = 0
         nonzero_open_interest = 0
@@ -604,7 +592,7 @@ class OptionCaptureService:
 
     def _render_symbol_runtime_snapshot(self, *, symbol: str, now: datetime) -> dict[str, Any]:
         snapshot = dict(self._symbol_capture_quality.get(symbol, self._empty_symbol_snapshot()))
-        snapshot_ts = _parse_timestamp(snapshot.get("snapshot_timestamp"))
+        snapshot_ts = parse_timestamp(snapshot.get("snapshot_timestamp"))
         snapshot["snapshot_age_seconds"] = (
             max(0.0, (now - snapshot_ts.astimezone(UTC)).total_seconds()) if snapshot_ts is not None else None
         )
