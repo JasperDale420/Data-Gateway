@@ -215,6 +215,10 @@ class Settings(BaseSettings):
     # are wired; these bounds are enforced server-side when streams are bootstrapped.
     jetstream_enabled: bool = False
     jetstream_lanes: Literal["backfill", "live", "both"] = "backfill"
+    # `live`/`both` also move flow-alert watch copies to HEBER_WATCH. Heber has
+    # no consumer for that stream yet, so those lanes are refused until an
+    # operator declares Heber's watch receiver deployed.
+    jetstream_heber_watch_receiver_ready: bool = False
     jetstream_url: str = "nats://jetstream:4222"
     jetstream_username: str = ""
     jetstream_password: SecretStr = SecretStr("")
@@ -240,6 +244,16 @@ class Settings(BaseSettings):
             raise ValueError("JetStream and durable outbox require the data sink to be enabled")
         if self.durable_outbox_enabled and not self.data_sink_redis_url:
             raise ValueError("durable outbox requires GATEWAY_DATA_SINK_REDIS_URL for the Redis control-plane URL")
+        if (
+            self.jetstream_enabled
+            and self.jetstream_lanes in {"live", "both"}
+            and not self.jetstream_heber_watch_receiver_ready
+        ):
+            raise ValueError(
+                f"GATEWAY_JETSTREAM_LANES={self.jetstream_lanes} routes flow-alert watch traffic to HEBER_WATCH, "
+                "which Heber does not consume yet; use 'backfill', or set "
+                "GATEWAY_JETSTREAM_HEBER_WATCH_RECEIVER_READY=true once Heber's JetStream watch receiver is deployed"
+            )
         return self
 
     # Pool size cap raised from 32 → 128. The previous cap left the redis_sink-

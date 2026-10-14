@@ -100,7 +100,8 @@ Cache keys include the `X-Gateway-Key` client id (per-client scoping prevents cr
 | `GATEWAY_DURABLE_OUTBOX_MAX_BYTES` | `21474836480` | Pending-backlog budget; admission fails closed and never evicts at the limit |
 | `GATEWAY_DURABLE_OUTBOX_RETRY_SECONDS` | `1.0` | Delay before retrying the oldest broker-unacknowledged row |
 | `GATEWAY_JETSTREAM_ENABLED` | `false` | Enable JetStream stream provisioning and publication |
-| `GATEWAY_JETSTREAM_LANES` | `backfill` | Route `backfill`, `live`, or `both` lanes through the durable outbox; other lanes stay on Redis |
+| `GATEWAY_JETSTREAM_LANES` | `backfill` | Route `backfill`, `live`, or `both` lanes through the durable outbox; other lanes stay on Redis. `live`/`both` also route flow-alert watch copies to `HEBER_WATCH` and are refused unless the next setting is true |
+| `GATEWAY_JETSTREAM_HEBER_WATCH_RECEIVER_READY` | `false` | Set `true` only once Heber's JetStream watch receiver is deployed; until then the gateway refuses `live`/`both` at startup |
 | `GATEWAY_JETSTREAM_URL` | `nats://jetstream:4222` | NATS server URL |
 | `GATEWAY_JETSTREAM_USERNAME` / `GATEWAY_JETSTREAM_PASSWORD` | — | Required JetStream credentials |
 | `GATEWAY_REDIS_BACKFILL_CONSUMER_GROUP` | `heber-backfill-writers` | Exact Redis consumer group required in Heber's backfill readiness record |

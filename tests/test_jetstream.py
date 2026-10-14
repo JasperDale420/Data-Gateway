@@ -405,3 +405,53 @@ def test_compose_jetstream_is_authenticated_internal_and_host_persisted() -> Non
     )
     assert "GATEWAY_DURABLE_OUTBOX_MAX_BYTES=${GATEWAY_DURABLE_OUTBOX_MAX_BYTES:-21474836480}" in (gateway_environment)
     assert "GATEWAY_DURABLE_OUTBOX_RETRY_SECONDS=${GATEWAY_DURABLE_OUTBOX_RETRY_SECONDS:-1.0}" in (gateway_environment)
+
+
+def _durable_jetstream_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "_env_file": None,
+        "data_sink_enabled": True,
+        "durable_outbox_enabled": True,
+        "jetstream_enabled": True,
+        "jetstream_username": "gateway",
+        "jetstream_password": "secret",  # pragma: allowlist secret
+        "GATEWAY_DATA_SINK_REDIS_URL": "redis://localhost:6379/0",
+    }
+    values.update(overrides)
+    return Settings(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("lanes", ["live", "both"])
+def test_lanes_that_route_flow_watch_refuse_until_heber_has_a_watch_receiver(lanes: str) -> None:
+    """``live``/``both`` also move flow-alert watch copies to HEBER_WATCH.
+
+    Heber has no consumer for HEBER_WATCH yet, so starting with those lanes
+    would silently stop live watch processing. The gateway refuses instead.
+    """
+    with pytest.raises(ValidationError, match="HEBER_WATCH"):
+        _durable_jetstream_settings(jetstream_lanes=lanes)
+
+
+@pytest.mark.parametrize("lanes", ["live", "both"])
+def test_watch_routing_lanes_are_allowed_once_the_receiver_is_declared_ready(lanes: str) -> None:
+    settings = _durable_jetstream_settings(jetstream_lanes=lanes, jetstream_heber_watch_receiver_ready=True)
+    assert settings.jetstream_lanes == lanes
+
+
+def test_backfill_lane_needs_no_watch_receiver() -> None:
+    settings = _durable_jetstream_settings(jetstream_lanes="backfill")
+    assert settings.jetstream_heber_watch_receiver_ready is False
+
+
+def test_watch_receiver_gate_only_applies_when_jetstream_is_enabled() -> None:
+    settings = Settings(_env_file=None, jetstream_lanes="both")
+    assert settings.jetstream_enabled is False
+
+
+def test_compose_keeps_the_watch_receiver_gate_closed_by_default() -> None:
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text())
+    gateway_environment = compose["services"]["gateway"]["environment"]
+    assert (
+        "GATEWAY_JETSTREAM_HEBER_WATCH_RECEIVER_READY=${GATEWAY_JETSTREAM_HEBER_WATCH_RECEIVER_READY:-false}"
+        in gateway_environment
+    )
