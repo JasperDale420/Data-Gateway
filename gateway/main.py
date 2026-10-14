@@ -762,6 +762,12 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
+        # Keep parsing a JSON body sent without a Content-Type header, as every
+        # JSON-body endpoint always has (FastAPI 0.132+ rejects it by default).
+        # Strict mode guards against cross-site form posts; here every
+        # JSON-body route requires the X-Gateway-Key header, which a browser
+        # cannot send cross-origin without a CORS preflight.
+        strict_content_type=False,
     )
     # Starlette types handlers as taking bare Exception; per-exception-type handlers are a known stub gap.
     app.add_exception_handler(HTTPException, gateway_http_exception_handler)  # type: ignore[arg-type]
