@@ -234,9 +234,20 @@ docker compose up -d heber-consumer heber-backfill-consumer
 ```
 
 This keeps `heber:events` live traffic on Redis while only
-`heber:events:backfill` enters the durable outbox. Promote live traffic later
-by setting `GATEWAY_JETSTREAM_LANES=both` and
-`HEBER_LIVE_INGEST_TRANSPORT=jetstream`.
+`heber:events:backfill` enters the durable outbox.
+
+**Do not promote live traffic yet.** `GATEWAY_JETSTREAM_LANES=live` or `both`
+also routes every flow-alert watch copy to `HEBER_WATCH`. Heber has no JetStream
+watch receiver yet, so live watch processing would stop. The gateway therefore
+refuses to start with those lanes unless
+`GATEWAY_JETSTREAM_HEBER_WATCH_RECEIVER_READY=true`. Set that only after Heber's
+watch receiver is deployed, then promote with `GATEWAY_JETSTREAM_LANES=both`
+and `HEBER_LIVE_INGEST_TRANSPORT=jetstream`.
+
+Backfill *jobs* also need Heber's readiness record and per-chunk
+acknowledgements (see below). Heber does not write them yet on either transport,
+so jobs stay blocked with `heber_readiness_missing`. Bulk EOD publishes to the
+backfill lane are not gated by them.
 
 Gateway admits a replay only when Heber's readiness hash identifies the exact
 selected backfill binding: transport, `backfill` lane, stream, and durable

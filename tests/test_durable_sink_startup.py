@@ -69,6 +69,7 @@ async def test_durable_transport_verifies_jetstream_before_exposing_registry(
         GATEWAY_DATA_SINK_REDIS_URL="redis://redis:6379/0",
         jetstream_enabled=True,
         jetstream_lanes="both",
+        jetstream_heber_watch_receiver_ready=True,
         jetstream_username="gateway",
         jetstream_password="secret",  # pragma: allowlist secret
     )
